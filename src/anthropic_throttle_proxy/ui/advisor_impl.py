@@ -44,14 +44,24 @@ Rate-limit model (important — do not confuse the two regimes):
   - 529 = upstream OVERLOADED (Anthropic-side), NOT your usage — back off and
     retry; do not lower your own ceiling in response.
 
+OAuth utilization signal (per bearer, in snapshot as `unified`):
+  - `unified.util_5h` / `unified.util_7d` are 0..1 fractions of the 5-hour and
+    7-day budgets consumed; `unified.status` is allowed/rejected;
+    `unified.representative_claim` names the binding window.
+  - util near 1.0 with status still "allowed" = you are about to be throttled;
+    this is the "as close to the limit as possible" frontier.
+  - status "rejected" = already over; the proxy auto-pauses until reset.
+
 Knobs you may recommend (do NOT invent others):
-  CLAUDE_API_THROTTLE_MAX      — per-bearer concurrent ceiling (int, 1..64).
-  THROTTLE_QUEUE_MODE          — off | observe | fair | reactive.
-  THROTTLE_MIN_DISPATCH_GAP_MS — min ms between upstream dispatches (0..500);
-                                 smooths millisecond burst WITHOUT capping
-                                 throughput.
-  THROTTLE_AIMD_MIN            — AIMD floor for the live ceiling (>=1).
-  THROTTLE_AIMD_BACKOFF_S      — cooldown after a shrink before ramp resumes.
+  CLAUDE_API_THROTTLE_MAX        — per-bearer concurrent ceiling (int, 1..64).
+  THROTTLE_QUEUE_MODE            — off | observe | fair | reactive.
+  THROTTLE_MIN_DISPATCH_GAP_MS   — min ms between upstream dispatches (0..500);
+                                   smooths millisecond burst WITHOUT capping
+                                   throughput.
+  THROTTLE_AIMD_MIN              — AIMD floor for the live ceiling (>=1).
+  THROTTLE_AIMD_BACKOFF_S        — cooldown after a shrink before ramp resumes.
+  THROTTLE_UTILIZATION_TARGET    — 0..1; proactively shrink once binding OAuth
+                                   utilization crosses this (0 = off).
 
 Reasoning hints:
   - High `retries` + low `inflight` → per-bearer concurrency too high for the
@@ -60,6 +70,8 @@ Reasoning hints:
     THROTTLE_MIN_DISPATCH_GAP_MS to 50-100.
   - Repeated 529 → upstream overload; widen THROTTLE_AIMD_BACKOFF_S, don't
     lower MAX.
+  - High `unified.util_5h` (e.g. >0.9) trending up fast → set
+    THROTTLE_UTILIZATION_TARGET ~0.9 so the proxy eases off before "rejected".
 
 Output format:
   - One short paragraph diagnosing the likely culprit, citing snapshot numbers.

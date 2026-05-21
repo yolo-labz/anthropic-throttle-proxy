@@ -39,6 +39,7 @@ def _collect_view() -> dict:
             "queued": bstate.get("queued", 0),
             "served": bstate.get("served", 0),
             "last_ratelimit": bstate.get("last_ratelimit"),
+            "unified": bstate.get("unified"),
             "limiter": lim.snapshot() if lim is not None else None,
         })
     return {

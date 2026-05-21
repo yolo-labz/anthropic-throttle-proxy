@@ -16,6 +16,7 @@
       <th>queued</th>
       <th>served</th>
       <th>aimd (live/max)</th>
+      <th>5h util</th>
       <th>req left</th>
       <th>retry-after</th>
       <th>clients</th>
@@ -31,6 +32,13 @@
       <td>
         {% if b.limiter %}
           {{ b.limiter.max_concurrent }}/{{ b.limiter.hard_max }}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+      <td>
+        {% if b.unified and b.unified.util_5h is not none %}
+          {{ (b.unified.util_5h * 100) | round(0) | int }}%{% if b.unified.status == "rejected" %} <span class="util-rejected">rejected</span>{% endif %}
         {% else %}
           —
         {% endif %}

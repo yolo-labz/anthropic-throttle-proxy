@@ -169,6 +169,21 @@ M_RATELIMIT_TOKENS_REMAINING = Gauge(
     ["bearer"],
     registry=REGISTRY,
 )
+# OAuth (Claude Code Max/Pro) unified-window utilization (0..1). The OAuth
+# regime is gated by a 5-hour rolling + 7-day weekly window rather than
+# RPM/ITPM/OTPM, reported via anthropic-ratelimit-unified-*-utilization.
+M_UTIL_5H = Gauge(
+    "anthropic_ratelimit_unified_5h_utilization",
+    "OAuth 5-hour rolling window utilization (0..1).",
+    ["bearer"],
+    registry=REGISTRY,
+)
+M_UTIL_7D = Gauge(
+    "anthropic_ratelimit_unified_7d_utilization",
+    "OAuth 7-day weekly window utilization (0..1).",
+    ["bearer"],
+    registry=REGISTRY,
+)
 
 UPSTREAM = os.environ.get("THROTTLE_UPSTREAM", "https://api.anthropic.com")
 LISTEN_HOST = os.environ.get("THROTTLE_HOST", "127.0.0.1")
@@ -225,6 +240,14 @@ AIMD_STATUSES = {429, 503}
 OVERLOAD_STATUSES = {529}
 # Any throttle-ish status worth an advisor diagnosis.
 THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
+
+# WS-B2: OAuth unified-window utilization pacing. When > 0, once the binding
+# window's utilization crosses this fraction (while still "allowed"), shrink the
+# ceiling one AIMD step to ease off BEFORE hitting "rejected" — "glide near the
+# limit without hitting it". 0 = disabled (surface utilization only). The
+# proactive pause on an already-"rejected" window is unconditional (it just
+# preempts a 429 you'd otherwise get).
+UTILIZATION_TARGET = float(os.environ.get("THROTTLE_UTILIZATION_TARGET", "0"))
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider — see ui/advisor_impl.py,
@@ -570,6 +593,7 @@ async def _get_bearer_limiter(bid):
             bearer_state[bid] = {
                 "inflight": 0, "queued": 0, "served": 0,
                 "last_ratelimit": None,    # last-seen anthropic-ratelimit-* + retry-after
+                "unified": None,           # parsed OAuth unified-window utilization
                 "clients": {},
             }
             M_AIMD_MAX.labels(bearer=bid).set(MAX_CONCURRENT)
@@ -596,6 +620,7 @@ def _advisor_snapshot(trigger_bid=None, trigger_status=None):
             "queued": bs.get("queued", 0),
             "served": bs.get("served", 0),
             "last_ratelimit": bs.get("last_ratelimit"),
+            "unified": bs.get("unified"),
             "limiter": lim.snapshot() if lim is not None else None,
         })
     return {
@@ -689,8 +714,13 @@ def pick_target(path, query):
 
 
 # Upstream rate-limit headers we surface for proactive pacing + diagnosis.
-# Anthropic returns these on BOTH success and 429 (when present). retry-after
-# is integer seconds on a 429. *-reset are RFC-3339 timestamps.
+# Two families, depending on the auth regime:
+#   API-key (pay-as-you-go): anthropic-ratelimit-{requests,tokens,...}-* with
+#     remaining counts + RFC-3339 *-reset; retry-after (int seconds) on 429.
+#   OAuth (Claude Code Max/Pro): anthropic-ratelimit-unified-* exposing 5h/7d
+#     window UTILIZATION (0..1) + status (allowed/rejected) + epoch reset.
+#     Measured 21/05/2026 against a Max-20x token — the OAuth family does NOT
+#     include the remaining-count headers above, so utilization is the signal.
 _RATELIMIT_HEADER_KEYS = (
     "retry-after",
     "anthropic-ratelimit-requests-limit",
@@ -703,6 +733,16 @@ _RATELIMIT_HEADER_KEYS = (
     "anthropic-ratelimit-input-tokens-reset",
     "anthropic-ratelimit-output-tokens-remaining",
     "anthropic-ratelimit-output-tokens-reset",
+    # OAuth unified-window family.
+    "anthropic-ratelimit-unified-status",
+    "anthropic-ratelimit-unified-reset",
+    "anthropic-ratelimit-unified-representative-claim",
+    "anthropic-ratelimit-unified-5h-status",
+    "anthropic-ratelimit-unified-5h-utilization",
+    "anthropic-ratelimit-unified-5h-reset",
+    "anthropic-ratelimit-unified-7d-status",
+    "anthropic-ratelimit-unified-7d-utilization",
+    "anthropic-ratelimit-unified-7d-reset",
 )
 
 
@@ -751,6 +791,103 @@ def _publish_ratelimit_gauges(bid, meta):
             gauge.labels(bearer=bid).set(float(raw))
         except (TypeError, ValueError):
             pass
+
+
+def _parse_unified(meta):
+    """Parse the OAuth unified-window headers into a compact dict.
+
+    Returns {} when none are present (e.g. API-key traffic), which is itself a
+    useful signal. utilization is a 0..1 float; reset values are epoch seconds.
+    """
+    if not meta or not any(k.startswith("anthropic-ratelimit-unified") for k in meta):
+        return {}
+
+    def _f(key):
+        try:
+            v = meta.get(key)
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _i(key):
+        try:
+            v = meta.get(key)
+            return int(float(v)) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "status": meta.get("anthropic-ratelimit-unified-status"),
+        "reset": _i("anthropic-ratelimit-unified-reset"),
+        "representative_claim": meta.get("anthropic-ratelimit-unified-representative-claim"),
+        "util_5h": _f("anthropic-ratelimit-unified-5h-utilization"),
+        "status_5h": meta.get("anthropic-ratelimit-unified-5h-status"),
+        "reset_5h": _i("anthropic-ratelimit-unified-5h-reset"),
+        "util_7d": _f("anthropic-ratelimit-unified-7d-utilization"),
+        "status_7d": meta.get("anthropic-ratelimit-unified-7d-status"),
+        "reset_7d": _i("anthropic-ratelimit-unified-7d-reset"),
+    }
+
+
+def _binding_utilization(unified):
+    """The utilization of the window Anthropic flags as representative, with a
+    max() fallback when the claim is missing/unknown."""
+    u5h = unified.get("util_5h")
+    u7d = unified.get("util_7d")
+    claim = unified.get("representative_claim")
+    if claim == "five_hour" and u5h is not None:
+        return u5h
+    if claim == "seven_day" and u7d is not None:
+        return u7d
+    candidates = [u for u in (u5h, u7d) if u is not None]
+    return max(candidates) if candidates else None
+
+
+async def _apply_unified(bid, bstate, limiter, meta):
+    """React to OAuth unified-window headers (WS-B2).
+
+    1. Surface utilization (gauges + bearer_state) — always.
+    2. Proactive pause: if a window is already "rejected", stop dispatching to
+       this bearer until its reset epoch — preempts the 429 + the
+       ClientConnectionReset storm that comes with hammering an exhausted cap.
+    3. Opt-in glide: when THROTTLE_UTILIZATION_TARGET > 0 and the binding window
+       crosses it while still "allowed", shrink one AIMD step to ease off early.
+
+    Never raises into the hot path (caller wraps in try/except).
+    """
+    unified = _parse_unified(meta)
+    if not unified:
+        return
+    bstate["unified"] = unified
+    if unified.get("util_5h") is not None:
+        M_UTIL_5H.labels(bearer=bid).set(unified["util_5h"])
+    if unified.get("util_7d") is not None:
+        M_UTIL_7D.labels(bearer=bid).set(unified["util_7d"])
+
+    # 2. Proactive pause when the server already says rejected.
+    rejected = "rejected" in (
+        unified.get("status"), unified.get("status_5h"), unified.get("status_7d"),
+    )
+    if rejected:
+        reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d") or 0
+        pause = reset - time.time()
+        if pause > 0:
+            limiter.note_retry_after(pause)
+            log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
+        return
+
+    # 3. Opt-in proactive glide toward the cap.
+    if UTILIZATION_TARGET > 0:
+        binding = _binding_utilization(unified)
+        if binding is not None and binding >= UTILIZATION_TARGET:
+            new_max = await limiter.shrink()
+            if new_max is not None:
+                M_AIMD_SHRINKS.labels(bearer=bid, status="util").inc()
+                M_AIMD_MAX.labels(bearer=bid).set(new_max)
+                log(
+                    f"util-shrink bid={bid} util={binding:.2f}>={UTILIZATION_TARGET} "
+                    f"max_concurrent={new_max}"
+                )
 
 
 def _extract_model_from_body(body):
@@ -965,6 +1102,12 @@ async def handler(request):
                 if meta:
                     bstate["last_ratelimit"] = meta
                     _publish_ratelimit_gauges(bid, meta)
+                    # WS-B2: OAuth unified-window utilization — surface it,
+                    # preempt 429s on a rejected window, and (opt-in) glide.
+                    try:
+                        await _apply_unified(bid, bstate, limiter, meta)
+                    except Exception as ue:
+                        log(f"unified-error bid={bid}: {ue!r}")
 
                 # AIMD + Retry-After feedback. final_status is whatever last
                 # went to the client (central-retry-direct's status counts).

@@ -214,6 +214,12 @@ button:active { background: var(--ctp-surface2); }
   font-size: 0.85rem;
 }
 
+.util-rejected {
+  color: var(--ctp-red);
+  font-weight: 600;
+  font-size: 0.72rem;
+}
+
 footer {
   border-top: 1px solid var(--ctp-surface1);
   padding-top: 1rem;
