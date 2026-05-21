@@ -257,6 +257,11 @@ UTILIZATION_TARGET = float(os.environ.get("THROTTLE_UTILIZATION_TARGET", "0"))
 ADVISOR_ENABLED = os.environ.get("ADVISOR_ENABLED", "false").strip().lower() == "true"
 ADVISOR_DEBOUNCE_S = float(os.environ.get("ADVISOR_DEBOUNCE_S", "120"))
 
+# Strong refs to fire-and-forget tasks. asyncio only keeps a weak reference to
+# a task, so a bare `create_task(...)` whose result is never awaited can be
+# garbage-collected mid-flight. Hold the ref until the task is done.
+_background_tasks: set = set()
+
 HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
@@ -1150,7 +1155,9 @@ async def handler(request):
                 # (fire-and-forget, debounced inside _maybe_advise). Fires even
                 # in `off` mode. create_task so the hot path never awaits it.
                 if ADVISOR_ENABLED and final_status in THROTTLE_STATUSES:
-                    asyncio.create_task(_maybe_advise(bid, final_status))
+                    advisor_task = asyncio.create_task(_maybe_advise(bid, final_status))
+                    _background_tasks.add(advisor_task)
+                    advisor_task.add_done_callback(_background_tasks.discard)
 
                 # PR #557: parse SSE usage block for token/cost metrics. Only do this
                 # on successful POST /v1/messages — the only endpoint that streams a
