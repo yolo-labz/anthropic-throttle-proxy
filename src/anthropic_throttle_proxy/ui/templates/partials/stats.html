@@ -15,7 +15,9 @@
       <th>inflight</th>
       <th>queued</th>
       <th>served</th>
-      <th>aimd</th>
+      <th>aimd (live/max)</th>
+      <th>req left</th>
+      <th>retry-after</th>
       <th>clients</th>
     </tr>
   </thead>
@@ -28,11 +30,13 @@
       <td>{{ b.served }}</td>
       <td>
         {% if b.limiter %}
-          {{ b.limiter.live_cap }}/{{ b.limiter.hard_cap }}
+          {{ b.limiter.max_concurrent }}/{{ b.limiter.hard_max }}
         {% else %}
           —
         {% endif %}
       </td>
+      <td>{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
+      <td>{{ (b.last_ratelimit or {}).get("retry-after", "—") }}</td>
       <td>
         {% if b.limiter %}
           {{ (b.limiter.queued_per_client or {}) | length }}

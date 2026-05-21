@@ -139,13 +139,33 @@ M_AIMD_MAX = Gauge(
 )
 M_AIMD_SHRINKS = Counter(
     "anthropic_aimd_shrinks_total",
-    "AIMD multiplicative-decrease events triggered by upstream 429/503/529.",
+    "AIMD multiplicative-decrease events triggered by upstream rate pushback (429/503).",
     ["bearer", "status"],
     registry=REGISTRY,
 )
 M_AIMD_GROWS = Counter(
     "anthropic_aimd_grows_total",
     "AIMD additive-increase events after sustained successes past cooldown.",
+    ["bearer"],
+    registry=REGISTRY,
+)
+M_AIMD_OVERLOAD = Counter(
+    "anthropic_overload_total",
+    "Upstream 529 overloaded events (Anthropic-side capacity, not your usage). "
+    "Does NOT shrink the ceiling; retry-after is still honored.",
+    ["bearer"],
+    registry=REGISTRY,
+)
+# Last-seen upstream rate-limit headroom per bearer (proactive-pacing signal).
+M_RATELIMIT_REQUESTS_REMAINING = Gauge(
+    "anthropic_ratelimit_requests_remaining",
+    "Last-seen anthropic-ratelimit-requests-remaining header value.",
+    ["bearer"],
+    registry=REGISTRY,
+)
+M_RATELIMIT_TOKENS_REMAINING = Gauge(
+    "anthropic_ratelimit_tokens_remaining",
+    "Last-seen anthropic-ratelimit-tokens-remaining header value.",
     ["bearer"],
     registry=REGISTRY,
 )
@@ -192,7 +212,19 @@ CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT
 AIMD_MIN = int(os.environ.get("THROTTLE_AIMD_MIN", "1"))
 AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
-AIMD_STATUSES = {429, 503, 529}
+# AIMD multiplicative-decrease factor. TCP Reno halves (0.5, deep teeth, fast
+# convergence, more wasted headroom); CUBIC cuts ~30% (0.7, shallower sawtooth,
+# higher average utilisation). We default to 0.7 to glide closer to the limit
+# after each pushback. Floor is AIMD_MIN.
+AIMD_DECREASE = float(os.environ.get("THROTTLE_AIMD_DECREASE", "0.7"))
+# Rate pushback → AIMD multiplicative-decrease (YOUR usage is too high).
+AIMD_STATUSES = {429, 503}
+# 529 = upstream OVERLOADED (Anthropic-side capacity, NOT your usage). We honor
+# any retry-after and count it separately, but do NOT shrink the ceiling —
+# shrinking would throttle you for someone else's capacity problem.
+OVERLOAD_STATUSES = {529}
+# Any throttle-ish status worth an advisor diagnosis.
+THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider — see ui/advisor_impl.py,
@@ -330,17 +362,20 @@ class FairBearerLimiter:
         self._lock = asyncio.Lock()
         self._last_throttle_at = 0.0               # monotonic-ish wall clock of last shrink
         self._successes_since_throttle = 0          # consecutive 2xx since last shrink
+        self._retry_after_until = 0.0  # wall-clock end of any Retry-After window
 
     def slot(self, client_id):
         return _FairSlotContext(self, client_id)
 
     async def shrink(self):
-        """AIMD multiplicative-decrease. Called on upstream 429/503/529.
+        """AIMD multiplicative-decrease. Called on upstream rate pushback (429/503).
 
-        Halves the live ceiling (floor AIMD_MIN), records the throttle time,
-        and resets the success counter. Already-inflight requests are NOT
-        killed — they finish naturally, and `inflight` drops over time until
-        it sinks below the new ceiling and `_try_dispatch` resumes.
+        Multiplies the live ceiling by AIMD_DECREASE (floor AIMD_MIN), records
+        the throttle time, and resets the success counter. Always cuts by at
+        least one slot so a fractional decrease can't stall at the same value.
+        Already-inflight requests are NOT killed — they finish naturally, and
+        `inflight` drops over time until it sinks below the new ceiling and
+        `_try_dispatch` resumes.
 
         Returns the new ceiling.
         """
@@ -350,7 +385,8 @@ class FairBearerLimiter:
         if not self.observe_enabled:
             return None
         async with self._lock:
-            new_max = max(AIMD_MIN, self.max_concurrent // 2)
+            scaled = int(self.max_concurrent * AIMD_DECREASE)
+            new_max = max(AIMD_MIN, min(scaled, self.max_concurrent - 1))
             self.max_concurrent = new_max
             self._last_throttle_at = time.time()
             self._successes_since_throttle = 0
@@ -379,6 +415,10 @@ class FairBearerLimiter:
                 return None
             if time.time() - self._last_throttle_at < AIMD_BACKOFF_S:
                 return None
+            # Don't ramp back up while the server's explicit Retry-After window
+            # is still open, even if the AIMD cooldown already elapsed.
+            if time.time() < self._retry_after_until:
+                return None
             if self.max_concurrent >= self.hard_max:
                 return None
             self.max_concurrent += 1
@@ -386,6 +426,34 @@ class FairBearerLimiter:
             if self.queue_enabled:
                 self._try_dispatch()
             return self.max_concurrent
+
+    def note_retry_after(self, seconds):
+        """Record an upstream Retry-After (seconds) for this bearer.
+
+        The next dispatch waits at least this long (`wait_retry_after`), and
+        `grow()` won't ramp back up until the window closes. Idempotent-ish:
+        only extends the window, never shortens it. Honored uncapped — the
+        Anthropic input bucket has been observed to return >120 s, so clamping
+        would defeat the back-off.
+        """
+        if seconds <= 0:
+            return self._retry_after_until
+        until = time.time() + seconds
+        if until > self._retry_after_until:
+            self._retry_after_until = until
+        self._last_throttle_at = max(self._last_throttle_at, time.time())
+        return self._retry_after_until
+
+    async def wait_retry_after(self):
+        """Sleep until any outstanding Retry-After window has elapsed.
+
+        Called just before dispatching to upstream so we honor the server's
+        explicit back-off instead of spinning requests against a known-closed
+        window. No-op when no Retry-After is pending.
+        """
+        wait = self._retry_after_until - time.time()
+        if wait > 0:
+            await asyncio.sleep(wait)
 
     async def acquire(self, client_id):
         if not self.queue_enabled:
@@ -466,6 +534,7 @@ class FairBearerLimiter:
             "observe_enabled": self.observe_enabled,
             "last_throttle_at": self._last_throttle_at,
             "successes_since_throttle": self._successes_since_throttle,
+            "retry_after_until": self._retry_after_until,
             "queued_total": sum(len(q) for q in self._queues.values()),
             "queued_per_client": {cid: len(q) for cid, q in self._queues.items()},
             "rr_order": list(self._rr_order),
@@ -498,7 +567,11 @@ async def _get_bearer_limiter(bid):
         if lim is None:
             lim = FairBearerLimiter(MAX_CONCURRENT, QUEUE_MODE)
             bearer_limiters[bid] = lim
-            bearer_state[bid] = {"inflight": 0, "queued": 0, "served": 0, "clients": {}}
+            bearer_state[bid] = {
+                "inflight": 0, "queued": 0, "served": 0,
+                "last_ratelimit": None,    # last-seen anthropic-ratelimit-* + retry-after
+                "clients": {},
+            }
             M_AIMD_MAX.labels(bearer=bid).set(MAX_CONCURRENT)
             log(f"bearer-new bid={bid} max_concurrent={MAX_CONCURRENT} hard_max={MAX_CONCURRENT} queue_mode={QUEUE_MODE}")
         return lim
@@ -522,6 +595,7 @@ def _advisor_snapshot(trigger_bid=None, trigger_status=None):
             "inflight": bs.get("inflight", 0),
             "queued": bs.get("queued", 0),
             "served": bs.get("served", 0),
+            "last_ratelimit": bs.get("last_ratelimit"),
             "limiter": lim.snapshot() if lim is not None else None,
         })
     return {
@@ -614,6 +688,71 @@ def pick_target(path, query):
     return url, timeout, via
 
 
+# Upstream rate-limit headers we surface for proactive pacing + diagnosis.
+# Anthropic returns these on BOTH success and 429 (when present). retry-after
+# is integer seconds on a 429. *-reset are RFC-3339 timestamps.
+_RATELIMIT_HEADER_KEYS = (
+    "retry-after",
+    "anthropic-ratelimit-requests-limit",
+    "anthropic-ratelimit-requests-remaining",
+    "anthropic-ratelimit-requests-reset",
+    "anthropic-ratelimit-tokens-limit",
+    "anthropic-ratelimit-tokens-remaining",
+    "anthropic-ratelimit-tokens-reset",
+    "anthropic-ratelimit-input-tokens-remaining",
+    "anthropic-ratelimit-input-tokens-reset",
+    "anthropic-ratelimit-output-tokens-remaining",
+    "anthropic-ratelimit-output-tokens-reset",
+)
+
+
+def _extract_ratelimit(headers):
+    """Pull the subset of rate-limit headers we care about into a plain dict.
+
+    Case-insensitive (aiohttp's CIMultiDict handles that). Returns only the
+    keys that were actually present, so an empty dict means "upstream sent no
+    rate-limit headers" — the key signal for the OAuth-vs-API-key question.
+    """
+    out = {}
+    for key in _RATELIMIT_HEADER_KEYS:
+        val = headers.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
+def _parse_retry_after(meta):
+    """Seconds from a Retry-After header (integer form). 0.0 if absent/unparseable.
+
+    Anthropic uses integer-seconds Retry-After; the HTTP-date form is not
+    emitted by the Messages API, so we don't parse it.
+    """
+    if not meta:
+        return 0.0
+    raw = meta.get("retry-after")
+    if raw is None:
+        return 0.0
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _publish_ratelimit_gauges(bid, meta):
+    """Push numeric remaining-headroom headers into Prometheus gauges."""
+    for key, gauge in (
+        ("anthropic-ratelimit-requests-remaining", M_RATELIMIT_REQUESTS_REMAINING),
+        ("anthropic-ratelimit-tokens-remaining", M_RATELIMIT_TOKENS_REMAINING),
+    ):
+        raw = meta.get(key)
+        if raw is None:
+            continue
+        try:
+            gauge.labels(bearer=bid).set(float(raw))
+        except (TypeError, ValueError):
+            pass
+
+
 def _extract_model_from_body(body):
     """Pull the `model` field from a POST /v1/messages JSON body."""
     if not body:
@@ -655,8 +794,9 @@ async def _forward_once(request, headers, body, url, timeout):
     """Forward request to URL and stream the response back. Distinguishes
     client-side disconnects from upstream errors so the caller can retry
     upstream failures but not waste cycles retrying after the client gave up.
-    Returns (response, status, captured_buffer, None) on success
-    or (None, None, None, exc) on upstream failure.
+    Returns (response, status, captured_buffer, None, meta) on success
+    or (None, None, None, exc, None) on upstream failure, where `meta` is the
+    extracted upstream rate-limit headers (anthropic-ratelimit-* + retry-after).
     Raises ConnectionResetError / ClientConnectionResetError on client-side.
     """
     connector = aiohttp.TCPConnector(ssl=True)
@@ -677,6 +817,7 @@ async def _forward_once(request, headers, body, url, timeout):
                     k: v for k, v in upstream.headers.items()
                     if k.lower() not in HOP_HEADERS
                 }
+                meta = _extract_ratelimit(upstream.headers)
                 response = web.StreamResponse(status=upstream.status, headers=resp_headers)
                 await response.prepare(request)
                 # PR #557: tee the response into a small buffer so we can scan
@@ -692,9 +833,9 @@ async def _forward_once(request, headers, body, url, timeout):
                     if len(captured) < cap_limit:
                         captured.extend(chunk[: cap_limit - len(captured)])
                 await response.write_eof()
-                return response, upstream.status, captured, None
+                return response, upstream.status, captured, None, meta
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            return None, None, None, exc
+            return None, None, None, exc, None
 
 
 async def handler(request):
@@ -746,12 +887,16 @@ async def handler(request):
             M_INFLIGHT_BEARER.labels(bearer=bid).set(bstate["inflight"])
             url, timeout, via = pick_target(path, request.query_string)
             log(f"start  method={request.method} path=/{path} bid={bid} cid={cid} via={via} model={model_label} inflight={state['inflight']} queued={state['queued']}")
+            # Honor any outstanding upstream Retry-After for this bearer before
+            # we dispatch — don't spin a request against a known-closed window.
+            await limiter.wait_retry_after()
             t0 = time.time()
             final_status = 0
             captured = None
+            meta = None
             try:
                 try:
-                    response, status, captured, exc = await _forward_once(request, headers, body, url, timeout)
+                    response, status, captured, exc, meta = await _forward_once(request, headers, body, url, timeout)
                     if exc is None:
                         state["served"] += 1
                         final_status = status
@@ -770,7 +915,7 @@ async def handler(request):
                     M_UPSTREAM_RETRIES.inc()
                     url_direct, timeout_direct, _ = pick_target(path, request.query_string)
                     try:
-                        response, status, captured, exc2 = await _forward_once(request, headers, body, url_direct, timeout_direct)
+                        response, status, captured, exc2, meta = await _forward_once(request, headers, body, url_direct, timeout_direct)
                         if exc2 is None:
                             state["served"] += 1
                             final_status = status
@@ -787,7 +932,7 @@ async def handler(request):
                     state["upstream_retries"] += 1
                     M_UPSTREAM_RETRIES.inc()
                     try:
-                        response, status, captured, exc2 = await _forward_once(request, headers, body, url, timeout)
+                        response, status, captured, exc2, meta = await _forward_once(request, headers, body, url, timeout)
                         if exc2 is None:
                             state["served"] += 1
                             final_status = status
@@ -815,18 +960,40 @@ async def handler(request):
                 M_REQUESTS.labels(method=request.method, status=str(final_status), model=model_label).inc()
                 M_DURATION.labels(model=model_label).observe(time.time() - t0)
 
-                # PR #575: AIMD feedback loop. Shrink ceiling on upstream
-                # pushback so future requests queue at this proxy instead
-                # of being slammed against Anthropic's per-account counter.
-                # Grow ceiling after sustained successes past cooldown.
-                # final_status here is whatever last sent to the client —
-                # central-retry-direct's status counts too.
+                # Capture upstream rate-limit headroom for this bearer
+                # (proactive-pacing signal + advisor input + dashboard view).
+                if meta:
+                    bstate["last_ratelimit"] = meta
+                    _publish_ratelimit_gauges(bid, meta)
+
+                # AIMD + Retry-After feedback. final_status is whatever last
+                # went to the client (central-retry-direct's status counts).
                 try:
+                    retry_after = _parse_retry_after(meta)
                     if final_status in AIMD_STATUSES:
+                        # Rate pushback (429/503) → multiplicative-decrease so
+                        # future requests queue here instead of being slammed
+                        # against Anthropic's per-account counter.
                         new_max = await limiter.shrink()
                         M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
-                        M_AIMD_MAX.labels(bearer=bid).set(new_max)
-                        log(f"aimd-shrink bid={bid} status={final_status} max_concurrent={new_max}")
+                        if new_max is not None:
+                            M_AIMD_MAX.labels(bearer=bid).set(new_max)
+                        if retry_after > 0:
+                            limiter.note_retry_after(retry_after)
+                        log(
+                            f"aimd-shrink bid={bid} status={final_status} "
+                            f"max_concurrent={new_max} retry_after={retry_after}"
+                        )
+                    elif final_status in OVERLOAD_STATUSES:
+                        # 529 = upstream overloaded (not our usage): honor any
+                        # retry-after but do NOT shrink the ceiling.
+                        M_AIMD_OVERLOAD.labels(bearer=bid).inc()
+                        if retry_after > 0:
+                            limiter.note_retry_after(retry_after)
+                        log(
+                            f"overload bid={bid} status={final_status} "
+                            f"retry_after={retry_after} (no shrink)"
+                        )
                     elif final_status and 200 <= final_status < 400:
                         new_max = await limiter.grow()
                         if new_max is not None:
@@ -836,11 +1003,10 @@ async def handler(request):
                 except Exception as aimde:
                     log(f"aimd-error bid={bid}: {aimde!r}")
 
-                # Out-of-band GROQ advisor on throttle (fire-and-forget,
-                # debounced inside _maybe_advise). Independent of the AIMD
-                # shrink above — fires even in `off` mode, where a 429 is still
-                # worth diagnosing. create_task so the hot path never awaits it.
-                if ADVISOR_ENABLED and final_status in AIMD_STATUSES:
+                # Out-of-band GROQ advisor on any throttle signal
+                # (fire-and-forget, debounced inside _maybe_advise). Fires even
+                # in `off` mode. create_task so the hot path never awaits it.
+                if ADVISOR_ENABLED and final_status in THROTTLE_STATUSES:
                     asyncio.create_task(_maybe_advise(bid, final_status))
 
                 # PR #557: parse SSE usage block for token/cost metrics. Only do this
