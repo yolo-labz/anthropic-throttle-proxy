@@ -29,7 +29,7 @@
     {% if advisor_enabled %}
       <section id="advisor">
         <h2>Advisor</h2>
-        <p class="muted">Ask Anthropic Haiku to read the live snapshot and propose knob tweaks.</p>
+        <p class="muted">Ask GROQ to read the live snapshot and propose knob tweaks. Also fires automatically on a throttle event (see latest diagnosis above).</p>
         <button hx-post="/ui/advisor" hx-target="#advisor-out" hx-swap="innerHTML"
                 hx-indicator="#advisor-spin">
           Ask advisor
@@ -39,7 +39,7 @@
       </section>
     {% else %}
       <section id="advisor" class="muted">
-        Advisor disabled. Set <code>ADVISOR_ENABLED=true</code> + <code>ANTHROPIC_API_KEY</code> to enable.
+        Advisor disabled. Set <code>ADVISOR_ENABLED=true</code> + <code>GROQ_API_KEY</code> to enable.
       </section>
     {% endif %}
   </main>

@@ -12,7 +12,7 @@ Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-
 - **AIMD live ceiling** — shrinks the per-bearer cap on `429/503/529`, ramps back on consecutive 2xx successes. Self-regulating.
 - **Burst pacing** — optional minimum gap between dispatches to upstream so 15 simultaneous requests get spaced over the millisecond budget instead of hitting Anthropic at the same instant.
 - **HTMX live dashboard** — small dashboard at `/ui` showing in-flight/queued/served/AIMD state with live updates via SSE.
-- **Cheap-AI advisor** — optional Anthropic Haiku integration that reads the running metrics and proposes knob tweaks (`MAX`, `QUEUE_MODE`, gap-ms) in natural language. Off by default.
+- **Cheap-AI advisor (GROQ)** — optional, Anthropic-independent. On a throttle event (429/503/529) it fires a debounced, out-of-band GROQ call that reads the live metrics and proposes knob tweaks (`MAX`, `QUEUE_MODE`, gap-ms) in natural language — surfaced to the log + dashboard. Independent provider on purpose: asking Anthropic for advice during an Anthropic 429 storm hits the same limit. Off by default; also available on demand via `/ui/advisor`.
 - **Prometheus `/metrics`** — bring your own Grafana.
 - **Dokku-deploy-ready** — Dockerfile + Procfile + app.json + healthcheck endpoints.
 
@@ -65,11 +65,13 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_PORT` | `8765` | TCP port. |
 | `THROTTLE_UPSTREAM` | `https://api.anthropic.com` | Upstream target. |
 | `THROTTLE_CENTRAL_URL` | *(unset)* | If set, the local proxy forwards each request to this URL first; on health-check failure it falls back direct-to-upstream. |
-| `THROTTLE_AIMD_MIN` | `2` | Floor of the AIMD live ceiling. |
-| `THROTTLE_AIMD_BACKOFF_S` | `60` | Cooldown after a 429 before ramping back up. |
+| `THROTTLE_AIMD_MIN` | `1` | Floor of the AIMD live ceiling. Must stay ≥ 1 so traffic never fully blocks. |
+| `THROTTLE_AIMD_BACKOFF_S` | `30` | Cooldown after a shrink before ramping back up. |
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 2xx responses required to bump the live ceiling by one. |
-| `ADVISOR_ENABLED` | `false` | Enable the Haiku-driven advisor (`/ui/advisor`). Requires `ANTHROPIC_API_KEY`. |
-| `ANTHROPIC_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |
+| `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
+| `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |
+| `ADVISOR_MODEL` | `llama-3.1-8b-instant` | GROQ model for the advisor diagnosis. |
+| `ADVISOR_DEBOUNCE_S` | `120` | Minimum seconds between auto-advisor calls, so a 429 storm can't become a GROQ storm. |
 
 ## Architecture
 
@@ -94,7 +96,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
                  │
         ┌────────┴────────┐
         │ HTMX dashboard  │  /ui   ◄── you
-        │ Haiku advisor   │  /ui/advisor (optional)
+        │ GROQ advisor    │  /ui/advisor + auto-on-throttle (optional)
         │ Prometheus      │  /metrics
         └─────────────────┘
 ```

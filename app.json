@@ -1,6 +1,6 @@
 {
   "name": "anthropic-throttle-proxy",
-  "description": "Self-hosted throttle proxy for api.anthropic.com — fleet-wide #53915 mitigation with HTMX dashboard + Haiku advisor.",
+  "description": "Self-hosted throttle proxy for api.anthropic.com — fleet-wide #53915 mitigation with HTMX dashboard + GROQ advisor.",
   "keywords": ["anthropic", "claude", "proxy", "rate-limit", "dokku", "tailnet"],
   "repository": "https://github.com/yolo-labz/anthropic-throttle-proxy",
   "scripts": {

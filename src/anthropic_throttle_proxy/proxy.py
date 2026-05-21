@@ -194,6 +194,14 @@ AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 AIMD_STATUSES = {429, 503, 529}
 
+# GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
+# diagnosis to GROQ (an Anthropic-INDEPENDENT provider — see ui/advisor_impl.py,
+# which calls GROQ's OpenAI-compatible endpoint over raw aiohttp). Off by
+# default; needs ADVISOR_ENABLED=true + GROQ_API_KEY. Never on the hot path:
+# scheduled as a fire-and-forget task whose failures are swallowed.
+ADVISOR_ENABLED = os.environ.get("ADVISOR_ENABLED", "false").strip().lower() == "true"
+ADVISOR_DEBOUNCE_S = float(os.environ.get("ADVISOR_DEBOUNCE_S", "120"))
+
 HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
@@ -207,6 +215,7 @@ state = {
     "upstream_retries": 0,
     "central_status": "unknown",
     "central_last_check": 0,
+    "last_advisor": None,           # {"text", "ts", "trigger"} from the GROQ advisor
 }
 # PR #562 + PR #573: bearer_id → FairBearerLimiter(MAX_CONCURRENT). Replaces
 # the plain asyncio.Semaphore so two distinct OAuth bearers still get
@@ -495,6 +504,74 @@ async def _get_bearer_limiter(bid):
         return lim
 
 
+_last_advice_ts = 0.0
+
+
+def _advisor_snapshot(trigger_bid=None, trigger_status=None):
+    """Assemble a JSON-safe view of proxy state for the advisor.
+
+    Mirrors the dashboard's ``ui.routes._collect_view`` but adds the throttle
+    trigger and avoids importing ui.routes, so it stays callable from the
+    hot-path finally block without a circular import.
+    """
+    bearers = []
+    for b, bs in bearer_state.items():
+        lim = bearer_limiters.get(b)
+        bearers.append({
+            "bearer_id": b,
+            "inflight": bs.get("inflight", 0),
+            "queued": bs.get("queued", 0),
+            "served": bs.get("served", 0),
+            "limiter": lim.snapshot() if lim is not None else None,
+        })
+    return {
+        "inflight": state["inflight"],
+        "queued": state["queued"],
+        "served": state["served"],
+        "disconnects": state["client_disconnects"],
+        "retries": state["upstream_retries"],
+        "max_concurrent": MAX_CONCURRENT,
+        "queue_mode": QUEUE_MODE,
+        "min_dispatch_gap_ms": int(MIN_DISPATCH_GAP_S * 1000),
+        "upstream": UPSTREAM,
+        "central_url": CENTRAL_URL or "(direct)",
+        "central_status": state["central_status"],
+        "trigger": (
+            {"bearer": trigger_bid, "status": trigger_status}
+            if trigger_status is not None else None
+        ),
+        "bearers": bearers,
+    }
+
+
+async def _maybe_advise(trigger_bid, trigger_status):
+    """Fire-and-forget GROQ diagnosis on a throttle event.
+
+    Debounced to at most once per ADVISOR_DEBOUNCE_S so a 429 storm can't turn
+    into a GROQ storm (GROQ's own free tier is ~30 RPM). Never raises — any
+    failure is stored as the diagnosis text and logged. Runs in its own task,
+    so the proxy hot path is unaffected regardless of outcome.
+    """
+    global _last_advice_ts
+    if not ADVISOR_ENABLED or not os.environ.get("GROQ_API_KEY"):
+        return
+    now = time.time()
+    if now - _last_advice_ts < ADVISOR_DEBOUNCE_S:
+        return
+    _last_advice_ts = now            # claim the window before awaiting (cheap de-dupe)
+    trigger = f"status={trigger_status} bid={trigger_bid}"
+    try:
+        from .ui.advisor_impl import recommend
+        text = await recommend(_advisor_snapshot(trigger_bid, trigger_status))
+        state["last_advisor"] = {"text": text, "ts": now, "trigger": trigger}
+        log(f"advisor {trigger}: {text[:160]!r}")
+    except Exception as exc:
+        state["last_advisor"] = {
+            "text": f"(advisor error: {exc!s})", "ts": now, "trigger": trigger,
+        }
+        log(f"advisor-error {trigger}: {exc!r}")
+
+
 async def central_health_loop():
     """Background poll of central /__throttle/health. Updates state."""
     if not CENTRAL_URL:
@@ -759,6 +836,13 @@ async def handler(request):
                 except Exception as aimde:
                     log(f"aimd-error bid={bid}: {aimde!r}")
 
+                # Out-of-band GROQ advisor on throttle (fire-and-forget,
+                # debounced inside _maybe_advise). Independent of the AIMD
+                # shrink above — fires even in `off` mode, where a 429 is still
+                # worth diagnosing. create_task so the hot path never awaits it.
+                if ADVISOR_ENABLED and final_status in AIMD_STATUSES:
+                    asyncio.create_task(_maybe_advise(bid, final_status))
+
                 # PR #557: parse SSE usage block for token/cost metrics. Only do this
                 # on successful POST /v1/messages — the only endpoint that streams a
                 # usage block. Skip for HEAD/GET/health/etc.
@@ -816,6 +900,7 @@ async def health(_request):
         "central_url": CENTRAL_URL,
         "central_status": cs,
         "central_last_check": state["central_last_check"],
+        "last_advisor": state["last_advisor"],
         # PR #562/#573: per-bearer + per-client view so /__throttle/health
         # shows fleet parallelism + fair-RR queue depths in one glance.
         "bearers": bearers_view,

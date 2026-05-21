@@ -191,6 +191,29 @@ button:active { background: var(--ctp-surface2); }
   color: var(--ctp-subtext1);
 }
 
+/* Auto-diagnosis panel (fired on a throttle event). Peach left-rail to
+   distinguish it from the manual mauve advisor-output panel. */
+.advisor-auto {
+  margin-top: 0.5rem;
+  padding: 0.9rem 1rem;
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface1);
+  border-left: 3px solid var(--ctp-peach);
+  border-radius: 4px;
+}
+.advisor-auto .advisor-trigger {
+  color: var(--ctp-subtext0);
+  font-family: ui-monospace, "Fira Code", monospace;
+  font-size: 0.74rem;
+  margin-bottom: 0.5rem;
+}
+.advisor-auto .markdown,
+.advisor-output .markdown {
+  white-space: pre-wrap;
+  color: var(--ctp-text);
+  font-size: 0.85rem;
+}
+
 footer {
   border-top: 1px solid var(--ctp-surface1);
   padding-top: 1rem;
