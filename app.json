@@ -14,7 +14,7 @@
         "type": "startup",
         "name": "throttle ready",
         "description": "Proxy responds on /__throttle/health.",
-        "command": "curl -fsS http://localhost:8765/__throttle/health",
+        "command": ["curl", "-fsS", "http://localhost:8765/__throttle/health"],
         "attempts": 30,
         "timeout": 5,
         "wait": 2,
@@ -25,7 +25,7 @@
         "type": "liveness",
         "name": "throttle alive",
         "description": "Proxy still responds on /__throttle/health.",
-        "command": "curl -fsS http://localhost:8765/__throttle/health",
+        "command": ["curl", "-fsS", "http://localhost:8765/__throttle/health"],
         "timeout": 5,
         "uptime": 10
       }
