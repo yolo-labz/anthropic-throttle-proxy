@@ -17,6 +17,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
     "ruff>=0.7",
 ]
 
@@ -38,3 +39,9 @@ ignore = ["S101"]  # asserts in tests
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# relative_files is REQUIRED so SonarQube matches coverage.xml paths to its
+# source tree — absolute paths silently report 0% coverage in CI.
+relative_files = true
+source = ["src/anthropic_throttle_proxy"]
