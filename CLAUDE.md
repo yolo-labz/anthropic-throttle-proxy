@@ -20,7 +20,7 @@ Self-hosted reverse-proxy in front of `api.anthropic.com`. Born from [anthropics
 - **Build**: `uv` for deps + venv. `hatchling` build backend. `pyproject.toml` is the single source of truth.
 - **Deploy**: Dockerfile-based Dokku app. Multi-stage uv build per Astral's official pattern. No Heroku buildpacks.
 - **Lint**: `ruff` (lint + format). Target Python 3.13. Line length 100.
-- **Test**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). `tests/` is empty at v0.1.0 — new tests mirror `src/anthropic_throttle_proxy/` module layout.
+- **Test**: `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). `tests/` covers the proxy app, forwarding paths, pacing, unified-window parsing, and the advisor (~85% line coverage, gated in CI via SonarQube). New tests mirror `src/anthropic_throttle_proxy/` module layout.
 
 ## Architecture
 
@@ -59,8 +59,8 @@ Entry: `python -m anthropic_throttle_proxy` → `__main__.py` → `proxy.main()`
 ```sh
 uv sync
 uv run python -m anthropic_throttle_proxy   # proxy :8765, dashboard /ui, metrics /metrics, health /__throttle/health
-uv run pytest                                # tests (none yet at v0.1.0)
-uv run pytest tests/test_xxx.py::test_yyy    # single test
+uv run pytest                                # full suite (proxy/forwarding/pacing/unified/advisor)
+uv run pytest tests/test_pacing.py::test_yyy # single test
 uv run ruff check src tests                  # lint
 uv run ruff format src tests                 # format
 ```
