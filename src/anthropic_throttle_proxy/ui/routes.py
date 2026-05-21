@@ -38,6 +38,7 @@ def _collect_view() -> dict:
             "inflight": bstate.get("inflight", 0),
             "queued": bstate.get("queued", 0),
             "served": bstate.get("served", 0),
+            "last_ratelimit": bstate.get("last_ratelimit"),
             "limiter": lim.snapshot() if lim is not None else None,
         })
     return {

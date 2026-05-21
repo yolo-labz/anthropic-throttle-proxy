@@ -9,7 +9,8 @@ Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-
 - **Single-binary aiohttp proxy** — drop-in for `ANTHROPIC_BASE_URL`. Transparent forward to `https://api.anthropic.com`.
 - **Two roles, same binary** — `local` (per-device passthrough, optional central fanout) and `central` (fleet-wide single semaphore).
 - **Fair per-bearer concurrency** — round-robin across distinct client TCPs so no Claude TUI starves the others.
-- **AIMD live ceiling** — shrinks the per-bearer cap on `429/503/529`, ramps back on consecutive 2xx successes. Self-regulating.
+- **AIMD live ceiling** — shrinks the per-bearer cap on rate pushback (`429/503`, CUBIC-style ×0.7), ramps back on consecutive 2xx successes. `529` (upstream overloaded) is counted separately and does **not** shrink the cap — it's Anthropic's capacity, not your usage.
+- **Header-aware pacing** — captures `anthropic-ratelimit-*` headroom + honors `Retry-After` (uncapped) per bearer, surfaced on `/__throttle/health`, `/metrics`, and the dashboard.
 - **Burst pacing** — optional minimum gap between dispatches to upstream so 15 simultaneous requests get spaced over the millisecond budget instead of hitting Anthropic at the same instant.
 - **HTMX live dashboard** — small dashboard at `/ui` showing in-flight/queued/served/AIMD state with live updates via SSE.
 - **Cheap-AI advisor (GROQ)** — optional, Anthropic-independent. On a throttle event (429/503/529) it fires a debounced, out-of-band GROQ call that reads the live metrics and proposes knob tweaks (`MAX`, `QUEUE_MODE`, gap-ms) in natural language — surfaced to the log + dashboard. Independent provider on purpose: asking Anthropic for advice during an Anthropic 429 storm hits the same limit. Off by default; also available on demand via `/ui/advisor`.
@@ -68,6 +69,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_AIMD_MIN` | `1` | Floor of the AIMD live ceiling. Must stay ≥ 1 so traffic never fully blocks. |
 | `THROTTLE_AIMD_BACKOFF_S` | `30` | Cooldown after a shrink before ramping back up. |
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 2xx responses required to bump the live ceiling by one. |
+| `THROTTLE_AIMD_DECREASE` | `0.7` | Multiplicative-decrease factor on rate pushback. `0.5` = TCP-Reno (deep cut), `0.7` = CUBIC (gentler, stays nearer the limit). |
 | `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
 | `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |
 | `ADVISOR_MODEL` | `llama-3.1-8b-instant` | GROQ model for the advisor diagnosis. |
