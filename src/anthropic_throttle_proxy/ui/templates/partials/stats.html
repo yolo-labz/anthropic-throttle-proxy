@@ -1,0 +1,49 @@
+<div class="cards">
+  <div class="card"><div class="label">in-flight</div><div class="value">{{ inflight }}</div></div>
+  <div class="card"><div class="label">queued</div><div class="value">{{ queued }}</div></div>
+  <div class="card"><div class="label">served</div><div class="value">{{ served }}</div></div>
+  <div class="card"><div class="label">retries</div><div class="value">{{ retries }}</div></div>
+  <div class="card"><div class="label">disconnects</div><div class="value">{{ disconnects }}</div></div>
+</div>
+
+{% if bearers %}
+<h2>Bearers</h2>
+<table class="bearers">
+  <thead>
+    <tr>
+      <th>bearer (sha)</th>
+      <th>inflight</th>
+      <th>queued</th>
+      <th>served</th>
+      <th>aimd</th>
+      <th>clients</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for b in bearers %}
+    <tr>
+      <td><code>{{ b.bearer_id }}</code></td>
+      <td>{{ b.inflight }}</td>
+      <td>{{ b.queued }}</td>
+      <td>{{ b.served }}</td>
+      <td>
+        {% if b.limiter %}
+          {{ b.limiter.live_cap }}/{{ b.limiter.hard_cap }}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+      <td>
+        {% if b.limiter %}
+          {{ (b.limiter.queued_per_client or {}) | length }}
+        {% else %}
+          —
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <p class="muted">no bearers yet — point a client at this proxy to start.</p>
+{% endif %}

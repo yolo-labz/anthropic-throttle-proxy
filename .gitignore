@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.env
+.env.local
+.envrc.local
+.coverage
+coverage.xml
+htmlcov/
+
+# Dokku artifacts
+.dokku-*

@@ -1,0 +1,8 @@
+<div class="advisor-output">
+  <h3>Recommendation</h3>
+  <div class="markdown">{{ recommendation }}</div>
+  <details>
+    <summary>Snapshot sent to advisor</summary>
+    <pre><code>{{ snapshot | tojson(indent=2) }}</code></pre>
+  </details>
+</div>

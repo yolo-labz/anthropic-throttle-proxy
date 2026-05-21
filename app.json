@@ -1,0 +1,34 @@
+{
+  "name": "anthropic-throttle-proxy",
+  "description": "Self-hosted throttle proxy for api.anthropic.com — fleet-wide #53915 mitigation with HTMX dashboard + Haiku advisor.",
+  "keywords": ["anthropic", "claude", "proxy", "rate-limit", "dokku", "tailnet"],
+  "repository": "https://github.com/yolo-labz/anthropic-throttle-proxy",
+  "scripts": {
+    "dokku": {
+      "after": {}
+    }
+  },
+  "healthchecks": {
+    "web": [
+      {
+        "type": "startup",
+        "name": "throttle ready",
+        "description": "Proxy responds on /__throttle/health.",
+        "command": "curl -fsS http://localhost:8765/__throttle/health",
+        "attempts": 30,
+        "timeout": 5,
+        "wait": 2,
+        "initialDelay": 2,
+        "onFailure": "fail_deploy"
+      },
+      {
+        "type": "liveness",
+        "name": "throttle alive",
+        "description": "Proxy still responds on /__throttle/health.",
+        "command": "curl -fsS http://localhost:8765/__throttle/health",
+        "timeout": 5,
+        "uptime": 10
+      }
+    ]
+  }
+}

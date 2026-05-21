@@ -1,0 +1,205 @@
+/* Catppuccin Mocha tokens — match Pedro's NixOS rice. */
+:root {
+  --ctp-base:     #1e1e2e;
+  --ctp-mantle:   #181825;
+  --ctp-crust:    #11111b;
+  --ctp-surface0: #313244;
+  --ctp-surface1: #45475a;
+  --ctp-surface2: #585b70;
+  --ctp-text:     #cdd6f4;
+  --ctp-subtext0: #a6adc8;
+  --ctp-subtext1: #bac2de;
+  --ctp-overlay0: #6c7086;
+  --ctp-blue:     #89b4fa;
+  --ctp-mauve:    #cba6f7;
+  --ctp-peach:    #fab387;
+  --ctp-green:    #a6e3a1;
+  --ctp-red:      #f38ba8;
+  --ctp-yellow:   #f9e2af;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--ctp-base);
+  color: var(--ctp-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 2rem clamp(1rem, 4vw, 3rem);
+  gap: 1.5rem;
+}
+
+header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--ctp-surface1);
+  padding-bottom: 1rem;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ctp-mauve);
+}
+
+.config {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.badge {
+  background: var(--ctp-surface0);
+  color: var(--ctp-subtext1);
+  border: 1px solid var(--ctp-surface1);
+  padding: 0.2rem 0.55rem;
+  border-radius: 4px;
+  font-family: ui-monospace, "Fira Code", monospace;
+  font-size: 0.78rem;
+}
+
+.badge.upstream { color: var(--ctp-blue); }
+.badge.central-up    { color: var(--ctp-green);  border-color: var(--ctp-green); }
+.badge.central-down  { color: var(--ctp-red);    border-color: var(--ctp-red); }
+.badge.central-unknown { color: var(--ctp-peach); border-color: var(--ctp-peach); }
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  flex: 1;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.75rem;
+}
+
+.card {
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.card .label {
+  color: var(--ctp-subtext0);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.card .value {
+  color: var(--ctp-text);
+  font-family: ui-monospace, "Fira Code", monospace;
+  font-size: 1.5rem;
+  font-weight: 500;
+  line-height: 1.15;
+}
+
+table.bearers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+table.bearers th,
+table.bearers td {
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  border-bottom: 1px solid var(--ctp-surface1);
+}
+
+table.bearers thead th {
+  color: var(--ctp-subtext0);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+}
+
+table.bearers code {
+  color: var(--ctp-peach);
+  background: transparent;
+}
+
+h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+  color: var(--ctp-mauve);
+}
+
+.muted { color: var(--ctp-subtext0); }
+
+button {
+  background: var(--ctp-surface0);
+  color: var(--ctp-text);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: 4px;
+  padding: 0.45rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover { background: var(--ctp-surface1); border-color: var(--ctp-mauve); }
+button:active { background: var(--ctp-surface2); }
+
+.htmx-indicator {
+  display: none;
+  margin-left: 0.5rem;
+  color: var(--ctp-peach);
+  font-family: ui-monospace, "Fira Code", monospace;
+}
+.htmx-request .htmx-indicator { display: inline; }
+
+.advisor-output {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface1);
+  border-left: 3px solid var(--ctp-mauve);
+  border-radius: 4px;
+}
+.advisor-output h3 {
+  margin: 0 0 0.4rem;
+  color: var(--ctp-peach);
+  font-size: 0.95rem;
+}
+.advisor-output pre {
+  background: var(--ctp-crust);
+  padding: 0.6rem;
+  border-radius: 4px;
+  overflow: auto;
+  font-size: 0.78rem;
+  color: var(--ctp-subtext1);
+}
+
+footer {
+  border-top: 1px solid var(--ctp-surface1);
+  padding-top: 1rem;
+  color: var(--ctp-subtext0);
+  font-size: 0.78rem;
+}
+footer a {
+  color: var(--ctp-blue);
+  text-decoration: none;
+  font-family: ui-monospace, "Fira Code", monospace;
+}
+footer a:hover { color: var(--ctp-mauve); text-decoration: underline; }
