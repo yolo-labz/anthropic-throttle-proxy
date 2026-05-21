@@ -27,7 +27,7 @@ _TEMPLATES = _HERE / "templates"
 _STATIC = _HERE / "static"
 
 
-def _collect_view() -> dict:
+def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
     bearers = []
@@ -61,10 +61,12 @@ def _collect_view() -> dict:
 
 
 async def index(request: web.Request) -> web.Response:
+    """GET /ui — render the full HTMX dashboard page."""
     return aiohttp_jinja2.render_template("dashboard.html", request, _collect_view())
 
 
 async def stats_partial(request: web.Request) -> web.Response:
+    """GET /ui/stats — render the live stats ``<table>`` partial (hx-polled)."""
     return aiohttp_jinja2.render_template("partials/stats.html", request, _collect_view())
 
 
@@ -81,7 +83,9 @@ async def advisor(request: web.Request) -> web.Response:
     snapshot = _collect_view()
     try:
         recommendation = await recommend(snapshot)
-    except Exception as exc:  # noqa: BLE001 — surface to the user
+    except Exception as exc:
+        # Best-effort: the advisor must never 500 the dashboard — surface the
+        # error text to the user instead of propagating.
         return web.Response(status=500, text=f"advisor error: {exc!s}")
     return aiohttp_jinja2.render_template(
         "partials/advisor.html",
