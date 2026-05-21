@@ -13,6 +13,12 @@ dependencies = [
     "prometheus-client>=0.21",
 ]
 
+# Console entry point so `anthropic-throttle-proxy` resolves to a real bin
+# (the Nix `buildPythonApplication` consumer needs /bin/anthropic-throttle-proxy;
+# the `python -m anthropic_throttle_proxy` path in Procfile/Dockerfile still works).
+[project.scripts]
+anthropic-throttle-proxy = "anthropic_throttle_proxy.proxy:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
