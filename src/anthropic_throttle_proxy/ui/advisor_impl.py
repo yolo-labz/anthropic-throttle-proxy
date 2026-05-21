@@ -81,7 +81,7 @@ Be terse. No filler.
 """
 
 
-async def recommend(snapshot: dict) -> str:
+async def recommend(snapshot: dict[str, object]) -> str:
     """POST the snapshot to GROQ and return the model's recommendation text.
 
     Raises RuntimeError if GROQ_API_KEY is unset, or aiohttp errors on HTTP
