@@ -16,7 +16,7 @@ Self-hosted reverse-proxy in front of `api.anthropic.com`. Born from [anthropics
 
 ## Stack
 
-- **Runtime**: Python 3.13+, `aiohttp` (server), `aiohttp-jinja2` (templates for HTMX UI), `prometheus-client` (metrics), `anthropic` (advisor only — never on the hot path).
+- **Runtime**: Python 3.13+, `aiohttp` (server + the advisor's GROQ call), `aiohttp-jinja2` (templates for HTMX UI), `prometheus-client` (metrics). No vendor AI SDK — the advisor talks to GROQ over raw `aiohttp` (see invariant #1).
 - **Build**: `uv` for deps + venv. `hatchling` build backend. `pyproject.toml` is the single source of truth.
 - **Deploy**: Dockerfile-based Dokku app. Multi-stage uv build per Astral's official pattern. No Heroku buildpacks.
 - **Lint**: `ruff` (lint + format). Target Python 3.13. Line length 100.
@@ -32,14 +32,14 @@ Single-process aiohttp app, wired in `proxy.py::main()`:
 - **Burst pacing** — single process-global `_dispatch_lock` enforces `THROTTLE_MIN_DISPATCH_GAP_MS` between consecutive upstream POSTs. Orthogonal to `CLAUDE_API_THROTTLE_MAX` (which caps concurrency, not rate).
 - **Queue modes** (`THROTTLE_QUEUE_MODE`): `off` (passthrough, no AIMD counters), `observe` (no queue but AIMD counters DO move — early-warning without slowdown), `fair`/`reactive` (queue + AIMD; `reactive` is an alias).
 - **Central tier** — when `THROTTLE_CENTRAL_URL` is set, local proxy forwards there; background `central_health_loop` polls `/__throttle/health` every `THROTTLE_CENTRAL_HEALTH_INTERVAL`. Central unhealthy → transparent fallback to direct upstream.
-- **UI** (`ui/routes.py::attach_ui`) — HTMX 1.x dashboard at `/ui`, jinja2 templates in `ui/templates/`, advisor (cheap-AI suggester) in `ui/advisor_impl.py` (only place the `anthropic` SDK is imported).
+- **UI** (`ui/routes.py::attach_ui`) — HTMX 1.x dashboard at `/ui`, jinja2 templates in `ui/templates/`. Advisor in `ui/advisor_impl.py` (`recommend()`): a cheap GROQ diagnosis of throttle events. Fires automatically (debounced) from `proxy._maybe_advise` on 429/503/529 and on demand via `POST /ui/advisor`; latest result lives in `state["last_advisor"]`. Gated by `ADVISOR_ENABLED` + `GROQ_API_KEY`.
 - **Metrics** — `prometheus_client` with a process-local `CollectorRegistry` (NOT the default global), exposed at `/metrics`. Health JSON at `/__throttle/health` includes per-bearer `limiter.queued_per_client` for live starvation debugging.
 
 Entry: `python -m anthropic_throttle_proxy` → `__main__.py` → `proxy.main()`. Dockerfile uses the same CMD.
 
 ## Load-bearing invariants
 
-1. **The proxy hot path NEVER imports the `anthropic` SDK.** Hot path is aiohttp `Application` + raw `aiohttp.ClientSession` only. The SDK is *advisor-only* and lives behind `ADVISOR_ENABLED=true` so a transitive SDK bug can't kill the proxy.
+1. **The proxy hot path imports NO vendor AI SDK.** Hot path is aiohttp `Application` + raw `aiohttp.ClientSession` only. The advisor calls GROQ's OpenAI-compatible endpoint over raw `aiohttp` — a deliberately INDEPENDENT provider, so a 429 storm against Anthropic doesn't also block the diagnosis, and no transitive SDK bug can reach the proxy. It is lazy-imported only when `ADVISOR_ENABLED=true` and a throttle fires (or `/ui/advisor` is hit).
 2. **Bearer token never logged.** `bearer_id` is `sha256(Authorization-header)[:8]` (`_bearer_id` in `proxy.py`) — only the hash appears in logs/metrics. `_anon` is used for unauthenticated requests (health/metrics) so they share one bypass slot.
 3. **AIMD floor (`THROTTLE_AIMD_MIN`) is the safety net.** When upstream hits sustained 429s, live cap shrinks to floor; floor must stay ≥ 1 so traffic never fully blocks. Default 1.
 4. **`/__throttle/health` must return in <50 ms.** Dokku healthcheck (`app.json`) polls it every 5 s with 5 s timeout. Anything that blocks the event loop here (sync I/O, large lock contention) breaks Dokku's restart policy.

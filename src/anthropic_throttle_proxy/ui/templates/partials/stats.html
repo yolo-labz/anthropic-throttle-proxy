@@ -47,3 +47,11 @@
 {% else %}
   <p class="muted">no bearers yet — point a client at this proxy to start.</p>
 {% endif %}
+
+{% if last_advisor %}
+<div class="advisor-auto">
+  <h2>Latest auto-diagnosis</h2>
+  <div class="advisor-trigger">{{ last_advisor.trigger }}</div>
+  <div class="markdown">{{ last_advisor.text }}</div>
+</div>
+{% endif %}

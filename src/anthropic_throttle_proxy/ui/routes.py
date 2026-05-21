@@ -4,7 +4,7 @@ Routes:
     GET  /ui              — full page (Catppuccin Mocha, one HTMX script).
     GET  /ui/stats        — `<table>` partial; hx-trigger fires every 2 s.
     GET  /ui/static/...   — CSS + favicon.
-    POST /ui/advisor      — optional Haiku call (gated by ADVISOR_ENABLED).
+    POST /ui/advisor      — optional GROQ call (gated by ADVISOR_ENABLED).
 
 The hot path proxy is NOT routed through this module. Failure to render the
 UI must not break /v1/messages.
@@ -54,6 +54,7 @@ def _collect_view() -> dict:
         "central_status": cs,
         "bearers": bearers,
         "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
+        "last_advisor": _proxy.state.get("last_advisor"),
     }
 
 
@@ -66,13 +67,13 @@ async def stats_partial(request: web.Request) -> web.Response:
 
 
 async def advisor(request: web.Request) -> web.Response:
-    """POST /ui/advisor — ask Anthropic Haiku to recommend knob tweaks."""
+    """POST /ui/advisor — ask GROQ to recommend knob tweaks."""
     if os.environ.get("ADVISOR_ENABLED", "false").lower() != "true":
         return web.Response(
             status=503,
-            text="ADVISOR_ENABLED=false. Set the env var + ANTHROPIC_API_KEY to enable.",
+            text="ADVISOR_ENABLED=false. Set the env var + GROQ_API_KEY to enable.",
         )
-    # Lazy import — keeps the SDK off the hot path.
+    # Lazy import — keeps the advisor (and its HTTP client) off the hot path.
     from .advisor_impl import recommend
 
     snapshot = _collect_view()

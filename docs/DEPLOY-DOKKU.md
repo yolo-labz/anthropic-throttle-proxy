@@ -29,8 +29,8 @@ dokku config:set anthropic-throttle \
   THROTTLE_HOST=0.0.0.0 \
   THROTTLE_PORT=8765
 dokku checks:enable anthropic-throttle
-# Optional: enable the Haiku advisor
-# dokku config:set anthropic-throttle ADVISOR_ENABLED=true ANTHROPIC_API_KEY=sk-ant-…
+# Optional: enable the GROQ advisor (Anthropic-independent diagnosis on throttle)
+# dokku config:set anthropic-throttle ADVISOR_ENABLED=true GROQ_API_KEY=gsk_…
 ```
 
 ## Push + deploy
