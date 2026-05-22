@@ -24,10 +24,10 @@ from anthropic_throttle_proxy.ui.routes import _compute_status, attach_ui
 # input usage, message_delta the output usage — exactly the two blocks the SSE
 # usage parser sums.
 _SSE_BODY = (
-    b'event: message_start\n'
+    b"event: message_start\n"
     b'data: {"type":"message_start","message":{"usage":{"input_tokens":11,'
     b'"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}\n\n'
-    b'event: message_delta\n'
+    b"event: message_delta\n"
     b'data: {"type":"message_delta","usage":{"output_tokens":7}}\n\n'
     b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
 )
@@ -104,11 +104,18 @@ def _reset_proxy_state() -> None:
     """Clear the process-global registries so each test starts clean."""
     config.bearer_limiters.clear()
     config.bearer_state.clear()
-    config.state.update({
-        "inflight": 0, "queued": 0, "served": 0,
-        "client_disconnects": 0, "upstream_retries": 0,
-        "central_status": "unknown", "central_last_check": 0, "last_advisor": None,
-    })
+    config.state.update(
+        {
+            "inflight": 0,
+            "queued": 0,
+            "served": 0,
+            "client_disconnects": 0,
+            "upstream_retries": 0,
+            "central_status": "unknown",
+            "central_last_check": 0,
+            "last_advisor": None,
+        }
+    )
 
 
 @pytest.fixture
@@ -162,7 +169,8 @@ async def test_metrics_endpoint_exposes_prometheus(client: TestClient) -> None:
 
 async def test_post_messages_streams_and_mints_bearer(client: TestClient) -> None:
     status, streamed = await _post_and_settle(
-        client, data=b'{"model":"claude-haiku-4-5","messages":[]}',
+        client,
+        data=b'{"model":"claude-haiku-4-5","messages":[]}',
         headers={"Authorization": "Bearer test-oauth-abc"},
     )
     assert status == 200
@@ -180,8 +188,10 @@ async def test_usage_block_parsed_into_token_metrics(client: TestClient) -> None
     # path (match_info has no leading slash for a bare /v1/messages request, so
     # we drive the nested form that satisfies the production condition).
     status, _ = await _post_and_settle(
-        client, path_suffix="/api/v1/messages",
-        data=b'{"model":"claude-haiku-4-5"}', headers={"Authorization": "Bearer usage-abc"},
+        client,
+        path_suffix="/api/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
+        headers={"Authorization": "Bearer usage-abc"},
     )
     assert status == 200
     metrics_text = await (await client.get("/metrics")).text()
@@ -205,7 +215,8 @@ async def test_429_triggers_aimd_shrink(client: TestClient, monkeypatch) -> None
     # observe/fair so AIMD counters move; default QUEUE_MODE is off → patch it.
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     status, _ = await _post_and_settle(
-        client, data=b'{"model":"claude-sonnet-4-6"}',
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
         headers={"Authorization": "Bearer rate-limited", "X-Stub-Mode": "429"},
     )
     assert status == 429
@@ -218,7 +229,8 @@ async def test_429_triggers_aimd_shrink(client: TestClient, monkeypatch) -> None
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     status, _ = await _post_and_settle(
-        client, data=b'{"model":"claude-opus-4-7"}',
+        client,
+        data=b'{"model":"claude-opus-4-7"}',
         headers={"Authorization": "Bearer overloaded", "X-Stub-Mode": "529"},
     )
     assert status == 529
@@ -230,7 +242,8 @@ async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> 
 
 async def test_unified_utilization_surfaced(client: TestClient) -> None:
     status, _ = await _post_and_settle(
-        client, data=b'{"model":"claude-opus-4-7"}',
+        client,
+        data=b'{"model":"claude-opus-4-7"}',
         headers={"Authorization": "Bearer oauth-unified", "X-Stub-Mode": "unified"},
     )
     assert status == 200
@@ -276,7 +289,8 @@ async def test_fair_mode_queues_and_serves(client: TestClient, monkeypatch) -> N
     # In fair mode the request is enqueued (queued counter bumps) then dispatched.
     monkeypatch.setattr(config, "QUEUE_MODE", "fair")
     status, _ = await _post_and_settle(
-        client, data=b'{"model":"claude-haiku-4-5"}',
+        client,
+        data=b'{"model":"claude-haiku-4-5"}',
         headers={"Authorization": "Bearer fair-client"},
     )
     assert status == 200
@@ -288,6 +302,7 @@ async def test_fair_mode_queues_and_serves(client: TestClient, monkeypatch) -> N
 # ── _compute_status (pure view-layer verdict) ──────────────────────────────
 # Drives the dashboard status strip; pure function so we test the worst-wins
 # precedence and the "binding" line directly, without standing up the app.
+
 
 def _bearer(bid: str, *, util=None, status="allowed", retry=None, live=8, hard=8, queued=0):
     """Build a minimal bearer view dict shaped like ``_collect_view`` emits."""

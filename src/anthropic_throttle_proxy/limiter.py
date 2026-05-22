@@ -196,12 +196,7 @@ class FairBearerLimiter:
         """
         async with self._lock:
             removed = self._remove_pending(client_id, fut)
-            if (
-                not removed
-                and fut.done()
-                and not fut.cancelled()
-                and fut.exception() is None
-            ):
+            if not removed and fut.done() and not fut.cancelled() and fut.exception() is None:
                 self.inflight -= 1
                 self._try_dispatch()
 
@@ -297,7 +292,9 @@ async def _get_bearer_limiter(bid: str) -> FairBearerLimiter:
             lim = FairBearerLimiter(config.MAX_CONCURRENT, config.QUEUE_MODE)
             config.bearer_limiters[bid] = lim
             config.bearer_state[bid] = {
-                "inflight": 0, "queued": 0, "served": 0,
+                "inflight": 0,
+                "queued": 0,
+                "served": 0,
                 # last_ratelimit: last-seen anthropic-ratelimit-* + retry-after.
                 # unified: parsed OAuth unified-window utilization.
                 "last_ratelimit": None,

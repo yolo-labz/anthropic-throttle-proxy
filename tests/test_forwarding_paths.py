@@ -27,11 +27,18 @@ _SSE_BODY = (
 def _reset() -> None:
     config.bearer_limiters.clear()
     config.bearer_state.clear()
-    config.state.update({
-        "inflight": 0, "queued": 0, "served": 0,
-        "client_disconnects": 0, "upstream_retries": 0,
-        "central_status": "unknown", "central_last_check": 0, "last_advisor": None,
-    })
+    config.state.update(
+        {
+            "inflight": 0,
+            "queued": 0,
+            "served": 0,
+            "client_disconnects": 0,
+            "upstream_retries": 0,
+            "central_status": "unknown",
+            "central_last_check": 0,
+            "last_advisor": None,
+        }
+    )
 
 
 def _ok_upstream() -> web.Application:
@@ -88,7 +95,8 @@ async def test_central_failover_marks_down_and_retries_direct(env, monkeypatch) 
     monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")  # unroutable
     config.state["central_status"] = "up"
     resp = await tc.post(
-        "/v1/messages", data=b'{"model":"claude-haiku-4-5"}',
+        "/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
         headers={"Authorization": "Bearer central-fail"},
     )
     body = await resp.read()
@@ -106,7 +114,8 @@ async def test_exhausted_retry_returns_502(env, monkeypatch) -> None:
     monkeypatch.setattr(config, "CENTRAL_URL", "")
     monkeypatch.setattr(config, "UPSTREAM", "http://127.0.0.1:1")
     resp = await tc.post(
-        "/v1/messages", data=b'{"model":"claude-haiku-4-5"}',
+        "/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
         headers={"Authorization": "Bearer dead-upstream"},
     )
     text = await resp.text()

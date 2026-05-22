@@ -124,28 +124,78 @@ if TYPE_CHECKING:
 # Declared so static analysis treats the re-exports above as intentional.
 __all__ = [
     # config scalars + shared state
-    "AIMD_BACKOFF_S", "AIMD_DECREASE", "AIMD_MIN", "AIMD_RAMP_AFTER",
-    "AIMD_STATUSES", "CENTRAL_FORWARD_TIMEOUT", "CENTRAL_HEALTH_INTERVAL",
-    "CENTRAL_HEALTH_PATH", "CENTRAL_HEALTH_TIMEOUT", "CENTRAL_URL", "HOP_HEADERS",
-    "LISTEN_HOST", "LISTEN_PORT", "MAX_CONCURRENT", "MIN_DISPATCH_GAP_S",
-    "OVERLOAD_STATUSES", "QUEUE_MODE", "THROTTLE_STATUSES", "UPSTREAM",
-    "bearer_limiters", "bearer_state", "log", "log_mode", "state",
+    "AIMD_BACKOFF_S",
+    "AIMD_DECREASE",
+    "AIMD_MIN",
+    "AIMD_RAMP_AFTER",
+    "AIMD_STATUSES",
+    "CENTRAL_FORWARD_TIMEOUT",
+    "CENTRAL_HEALTH_INTERVAL",
+    "CENTRAL_HEALTH_PATH",
+    "CENTRAL_HEALTH_TIMEOUT",
+    "CENTRAL_URL",
+    "HOP_HEADERS",
+    "LISTEN_HOST",
+    "LISTEN_PORT",
+    "MAX_CONCURRENT",
+    "MIN_DISPATCH_GAP_S",
+    "OVERLOAD_STATUSES",
+    "QUEUE_MODE",
+    "THROTTLE_STATUSES",
+    "UPSTREAM",
+    "bearer_limiters",
+    "bearer_state",
+    "log",
+    "log_mode",
+    "state",
     # forwarding / limiter / pricing / ratelimit helpers
-    "FairBearerLimiter", "_get_bearer_limiter", "_forward_once",
-    "central_health_loop", "pick_target", "_pricing_for", "_bearer_id",
-    "_binding_utilization", "_client_id", "_extract_model_from_body",
-    "_extract_ratelimit", "_parse_retry_after", "_parse_sse_usage",
-    "_parse_unified", "_publish_ratelimit_gauges",
+    "FairBearerLimiter",
+    "_get_bearer_limiter",
+    "_forward_once",
+    "central_health_loop",
+    "pick_target",
+    "_pricing_for",
+    "_bearer_id",
+    "_binding_utilization",
+    "_client_id",
+    "_extract_model_from_body",
+    "_extract_ratelimit",
+    "_parse_retry_after",
+    "_parse_sse_usage",
+    "_parse_unified",
+    "_publish_ratelimit_gauges",
     # metrics
-    "CONTENT_TYPE_LATEST", "REGISTRY", "generate_latest",
-    "M_AIMD_GROWS", "M_AIMD_MAX", "M_AIMD_OVERLOAD", "M_AIMD_SHRINKS",
-    "M_CENTRAL_STATUS", "M_CLIENT_DISCONNECTS", "M_COST", "M_DURATION",
-    "M_INFLIGHT", "M_INFLIGHT_BEARER", "M_QUEUED", "M_QUEUED_BEARER",
-    "M_REQUESTS", "M_TOKENS", "M_UPSTREAM_RETRIES", "M_UTIL_5H", "M_UTIL_7D",
+    "CONTENT_TYPE_LATEST",
+    "REGISTRY",
+    "generate_latest",
+    "M_AIMD_GROWS",
+    "M_AIMD_MAX",
+    "M_AIMD_OVERLOAD",
+    "M_AIMD_SHRINKS",
+    "M_CENTRAL_STATUS",
+    "M_CLIENT_DISCONNECTS",
+    "M_COST",
+    "M_DURATION",
+    "M_INFLIGHT",
+    "M_INFLIGHT_BEARER",
+    "M_QUEUED",
+    "M_QUEUED_BEARER",
+    "M_REQUESTS",
+    "M_TOKENS",
+    "M_UPSTREAM_RETRIES",
+    "M_UTIL_5H",
+    "M_UTIL_7D",
     # defined in this module
-    "UTILIZATION_TARGET", "ADVISOR_ENABLED", "ADVISOR_DEBOUNCE_S",
-    "_apply_unified", "_advisor_snapshot", "_maybe_advise",
-    "handler", "health", "metrics", "main",
+    "UTILIZATION_TARGET",
+    "ADVISOR_ENABLED",
+    "ADVISOR_DEBOUNCE_S",
+    "_apply_unified",
+    "_advisor_snapshot",
+    "_maybe_advise",
+    "handler",
+    "health",
+    "metrics",
+    "main",
 ]
 
 # WS-B2: OAuth unified-window utilization pacing. When > 0, once the binding
@@ -203,7 +253,9 @@ async def _apply_unified(
 
     # 2. Proactive pause when the server already says rejected.
     rejected = "rejected" in (
-        unified.get("status"), unified.get("status_5h"), unified.get("status_7d"),
+        unified.get("status"),
+        unified.get("status_5h"),
+        unified.get("status_7d"),
     )
     if rejected:
         reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d") or 0
@@ -240,15 +292,17 @@ def _advisor_snapshot(
     bearers = []
     for b, bs in bearer_state.items():
         lim = bearer_limiters.get(b)
-        bearers.append({
-            "bearer_id": b,
-            "inflight": bs.get("inflight", 0),
-            "queued": bs.get("queued", 0),
-            "served": bs.get("served", 0),
-            "last_ratelimit": bs.get("last_ratelimit"),
-            "unified": bs.get("unified"),
-            "limiter": lim.snapshot() if lim is not None else None,
-        })
+        bearers.append(
+            {
+                "bearer_id": b,
+                "inflight": bs.get("inflight", 0),
+                "queued": bs.get("queued", 0),
+                "served": bs.get("served", 0),
+                "last_ratelimit": bs.get("last_ratelimit"),
+                "unified": bs.get("unified"),
+                "limiter": lim.snapshot() if lim is not None else None,
+            }
+        )
     return {
         "inflight": state["inflight"],
         "queued": state["queued"],
@@ -263,7 +317,8 @@ def _advisor_snapshot(
         "central_status": state["central_status"],
         "trigger": (
             {"bearer": trigger_bid, "status": trigger_status}
-            if trigger_status is not None else None
+            if trigger_status is not None
+            else None
         ),
         "bearers": bearers,
     }
@@ -288,12 +343,15 @@ async def _maybe_advise(trigger_bid: str, trigger_status: int) -> None:
     trigger = f"status={trigger_status} bid={trigger_bid}"
     try:
         from .ui.advisor_impl import recommend
+
         text = await recommend(_advisor_snapshot(trigger_bid, trigger_status))
         state["last_advisor"] = {"text": text, "ts": now, "trigger": trigger}
         log(f"advisor {trigger}: {text[:160]!r}")
     except Exception as exc:
         state["last_advisor"] = {
-            "text": f"(advisor error: {exc!s})", "ts": now, "trigger": trigger,
+            "text": f"(advisor error: {exc!s})",
+            "ts": now,
+            "trigger": trigger,
         }
         log(f"advisor-error {trigger}: {exc!r}")
 
@@ -648,8 +706,16 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 )
             finally:
                 await _finalize(
-                    counters, bid, limiter, bstate, attempt,
-                    t0, model, model_label, request, path,
+                    counters,
+                    bid,
+                    limiter,
+                    bstate,
+                    attempt,
+                    t0,
+                    model,
+                    model_label,
+                    request,
+                    path,
                 )
     finally:
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
@@ -676,24 +742,26 @@ async def health(_request: web.Request) -> web.Response:
         if lim is not None:
             view["limiter"] = lim.snapshot()
         bearers_view[bid] = view
-    return web.json_response({
-        "inflight": state["inflight"],
-        "queued": state["queued"],
-        "served": state["served"],
-        "client_disconnects": state["client_disconnects"],
-        "upstream_retries": state["upstream_retries"],
-        "max_concurrent": config.MAX_CONCURRENT,
-        "queue_mode": config.QUEUE_MODE,
-        "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
-        "upstream": config.UPSTREAM,
-        "central_url": config.CENTRAL_URL,
-        "central_status": cs,
-        "central_last_check": state["central_last_check"],
-        "last_advisor": state["last_advisor"],
-        # PR #562/#573: per-bearer + per-client view so /__throttle/health
-        # shows fleet parallelism + fair-RR queue depths in one glance.
-        "bearers": bearers_view,
-    })
+    return web.json_response(
+        {
+            "inflight": state["inflight"],
+            "queued": state["queued"],
+            "served": state["served"],
+            "client_disconnects": state["client_disconnects"],
+            "upstream_retries": state["upstream_retries"],
+            "max_concurrent": config.MAX_CONCURRENT,
+            "queue_mode": config.QUEUE_MODE,
+            "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
+            "upstream": config.UPSTREAM,
+            "central_url": config.CENTRAL_URL,
+            "central_status": cs,
+            "central_last_check": state["central_last_check"],
+            "last_advisor": state["last_advisor"],
+            # PR #562/#573: per-bearer + per-client view so /__throttle/health
+            # shows fleet parallelism + fair-RR queue depths in one glance.
+            "bearers": bearers_view,
+        }
+    )
 
 
 async def metrics(_request: web.Request) -> web.Response:
@@ -726,6 +794,7 @@ def main() -> None:
     app.router.add_get("/metrics", metrics)
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
     from .ui.routes import attach_ui
+
     attach_ui(app)
     app.router.add_route("*", "/{path:.*}", handler)
     if config.log_mode:
