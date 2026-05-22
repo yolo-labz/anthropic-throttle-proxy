@@ -74,8 +74,16 @@ OVERLOAD_STATUSES = {529}
 THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
 
 HOP_HEADERS = {
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length",
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "host",
+    "content-length",
 }
 
 state: dict[str, object] = {

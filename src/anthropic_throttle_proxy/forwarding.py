@@ -127,7 +127,9 @@ async def _forward_once(
     """
     connector = aiohttp.TCPConnector(ssl=True)
     async with aiohttp.ClientSession(
-        timeout=client_timeout, connector=connector, auto_decompress=False,
+        timeout=client_timeout,
+        connector=connector,
+        auto_decompress=False,
     ) as session:
         # Burst-smoothing pace (no-op when THROTTLE_MIN_DISPATCH_GAP_MS=0).
         # Placed inside the session context so the connector + TLS handshake
@@ -136,8 +138,11 @@ async def _forward_once(
         await _pace_dispatch()
         try:
             async with session.request(
-                request.method, url,
-                headers=headers, data=body, allow_redirects=False,
+                request.method,
+                url,
+                headers=headers,
+                data=body,
+                allow_redirects=False,
             ) as upstream:
                 return await _stream_response(request, upstream)
         except (TimeoutError, aiohttp.ClientError) as exc:
