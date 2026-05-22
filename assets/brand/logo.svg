@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="anthropic-throttle-proxy logo">
+  <title>anthropic-throttle-proxy — AIMD sawtooth mark</title>
+  <!-- Tile -->
+  <rect x="1" y="1" width="98" height="98" rx="22" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
+  <!-- ceiling (hard_max) + floor (AIMD_MIN) guides -->
+  <line x1="16" y1="24" x2="84" y2="24" stroke="#45475a" stroke-width="1.2" stroke-dasharray="3 4"/>
+  <line x1="16" y1="78" x2="84" y2="78" stroke="#313244" stroke-width="1.2"/>
+  <!-- AIMD curve: additive-increase ramps, multiplicative-decrease cuts, recovering higher -->
+  <path d="M16 78 L31 50 L31 64 L50 34 L50 50 L72 24 L84 30"
+        fill="none" stroke="#cba6f7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- pushback events (429/503) at each multiplicative cut -->
+  <circle cx="31" cy="50" r="3.4" fill="#fab387"/>
+  <circle cx="50" cy="34" r="3.4" fill="#fab387"/>
+</svg>
