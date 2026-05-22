@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/lockup.svg" alt="anthropic-throttle-proxy — fleet-wide pacing in front of api.anthropic.com" width="460">
+</p>
+
 # anthropic-throttle-proxy
 
 Self-hosted reverse-proxy in front of `api.anthropic.com` that smooths request bursts and enforces a single per-bearer concurrency cap across an entire fleet of Claude Code / opencode / codex / Claude SDK clients.
