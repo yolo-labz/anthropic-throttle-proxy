@@ -26,6 +26,66 @@ _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
 _STATIC = _HERE / "static"
 
+# Utilization at/above this fraction of a unified window counts as "pacing"
+# even before Anthropic flips the window to ``rejected``.
+_PACING_UTIL = 0.80
+
+
+def _compute_status(bearers: list[dict], queue_mode: str) -> dict[str, object]:
+    """Derive one fleet-wide verdict from the live snapshot (drives the status strip).
+
+    Worst-wins across bearers: ``throttled`` > ``pacing`` > ``healthy``. The
+    ``binding`` line names the most-constrained bearer so the operator sees the
+    single thing holding the fleet back without scanning the table.
+    """
+    if not bearers:
+        return {
+            "level": "idle",
+            "verdict": "IDLE",
+            "detail": "no bearers yet — point a client at this proxy to start.",
+        }
+
+    n = len(bearers)
+    throttled: list[str] = []
+    pacing: list[str] = []
+    binding: tuple[float, str, object] | None = None  # (util_5h, bearer_id, retry_after)
+
+    for b in bearers:
+        unified = b.get("unified") or {}
+        util_5h = unified.get("util_5h")
+        status_5h = unified.get("status") or unified.get("status_5h")
+        retry_after = (b.get("last_ratelimit") or {}).get("retry-after")
+        lim = b.get("limiter") or {}
+        live, hard = lim.get("max_concurrent"), lim.get("hard_max")
+        shrunk = live is not None and hard is not None and live < hard
+
+        if status_5h == "rejected" or retry_after:
+            throttled.append(b["bearer_id"])
+        elif shrunk or (util_5h is not None and util_5h >= _PACING_UTIL) or b.get("queued", 0) > 0:
+            pacing.append(b["bearer_id"])
+
+        if util_5h is not None and (binding is None or util_5h > binding[0]):
+            binding = (util_5h, b["bearer_id"], retry_after)
+
+    plural = "s" if n != 1 else ""
+    if throttled:
+        level, verdict = "throttled", "THROTTLED"
+        detail = f"{len(throttled)} of {n} bearer{plural} throttled"
+    elif pacing:
+        level, verdict = "pacing", "PACING"
+        detail = f"{len(pacing)} of {n} bearer{plural} pacing"
+    else:
+        level, verdict = "healthy", "HEALTHY"
+        detail = f"all {n} bearer{plural} clear"
+
+    if binding is not None:
+        detail += f" · binding: 5h window {round(binding[0] * 100)}% on {binding[1]}"
+        if binding[2]:
+            detail += f" · retry-after {binding[2]}"
+    if queue_mode == "off":
+        detail += " · queue off (passthrough)"
+    return {"level": level, "verdict": verdict, "detail": detail}
+
 
 def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
@@ -33,16 +93,19 @@ def _collect_view() -> dict[str, object]:
     bearers = []
     for bid, bstate in _proxy.bearer_state.items():
         lim = _proxy.bearer_limiters.get(bid)
-        bearers.append({
-            "bearer_id": bid,
-            "inflight": bstate.get("inflight", 0),
-            "queued": bstate.get("queued", 0),
-            "served": bstate.get("served", 0),
-            "last_ratelimit": bstate.get("last_ratelimit"),
-            "unified": bstate.get("unified"),
-            "limiter": lim.snapshot() if lim is not None else None,
-        })
+        bearers.append(
+            {
+                "bearer_id": bid,
+                "inflight": bstate.get("inflight", 0),
+                "queued": bstate.get("queued", 0),
+                "served": bstate.get("served", 0),
+                "last_ratelimit": bstate.get("last_ratelimit"),
+                "unified": bstate.get("unified"),
+                "limiter": lim.snapshot() if lim is not None else None,
+            }
+        )
     return {
+        "status": _compute_status(bearers, _proxy.QUEUE_MODE),
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
         "served": _proxy.state["served"],

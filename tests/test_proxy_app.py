@@ -18,7 +18,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from anthropic_throttle_proxy import config, limiter, pacing, proxy
-from anthropic_throttle_proxy.ui.routes import attach_ui
+from anthropic_throttle_proxy.ui.routes import _compute_status, attach_ui
 
 # A minimal but realistic streamed Messages response: message_start carries the
 # input usage, message_delta the output usage — exactly the two blocks the SSE
@@ -283,3 +283,67 @@ async def test_fair_mode_queues_and_serves(client: TestClient, monkeypatch) -> N
     body = await (await client.get("/__throttle/health")).json()
     assert body["served"] >= 1
     assert body["queued"] == 0  # drained after dispatch
+
+
+# ── _compute_status (pure view-layer verdict) ──────────────────────────────
+# Drives the dashboard status strip; pure function so we test the worst-wins
+# precedence and the "binding" line directly, without standing up the app.
+
+def _bearer(bid: str, *, util=None, status="allowed", retry=None, live=8, hard=8, queued=0):
+    """Build a minimal bearer view dict shaped like ``_collect_view`` emits."""
+    return {
+        "bearer_id": bid,
+        "queued": queued,
+        "unified": None if util is None else {"util_5h": util, "status": status},
+        "last_ratelimit": None if retry is None else {"retry-after": retry},
+        "limiter": {"max_concurrent": live, "hard_max": hard},
+    }
+
+
+def test_compute_status_idle_when_no_bearers() -> None:
+    out = _compute_status([], "fair")
+    assert out["level"] == "idle"
+    assert out["verdict"] == "IDLE"
+
+
+def test_compute_status_healthy_clear() -> None:
+    out = _compute_status([_bearer("aa", util=0.30)], "fair")
+    assert out["level"] == "healthy"
+    assert out["verdict"] == "HEALTHY"
+    # binding line names the (only) bearer + its window.
+    assert "30% on aa" in out["detail"]
+
+
+def test_compute_status_pacing_on_high_utilization() -> None:
+    out = _compute_status([_bearer("aa", util=0.85)], "fair")
+    assert out["level"] == "pacing"
+    assert "1 of 1 bearer pacing" in out["detail"]
+
+
+def test_compute_status_pacing_on_shrunk_ceiling() -> None:
+    # live < hard (AIMD shrank) counts as pacing even at low utilization.
+    out = _compute_status([_bearer("aa", util=0.10, live=4, hard=8)], "fair")
+    assert out["level"] == "pacing"
+
+
+def test_compute_status_throttled_wins_over_pacing() -> None:
+    bearers = [
+        _bearer("pace", util=0.82),  # pacing
+        _bearer("rej", util=0.97, status="rejected"),  # throttled
+    ]
+    out = _compute_status(bearers, "fair")
+    assert out["level"] == "throttled"
+    assert "1 of 2 bearers throttled" in out["detail"]
+    # binding = highest-utilization bearer.
+    assert "97% on rej" in out["detail"]
+
+
+def test_compute_status_retry_after_throttles_and_annotates() -> None:
+    out = _compute_status([_bearer("aa", util=0.50, retry="38")], "fair")
+    assert out["level"] == "throttled"
+    assert "retry-after 38" in out["detail"]
+
+
+def test_compute_status_notes_passthrough_when_queue_off() -> None:
+    out = _compute_status([_bearer("aa", util=0.20)], "off")
+    assert out["detail"].endswith("queue off (passthrough)")

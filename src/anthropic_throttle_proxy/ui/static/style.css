@@ -1,4 +1,4 @@
-/* Catppuccin Mocha tokens — match Pedro's NixOS rice. */
+/* Catppuccin Mocha tokens — match Pedro's NixOS rice. No raw hex below :root. */
 :root {
   --ctp-base:     #1e1e2e;
   --ctp-mantle:   #181825;
@@ -16,6 +16,10 @@
   --ctp-green:    #a6e3a1;
   --ctp-red:      #f38ba8;
   --ctp-yellow:   #f9e2af;
+  --ctp-teal:     #94e2d5;
+
+  --mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -25,7 +29,7 @@ html, body {
   padding: 0;
   background: var(--ctp-base);
   color: var(--ctp-text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--sans);
   font-size: 15px;
   line-height: 1.55;
 }
@@ -35,125 +39,198 @@ body {
   flex-direction: column;
   min-height: 100vh;
   padding: 2rem clamp(1rem, 4vw, 3rem);
-  gap: 1.5rem;
+  gap: 1.4rem;
+  font-variant-numeric: tabular-nums;
 }
 
+/* ── header ─────────────────────────────────────────────────────────── */
 header {
   display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  border-bottom: 1px solid var(--ctp-surface1);
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--ctp-surface0);
   padding-bottom: 1rem;
 }
 
-header h1 {
+.brand { display: flex; align-items: baseline; gap: 0.6rem; }
+
+.brand h1 {
   margin: 0;
-  font-size: 1.4rem;
+  font-family: var(--mono);
+  font-size: 1.15rem;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--ctp-mauve);
+  letter-spacing: -0.02em;
+  color: var(--ctp-text);
 }
 
-.config {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+.brand .role {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ctp-overlay0);
 }
+
+.config { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 
 .badge {
-  background: var(--ctp-surface0);
-  color: var(--ctp-subtext1);
-  border: 1px solid var(--ctp-surface1);
-  padding: 0.2rem 0.55rem;
-  border-radius: 4px;
-  font-family: ui-monospace, "Fira Code", monospace;
-  font-size: 0.78rem;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--ctp-subtext0);
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface0);
+  padding: 0.18rem 0.5rem;
+  border-radius: 5px;
+  white-space: nowrap;
 }
+.badge b { color: var(--ctp-subtext1); font-weight: 500; }
+.badge.upstream b { color: var(--ctp-blue); }
+.badge.central-up      { color: var(--ctp-green);  border-color: color-mix(in srgb, var(--ctp-green) 40%, var(--ctp-surface0)); }
+.badge.central-down    { color: var(--ctp-red);    border-color: color-mix(in srgb, var(--ctp-red) 40%, var(--ctp-surface0)); }
+.badge.central-unknown { color: var(--ctp-peach);  border-color: color-mix(in srgb, var(--ctp-peach) 40%, var(--ctp-surface0)); }
 
-.badge.upstream { color: var(--ctp-blue); }
-.badge.central-up    { color: var(--ctp-green);  border-color: var(--ctp-green); }
-.badge.central-down  { color: var(--ctp-red);    border-color: var(--ctp-red); }
-.badge.central-unknown { color: var(--ctp-peach); border-color: var(--ctp-peach); }
+/* ── main ───────────────────────────────────────────────────────────── */
+main { display: flex; flex-direction: column; gap: 1.5rem; flex: 1; }
 
-main {
+/* ── status strip ───────────────────────────────────────────────────── */
+.status {
   display: flex;
-  flex-direction: column;
-  gap: 1.75rem;
-  flex: 1;
+  align-items: center;
+  gap: 0.85rem;
+  background: var(--ctp-mantle);
+  border: 1px solid var(--ctp-surface0);
+  border-left: 3px solid var(--ctp-overlay0);
+  border-radius: 8px;
+  padding: 0.85rem 1.1rem;
 }
+.status .dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--ctp-overlay0);
+  flex: none;
+}
+.status .verdict {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ctp-subtext0);
+}
+.status .detail { color: var(--ctp-subtext0); font-size: 0.86rem; }
+.status .detail b { color: var(--ctp-text); font-family: var(--mono); font-weight: 500; }
 
+.status.healthy   { border-left-color: var(--ctp-green); }
+.status.healthy   .dot { background: var(--ctp-green); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ctp-green) 18%, transparent); }
+.status.healthy   .verdict { color: var(--ctp-green); }
+.status.pacing    { border-left-color: var(--ctp-peach); }
+.status.pacing    .dot { background: var(--ctp-peach); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ctp-peach) 18%, transparent); }
+.status.pacing    .verdict { color: var(--ctp-peach); }
+.status.throttled { border-left-color: var(--ctp-red); }
+.status.throttled .dot { background: var(--ctp-red); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ctp-red) 18%, transparent); }
+.status.throttled .verdict { color: var(--ctp-red); }
+
+/* ── metric cards ───────────────────────────────────────────────────── */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.7rem;
 }
-
 .card {
   background: var(--ctp-mantle);
-  border: 1px solid var(--ctp-surface1);
-  border-radius: 6px;
-  padding: 0.9rem 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
+  border: 1px solid var(--ctp-surface0);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
 }
-
 .card .label {
   color: var(--ctp-subtext0);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
 }
-
 .card .value {
-  color: var(--ctp-text);
-  font-family: ui-monospace, "Fira Code", monospace;
-  font-size: 1.5rem;
+  font-family: var(--mono);
+  font-size: 1.7rem;
   font-weight: 500;
-  line-height: 1.15;
+  line-height: 1.1;
+  margin-top: 0.2rem;
+  color: var(--ctp-text);
+}
+.card.alarm { border-left: 3px solid var(--ctp-red); }
+.card.alarm .value { color: var(--ctp-red); }
+
+/* ── section heading ────────────────────────────────────────────────── */
+h2 {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ctp-subtext0);
+  margin: 0.3rem 0 0.1rem;
 }
 
+/* ── bearers table ──────────────────────────────────────────────────── */
 table.bearers {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
-  margin-top: 0.5rem;
 }
-
 table.bearers th,
 table.bearers td {
-  text-align: left;
-  padding: 0.45rem 0.6rem;
-  border-bottom: 1px solid var(--ctp-surface1);
+  text-align: right;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--ctp-surface0);
+  white-space: nowrap;
 }
-
+table.bearers th:first-child,
+table.bearers td:first-child { text-align: left; }
 table.bearers thead th {
-  color: var(--ctp-subtext0);
-  font-size: 0.72rem;
+  color: var(--ctp-overlay0);
+  font-size: 0.66rem;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   font-weight: 500;
+  border-bottom-color: var(--ctp-surface1);
+}
+table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
+table.bearers code { font-family: var(--mono); color: var(--ctp-peach); background: transparent; }
+
+.num { font-family: var(--mono); }
+.aimd { font-family: var(--mono); }
+.aimd.shrunk { color: var(--ctp-peach); }
+.aimd.floor  { color: var(--ctp-red); font-weight: 600; }
+
+.tag-rejected {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--ctp-red);
+  border: 1px solid var(--ctp-red);
+  border-radius: 4px;
+  padding: 0.02rem 0.3rem;
+  margin-left: 0.35rem;
 }
 
-table.bearers code {
-  color: var(--ctp-peach);
-  background: transparent;
+/* inline utilization bar (server sets fill width via inline style) */
+.util { display: inline-flex; align-items: center; gap: 0.5rem; justify-content: flex-end; }
+.bar {
+  width: 64px; height: 6px;
+  border-radius: 3px;
+  background: var(--ctp-surface0);
+  overflow: hidden;
+  flex: none;
 }
+.bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ctp-green); }
+.bar > i.warn { background: var(--ctp-peach); }
+.bar > i.crit { background: var(--ctp-red); }
+.util .pct { font-family: var(--mono); font-size: 0.78rem; min-width: 2.6rem; text-align: right; }
 
-h2 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0 0 0.4rem;
-  color: var(--ctp-mauve);
-}
-
+/* ── advisor (manual + auto) ────────────────────────────────────────── */
 .muted { color: var(--ctp-subtext0); }
 
 button {
   background: var(--ctp-surface0);
   color: var(--ctp-text);
   border: 1px solid var(--ctp-surface1);
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 0.45rem 0.9rem;
   font: inherit;
   cursor: pointer;
@@ -165,27 +242,23 @@ button:active { background: var(--ctp-surface2); }
   display: none;
   margin-left: 0.5rem;
   color: var(--ctp-peach);
-  font-family: ui-monospace, "Fira Code", monospace;
+  font-family: var(--mono);
 }
 .htmx-request .htmx-indicator { display: inline; }
 
 .advisor-output {
   margin-top: 1rem;
-  padding: 0.9rem 1rem;
+  padding: 0.9rem 1.1rem;
   background: var(--ctp-mantle);
-  border: 1px solid var(--ctp-surface1);
+  border: 1px solid var(--ctp-surface0);
   border-left: 3px solid var(--ctp-mauve);
-  border-radius: 4px;
+  border-radius: 8px;
 }
-.advisor-output h3 {
-  margin: 0 0 0.4rem;
-  color: var(--ctp-peach);
-  font-size: 0.95rem;
-}
+.advisor-output h3 { margin: 0 0 0.4rem; color: var(--ctp-mauve); font-size: 0.95rem; }
 .advisor-output pre {
   background: var(--ctp-crust);
   padding: 0.6rem;
-  border-radius: 4px;
+  border-radius: 6px;
   overflow: auto;
   font-size: 0.78rem;
   color: var(--ctp-subtext1);
@@ -194,41 +267,35 @@ button:active { background: var(--ctp-surface2); }
 /* Auto-diagnosis panel (fired on a throttle event). Peach left-rail to
    distinguish it from the manual mauve advisor-output panel. */
 .advisor-auto {
-  margin-top: 0.5rem;
-  padding: 0.9rem 1rem;
+  padding: 0.9rem 1.1rem;
   background: var(--ctp-mantle);
-  border: 1px solid var(--ctp-surface1);
+  border: 1px solid var(--ctp-surface0);
   border-left: 3px solid var(--ctp-peach);
-  border-radius: 4px;
+  border-radius: 8px;
 }
+.advisor-auto h2 { color: var(--ctp-peach); margin-top: 0; }
 .advisor-auto .advisor-trigger {
-  color: var(--ctp-subtext0);
-  font-family: ui-monospace, "Fira Code", monospace;
+  color: var(--ctp-overlay0);
+  font-family: var(--mono);
   font-size: 0.74rem;
   margin-bottom: 0.5rem;
 }
 .advisor-auto .markdown,
 .advisor-output .markdown {
   white-space: pre-wrap;
-  color: var(--ctp-text);
-  font-size: 0.85rem;
+  color: var(--ctp-subtext1);
+  font-size: 0.86rem;
 }
+.advisor-output .markdown b,
+.advisor-auto .markdown b { color: var(--ctp-text); }
 
-.util-rejected {
-  color: var(--ctp-red);
-  font-weight: 600;
-  font-size: 0.72rem;
-}
-
+/* ── footer ─────────────────────────────────────────────────────────── */
 footer {
-  border-top: 1px solid var(--ctp-surface1);
+  margin-top: auto;
+  border-top: 1px solid var(--ctp-surface0);
   padding-top: 1rem;
-  color: var(--ctp-subtext0);
+  color: var(--ctp-overlay0);
   font-size: 0.78rem;
 }
-footer a {
-  color: var(--ctp-blue);
-  text-decoration: none;
-  font-family: ui-monospace, "Fira Code", monospace;
-}
+footer a { color: var(--ctp-blue); text-decoration: none; font-family: var(--mono); }
 footer a:hover { color: var(--ctp-mauve); text-decoration: underline; }

@@ -1,22 +1,30 @@
+{% if status %}
+<div class="status {{ status.level }}">
+  <span class="dot"></span>
+  <span class="verdict">{{ status.verdict }}</span>
+  <span class="detail">{{ status.detail }}</span>
+</div>
+{% endif %}
+
 <div class="cards">
   <div class="card"><div class="label">in-flight</div><div class="value">{{ inflight }}</div></div>
   <div class="card"><div class="label">queued</div><div class="value">{{ queued }}</div></div>
-  <div class="card"><div class="label">served</div><div class="value">{{ served }}</div></div>
-  <div class="card"><div class="label">retries</div><div class="value">{{ retries }}</div></div>
-  <div class="card"><div class="label">disconnects</div><div class="value">{{ disconnects }}</div></div>
+  <div class="card"><div class="label">served</div><div class="value">{{ "{:,}".format(served) }}</div></div>
+  <div class="card{% if retries %} alarm{% endif %}"><div class="label">retries</div><div class="value">{{ retries }}</div></div>
+  <div class="card{% if disconnects %} alarm{% endif %}"><div class="label">disconnects</div><div class="value">{{ disconnects }}</div></div>
 </div>
 
 {% if bearers %}
-<h2>Bearers</h2>
+<h2>Bearers · {{ bearers | length }}</h2>
 <table class="bearers">
   <thead>
     <tr>
-      <th>bearer (sha)</th>
+      <th>bearer</th>
       <th>inflight</th>
       <th>queued</th>
       <th>served</th>
-      <th>aimd (live/max)</th>
-      <th>5h util</th>
+      <th>aimd</th>
+      <th>5h window</th>
       <th>req left</th>
       <th>retry-after</th>
       <th>clients</th>
@@ -26,26 +34,34 @@
     {% for b in bearers %}
     <tr>
       <td><code>{{ b.bearer_id }}</code></td>
-      <td>{{ b.inflight }}</td>
-      <td>{{ b.queued }}</td>
-      <td>{{ b.served }}</td>
+      <td class="num">{{ b.inflight }}</td>
+      <td class="num">{{ b.queued }}</td>
+      <td class="num">{{ "{:,}".format(b.served) }}</td>
       <td>
         {% if b.limiter %}
-          {{ b.limiter.max_concurrent }}/{{ b.limiter.hard_max }}
+          {% set live = b.limiter.max_concurrent %}
+          {% set hard = b.limiter.hard_max %}
+          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}">{{ live }}/{{ hard }}</span>
         {% else %}
           —
         {% endif %}
       </td>
       <td>
         {% if b.unified and b.unified.util_5h is not none %}
-          {{ (b.unified.util_5h * 100) | round(0) | int }}%{% if b.unified.status == "rejected" %} <span class="util-rejected">rejected</span>{% endif %}
+          {% set pct = (b.unified.util_5h * 100) | round(0) | int %}
+          {% set rejected = b.unified.status == "rejected" %}
+          <span class="util">
+            <span class="bar"><i class="{% if rejected or pct >= 90 %}crit{% elif pct >= 75 %}warn{% endif %}" style="width: {{ [pct, 100] | min }}%"></i></span>
+            <span class="pct">{{ pct }}%</span>
+            {% if rejected %}<span class="tag-rejected">rejected</span>{% endif %}
+          </span>
         {% else %}
           —
         {% endif %}
       </td>
-      <td>{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
-      <td>{{ (b.last_ratelimit or {}).get("retry-after", "—") }}</td>
-      <td>
+      <td class="num">{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
+      <td class="num">{{ (b.last_ratelimit or {}).get("retry-after", "—") }}</td>
+      <td class="num">
         {% if b.limiter %}
           {{ (b.limiter.queued_per_client or {}) | length }}
         {% else %}
