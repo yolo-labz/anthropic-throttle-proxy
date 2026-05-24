@@ -34,6 +34,8 @@ __all__ = [
     "M_AIMD_SHRINKS",
     "M_AIMD_GROWS",
     "M_AIMD_OVERLOAD",
+    "M_BODY_SHRINK_TRIMMED",
+    "M_BODY_SHRINK_BYTES_SAVED",
     "M_RATELIMIT_REQUESTS_REMAINING",
     "M_RATELIMIT_TOKENS_REMAINING",
     "M_UTIL_5H",
@@ -128,6 +130,21 @@ M_AIMD_OVERLOAD = Counter(
     "Upstream 529 overloaded events (Anthropic-side capacity, not your usage). "
     "Does NOT shrink the ceiling; retry-after is still honored.",
     ["bearer"],
+    registry=REGISTRY,
+)
+# PR #15: body_shrink counters. ``still_oversize`` label is "true" when the
+# trim could not get the body under the soft cap (a single huge attachment
+# in the last KEEP_TURNS messages — operator should chase client-side fix).
+M_BODY_SHRINK_TRIMMED = Counter(
+    "anthropic_body_shrink_trimmed_total",
+    "POST /v1/messages bodies trimmed by the proxy to fit under Anthropic's 32MB cap.",
+    ["model", "still_oversize"],
+    registry=REGISTRY,
+)
+M_BODY_SHRINK_BYTES_SAVED = Counter(
+    "anthropic_body_shrink_bytes_saved_total",
+    "Bytes removed from POST /v1/messages bodies by tool_result trimming.",
+    ["model"],
     registry=REGISTRY,
 )
 # Last-seen upstream rate-limit headroom per bearer (proactive-pacing signal).
