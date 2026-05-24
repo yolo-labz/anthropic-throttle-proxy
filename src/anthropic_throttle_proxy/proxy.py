@@ -48,6 +48,7 @@ from aiohttp import web
 from . import config
 from . import limiter as _limiter
 from . import pacing as _pacing
+from .body_shrink import shrink_body
 
 # Re-exported config (env scalars + shared mutable state + log + HOP_HEADERS).
 # These are the proxy module's stable public surface; ``ui.routes`` does
@@ -88,6 +89,8 @@ from .metrics import (
     M_AIMD_MAX,
     M_AIMD_OVERLOAD,
     M_AIMD_SHRINKS,
+    M_BODY_SHRINK_BYTES_SAVED,
+    M_BODY_SHRINK_TRIMMED,
     M_CENTRAL_STATUS,
     M_CLIENT_DISCONNECTS,
     M_COST,
@@ -666,6 +669,31 @@ async def handler(request: web.Request) -> web.StreamResponse:
     # PR #557: extract model from POST /v1/messages body for metrics labels.
     model = _extract_model_from_body(body) if body else ""
     model_label = model or "unknown"
+
+    # PR #15: trim oversize POST /v1/messages bodies before forwarding so we
+    # do not hand Anthropic a payload they will reject with the 32MB cap.
+    # See body_shrink.py for the algorithm + trade-offs (cache invalidation,
+    # breadcrumb stubs, hard floor on single-attachment overruns).
+    if body is not None and request.method == "POST":
+        body, shrink_meta = shrink_body(body, path)
+        if shrink_meta.get("trimmed"):
+            still = "true" if shrink_meta.get("still_oversize") else "false"
+            M_BODY_SHRINK_TRIMMED.labels(model=model_label, still_oversize=still).inc()
+            M_BODY_SHRINK_BYTES_SAVED.labels(model=model_label).inc(
+                shrink_meta.get("bytes_saved", 0)
+            )
+            log(
+                f"body_shrink bid={_bearer_id(request.headers)} model={model_label} "
+                f"original={shrink_meta['original_bytes']} "
+                f"final={shrink_meta['final_bytes']} "
+                f"blocks_trimmed={shrink_meta['blocks_trimmed']} "
+                f"saved={shrink_meta['bytes_saved']} "
+                f"still_oversize={shrink_meta['still_oversize']}"
+            )
+            # When the proxy MUTATES the body we have to refresh Content-Length;
+            # the header dict we forward was built from the ORIGINAL request and
+            # would lie about the payload size if we left it untouched.
+            headers["Content-Length"] = str(len(body))
 
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
