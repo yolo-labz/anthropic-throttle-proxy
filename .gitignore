@@ -17,3 +17,6 @@ htmlcov/
 
 # Dokku artifacts
 .dokku-*
+
+# brand-board iteration state (worktree-local, not for commit)
+assets/brand/.board-iter-state.json
