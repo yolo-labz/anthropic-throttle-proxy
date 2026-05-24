@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  HUASHU BRAND-BOARD — anthropic-throttle-proxy
+  PR #14 deliverable · iter loop in BOARD_ITER_BRIEF.md
+
+  Showcase of the identity shipped in PR #11. NOT a redesign.
+
+  Phase 1 — assumption sketch (Junior Designer):
+    Audience  : Pedro + PR reviewers + portfolio readers.
+                Engineer-designers, AIMD/congestion familiar.
+    Scope     : 4 existing assets at intended sizes + AIMD prose
+                + brand-spec.md rules rendered as visual artifact.
+    Layout    : single-column editorial deck, 8 sections, narrative.
+    Width     : 1080px content column on Catppuccin `base`.
+    Hierarchy : weight + size only (per accent rule). Mauve = single
+                emphasis colour for the brand mark / wordmark.
+    Type      : JetBrains Mono throughout. System mono fallback.
+    Self-ctd  : only relative SVG refs. No CDN. No web fonts.
+
+  Acceptance bar (BOARD_ITER_BRIEF.md):
+    C1 brand-spec fidelity   C2 anti-slop clean   C3 token-only
+    C4 sequential headings   C5 self-contained    C6 visual quality
+    C7 AIMD concept surfaced (≥3 hits in prose)
+  ============================================================
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>anthropic-throttle-proxy — brand board</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    /* --- Catppuccin Mocha tokens (mirror brand-spec.md) --------- */
+    :root {
+      --base:     #1e1e2e;
+      --mantle:   #181825;
+      --crust:    #11111b;
+      --surface0: #313244;
+      --surface1: #45475a;
+      --surface2: #585b70;
+      --overlay0: #6c7086;
+      --overlay1: #7f849c;
+      --subtext0: #a6adc8;
+      --text:     #cdd6f4;
+      --mauve:    #cba6f7;
+      --blue:     #89b4fa;
+      --green:    #a6e3a1;
+      --peach:    #fab387;
+      --red:      #f38ba8;
+    }
+
+    /* --- Reset + base ----------------------------------------- */
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--base);
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      font-feature-settings: "tnum", "calt";
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 96px 48px 48px;
+    }
+
+    /* --- Typography hierarchy (weight + size, never colour) --- */
+    h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+    h1 { font-size: 56px; line-height: 1.1; }
+    h2 { font-size: 28px; line-height: 1.2; }
+    h3 { font-size: 16px; line-height: 1.3; text-transform: lowercase; color: var(--subtext0); font-weight: 500; }
+    p  { margin: 0 0 14px; max-width: 68ch; }
+    .caption { font-size: 11px; color: var(--overlay0); letter-spacing: 0.04em; text-transform: uppercase; }
+    .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .mauve { color: var(--mauve); }
+    .subtext { color: var(--subtext0); }
+    .overlay { color: var(--overlay0); }
+
+    /* --- Section structure ------------------------------------ */
+    section { padding: 64px 0; border-top: 1px solid var(--surface0); }
+    section:first-of-type { padding-top: 0; border-top: none; }
+    .section-head { display: grid; grid-template-columns: 140px 1fr; gap: 32px; margin-bottom: 32px; }
+    .section-head .num { font-size: 11px; color: var(--overlay0); letter-spacing: 0.08em; padding-top: 14px; }
+
+    /* --- Section 1: Hero -------------------------------------- */
+    .hero { padding-bottom: 48px; }
+    .hero-lockup { display: block; max-width: 100%; height: auto; margin: 24px 0 32px; }
+    .hero-tag { font-size: 18px; color: var(--subtext0); max-width: 56ch; line-height: 1.5; }
+    .hero-meta { margin-top: 40px; display: flex; gap: 32px; font-size: 11px; color: var(--overlay0); letter-spacing: 0.04em; text-transform: uppercase; }
+    .hero-meta span strong { color: var(--text); font-weight: 600; letter-spacing: 0; text-transform: none; display: block; margin-top: 4px; font-size: 13px; }
+
+    /* --- Section 2: Mark anatomy ------------------------------ */
+    .size-ladder { background: var(--base); border: 1px solid var(--surface0); padding: 32px 32px 24px; margin-top: 24px; }
+    .size-ladder .caption { margin-bottom: 28px; }
+    .ladder-rail { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; }
+    .ladder-rail figure { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+    .ladder-rail figure img { display: block; }
+    .ladder-rail figcaption { font-size: 11px; color: var(--overlay0); letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .surface-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .surface-tile { padding: 28px 32px; border: 1px solid var(--surface0); display: flex; align-items: center; gap: 24px; }
+    .surface-tile.mantle { background: var(--mantle); }
+    .surface-tile.crust  { background: var(--crust); }
+    .surface-tile .caption { flex: 1; }
+    .surface-tile img { display: block; }
+
+    .mark-construction {
+      margin: 40px 0 0;
+      padding: 24px;
+      border: 1px solid var(--surface0);
+      background: var(--mantle);
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .mark-construction svg { max-width: 100%; height: auto; align-self: center; }
+    .mark-construction figcaption { margin-top: 16px; text-align: center; }
+
+    /* --- Section 3: Concept ----------------------------------- */
+    .concept-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 16px; }
+    .concept-prose p { font-size: 15px; line-height: 1.6; color: var(--text); }
+    .concept-prose p + p { margin-top: 14px; }
+    .concept-call { padding: 24px; border: 1px solid var(--surface0); background: var(--mantle); }
+    .concept-call dt { font-size: 11px; color: var(--overlay0); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 16px; }
+    .concept-call dt:first-child { margin-top: 0; }
+    .concept-call dd { margin: 4px 0 0; font-size: 13px; color: var(--text); }
+    .concept-call dd code { background: var(--surface0); padding: 1px 6px; border-radius: 2px; color: var(--text); font-size: 12px; }
+
+    /* --- Section 4: Palette ----------------------------------- */
+    .palette-group { margin-top: 32px; }
+    .palette-group h3 { margin-bottom: 16px; }
+    .swatches { display: flex; flex-wrap: wrap; gap: 16px; }
+    .swatch { flex: 0 1 calc(25% - 12px); border: 1px solid var(--surface0); padding: 0; }
+    .swatch .chip { display: block; height: 96px; }
+    .swatch .meta { padding: 12px; }
+    .swatch .role  { font-size: 12px; color: var(--text); font-weight: 500; }
+    .swatch .token { font-size: 11px; color: var(--subtext0); margin-top: 2px; }
+    .swatch .hex   { font-size: 11px; color: var(--overlay0); margin-top: 6px; }
+
+    /* --- Section 5: Type specimen ----------------------------- */
+    .type-row { display: grid; grid-template-columns: 60px 1fr; gap: 24px; padding: 24px 0; border-top: 1px dashed var(--surface0); align-items: baseline; }
+    .type-row:first-of-type { border-top: none; }
+    .type-row .label { font-size: 11px; color: var(--overlay0); letter-spacing: 0.04em; padding-top: 14px; }
+    .type-row .sample { color: var(--text); line-height: 1.05; letter-spacing: -0.01em; word-break: break-all; }
+    .type-row .sample.s-display { font-size: 96px; font-weight: 600; }
+    .type-row .sample.s-h1      { font-size: 56px; font-weight: 600; }
+    .type-row .sample.s-h2      { font-size: 24px; font-weight: 500; }
+    .type-row .sample.s-body    { font-size: 14px; font-weight: 400; line-height: 1.6; }
+    .digits { font-variant-numeric: tabular-nums; color: var(--subtext0); }
+    .digits .accent { color: var(--mauve); }
+
+    /* --- Section 6: Voice ------------------------------------- */
+    .voice-quote {
+      font-size: 36px;
+      line-height: 1.3;
+      font-weight: 500;
+      color: var(--text);
+      max-width: 56ch;
+      margin: 32px 0 16px;
+    }
+    .voice-quote .accent { color: var(--mauve); }
+    .voice-attrib { font-size: 11px; color: var(--overlay0); text-transform: uppercase; letter-spacing: 0.06em; }
+    .voice-compare { margin-top: 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+    .voice-compare > div { padding: 20px 24px; border: 1px solid var(--surface0); }
+    .voice-compare .lbl { font-size: 11px; color: var(--overlay0); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 10px; }
+    .voice-compare .yes .lbl { color: var(--mauve); }
+    .voice-compare .no  .lbl { color: var(--red); }
+    .voice-compare p { font-size: 14px; color: var(--text); margin: 0; }
+    .voice-compare .no p { color: var(--subtext0); text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 1px; }
+
+    /* --- Section 7: Anti-slop guardrails ---------------------- */
+    .slop-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 24px; }
+    .slop-card { padding: 20px; border: 1px solid var(--surface0); display: grid; grid-template-columns: 32px 1fr; gap: 16px; align-items: start; }
+    .slop-mark { width: 32px; height: 32px; border: 1px solid var(--red); position: relative; }
+    .slop-mark::before, .slop-mark::after { content: ""; position: absolute; top: 50%; left: 4px; right: 4px; height: 1px; background: var(--red); transform-origin: center; }
+    .slop-mark::before { transform: rotate(45deg); }
+    .slop-mark::after  { transform: rotate(-45deg); }
+    .slop-card h3 { font-size: 13px; color: var(--text); font-weight: 500; text-transform: none; margin-bottom: 6px; letter-spacing: 0; }
+    .slop-card p { font-size: 12px; color: var(--subtext0); margin: 0; line-height: 1.5; }
+
+    /* --- Section 8: Footer ------------------------------------ */
+    .board-footer {
+      margin-top: 64px;
+      padding: 32px 48px;
+      background: var(--crust);
+      color: var(--overlay0);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .footer-grid { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; }
+    .footer-grid strong { display: block; color: var(--text); font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 13px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+
+    <!-- ============================================================ -->
+    <!-- 1. HERO                                                      -->
+    <!-- ============================================================ -->
+    <section class="hero">
+      <h1 class="visually-hidden">anthropic-throttle-proxy — brand board</h1>
+      <div class="caption">brand board · 2026-05-23 · v1</div>
+      <img class="hero-lockup" src="lockup.svg" alt="anthropic-throttle-proxy">
+      <p class="hero-tag">
+        Fleet-wide pacing in front of <span class="mauve">api.anthropic.com</span>.
+        The mark is the algorithm: an AIMD congestion-control sawtooth — additive
+        increase, multiplicative decrease — drawn at the rate the proxy runs on
+        every bearer.
+      </p>
+      <div class="hero-meta">
+        <span>identity<strong>shipped pr #11</strong></span>
+        <span>board<strong>this pr (#14)</strong></span>
+        <span>palette<strong>catppuccin mocha</strong></span>
+        <span>type<strong>jetbrains mono</strong></span>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 2. MARK ANATOMY                                              -->
+    <!-- ============================================================ -->
+    <section>
+      <div class="section-head">
+        <div class="num">01 / mark</div>
+        <div>
+          <h2>The mark</h2>
+          <p class="subtext">AIMD sawtooth on three Catppuccin surfaces, four pixel scales.</p>
+        </div>
+      </div>
+
+      <div class="size-ladder">
+        <div class="caption">size ladder · on base</div>
+        <div class="ladder-rail">
+          <figure><img src="logo.svg" width="100" height="100" alt="mark 100px"><figcaption>100 · README hero</figcaption></figure>
+          <figure><img src="logo.svg" width="64"  height="64"  alt="mark 64px"><figcaption>64 · social card</figcaption></figure>
+          <figure><img src="favicon.svg" width="32" height="32" alt="favicon 32px"><figcaption>32 · /ui favicon</figcaption></figure>
+          <figure><img src="favicon.svg" width="16" height="16" alt="favicon 16px"><figcaption>16 · tab pill</figcaption></figure>
+        </div>
+      </div>
+
+      <div class="surface-pair">
+        <div class="surface-tile mantle">
+          <div class="caption">mantle · #181825</div>
+          <img src="logo.svg" width="64" height="64" alt="mark on mantle">
+        </div>
+        <div class="surface-tile crust">
+          <div class="caption">crust · #11111b</div>
+          <img src="logo.svg" width="64" height="64" alt="mark on crust">
+        </div>
+      </div>
+
+      <figure class="mark-construction">
+        <svg viewBox="0 0 560 280" width="560" height="280" role="img" aria-label="AIMD sawtooth mark — annotated">
+          <title>AIMD sawtooth mark — annotated</title>
+          <!-- mark, scaled 2× from 100×100 to 200×200 at (16, 40) -->
+          <g transform="translate(16 40) scale(2)">
+            <rect x="1" y="1" width="98" height="98" rx="22" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
+            <line x1="16" y1="24" x2="84" y2="24" stroke="#45475a" stroke-width="1.2" stroke-dasharray="3 4"/>
+            <line x1="16" y1="78" x2="84" y2="78" stroke="#313244" stroke-width="1.2"/>
+            <path d="M16 78 L31 50 L31 64 L50 34 L50 50 L72 24 L84 30"
+                  fill="none" stroke="#cba6f7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="31" cy="50" r="3.4" fill="#fab387"/>
+            <circle cx="50" cy="34" r="3.4" fill="#fab387"/>
+          </g>
+
+          <!-- leader lines: from key features OUT to labels on the right column -->
+          <g stroke="#45475a" stroke-width="1" fill="none">
+            <!-- hard_max (dashed ceiling) → top-right -->
+            <path d="M184 88 L260 88 L300 60"/>
+            <!-- AIMD live ceiling (mauve curve apex) → upper-right -->
+            <path d="M160 78 L260 130 L300 130"/>
+            <!-- pushback peach dot at (50,34) scaled → (116, 108) → mid-right -->
+            <path d="M120 108 L260 180 L300 180"/>
+            <!-- AIMD_MIN (solid floor) → bottom-right -->
+            <path d="M184 196 L260 232 L300 232"/>
+          </g>
+
+          <!-- label text on the right -->
+          <g font-family="'JetBrains Mono','Fira Code',ui-monospace,monospace" font-size="13" fill="#cdd6f4">
+            <text x="308" y="64"  font-size="11" fill="#6c7086" letter-spacing="0.06em">CEILING</text>
+            <text x="308" y="80"  fill="#a6adc8">hard_max — dashed</text>
+            <text x="308" y="134" font-size="11" fill="#6c7086" letter-spacing="0.06em">SAWTOOTH</text>
+            <text x="308" y="150" fill="#cba6f7">AIMD live ceiling</text>
+            <text x="308" y="184" font-size="11" fill="#6c7086" letter-spacing="0.06em">EVENT</text>
+            <text x="308" y="200" fill="#fab387">429 / 503 pushback</text>
+            <text x="308" y="236" font-size="11" fill="#6c7086" letter-spacing="0.06em">FLOOR</text>
+            <text x="308" y="252" fill="#a6adc8">THROTTLE_AIMD_MIN</text>
+          </g>
+        </svg>
+        <figcaption class="caption">construction · 4 labelled features inside the 100×100 tile</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 3. CONCEPT                                                   -->
+    <!-- ============================================================ -->
+    <section>
+      <div class="section-head">
+        <div class="num">02 / concept</div>
+        <div>
+          <h2>Why a sawtooth</h2>
+          <p class="subtext">The mark encodes the algorithm; the algorithm encodes the product.</p>
+        </div>
+      </div>
+
+      <div class="concept-grid">
+        <div class="concept-prose">
+          <p>
+            <span class="mauve">AIMD</span> — additive-increase /
+            multiplicative-decrease — is the congestion-control discipline TCP has
+            run for forty years and what this proxy runs on every bearer. The
+            live ceiling ramps additively while upstream stays healthy and drops
+            multiplicatively the instant Anthropic returns
+            <code style="background:var(--surface0);padding:1px 6px;border-radius:2px;font-size:12px;">429</code>
+            or
+            <code style="background:var(--surface0);padding:1px 6px;border-radius:2px;font-size:12px;">503</code>.
+          </p>
+          <p>
+            The sawtooth is the picture you would draw if you graphed that
+            ceiling over time. Slow climbs. Sharp cuts. Each cut leaves a
+            <span style="color:var(--peach)">pushback marker</span> at the corner.
+            Multiply by N bearers and the system breathes.
+          </p>
+          <p>
+            That is why the mark is a sawtooth and not an abstract glyph. A
+            generic "AI proxy" wordmark would carry no information. This one
+            tells you what the binary is doing the moment you see it.
+          </p>
+        </div>
+        <dl class="concept-call">
+          <dt>algorithm</dt>
+          <dd>AIMD · CUBIC-style</dd>
+          <dt>decrease factor</dt>
+          <dd><code>THROTTLE_AIMD_DECREASE = 0.7</code></dd>
+          <dt>ramp gate</dt>
+          <dd><code>THROTTLE_AIMD_RAMP_AFTER = 10</code> successes past the cooldown</dd>
+          <dt>cooldown</dt>
+          <dd><code>THROTTLE_AIMD_BACKOFF_S = 30 s</code></dd>
+          <dt>floor</dt>
+          <dd><code>THROTTLE_AIMD_MIN = 1</code> (never fully blocks)</dd>
+          <dt>overload (separate)</dt>
+          <dd><code>529</code> — upstream capacity, not your usage; counted, not punished</dd>
+        </dl>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 4. PALETTE                                                   -->
+    <!-- ============================================================ -->
+    <section>
+      <div class="section-head">
+        <div class="num">03 / palette</div>
+        <div>
+          <h2>Catppuccin Mocha, in roles</h2>
+          <p class="subtext">No colour earns a place unless it carries meaning. Mauve = brand. Green / peach / red = health state. Everything else is surface or ink.</p>
+        </div>
+      </div>
+
+      <div class="palette-group">
+        <h3>surface</h3>
+        <div class="swatches">
+          <div class="swatch"><span class="chip" style="background:#1e1e2e"></span><div class="meta"><div class="role">background</div><div class="token">base</div><div class="hex">#1e1e2e</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#181825"></span><div class="meta"><div class="role">panel</div><div class="token">mantle</div><div class="hex">#181825</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#11111b"></span><div class="meta"><div class="role">footer / inset</div><div class="token">crust</div><div class="hex">#11111b</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#313244"></span><div class="meta"><div class="role">divider</div><div class="token">surface0</div><div class="hex">#313244</div></div></div>
+        </div>
+      </div>
+
+      <div class="palette-group">
+        <h3>ink</h3>
+        <div class="swatches">
+          <div class="swatch"><span class="chip" style="background:#cdd6f4"></span><div class="meta"><div class="role">body</div><div class="token">text</div><div class="hex">#cdd6f4</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#a6adc8"></span><div class="meta"><div class="role">muted prose</div><div class="token">subtext0</div><div class="hex">#a6adc8</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#6c7086"></span><div class="meta"><div class="role">caption</div><div class="token">overlay0</div><div class="hex">#6c7086</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#45475a"></span><div class="meta"><div class="role">hairline</div><div class="token">surface1</div><div class="hex">#45475a</div></div></div>
+        </div>
+      </div>
+
+      <div class="palette-group">
+        <h3>state</h3>
+        <div class="swatches">
+          <div class="swatch"><span class="chip" style="background:#cba6f7"></span><div class="meta"><div class="role">brand · primary</div><div class="token">mauve</div><div class="hex">#cba6f7</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#a6e3a1"></span><div class="meta"><div class="role">healthy</div><div class="token">green</div><div class="hex">#a6e3a1</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#fab387"></span><div class="meta"><div class="role">pushback · 429/503</div><div class="token">peach</div><div class="hex">#fab387</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#f38ba8"></span><div class="meta"><div class="role">floor · throttled</div><div class="token">red</div><div class="hex">#f38ba8</div></div></div>
+        </div>
+      </div>
+
+      <div class="palette-group">
+        <h3>navigation</h3>
+        <div class="swatches">
+          <div class="swatch"><span class="chip" style="background:#89b4fa"></span><div class="meta"><div class="role">links</div><div class="token">blue</div><div class="hex">#89b4fa</div></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 5. TYPE SPECIMEN                                             -->
+    <!-- ============================================================ -->
+    <section>
+      <div class="section-head">
+        <div class="num">04 / type</div>
+        <div>
+          <h2>JetBrains Mono</h2>
+          <p class="subtext">Display, wordmark, prose, and data — one family, self-hosted, no font fetches. Tabular numerals on for metric reads.</p>
+        </div>
+      </div>
+
+      <div class="type-row"><div class="label">96 / 600</div>
+        <div>
+          <div class="sample s-display">throttle</div>
+          <div class="caption" style="margin-top:8px;">the verb in the wordmark, isolated · same face, same accent</div>
+        </div>
+      </div>
+      <div class="type-row"><div class="label">56 / 600</div><div class="sample s-h1">anthropic-throttle-proxy</div></div>
+      <div class="type-row"><div class="label">24 / 500</div><div class="sample s-h2">fleet-wide pacing in front of api.anthropic.com</div></div>
+      <div class="type-row"><div class="label">14 / 400</div><div class="sample s-body">The live ceiling shrinks ×0.7 on every 429 or 503 and ramps additively after ten successes past the cooldown — the literal sawtooth the mark draws.</div></div>
+      <div class="type-row"><div class="label">digits</div>
+        <div class="sample s-h1 digits">
+          0 1 2 3 4 5 6 7 8 9 · <span class="accent">429</span> · <span class="accent">503</span> · <span class="accent">×0.7</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 6. VOICE                                                     -->
+    <!-- ============================================================ -->
+    <section>
+      <div class="section-head">
+        <div class="num">05 / voice</div>
+        <div>
+          <h2>Operator-first prose</h2>
+          <p class="subtext">Facts and numbers, never adjectives. Lowercase. Mono. The proxy reports what it did; the human decides how to feel.</p>
+        </div>
+      </div>
+
+      <p class="voice-quote">
+        &ldquo;<span class="accent">1 of 3 bearers throttled</span> · ceiling 8 → 5 ·
+        retry-after 12 s&rdquo;
+      </p>
+      <div class="voice-attrib">house voice · operator log line</div>
+
+      <div class="voice-compare">
+        <div class="yes">
+          <div class="lbl">say</div>
+          <p>upstream returned 429 · ceiling shrunk to 5 · retry in 12 s</p>
+        </div>
+        <div class="no">
+          <div class="lbl">never</div>
+          <p>uh-oh, looks like we hit a rate limit — please try again later!</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 7. ANTI-SLOP GUARDRAILS                                      -->
+    <!-- ============================================================ -->
+    <section>
+      <div class="section-head">
+        <div class="num">06 / guardrails</div>
+        <div>
+          <h2>Refuse on sight</h2>
+          <p class="subtext">The brand is defined as much by what it rejects. These are hard rules — every render gates against them.</p>
+        </div>
+      </div>
+
+      <div class="slop-grid">
+        <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
+          <h3>No gradients, no neon glow, no glassmorphism</h3>
+          <p>The mark sits on solid Catppuccin surfaces only. A blurred translucent panel is a tell the design has nothing to say underneath it.</p>
+        </div></div>
+
+        <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
+          <h3>No rocket / sparkle / shield iconography</h3>
+          <p>The AI-starter-pack icon set is banned. The product is congestion control, not magic.</p>
+        </div></div>
+
+        <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
+          <h3>No raw hex in components</h3>
+          <p>Catppuccin tokens only — every colour gets a name and a role. Raw hex outside this board's token table is a bug.</p>
+        </div></div>
+
+        <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
+          <h3>The mark stays a single-weight line</h3>
+          <p>No 3D, no extrusion, no app-store render, no fill, no rotation. The sawtooth is the data; embellishment is noise.</p>
+        </div></div>
+
+        <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
+          <h3>Decorative colour is forbidden</h3>
+          <p>Mauve = brand. Green / peach / red = health state. Blue = link. Anything else asks itself: what does this mean?</p>
+        </div></div>
+
+        <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
+          <h3>No exclamations, no adjectives, no hype</h3>
+          <p>"1 of 3 bearers throttled" beats "uh-oh, rate limited!". The operator reads logs, not announcements.</p>
+        </div></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============================================================ -->
+  <!-- 8. FOOTER                                                    -->
+  <!-- ============================================================ -->
+  <footer class="board-footer">
+    <div class="footer-grid">
+      <span>spec<strong>brand-spec.md v1</strong></span>
+      <span>identity ship<strong>PR #11 · 22/05/2026</strong></span>
+      <span>board ship<strong>PR #14 · 23/05/2026</strong></span>
+      <span>dependencies<strong>none — single html, three svg</strong></span>
+    </div>
+  </footer>
+</body>
+</html>
