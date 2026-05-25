@@ -11,7 +11,7 @@
   --ctp-subtext1: #bac2de;
   --ctp-overlay0: #6c7086;
   --ctp-blue:     #89b4fa;
-  --ctp-mauve:    #cba6f7;
+  --ctp-teal:    #94e2d5;
   --ctp-peach:    #fab387;
   --ctp-green:    #a6e3a1;
   --ctp-red:      #f38ba8;
@@ -235,7 +235,7 @@ button {
   font: inherit;
   cursor: pointer;
 }
-button:hover { background: var(--ctp-surface1); border-color: var(--ctp-mauve); }
+button:hover { background: var(--ctp-surface1); border-color: var(--ctp-teal); }
 button:active { background: var(--ctp-surface2); }
 
 .htmx-indicator {
@@ -251,10 +251,10 @@ button:active { background: var(--ctp-surface2); }
   padding: 0.9rem 1.1rem;
   background: var(--ctp-mantle);
   border: 1px solid var(--ctp-surface0);
-  border-left: 3px solid var(--ctp-mauve);
+  border-left: 3px solid var(--ctp-teal);
   border-radius: 8px;
 }
-.advisor-output h3 { margin: 0 0 0.4rem; color: var(--ctp-mauve); font-size: 0.95rem; }
+.advisor-output h3 { margin: 0 0 0.4rem; color: var(--ctp-teal); font-size: 0.95rem; }
 .advisor-output pre {
   background: var(--ctp-crust);
   padding: 0.6rem;
@@ -265,7 +265,7 @@ button:active { background: var(--ctp-surface2); }
 }
 
 /* Auto-diagnosis panel (fired on a throttle event). Peach left-rail to
-   distinguish it from the manual mauve advisor-output panel. */
+   distinguish it from the manual teal advisor-output panel. */
 .advisor-auto {
   padding: 0.9rem 1.1rem;
   background: var(--ctp-mantle);
@@ -298,4 +298,4 @@ footer {
   font-size: 0.78rem;
 }
 footer a { color: var(--ctp-blue); text-decoration: none; font-family: var(--mono); }
-footer a:hover { color: var(--ctp-mauve); text-decoration: underline; }
+footer a:hover { color: var(--ctp-teal); text-decoration: underline; }

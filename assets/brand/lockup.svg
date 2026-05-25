@@ -6,13 +6,13 @@
     <line x1="16" y1="24" x2="84" y2="24" stroke="#45475a" stroke-width="1.2" stroke-dasharray="3 4"/>
     <line x1="16" y1="78" x2="84" y2="78" stroke="#313244" stroke-width="1.2"/>
     <path d="M16 78 L31 50 L31 64 L50 34 L50 50 L72 24 L84 30"
-          fill="none" stroke="#cba6f7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+          fill="none" stroke="#94e2d5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
     <circle cx="31" cy="50" r="3.4" fill="#fab387"/>
     <circle cx="50" cy="34" r="3.4" fill="#fab387"/>
   </g>
   <!-- wordmark: the verb 'throttle' carries the accent -->
   <text x="126" y="58" font-family="'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,monospace" font-size="29" font-weight="600" letter-spacing="-0.5">
-    <tspan fill="#a6adc8" font-weight="400">anthropic</tspan><tspan fill="#6c7086" font-weight="400">-</tspan><tspan fill="#cba6f7">throttle</tspan><tspan fill="#6c7086" font-weight="400">-</tspan><tspan fill="#a6adc8" font-weight="400">proxy</tspan>
+    <tspan fill="#a6adc8" font-weight="400">anthropic</tspan><tspan fill="#6c7086" font-weight="400">-</tspan><tspan fill="#94e2d5">throttle</tspan><tspan fill="#6c7086" font-weight="400">-</tspan><tspan fill="#a6adc8" font-weight="400">proxy</tspan>
   </text>
   <text x="127" y="84" font-family="'JetBrains Mono','Fira Code',ui-monospace,monospace" font-size="12.5" fill="#6c7086" letter-spacing="0.2">fleet-wide pacing in front of api.anthropic.com</text>
 </svg>

@@ -13,12 +13,12 @@ runs on every bearer.
 
 ### Mark — AIMD Sawtooth
 - File: `assets/brand/logo.svg` (100×100 tile, dark base)
-- The mauve line is the AIMD live-ceiling over time: slow ramps (additive
+- The teal line is the AIMD live-ceiling over time: slow ramps (additive
   increase), sharp drops (multiplicative decrease ×0.7). The dashed top line is
   the hard ceiling (`hard_max`); the solid bottom line is the floor
   (`THROTTLE_AIMD_MIN`). The two peach dots mark pushback events (429/503).
 - Usage: README hero, repo social preview, slide decks, app icon.
-- Don't: recolor the line off-mauve, fill the curve, add a gradient/glow, or
+- Don't: recolor the line off-teal, fill the curve, add a gradient/glow, or
   rotate the tile.
 
 ### Favicon
@@ -31,7 +31,7 @@ runs on every bearer.
 ### Lockup
 - File: `assets/brand/lockup.svg` (mark + wordmark + tagline, 560×122)
 - The wordmark colours the verb: `anthropic`/`proxy` in subtext, **`throttle`**
-  in mauve — the product *is* the throttle. Hyphens in overlay0.
+  in teal — the product *is* the throttle. Hyphens in overlay0.
 - Tagline: `fleet-wide pacing in front of api.anthropic.com`.
 
 ## 🎨 Palette — Catppuccin Mocha
@@ -40,7 +40,7 @@ runs on every bearer.
 |------|-------|-----|
 | Background | base | `#1e1e2e` |
 | Surface | mantle / crust | `#181825` / `#11111b` |
-| **Brand + primary** | **mauve** | **`#cba6f7`** |
+| **Brand + primary** | **teal** | **`#94e2d5`** |
 | Links | blue | `#89b4fa` |
 | Healthy | green | `#a6e3a1` |
 | Warning / pushback | peach | `#fab387` |
@@ -53,7 +53,7 @@ runs on every bearer.
 - No web-font fetches — a self-hosted proxy ships no third-party font calls.
 
 ## Accent rule
-- **mauve** = brand + primary action only.
+- **teal** = brand + primary action only.
 - **green / peach / red** = health state only (never decoration).
 - Everything else is base/surface/text. No colour earns a place unless it
   carries meaning.
