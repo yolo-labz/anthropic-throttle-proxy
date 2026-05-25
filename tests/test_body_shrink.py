@@ -204,6 +204,59 @@ def test_stub_drops_cache_control_marker(monkeypatch):
     assert "cache_control" not in trimmed
 
 
+def _image_block(payload_bytes: int, media_type: str = "image/png") -> dict:
+    """A user-pasted image content block whose base64 data is ~payload_bytes."""
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type,
+            "data": "A" * payload_bytes,
+        },
+    }
+
+
+def test_trims_older_image_block_in_user_message(monkeypatch):
+    monkeypatch.setattr(body_shrink, "CAP_BYTES", 2000)
+    monkeypatch.setattr(body_shrink, "KEEP_TURNS", 2)
+    monkeypatch.setattr(body_shrink, "MIN_BLOCK_BYTES", 100)
+    # PR #18: user-pasted screenshots accumulate across long sessions.
+    # tool_result trim alone misses them — image blocks live directly in
+    # user-message content. This older image must become a text breadcrumb.
+    big_img = _image_block(5000)
+    messages = [
+        _user_with([big_img, {"type": "text", "text": "describe this"}]),  # oldest — trimmed
+        _assistant_with([{"type": "text", "text": "a screenshot"}]),
+        _user_with([{"type": "text", "text": "now what"}]),  # protected by KEEP_TURNS
+    ]
+    body = _body(messages)
+    out, meta = body_shrink.shrink_body(body, "/v1/messages")
+    assert meta["trimmed"] is True
+    decoded = json.loads(out)
+    swapped = decoded["messages"][0]["content"][0]
+    # Image swapped for a text breadcrumb naming the original media_type.
+    assert swapped["type"] == "text"
+    assert "throttle-proxy trimmed older image" in swapped["text"]
+    assert "image/png" in swapped["text"]
+    # Sibling text block in the same user message left intact.
+    assert decoded["messages"][0]["content"][1] == {"type": "text", "text": "describe this"}
+
+
+def test_protects_recent_image_in_keep_turns_window(monkeypatch):
+    monkeypatch.setattr(body_shrink, "CAP_BYTES", 1000)
+    monkeypatch.setattr(body_shrink, "KEEP_TURNS", 1)
+    monkeypatch.setattr(body_shrink, "MIN_BLOCK_BYTES", 100)
+    # Only one message exists and KEEP_TURNS=1 protects it — image MUST survive,
+    # even though body remains oversize after the trim pass.
+    only_img = _image_block(4000)
+    messages = [_user_with([only_img])]
+    body = _body(messages)
+    out, meta = body_shrink.shrink_body(body, "/v1/messages")
+    decoded = json.loads(out)
+    assert decoded["messages"][0]["content"][0] == only_img
+    assert meta["still_oversize"] is True
+
+
 @pytest.mark.parametrize("missing", ["messages", "model"])
 def test_handles_missing_top_level_fields(monkeypatch, missing):
     monkeypatch.setattr(body_shrink, "CAP_BYTES", 100)
