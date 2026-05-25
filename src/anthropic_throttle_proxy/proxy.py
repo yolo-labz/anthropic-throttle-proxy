@@ -694,6 +694,25 @@ async def handler(request: web.Request) -> web.StreamResponse:
             # the header dict we forward was built from the ORIGINAL request and
             # would lie about the payload size if we left it untouched.
             headers["Content-Length"] = str(len(body))
+        elif "v1/messages" in path and shrink_meta.get("original_bytes") is not None:
+            # PR #17: passthrough diagnostic. body_shrink only logs when it
+            # actually trims; the no-trim case is silent. That made it
+            # impossible to correlate Anthropic 413s with the actual request
+            # size — the operator could only see `served=413` in the done
+            # line and had to guess whether the body was 5 MiB or 31 MiB.
+            # This terse log fires for every POST /v1/messages that
+            # body_shrink did not rewrite, so the bytes-on-the-wire are
+            # always observable. ``reason`` is "under-cap" when the body
+            # was already small enough (the common case) and otherwise
+            # carries the bail-out reason from body_shrink (``non-json``,
+            # ``no-messages-array``, ``disabled``…). Counter and metric
+            # remain unchanged — this is purely a log signal.
+            reason = shrink_meta.get("reason", "under-cap")
+            log(
+                f"body_passthrough bid={_bearer_id(request.headers)} "
+                f"model={model_label} bytes={shrink_meta['original_bytes']} "
+                f"reason={reason}"
+            )
 
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
