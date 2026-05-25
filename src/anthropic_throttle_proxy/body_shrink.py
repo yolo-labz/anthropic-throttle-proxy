@@ -10,8 +10,9 @@ turn is unrecoverable from the user's seat ("Double press esc to go back and
 try with a smaller file").
 
 This module intercepts oversize bodies at the proxy layer and replaces the
-oldest ``tool_result`` content blocks with terse breadcrumb stubs until the
-body fits under the cap, preserving:
+oldest ``tool_result`` content blocks (and PR #18: also top-level ``image``
+content blocks — i.e. user-pasted screenshots) with terse breadcrumb stubs
+until the body fits under the cap, preserving:
 
 * The system prompt and the tool catalog (untouched).
 * The last ``BODY_SHRINK_KEEP_TURNS`` messages (so the model still sees the
@@ -94,14 +95,46 @@ def _stub_for(original_block: dict[str, Any]) -> dict[str, Any]:
     return new_block
 
 
-def _iter_trimmable_blocks(messages: list[dict[str, Any]], keep_turns: int):
-    """Yield (msg_index, block_index, block) for tool_result blocks eligible
-    to trim, oldest first, skipping the last ``keep_turns`` messages.
+def _stub_for_image(original_block: dict[str, Any]) -> dict[str, Any]:
+    """Replace a top-level image content block with a text breadcrumb.
 
-    Only ``tool_result`` blocks are eligible: text blocks may be load-bearing
-    instructions the model is mid-task on, and ``tool_use`` blocks (assistant
-    side) describe what the assistant *did* — trimming them confuses the
-    model about its own history.
+    Direct user-message screenshots accumulate across long claude-code sessions
+    (each pasted image stays in history forever as a ~100-500 KiB base64
+    payload). Tool_result trimming alone misses them. This stub swaps the
+    block ``type`` from ``image`` to ``text`` and notes what was dropped, so
+    the model can still issue tool calls to re-fetch / re-screenshot if it
+    really needs the visual context. Older-turn images are far less load-
+    bearing than the most recent few (which KEEP_TURNS protects intact).
+    """
+    source = original_block.get("source")
+    if isinstance(source, dict):
+        media_type = source.get("media_type", "image/?")
+        data = source.get("data", "")
+        original_bytes = len(data) if isinstance(data, str) else 0
+    else:
+        media_type = "?"
+        original_bytes = -1
+    stub_text = (
+        f"[throttle-proxy trimmed older image: was {original_bytes} chars "
+        f"base64 ({media_type}); preserved in client TUI; "
+        f"ask the user to re-share if you need to inspect it again]"
+    )
+    return {"type": "text", "text": stub_text}
+
+
+def _iter_trimmable_blocks(messages: list[dict[str, Any]], keep_turns: int):
+    """Yield (msg_index, block_index, block) for blocks eligible to trim,
+    oldest first, skipping the last ``keep_turns`` messages.
+
+    Eligible:
+    * ``tool_result`` blocks — full content swap for a breadcrumb stub.
+    * ``image`` blocks — direct image content (typically a user-pasted
+      screenshot). Older screenshots replaced by a text breadcrumb; recent
+      screenshots stay intact because they're inside the KEEP_TURNS window.
+
+    Text blocks (load-bearing instructions) and ``tool_use`` blocks
+    (assistant-side describing what it *did*) are NEVER trimmed: rewriting
+    them confuses the model about its own history.
     """
     cutoff = max(0, len(messages) - keep_turns)
     for mi in range(cutoff):
@@ -112,7 +145,7 @@ def _iter_trimmable_blocks(messages: list[dict[str, Any]], keep_turns: int):
         for bi, block in enumerate(content):
             if not isinstance(block, dict):
                 continue
-            if block.get("type") != "tool_result":
+            if block.get("type") not in ("tool_result", "image"):
                 continue
             yield mi, bi, block
 
@@ -179,7 +212,11 @@ def shrink_body(body: bytes, path: str) -> tuple[bytes, dict[str, Any]]:
     for mi, bi, block in _iter_trimmable_blocks(messages, KEEP_TURNS):
         if _block_size(block) < MIN_BLOCK_BYTES:
             continue
-        messages[mi]["content"][bi] = _stub_for(block)
+        kind = block.get("type")
+        if kind == "image":
+            messages[mi]["content"][bi] = _stub_for_image(block)
+        else:
+            messages[mi]["content"][bi] = _stub_for(block)
         blocks_trimmed += 1
         candidate = json.dumps(data, ensure_ascii=False).encode("utf-8")
         if len(candidate) <= CAP_BYTES:
