@@ -602,7 +602,7 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
         log(f"usage-parse-error path=/{path}: {ue!r}")
 
 
-def _log_413_reason(bid: str, model_label: str, captured: bytearray) -> None:
+def _log_413_reason(bid: str, model_label: str, captured: bytearray | None) -> None:
     """Surface the actual Anthropic error reason on a 413 response.
 
     claude-code's TUI hard-codes "Request too large (max 32MB)" for every
@@ -613,7 +613,18 @@ def _log_413_reason(bid: str, model_label: str, captured: bytearray) -> None:
     413'd — so the 32 MiB byte cap is a red herring; this log pins the
     real bottleneck. Caps response read at 64 KiB to keep the journal
     line bounded for edge-case error envelopes.
+
+    PR #20: handle the empty-captured case explicitly. Observed
+    empirically on Pedro's desktop: the central tier sometimes
+    forwards a Content-Length:0 413 envelope, so ``captured`` arrives
+    here as an empty ``bytearray``. The original guard in ``_finalize``
+    short-circuited those, leaving 413s entirely undiagnosed. Log
+    `empty_body` instead so the operator at least knows the upstream
+    rejected without an error envelope.
     """
+    if not captured:
+        log(f"upstream_413 bid={bid} model={model_label} reason=empty_body")
+        return
     raw = bytes(captured[:65536])
     try:
         err = json.loads(raw)
@@ -672,16 +683,16 @@ async def _finalize(
 
     if attempt.captured and request.method == "POST" and "v1/messages" in path:
         _record_usage(model, model_label, attempt.captured, path)
-    if final_status == 413 and attempt.captured:
-        # PR #19: log Anthropic's 413 response body so the operator can read
-        # the actual error reason. claude-code's TUI paraphrases every 413
-        # as "Request too large (max 32MB)" regardless of cause; the body
-        # diagnostic from #17 already showed real bodies hit 413 well under
-        # cap (Pedro saw 907 KiB → 413 on 25/05). The Anthropic JSON carries
-        # the real reason: "prompt is too long" (token cap), "input
-        # messages exceed maximum" (per-message), beta-header conflicts,
-        # etc. Knowing the reason is the gate for choosing the mitigation
-        # (compact, fork, header drop, …).
+    if final_status == 413:
+        # PR #19/#20: log Anthropic's 413 response body so the operator
+        # can read the actual error reason. claude-code's TUI paraphrases
+        # every 413 as "Request too large (max 32MB)" regardless of cause.
+        # PR #20 drops the `and attempt.captured` guard — observed
+        # empirically that some upstream paths return 413 with an empty
+        # body, which made the guard short-circuit and leave the event
+        # entirely undiagnosed. _log_413_reason now handles None / empty
+        # captured by logging `reason=empty_body`, so every 413 produces
+        # at least one diagnostic line.
         _log_413_reason(bid, model_label, attempt.captured)
     log(
         f"done   path=/{path} model={model_label} inflight={counters.s['inflight']} "
