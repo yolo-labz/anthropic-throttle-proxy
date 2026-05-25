@@ -50,6 +50,13 @@
         Advisor disabled. Set <code>ADVISOR_ENABLED=true</code> + <code>GROQ_API_KEY</code> to enable.
       </section>
     {% endif %}
+
+    <details class="config-section">
+      <summary>⚙ Configuration <span class="muted">(live overrides; persisted across restarts)</span></summary>
+      <section id="config" hx-get="/ui/config" hx-trigger="load" hx-target="#config" hx-swap="innerHTML">
+        <p class="muted">Loading…</p>
+      </section>
+    </details>
   </main>
 
   <footer>

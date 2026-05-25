@@ -3,6 +3,9 @@
 Routes:
     GET  /ui              — full page (Catppuccin Mocha, one HTMX script).
     GET  /ui/stats        — `<table>` partial; hx-trigger fires every 2 s.
+    GET  /ui/config       — config-editor form partial (one row per editable knob).
+    POST /ui/config       — set one knob's runtime override (validates + persists).
+    POST /ui/config/reset — drop one knob's runtime override, restore env default.
     GET  /ui/static/...   — CSS + favicon.
     POST /ui/advisor      — optional GROQ call (gated by ADVISOR_ENABLED).
 
@@ -18,6 +21,8 @@ from pathlib import Path
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
+
+from .. import config as _config
 
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
@@ -157,10 +162,72 @@ async def advisor(request: web.Request) -> web.Response:
     )
 
 
+async def config_form(request: web.Request) -> web.Response:
+    """GET /ui/config — render the editable-knobs form partial."""
+    return aiohttp_jinja2.render_template(
+        "partials/config.html",
+        request,
+        {"knobs": _config.knob_snapshot(), "message": None, "error": None},
+    )
+
+
+async def config_set(request: web.Request) -> web.Response:
+    """POST /ui/config — apply one knob's runtime override (form data: ``key``, ``value``).
+
+    Returns the re-rendered config partial with a status message. HTMX swaps
+    the section in place; no page reload.
+    """
+    form = await request.post()
+    key = str(form.get("key", "")).strip()
+    raw_value = form.get("value", "")
+    message: str | None = None
+    error: str | None = None
+    if not key:
+        error = "missing 'key' field"
+    else:
+        try:
+            value = _config.set_override(key, raw_value)
+            message = f"{key} → {value}"
+        except KeyError as exc:
+            error = f"unknown knob: {exc!s}"
+        except (ValueError, TypeError) as exc:
+            error = f"invalid value: {exc!s}"
+    return aiohttp_jinja2.render_template(
+        "partials/config.html",
+        request,
+        {"knobs": _config.knob_snapshot(), "message": message, "error": error},
+    )
+
+
+async def config_reset(request: web.Request) -> web.Response:
+    """POST /ui/config/reset — drop one knob's runtime override.
+
+    Restores the env-default value for the named knob and removes the entry
+    from the persisted overrides file. Returns the re-rendered partial.
+    """
+    form = await request.post()
+    key = str(form.get("key", "")).strip()
+    message: str | None = None
+    error: str | None = None
+    try:
+        restored = _config.reset_override(key)
+        message = f"{key} reset → {restored}"
+    except KeyError as exc:
+        error = f"unknown knob: {exc!s}"
+    return aiohttp_jinja2.render_template(
+        "partials/config.html",
+        request,
+        {"knobs": _config.knob_snapshot(), "message": message, "error": error},
+    )
+
+
 def attach_ui(app: web.Application) -> None:
     """Wire jinja2 + the /ui routes onto an existing aiohttp app."""
     aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(str(_TEMPLATES)))
     app.router.add_get("/ui", index)
     app.router.add_get("/ui/stats", stats_partial)
+    app.router.add_get("/ui/config", config_form)
+    app.router.add_post("/ui/config", config_set)
+    app.router.add_post("/ui/config/reset", config_reset)
     app.router.add_post("/ui/advisor", advisor)
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
