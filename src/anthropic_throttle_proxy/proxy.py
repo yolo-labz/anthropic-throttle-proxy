@@ -38,6 +38,7 @@ test-suite keep working unchanged.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from typing import TYPE_CHECKING
@@ -601,6 +602,29 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
         log(f"usage-parse-error path=/{path}: {ue!r}")
 
 
+def _log_413_reason(bid: str, model_label: str, captured: bytearray) -> None:
+    """Surface the actual Anthropic error reason on a 413 response.
+
+    claude-code's TUI hard-codes "Request too large (max 32MB)" for every
+    413 status, but Anthropic's 413 has a JSON body with the real cause:
+    ``prompt is too long`` (token-count cap), ``input messages exceed
+    maximum allowed`` (per-message), ``the beta header ...`` (combination
+    rejected), and so on. PR #17 already showed bodies under 1 MiB getting
+    413'd — so the 32 MiB byte cap is a red herring; this log pins the
+    real bottleneck. Caps response read at 64 KiB to keep the journal
+    line bounded for edge-case error envelopes.
+    """
+    raw = bytes(captured[:65536])
+    try:
+        err = json.loads(raw)
+        outer_err = err.get("error") if isinstance(err.get("error"), dict) else {}
+        msg = outer_err.get("message") or err.get("message") or "<no message>"
+        etype = outer_err.get("type") or err.get("type") or "<no type>"
+        log(f"upstream_413 bid={bid} model={model_label} type={etype!r} message={msg!r}")
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        log(f"upstream_413 bid={bid} model={model_label} parse_error={exc!r} preview={raw[:200]!r}")
+
+
 def _schedule_advisor(bid: str, final_status: int) -> None:
     """Fire the out-of-band GROQ advisor (debounced) on a throttle status."""
     if ADVISOR_ENABLED and final_status in THROTTLE_STATUSES:
@@ -648,6 +672,17 @@ async def _finalize(
 
     if attempt.captured and request.method == "POST" and "v1/messages" in path:
         _record_usage(model, model_label, attempt.captured, path)
+    if final_status == 413 and attempt.captured:
+        # PR #19: log Anthropic's 413 response body so the operator can read
+        # the actual error reason. claude-code's TUI paraphrases every 413
+        # as "Request too large (max 32MB)" regardless of cause; the body
+        # diagnostic from #17 already showed real bodies hit 413 well under
+        # cap (Pedro saw 907 KiB → 413 on 25/05). The Anthropic JSON carries
+        # the real reason: "prompt is too long" (token cap), "input
+        # messages exceed maximum" (per-message), beta-header conflicts,
+        # etc. Knowing the reason is the gate for choosing the mitigation
+        # (compact, fork, header drop, …).
+        _log_413_reason(bid, model_label, attempt.captured)
     log(
         f"done   path=/{path} model={model_label} inflight={counters.s['inflight']} "
         f"queued={counters.s['queued']} served={counters.s['served']} "
