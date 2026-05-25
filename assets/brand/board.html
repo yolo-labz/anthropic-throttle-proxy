@@ -13,7 +13,7 @@
                 + brand-spec.md rules rendered as visual artifact.
     Layout    : single-column editorial deck, 8 sections, narrative.
     Width     : 1080px content column on Catppuccin `base`.
-    Hierarchy : weight + size only (per accent rule). Mauve = single
+    Hierarchy : weight + size only (per accent rule). Teal = single
                 emphasis colour for the brand mark / wordmark.
     Type      : JetBrains Mono throughout. System mono fallback.
     Self-ctd  : only relative SVG refs. No CDN. No web fonts.
@@ -43,7 +43,7 @@
       --overlay1: #7f849c;
       --subtext0: #a6adc8;
       --text:     #cdd6f4;
-      --mauve:    #cba6f7;
+      --teal:    #94e2d5;
       --blue:     #89b4fa;
       --green:    #a6e3a1;
       --peach:    #fab387;
@@ -78,7 +78,7 @@
     p  { margin: 0 0 14px; max-width: 68ch; }
     .caption { font-size: 11px; color: var(--overlay0); letter-spacing: 0.04em; text-transform: uppercase; }
     .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
-    .mauve { color: var(--mauve); }
+    .teal { color: var(--teal); }
     .subtext { color: var(--subtext0); }
     .overlay { color: var(--overlay0); }
 
@@ -153,7 +153,7 @@
     .type-row .sample.s-h2      { font-size: 24px; font-weight: 500; }
     .type-row .sample.s-body    { font-size: 14px; font-weight: 400; line-height: 1.6; }
     .digits { font-variant-numeric: tabular-nums; color: var(--subtext0); }
-    .digits .accent { color: var(--mauve); }
+    .digits .accent { color: var(--teal); }
 
     /* --- Section 6: Voice ------------------------------------- */
     .voice-quote {
@@ -164,12 +164,12 @@
       max-width: 56ch;
       margin: 32px 0 16px;
     }
-    .voice-quote .accent { color: var(--mauve); }
+    .voice-quote .accent { color: var(--teal); }
     .voice-attrib { font-size: 11px; color: var(--overlay0); text-transform: uppercase; letter-spacing: 0.06em; }
     .voice-compare { margin-top: 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
     .voice-compare > div { padding: 20px 24px; border: 1px solid var(--surface0); }
     .voice-compare .lbl { font-size: 11px; color: var(--overlay0); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 10px; }
-    .voice-compare .yes .lbl { color: var(--mauve); }
+    .voice-compare .yes .lbl { color: var(--teal); }
     .voice-compare .no  .lbl { color: var(--red); }
     .voice-compare p { font-size: 14px; color: var(--text); margin: 0; }
     .voice-compare .no p { color: var(--subtext0); text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 1px; }
@@ -209,7 +209,7 @@
       <div class="caption">brand board · 2026-05-23 · v1</div>
       <img class="hero-lockup" src="lockup.svg" alt="anthropic-throttle-proxy">
       <p class="hero-tag">
-        Fleet-wide pacing in front of <span class="mauve">api.anthropic.com</span>.
+        Fleet-wide pacing in front of <span class="teal">api.anthropic.com</span>.
         The mark is the algorithm: an AIMD congestion-control sawtooth — additive
         increase, multiplicative decrease — drawn at the rate the proxy runs on
         every bearer.
@@ -264,7 +264,7 @@
             <line x1="16" y1="24" x2="84" y2="24" stroke="#45475a" stroke-width="1.2" stroke-dasharray="3 4"/>
             <line x1="16" y1="78" x2="84" y2="78" stroke="#313244" stroke-width="1.2"/>
             <path d="M16 78 L31 50 L31 64 L50 34 L50 50 L72 24 L84 30"
-                  fill="none" stroke="#cba6f7" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+                  fill="none" stroke="#94e2d5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
             <circle cx="31" cy="50" r="3.4" fill="#fab387"/>
             <circle cx="50" cy="34" r="3.4" fill="#fab387"/>
           </g>
@@ -273,7 +273,7 @@
           <g stroke="#45475a" stroke-width="1" fill="none">
             <!-- hard_max (dashed ceiling) → top-right -->
             <path d="M184 88 L260 88 L300 60"/>
-            <!-- AIMD live ceiling (mauve curve apex) → upper-right -->
+            <!-- AIMD live ceiling (teal curve apex) → upper-right -->
             <path d="M160 78 L260 130 L300 130"/>
             <!-- pushback peach dot at (50,34) scaled → (116, 108) → mid-right -->
             <path d="M120 108 L260 180 L300 180"/>
@@ -286,7 +286,7 @@
             <text x="308" y="64"  font-size="11" fill="#6c7086" letter-spacing="0.06em">CEILING</text>
             <text x="308" y="80"  fill="#a6adc8">hard_max — dashed</text>
             <text x="308" y="134" font-size="11" fill="#6c7086" letter-spacing="0.06em">SAWTOOTH</text>
-            <text x="308" y="150" fill="#cba6f7">AIMD live ceiling</text>
+            <text x="308" y="150" fill="#94e2d5">AIMD live ceiling</text>
             <text x="308" y="184" font-size="11" fill="#6c7086" letter-spacing="0.06em">EVENT</text>
             <text x="308" y="200" fill="#fab387">429 / 503 pushback</text>
             <text x="308" y="236" font-size="11" fill="#6c7086" letter-spacing="0.06em">FLOOR</text>
@@ -312,7 +312,7 @@
       <div class="concept-grid">
         <div class="concept-prose">
           <p>
-            <span class="mauve">AIMD</span> — additive-increase /
+            <span class="teal">AIMD</span> — additive-increase /
             multiplicative-decrease — is the congestion-control discipline TCP has
             run for forty years and what this proxy runs on every bearer. The
             live ceiling ramps additively while upstream stays healthy and drops
@@ -358,7 +358,7 @@
         <div class="num">03 / palette</div>
         <div>
           <h2>Catppuccin Mocha, in roles</h2>
-          <p class="subtext">No colour earns a place unless it carries meaning. Mauve = brand. Green / peach / red = health state. Everything else is surface or ink.</p>
+          <p class="subtext">No colour earns a place unless it carries meaning. Teal = brand. Green / peach / red = health state. Everything else is surface or ink.</p>
         </div>
       </div>
 
@@ -385,7 +385,7 @@
       <div class="palette-group">
         <h3>state</h3>
         <div class="swatches">
-          <div class="swatch"><span class="chip" style="background:#cba6f7"></span><div class="meta"><div class="role">brand · primary</div><div class="token">mauve</div><div class="hex">#cba6f7</div></div></div>
+          <div class="swatch"><span class="chip" style="background:#94e2d5"></span><div class="meta"><div class="role">brand · primary</div><div class="token">teal</div><div class="hex">#94e2d5</div></div></div>
           <div class="swatch"><span class="chip" style="background:#a6e3a1"></span><div class="meta"><div class="role">healthy</div><div class="token">green</div><div class="hex">#a6e3a1</div></div></div>
           <div class="swatch"><span class="chip" style="background:#fab387"></span><div class="meta"><div class="role">pushback · 429/503</div><div class="token">peach</div><div class="hex">#fab387</div></div></div>
           <div class="swatch"><span class="chip" style="background:#f38ba8"></span><div class="meta"><div class="role">floor · throttled</div><div class="token">red</div><div class="hex">#f38ba8</div></div></div>
@@ -493,7 +493,7 @@
 
         <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
           <h3>Decorative colour is forbidden</h3>
-          <p>Mauve = brand. Green / peach / red = health state. Blue = link. Anything else asks itself: what does this mean?</p>
+          <p>Teal = brand. Green / peach / red = health state. Blue = link. Anything else asks itself: what does this mean?</p>
         </div></div>
 
         <div class="slop-card"><div class="slop-mark" aria-hidden="true"></div><div>
