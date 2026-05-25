@@ -874,6 +874,11 @@ def main() -> None:
     """Boot the aiohttp app: bind locks, mount routes + UI, and serve forever."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    # PR #22: re-apply any persisted /ui/config overrides on top of the env
+    # defaults loaded at import time. Runs BEFORE limiter / pacing locks are
+    # bound so any overridden MAX_CONCURRENT / AIMD_MIN / MIN_DISPATCH_GAP_S
+    # is already in place when the first bearer-limiter is allocated.
+    config.load_overrides()
     # PR #562 + #573: per-bearer FairBearerLimiter registry replaces the
     # single global Semaphore. Limiters are allocated lazily in
     # _get_bearer_limiter; the lock prevents racing dict.setdefault.
