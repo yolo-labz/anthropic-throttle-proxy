@@ -646,7 +646,7 @@ async def _finalize(
 
     _schedule_advisor(bid, final_status)
 
-    if attempt.captured and request.method == "POST" and "/v1/messages" in path:
+    if attempt.captured and request.method == "POST" and "v1/messages" in path:
         _record_usage(model, model_label, attempt.captured, path)
     log(
         f"done   path=/{path} model={model_label} inflight={counters.s['inflight']} "

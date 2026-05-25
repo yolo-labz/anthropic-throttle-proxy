@@ -56,6 +56,30 @@ def test_bypass_non_messages_path(monkeypatch):
     assert meta["reason"] == "non-messages-path"
 
 
+def test_catchall_route_path_shape_still_triggers(monkeypatch):
+    # Regression: aiohttp's `/{path:.*}` catchall yields the captured path
+    # WITHOUT a leading slash ("v1/messages"), but PR #15's original guard
+    # checked for "/v1/messages" — making body_shrink silently dead code in
+    # production. This test pins the prod-shape path to ensure we never lose
+    # the fire path again.
+    monkeypatch.setattr(body_shrink, "CAP_BYTES", 8000)
+    monkeypatch.setattr(body_shrink, "KEEP_TURNS", 2)
+    monkeypatch.setattr(body_shrink, "MIN_BLOCK_BYTES", 100)
+    big = 4000
+    messages = [
+        _user_with([_tool_result("t1", big)]),
+        _assistant_with([{"type": "text", "text": "ok"}]),
+        _user_with([_tool_result("t2", big)]),
+        _assistant_with([{"type": "text", "text": "done"}]),
+    ]
+    body = _body(messages)
+    out, meta = body_shrink.shrink_body(body, "v1/messages")  # NO leading slash
+    assert meta["trimmed"] is True, meta
+    assert meta["blocks_trimmed"] >= 1
+    assert meta["bytes_saved"] > 0
+    assert len(out) < len(body)
+
+
 def test_bypass_disabled(monkeypatch):
     monkeypatch.setattr(body_shrink, "CAP_BYTES", 0)
     body = _body([_user_with([_tool_result("t1", 1000)])])

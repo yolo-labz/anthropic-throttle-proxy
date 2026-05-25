@@ -139,7 +139,12 @@ def shrink_body(body: bytes, path: str) -> tuple[bytes, dict[str, Any]]:
     original_bytes = len(body)
     if CAP_BYTES <= 0:
         return body, {"trimmed": False, "reason": "disabled", "original_bytes": original_bytes}
-    if "/v1/messages" not in path:
+    # The aiohttp catchall route `/{path:.*}` yields the capture WITHOUT a
+    # leading slash (path="v1/messages"); only direct unit-test callers pass
+    # the path WITH the leading slash. Match both forms so the guard fires in
+    # production rather than silently bailing — the original "/v1/messages"
+    # prefix check made body_shrink dead code from PR #15 through #16.
+    if "v1/messages" not in path:
         return body, {
             "trimmed": False,
             "reason": "non-messages-path",
