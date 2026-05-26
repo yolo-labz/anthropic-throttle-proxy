@@ -67,6 +67,17 @@ class FairBearerLimiter:
         self._successes_since_throttle = 0
         self._retry_after_until = 0.0
 
+    def set_queue_mode(self, queue_mode: str) -> None:
+        """Switch the limiter's admission mode for future acquires.
+
+        Used by the local tier when central fallback becomes direct-upstream:
+        a desktop configured as pass-through while central is healthy must
+        still enforce the local fair queue when central is down.
+        """
+        self.queue_mode = queue_mode
+        self.queue_enabled = queue_mode in {"fair", "reactive"}
+        self.observe_enabled = queue_mode != "off"
+
     def slot(self, client_id: str) -> _FairSlotContext:
         """Return an async context manager that holds one slot for ``client_id``."""
         return _FairSlotContext(self, client_id)
@@ -281,15 +292,24 @@ class _FairSlotContext:
         return False
 
 
-async def _get_bearer_limiter(bid: str) -> FairBearerLimiter:
+async def _get_bearer_limiter(bid: str, queue_mode: str | None = None) -> FairBearerLimiter:
     """Return the FairBearerLimiter for a bearer, allocating on first sight."""
+    mode = queue_mode or config.QUEUE_MODE
     lim = config.bearer_limiters.get(bid)
     if lim is not None:
+        if lim.queue_mode != mode:
+            # Runtime target selection can promote an "off" local limiter to
+            # "fair" when central is down. Do not downgrade an existing fair
+            # limiter back to off on central recovery; queued futures would no
+            # longer have a queue dispatcher to wake them.
+            if not (mode == "off" and lim.queue_enabled):
+                lim.set_queue_mode(mode)
+                log(f"bearer-mode bid={bid} queue_mode={mode}")
         return lim
     async with bearer_limiter_lock:
         lim = config.bearer_limiters.get(bid)
         if lim is None:
-            lim = FairBearerLimiter(config.MAX_CONCURRENT, config.QUEUE_MODE)
+            lim = FairBearerLimiter(config.MAX_CONCURRENT, mode)
             config.bearer_limiters[bid] = lim
             config.bearer_state[bid] = {
                 "inflight": 0,
@@ -304,6 +324,10 @@ async def _get_bearer_limiter(bid: str) -> FairBearerLimiter:
             M_AIMD_MAX.labels(bearer=bid).set(config.MAX_CONCURRENT)
             log(
                 f"bearer-new bid={bid} max_concurrent={config.MAX_CONCURRENT} "
-                f"hard_max={config.MAX_CONCURRENT} queue_mode={config.QUEUE_MODE}"
+                f"hard_max={config.MAX_CONCURRENT} queue_mode={mode}"
             )
+        elif lim.queue_mode != mode:
+            if not (mode == "off" and lim.queue_enabled):
+                lim.set_queue_mode(mode)
+                log(f"bearer-mode bid={bid} queue_mode={mode}")
         return lim
