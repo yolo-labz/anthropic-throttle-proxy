@@ -51,9 +51,7 @@ CENTRAL_URL = os.environ.get("THROTTLE_CENTRAL_URL", "").rstrip("/")
 # through unbounded: Claude Code can launch several large Opus requests before
 # central/AIMD feedback arrives. This cap is only used by that central-backed
 # local safety mode; explicit fair/reactive deployments keep MAX_CONCURRENT.
-CENTRAL_LOCAL_MAX_CONCURRENT = int(
-    os.environ.get("THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT", "2")
-)
+CENTRAL_LOCAL_MAX_CONCURRENT = int(os.environ.get("THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT", "2"))
 CENTRAL_HEALTH_PATH = "/__throttle/health"
 CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL", "30"))
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
@@ -144,6 +142,30 @@ from pathlib import Path as _Path  # noqa: E402
 from typing import Any as _Any  # noqa: E402
 
 
+def _effective_existing_limiter_hard_max() -> int:
+    """Current hard cap for existing limiters under the active topology."""
+    if QUEUE_MODE == "off" and CENTRAL_URL:
+        return max(1, min(CENTRAL_LOCAL_MAX_CONCURRENT, MAX_CONCURRENT))
+    return MAX_CONCURRENT
+
+
+def _schedule_existing_limiter_retune() -> None:
+    """Best-effort hot retune for already-allocated bearer limiters."""
+    try:
+        import asyncio
+        import importlib
+
+        loop = asyncio.get_running_loop()
+        limiter_mod = importlib.import_module("anthropic_throttle_proxy.limiter")
+        loop.create_task(
+            limiter_mod.retune_existing_limiters(_effective_existing_limiter_hard_max())
+        )
+    except RuntimeError:
+        # No running event loop during import/tests; the next request will retune
+        # through limiter._get_bearer_limiter.
+        return
+
+
 def _state_dir() -> _Path:
     """``$XDG_STATE_HOME/anthropic-throttle-proxy`` (or its fallback)."""
     base = os.environ.get("XDG_STATE_HOME") or str(_Path.home() / ".local" / "state")
@@ -172,10 +194,16 @@ def _set_module_attr(module_path: str, attr: str, value: _Any) -> None:
 
 def _set_max_concurrent(v: int) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "MAX_CONCURRENT", v)
+    _schedule_existing_limiter_retune()
 
 
 def _set_min_dispatch_gap_ms(v: int) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "MIN_DISPATCH_GAP_S", float(v) / 1000.0)
+
+
+def _set_central_local_max_concurrent(v: int) -> None:
+    _set_module_attr("anthropic_throttle_proxy.config", "CENTRAL_LOCAL_MAX_CONCURRENT", v)
+    _schedule_existing_limiter_retune()
 
 
 def _set_aimd_min(v: int) -> None:
@@ -246,6 +274,19 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "setter": _set_min_dispatch_gap_ms,
         "units": "ms",
         "help": "Minimum gap between two consecutive upstream POSTs (burst pacing). 0 = disabled.",
+    },
+    "central_local_max_concurrent": {
+        "label": "Central fallback local cap",
+        "type": "int",
+        "min": 1,
+        "max": 512,
+        "getter": lambda: CENTRAL_LOCAL_MAX_CONCURRENT,
+        "setter": _set_central_local_max_concurrent,
+        "units": "slots",
+        "help": (
+            "Local fair-queue cap while forwarding through a central proxy, "
+            "and when falling back direct if central is down."
+        ),
     },
     "utilization_target": {
         "label": "Utilization target",

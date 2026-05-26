@@ -155,6 +155,63 @@ async def test_central_up_off_mode_still_uses_local_safety_queue(env, monkeypatc
     assert lim.max_concurrent == 2
 
 
+async def test_existing_limiter_raises_when_central_local_cap_increases(env, monkeypatch) -> None:
+    tc, upstream_url = env
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 32)
+    monkeypatch.setattr(config, "CENTRAL_LOCAL_MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "CENTRAL_URL", upstream_url)
+    config.state["central_status"] = "up"
+
+    for _ in range(2):
+        resp = await tc.post(
+            "/v1/messages",
+            data=b'{"model":"claude-haiku-4-5"}',
+            headers={"Authorization": "Bearer retune-central-local"},
+        )
+        await resp.read()
+        await _settle()
+        assert resp.status == 200
+        monkeypatch.setattr(config, "CENTRAL_LOCAL_MAX_CONCURRENT", 4)
+
+    bid = next(iter(config.bearer_limiters))
+    lim = config.bearer_limiters[bid]
+    assert lim.hard_max == 4
+    assert lim.max_concurrent == 4
+
+
+async def test_runtime_override_retunes_existing_central_local_limiter(
+    env, monkeypatch, tmp_path
+) -> None:
+    tc, upstream_url = env
+    monkeypatch.setattr(config, "OVERRIDES_FILE", tmp_path / "overrides.json")
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 32)
+    monkeypatch.setattr(config, "CENTRAL_LOCAL_MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "CENTRAL_URL", upstream_url)
+    config.state["central_status"] = "up"
+
+    resp = await tc.post(
+        "/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
+        headers={"Authorization": "Bearer hot-retune-central-local"},
+    )
+    await resp.read()
+    await _settle()
+    assert resp.status == 200
+
+    bid = next(iter(config.bearer_limiters))
+    lim = config.bearer_limiters[bid]
+    assert lim.hard_max == 1
+
+    config.set_override("central_local_max_concurrent", "5")
+    await _settle()
+
+    assert lim.hard_max == 5
+    assert lim.max_concurrent == 5
+    config.RUNTIME_OVERRIDES.pop("central_local_max_concurrent", None)
+
+
 async def test_fallback_promotion_does_not_downgrade_on_central_recovery(env, monkeypatch) -> None:
     tc, _ = env
     monkeypatch.setattr(config, "QUEUE_MODE", "off")

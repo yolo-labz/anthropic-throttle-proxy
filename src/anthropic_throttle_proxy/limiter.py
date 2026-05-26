@@ -26,6 +26,31 @@ def set_lock(lock: asyncio.Lock) -> None:
     bearer_limiter_lock = lock
 
 
+async def _retune_limiter_hard_max(bid: str, lim: FairBearerLimiter, hard_max: int) -> None:
+    """Apply an operator hard-ceiling change to an existing limiter."""
+    if hard_max == lim.hard_max:
+        return
+    async with lim._lock:
+        old_hard_max = lim.hard_max
+        lim.hard_max = hard_max
+        if hard_max < old_hard_max:
+            lim.max_concurrent = min(lim.max_concurrent, hard_max)
+        elif lim.max_concurrent >= old_hard_max:
+            lim.max_concurrent = hard_max
+        if lim.queue_enabled:
+            lim._try_dispatch()
+        M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
+        log(f"bearer-retune bid={bid} hard_max={hard_max} max_concurrent={lim.max_concurrent}")
+
+
+async def retune_existing_limiters(hard_max: int) -> None:
+    """Retune every already-allocated bearer limiter to a new hard ceiling."""
+    async with bearer_limiter_lock:
+        limiters = list(config.bearer_limiters.items())
+    for bid, lim in limiters:
+        await _retune_limiter_hard_max(bid, lim, hard_max)
+
+
 class FairBearerLimiter:
     """Per-bearer concurrency limiter with weighted-fair-queueing across clients.
 
@@ -302,11 +327,7 @@ async def _get_bearer_limiter(
     hard_max = max_concurrent or config.MAX_CONCURRENT
     lim = config.bearer_limiters.get(bid)
     if lim is not None:
-        if hard_max < lim.hard_max:
-            async with lim._lock:
-                lim.hard_max = hard_max
-                lim.max_concurrent = min(lim.max_concurrent, hard_max)
-                M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
+        await _retune_limiter_hard_max(bid, lim, hard_max)
         if lim.queue_mode != mode:
             # Runtime target selection can promote an "off" local limiter to
             # "fair" when central is down. Do not downgrade an existing fair
@@ -337,11 +358,7 @@ async def _get_bearer_limiter(
                 f"hard_max={hard_max} queue_mode={mode}"
             )
         else:
-            if hard_max < lim.hard_max:
-                async with lim._lock:
-                    lim.hard_max = hard_max
-                    lim.max_concurrent = min(lim.max_concurrent, hard_max)
-                    M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
+            await _retune_limiter_hard_max(bid, lim, hard_max)
         if lim.queue_mode != mode:
             if not (mode == "off" and lim.queue_enabled):
                 lim.set_queue_mode(mode)
