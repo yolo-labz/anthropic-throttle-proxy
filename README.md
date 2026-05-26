@@ -71,6 +71,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_PORT` | `8765` | TCP port. |
 | `THROTTLE_UPSTREAM` | `https://api.anthropic.com` | Upstream target. |
 | `THROTTLE_CENTRAL_URL` | *(unset)* | If set, the local proxy forwards each request to this URL first; on health-check failure it falls back direct-to-upstream. |
+| `THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT` | `2` | Local safety cap used only when `THROTTLE_CENTRAL_URL` is set and `THROTTLE_QUEUE_MODE=off`; prevents same-host Claude Code bursts from bypassing local admission before central/AIMD feedback arrives. |
 | `THROTTLE_AIMD_MIN` | `1` | Floor of the AIMD live ceiling. Must stay ≥ 1 so traffic never fully blocks. |
 | `THROTTLE_AIMD_BACKOFF_S` | `30` | Cooldown after a shrink before ramping back up. |
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 2xx responses required to bump the live ceiling by one. |

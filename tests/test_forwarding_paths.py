@@ -127,6 +127,32 @@ async def test_central_down_off_mode_uses_local_fair_queue(env, monkeypatch) -> 
     assert lim.queue_mode == "fair"
     assert lim.queue_enabled is True
     assert lim.observe_enabled is True
+    assert lim.hard_max == config.CENTRAL_LOCAL_MAX_CONCURRENT
+
+
+async def test_central_up_off_mode_still_uses_local_safety_queue(env, monkeypatch) -> None:
+    tc, upstream_url = env
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 32)
+    monkeypatch.setattr(config, "CENTRAL_LOCAL_MAX_CONCURRENT", 2)
+    monkeypatch.setattr(config, "CENTRAL_URL", upstream_url)
+    config.state["central_status"] = "up"
+
+    resp = await tc.post(
+        "/v1/messages",
+        data=b'{"model":"claude-opus-4-7[1m]"}',
+        headers={"Authorization": "Bearer central-up"},
+    )
+    await resp.read()
+    await _settle()
+
+    assert resp.status == 200
+    bid = next(iter(config.bearer_limiters))
+    lim = config.bearer_limiters[bid]
+    assert lim.queue_mode == "fair"
+    assert lim.queue_enabled is True
+    assert lim.hard_max == 2
+    assert lim.max_concurrent == 2
 
 
 async def test_fallback_promotion_does_not_downgrade_on_central_recovery(env, monkeypatch) -> None:
