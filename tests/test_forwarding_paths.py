@@ -107,6 +107,103 @@ async def test_central_failover_marks_down_and_retries_direct(env, monkeypatch) 
     assert config.state["upstream_retries"] >= 1
 
 
+async def test_central_down_off_mode_uses_local_fair_queue(env, monkeypatch) -> None:
+    tc, _ = env
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")
+    config.state["central_status"] = "down"
+
+    resp = await tc.post(
+        "/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
+        headers={"Authorization": "Bearer central-down"},
+    )
+    await resp.read()
+    await _settle()
+
+    assert resp.status == 200
+    bid = next(iter(config.bearer_limiters))
+    lim = config.bearer_limiters[bid]
+    assert lim.queue_mode == "fair"
+    assert lim.queue_enabled is True
+    assert lim.observe_enabled is True
+
+
+async def test_fallback_promotion_does_not_downgrade_on_central_recovery(env, monkeypatch) -> None:
+    tc, _ = env
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")
+    config.state["central_status"] = "down"
+
+    resp = await tc.post(
+        "/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
+        headers={"Authorization": "Bearer sticky-fair"},
+    )
+    await resp.read()
+    await _settle()
+
+    config.state["central_status"] = "up"
+    resp = await tc.post(
+        "/v1/messages",
+        data=b'{"model":"claude-haiku-4-5"}',
+        headers={"Authorization": "Bearer sticky-fair"},
+    )
+    await resp.read()
+    await _settle()
+
+    bid = next(iter(config.bearer_limiters))
+    assert config.bearer_limiters[bid].queue_mode == "fair"
+
+
+async def test_central_failure_direct_retry_is_serialized(monkeypatch) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(config, "UPSTREAM", "http://direct.example")
+    monkeypatch.setattr(proxy, "_direct_fallback_lock", None)
+    config.state["central_status"] = "up"
+    config.state["upstream_retries"] = 0
+
+    active = 0
+    max_active = 0
+
+    async def fake_try_forward(_request, _headers, _body, _url, _timeout, attempt):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        attempt.final_status = 200
+        response = web.Response(status=200, text="ok")
+        attempt.response = response
+        return response, None
+
+    monkeypatch.setattr(proxy, "_try_forward", fake_try_forward)
+    timeout = aiohttp.ClientTimeout(total=1)
+
+    class FakeRequest:
+        query_string = ""
+
+    async def one_retry() -> web.StreamResponse | web.Response:
+        return await proxy._retry_direct_once(
+            FakeRequest(),
+            {},
+            None,
+            "v1/messages",
+            "central",
+            "http://127.0.0.1:1/v1/messages",
+            timeout,
+            RuntimeError("central down"),
+            proxy._Attempt(),
+        )
+
+    responses = await asyncio.gather(*(one_retry() for _ in range(4)))
+
+    assert [r.status for r in responses] == [200, 200, 200, 200]
+    assert max_active == 1
+    assert config.state["upstream_retries"] == 4
+
+
 async def test_exhausted_retry_returns_502(env, monkeypatch) -> None:
     tc, _ = env
     # No central; point the direct upstream at a dead port so BOTH the initial
