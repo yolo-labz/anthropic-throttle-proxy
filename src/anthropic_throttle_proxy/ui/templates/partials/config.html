@@ -1,7 +1,9 @@
 {# Config editor partial — one form per editable knob.
    Rendered by GET /ui/config (load + after every save/reset).
-   Each knob row carries its own submit/reset buttons so writes are
-   per-knob, never bulk-apply.
+   Forms auto-save on input change (HTMX `hx-trigger="change delay"`);
+   no per-row save button — drops the repeating-button noise that the
+   manual flags as AI slop. Default values move to the input's
+   `title=` tooltip; the Default column is gone.
 #}
 {% if message %}
   <div class="config-toast ok" role="status">✓ {{ message }}</div>
@@ -13,11 +15,10 @@
 <table class="config-table">
   <thead>
     <tr>
-      <th>Knob</th>
-      <th>Current</th>
-      <th>Default</th>
-      <th>Change</th>
-      <th></th>
+      <th scope="col">Knob</th>
+      <th scope="col">Current</th>
+      <th scope="col">Change</th>
+      <th scope="col" aria-label="reset"></th>
     </tr>
   </thead>
   <tbody>
@@ -28,42 +29,36 @@
           {% if k.help %}<div class="help">{{ k.help }}</div>{% endif %}
         </td>
         <td class="config-current">
-          {% if k.type == "bool" %}
-            {{ "on" if k.value else "off" }}
-          {% else %}
-            {{ k.value }}{% if k.units %} <span class="units">{{ k.units }}</span>{% endif %}
-          {% endif %}
+          <span class="value">{% if k.type == "bool" %}{{ "on" if k.value else "off" }}{% else %}{{ k.value }}{% endif %}</span>
+          {% if k.units %}<span class="units">{{ k.units }}</span>{% endif %}
           {% if k.override %}<span class="badge-override" title="runtime override; reset to revert to env default">override</span>{% endif %}
         </td>
-        <td class="config-default">
-          {% if k.type == "bool" %}
-            {{ "on" if k.default else "off" }}
-          {% else %}
-            {{ k.default }}
-          {% endif %}
-        </td>
         <td class="config-input">
-          <form hx-post="/ui/config" hx-target="#config" hx-swap="innerHTML" class="config-form">
+          <form hx-post="/ui/config" hx-target="#config" hx-swap="innerHTML"
+                hx-trigger="change delay:250ms"
+                class="config-form">
             <input type="hidden" name="key" value="{{ k.key }}">
             {% if k.type == "bool" %}
-              <select name="value">
+              <select name="value" title="default: {{ 'on' if k.default else 'off' }}">
                 <option value="true"{% if k.value %} selected{% endif %}>on</option>
                 <option value="false"{% if not k.value %} selected{% endif %}>off</option>
               </select>
             {% elif k.type == "int" %}
               <input type="number" name="value" value="{{ k.value }}"
+                     title="default: {{ k.default }}"
                      {% if k.min is not none %}min="{{ k.min }}"{% endif %}
                      {% if k.max is not none %}max="{{ k.max }}"{% endif %}
                      step="1" required>
             {% elif k.type == "float" %}
               <input type="number" name="value" value="{{ k.value }}"
+                     title="default: {{ k.default }}"
                      {% if k.min is not none %}min="{{ k.min }}"{% endif %}
                      {% if k.max is not none %}max="{{ k.max }}"{% endif %}
                      step="0.01" required>
             {% else %}
-              <input type="text" name="value" value="{{ k.value }}" required>
+              <input type="text" name="value" value="{{ k.value }}"
+                     title="default: {{ k.default }}" required>
             {% endif %}
-            <button type="submit" class="save">save</button>
           </form>
         </td>
         <td class="config-reset">
@@ -71,7 +66,7 @@
             <form hx-post="/ui/config/reset" hx-target="#config" hx-swap="innerHTML"
                   hx-confirm="Reset {{ k.label }} to env default ({{ k.default }})?">
               <input type="hidden" name="key" value="{{ k.key }}">
-              <button type="submit" class="reset">reset</button>
+              <button type="submit" class="reset" title="reset to env default">↻</button>
             </form>
           {% endif %}
         </td>
@@ -81,7 +76,7 @@
 </table>
 
 <p class="config-foot">
-  Live mutations; persisted to <code>{{ "$XDG_STATE_HOME/anthropic-throttle-proxy/overrides.json" }}</code>.
+  Changes auto-save on blur, persisted to <code>{{ "$XDG_STATE_HOME/anthropic-throttle-proxy/overrides.json" }}</code>.
   Re-read on process start, applied on top of env defaults. Knobs not listed
   here (<code>THROTTLE_QUEUE_MODE</code>, <code>THROTTLE_UPSTREAM</code>,
   <code>THROTTLE_CENTRAL_URL</code>, listen host/port) change wire topology
