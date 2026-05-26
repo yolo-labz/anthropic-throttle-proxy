@@ -52,7 +52,10 @@
     {% endif %}
 
     <details class="config-section">
-      <summary>⚙ Configuration <span class="muted">(live overrides; persisted across restarts)</span></summary>
+      <summary>
+        <span>settings</span>
+        <span class="muted">live overrides · persisted across restarts</span>
+      </summary>
       <section id="config" hx-get="/ui/config" hx-trigger="load" hx-target="#config" hx-swap="innerHTML">
         <p class="muted">Loading…</p>
       </section>

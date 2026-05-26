@@ -1,83 +1,99 @@
 {# Config editor partial — one form per editable knob.
    Rendered by GET /ui/config (load + after every save/reset).
-   Forms auto-save on input change (HTMX `hx-trigger="change delay"`);
-   no per-row save button — drops the repeating-button noise that the
-   manual flags as AI slop. Default values move to the input's
-   `title=` tooltip; the Default column is gone.
+   Forms auto-save on input change (HTMX `hx-trigger="change delay"`).
+   The layout follows the brand board: lowercase labels, factual state,
+   quiet controls, no decorative color, and no repeated save buttons.
 #}
 {% if message %}
-  <div class="config-toast ok" role="status">✓ {{ message }}</div>
+  <div class="config-toast ok" role="status">saved · {{ message }}</div>
 {% endif %}
 {% if error %}
-  <div class="config-toast err" role="alert">⚠ {{ error }}</div>
+  <div class="config-toast err" role="alert">error · {{ error }}</div>
 {% endif %}
 
-<table class="config-table">
-  <thead>
-    <tr>
-      <th scope="col">Knob</th>
-      <th scope="col">Current</th>
-      <th scope="col">Change</th>
-      <th scope="col" aria-label="reset"></th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for k in knobs %}
-      <tr class="config-row{% if k.override %} overridden{% endif %}">
-        <td class="config-label">
-          <div class="name">{{ k.label }}</div>
-          {% if k.help %}<div class="help">{{ k.help }}</div>{% endif %}
-        </td>
-        <td class="config-current">
-          <span class="value">{% if k.type == "bool" %}{{ "on" if k.value else "off" }}{% else %}{{ k.value }}{% endif %}</span>
-          {% if k.units %}<span class="units">{{ k.units }}</span>{% endif %}
-          {% if k.override %}<span class="badge-override" title="runtime override; reset to revert to env default">override</span>{% endif %}
-        </td>
-        <td class="config-input">
-          <form hx-post="/ui/config" hx-target="#config" hx-swap="innerHTML"
-                hx-trigger="change delay:250ms"
-                class="config-form">
-            <input type="hidden" name="key" value="{{ k.key }}">
-            {% if k.type == "bool" %}
-              <select name="value" title="default: {{ 'on' if k.default else 'off' }}">
-                <option value="true"{% if k.value %} selected{% endif %}>on</option>
-                <option value="false"{% if not k.value %} selected{% endif %}>off</option>
-              </select>
-            {% elif k.type == "int" %}
+{% set override_count = knobs | selectattr("override") | list | length %}
+<div class="config-head">
+  <span>{{ knobs | length }} knobs</span>
+  <span>{{ override_count }} override{{ "s" if override_count != 1 else "" }}</span>
+  <span>autosave on change</span>
+</div>
+
+<div class="config-list">
+  {% for k in knobs %}
+    {% set current = "on" if k.type == "bool" and k.value else "off" if k.type == "bool" else k.value %}
+    {% set default = "on" if k.type == "bool" and k.default else "off" if k.type == "bool" else k.default %}
+    <section class="config-row{% if k.override %} overridden{% endif %}">
+      <div class="config-copy">
+        <div class="config-title">
+          <span class="name">{{ k.label }}</span>
+          <code>{{ k.key }}</code>
+        </div>
+        {% if k.help %}<p class="help">{{ k.help }}</p>{% endif %}
+        <div class="config-facts" aria-label="{{ k.label }} facts">
+          <span>current <b>{{ current }}</b>{% if k.units %} {{ k.units }}{% endif %}</span>
+          <span>default <b>{{ default }}</b>{% if k.units %} {{ k.units }}{% endif %}</span>
+          {% if k.min is not none or k.max is not none %}
+            <span>range <b>{{ k.min if k.min is not none else "−∞" }}..{{ k.max if k.max is not none else "∞" }}</b></span>
+          {% endif %}
+          <span class="state">{{ "override" if k.override else "env" }}</span>
+        </div>
+      </div>
+
+      <div class="config-control">
+        <form hx-post="/ui/config" hx-target="#config" hx-swap="innerHTML"
+              hx-trigger="change delay:250ms"
+              class="config-form">
+          <input type="hidden" name="key" value="{{ k.key }}">
+          {% if k.type == "bool" %}
+            <label class="switch" title="default: {{ default }}">
+              <input type="checkbox" name="value" value="true"{% if k.value %} checked{% endif %}>
+              <input type="hidden" name="value" value="false">
+              <span aria-hidden="true"></span>
+              <em>{{ "on" if k.value else "off" }}</em>
+            </label>
+          {% elif k.type == "int" %}
+            <label class="input-wrap">
+              <span class="sr-only">{{ k.label }}</span>
               <input type="number" name="value" value="{{ k.value }}"
                      title="default: {{ k.default }}"
                      {% if k.min is not none %}min="{{ k.min }}"{% endif %}
                      {% if k.max is not none %}max="{{ k.max }}"{% endif %}
                      step="1" required>
-            {% elif k.type == "float" %}
+            </label>
+          {% elif k.type == "float" %}
+            <label class="input-wrap">
+              <span class="sr-only">{{ k.label }}</span>
               <input type="number" name="value" value="{{ k.value }}"
                      title="default: {{ k.default }}"
                      {% if k.min is not none %}min="{{ k.min }}"{% endif %}
                      {% if k.max is not none %}max="{{ k.max }}"{% endif %}
                      step="0.01" required>
-            {% else %}
+            </label>
+          {% else %}
+            <label class="input-wrap">
+              <span class="sr-only">{{ k.label }}</span>
               <input type="text" name="value" value="{{ k.value }}"
                      title="default: {{ k.default }}" required>
-            {% endif %}
-          </form>
-        </td>
-        <td class="config-reset">
-          {% if k.override %}
-            <form hx-post="/ui/config/reset" hx-target="#config" hx-swap="innerHTML"
-                  hx-confirm="Reset {{ k.label }} to env default ({{ k.default }})?">
-              <input type="hidden" name="key" value="{{ k.key }}">
-              <button type="submit" class="reset" title="reset to env default">↻</button>
-            </form>
+            </label>
           {% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-  </tbody>
-</table>
+        </form>
+
+        {% if k.override %}
+          <form hx-post="/ui/config/reset" hx-target="#config" hx-swap="innerHTML"
+                hx-confirm="reset {{ k.label }} to env default ({{ default }})?"
+                class="config-reset">
+            <input type="hidden" name="key" value="{{ k.key }}">
+            <button type="submit" class="reset" title="reset to env default">↻</button>
+          </form>
+        {% endif %}
+      </div>
+    </section>
+  {% endfor %}
+</div>
 
 <p class="config-foot">
-  Changes auto-save on blur, persisted to <code>{{ "$XDG_STATE_HOME/anthropic-throttle-proxy/overrides.json" }}</code>.
-  Re-read on process start, applied on top of env defaults. Knobs not listed
+  changes persist to <code>{{ "$XDG_STATE_HOME/anthropic-throttle-proxy/overrides.json" }}</code>.
+  re-read on process start, applied on top of env defaults. knobs not listed
   here (<code>THROTTLE_QUEUE_MODE</code>, <code>THROTTLE_UPSTREAM</code>,
   <code>THROTTLE_CENTRAL_URL</code>, listen host/port) change wire topology
   and require a restart.
