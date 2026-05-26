@@ -227,6 +227,27 @@ ADVISOR_DEBOUNCE_S = float(os.environ.get("ADVISOR_DEBOUNCE_S", "120"))
 _background_tasks: set[asyncio.Task] = set()
 
 _last_advice_ts: float = 0.0
+_direct_fallback_lock: asyncio.Lock | None = None
+
+
+def _effective_queue_mode(via: str) -> str:
+    """Admission mode for this request.
+
+    Local deployments normally run ``THROTTLE_QUEUE_MODE=off`` because the
+    central tier owns the fleet-wide fair queue. If central is configured but
+    currently down, direct fallback must not become a pass-through firehose.
+    """
+    if config.QUEUE_MODE == "off" and config.CENTRAL_URL and via == "direct":
+        return "fair"
+    return config.QUEUE_MODE
+
+
+def _get_direct_fallback_lock() -> asyncio.Lock:
+    """Process-wide gate for direct retries after a central forward failure."""
+    global _direct_fallback_lock
+    if _direct_fallback_lock is None:
+        _direct_fallback_lock = asyncio.Lock()
+    return _direct_fallback_lock
 
 
 async def _apply_unified(
@@ -517,10 +538,23 @@ async def _retry_direct_once(
     state["upstream_retries"] += 1
     M_UPSTREAM_RETRIES.inc()
 
+    lock: asyncio.Lock | None = None
+    if via == "central" and config.QUEUE_MODE == "off" and config.CENTRAL_URL:
+        # Central failed after this request had already bypassed the local
+        # queue. Serialize the emergency direct retry so a central flap cannot
+        # turn into N simultaneous direct Anthropic requests.
+        lock = _get_direct_fallback_lock()
+
     try:
-        response, exc2 = await _try_forward(
-            request, headers, body, retry_url, retry_timeout, attempt
-        )
+        if lock is None:
+            response, exc2 = await _try_forward(
+                request, headers, body, retry_url, retry_timeout, attempt
+            )
+        else:
+            async with lock:
+                response, exc2 = await _try_forward(
+                    request, headers, body, retry_url, retry_timeout, attempt
+                )
     except _CLIENT_DISCONNECT_EXC as cexc:
         return _record_disconnect(path, retry_where, cexc, attempt)
     if exc2 is None:
@@ -760,12 +794,14 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 f"reason={reason}"
             )
 
+    bid = _bearer_id(request.headers)
+    cid = _client_id(request)
+    url, client_timeout, via = pick_target(path, request.query_string)
+    queue_mode = _effective_queue_mode(via)
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
     # dispatched round-robin per client connection.
-    bid = _bearer_id(request.headers)
-    cid = _client_id(request)
-    limiter = await _get_bearer_limiter(bid)
+    limiter = await _get_bearer_limiter(bid, queue_mode)
     bstate = bearer_state[bid]
     cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
     counters = _Counters(bid, cid, bstate, cstate)
@@ -782,7 +818,6 @@ async def handler(request: web.Request) -> web.StreamResponse:
         async with limiter.slot(cid):
             counters.dequeue()
             counters.enter_inflight()
-            url, client_timeout, via = pick_target(path, request.query_string)
             log(
                 f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
                 f"via={via} model={model_label} inflight={state['inflight']} "
