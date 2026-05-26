@@ -61,6 +61,12 @@ def test_set_override_min_dispatch_gap_ms_converts_to_seconds():
     assert config.MIN_DISPATCH_GAP_S == pytest.approx(0.25)
 
 
+def test_set_override_central_local_max_concurrent_propagates():
+    config.set_override("central_local_max_concurrent", "6")
+    assert config.RUNTIME_OVERRIDES["central_local_max_concurrent"] == 6
+    assert config.CENTRAL_LOCAL_MAX_CONCURRENT == 6
+
+
 def test_set_override_bounds_check_rejects_too_low():
     with pytest.raises(ValueError, match="below min"):
         config.set_override("max_concurrent", "0")
