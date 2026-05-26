@@ -350,12 +350,12 @@ footer a:hover { color: var(--ctp-teal); text-decoration: underline; }
   border-bottom: 1px solid var(--ctp-crust);
   vertical-align: middle;
 }
-.config-table tr.overridden td.config-current { color: var(--ctp-teal); }
+.config-table tr.overridden td.config-current .value { color: var(--ctp-teal); }
 .config-label .name { color: var(--ctp-text); font-weight: 500; }
-.config-label .help { color: var(--ctp-overlay1); font-size: 0.72rem; margin-top: 0.15rem; }
-.config-current { color: var(--ctp-subtext0); }
-.config-current .units { color: var(--ctp-overlay0); font-size: 0.72rem; }
-.config-default { color: var(--ctp-overlay0); font-size: 0.78rem; }
+.config-label .help { color: var(--ctp-overlay1); font-size: 0.74rem; margin-top: 0.3rem; line-height: 1.5; max-width: 52ch; }
+.config-current { color: var(--ctp-subtext0); white-space: nowrap; }
+.config-current .value { color: var(--ctp-subtext1); }
+.config-current .units { color: var(--ctp-overlay0); font-size: 0.72rem; margin-left: 0.25rem; }
 .badge-override {
   display: inline-block;
   margin-left: 0.5rem;
@@ -368,36 +368,50 @@ footer a:hover { color: var(--ctp-teal); text-decoration: underline; }
   text-transform: uppercase;
 }
 
-.config-form, .config-reset form { display: flex; gap: 0.4rem; align-items: center; }
+.config-form { display: flex; gap: 0.4rem; align-items: center; margin: 0; }
+.config-reset form { display: flex; gap: 0.4rem; align-items: center; margin: 0; }
 .config-form input[type="number"],
 .config-form input[type="text"],
 .config-form select {
   background: var(--ctp-base);
   border: 1px solid var(--ctp-surface0);
   color: var(--ctp-text);
-  padding: 0.3rem 0.5rem;
+  padding: 0.32rem 0.55rem;
   border-radius: 3px;
   font-family: var(--mono);
   font-size: 0.82rem;
-  width: 9rem;
+  width: 7rem;
+  transition: border-color 120ms ease-out;
 }
+/* Kill native number-spinner chrome — generic browser default reads as AI slop. */
+.config-form input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.config-form input[type="number"]::-webkit-outer-spin-button,
+.config-form input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.config-form input:hover, .config-form select:hover { border-color: var(--ctp-surface1); }
 .config-form input:focus, .config-form select:focus {
   outline: none;
   border-color: var(--ctp-teal);
 }
-.config-table button.save,
 .config-table button.reset {
-  background: var(--ctp-surface0);
-  border: 1px solid var(--ctp-surface1);
-  color: var(--ctp-subtext0);
-  padding: 0.25rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--ctp-surface0);
+  color: var(--ctp-overlay0);
+  padding: 0.2rem 0.55rem;
   font-family: var(--mono);
-  font-size: 0.78rem;
+  font-size: 0.9rem;
+  line-height: 1;
   border-radius: 3px;
   cursor: pointer;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
 }
-.config-table button.save:hover { background: var(--ctp-surface1); border-color: var(--ctp-teal); color: var(--ctp-teal); }
-.config-table button.reset:hover { background: var(--ctp-surface1); border-color: var(--ctp-peach); color: var(--ctp-peach); }
+.config-table button.reset:hover { border-color: var(--ctp-peach); color: var(--ctp-peach); }
+.config-reset { width: 2.4rem; }
 
 .config-foot {
   margin-top: 0.8rem;
