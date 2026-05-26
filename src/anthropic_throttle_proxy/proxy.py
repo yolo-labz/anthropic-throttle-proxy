@@ -199,6 +199,7 @@ __all__ = [
     "handler",
     "health",
     "metrics",
+    "root_probe",
     "main",
 ]
 
@@ -911,6 +912,13 @@ async def metrics(_request: web.Request) -> web.Response:
     )
 
 
+async def root_probe(request: web.Request) -> web.Response:
+    """GET/HEAD / — local connectivity probe, never forwarded upstream."""
+    if request.method == "HEAD":
+        return web.Response(status=200)
+    return web.Response(text="anthropic-throttle-proxy\n")
+
+
 def main() -> None:
     """Boot the aiohttp app: bind locks, mount routes + UI, and serve forever."""
     loop = asyncio.new_event_loop()
@@ -929,6 +937,7 @@ def main() -> None:
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
+    app.router.add_get("/", root_probe)
     app.router.add_get("/__throttle/health", health)
     app.router.add_get("/metrics", metrics)
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
