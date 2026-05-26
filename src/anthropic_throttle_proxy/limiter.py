@@ -292,11 +292,21 @@ class _FairSlotContext:
         return False
 
 
-async def _get_bearer_limiter(bid: str, queue_mode: str | None = None) -> FairBearerLimiter:
+async def _get_bearer_limiter(
+    bid: str,
+    queue_mode: str | None = None,
+    max_concurrent: int | None = None,
+) -> FairBearerLimiter:
     """Return the FairBearerLimiter for a bearer, allocating on first sight."""
     mode = queue_mode or config.QUEUE_MODE
+    hard_max = max_concurrent or config.MAX_CONCURRENT
     lim = config.bearer_limiters.get(bid)
     if lim is not None:
+        if hard_max < lim.hard_max:
+            async with lim._lock:
+                lim.hard_max = hard_max
+                lim.max_concurrent = min(lim.max_concurrent, hard_max)
+                M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
         if lim.queue_mode != mode:
             # Runtime target selection can promote an "off" local limiter to
             # "fair" when central is down. Do not downgrade an existing fair
@@ -309,7 +319,7 @@ async def _get_bearer_limiter(bid: str, queue_mode: str | None = None) -> FairBe
     async with bearer_limiter_lock:
         lim = config.bearer_limiters.get(bid)
         if lim is None:
-            lim = FairBearerLimiter(config.MAX_CONCURRENT, mode)
+            lim = FairBearerLimiter(hard_max, mode)
             config.bearer_limiters[bid] = lim
             config.bearer_state[bid] = {
                 "inflight": 0,
@@ -321,12 +331,18 @@ async def _get_bearer_limiter(bid: str, queue_mode: str | None = None) -> FairBe
                 "unified": None,
                 "clients": {},
             }
-            M_AIMD_MAX.labels(bearer=bid).set(config.MAX_CONCURRENT)
+            M_AIMD_MAX.labels(bearer=bid).set(hard_max)
             log(
-                f"bearer-new bid={bid} max_concurrent={config.MAX_CONCURRENT} "
-                f"hard_max={config.MAX_CONCURRENT} queue_mode={mode}"
+                f"bearer-new bid={bid} max_concurrent={hard_max} "
+                f"hard_max={hard_max} queue_mode={mode}"
             )
-        elif lim.queue_mode != mode:
+        else:
+            if hard_max < lim.hard_max:
+                async with lim._lock:
+                    lim.hard_max = hard_max
+                    lim.max_concurrent = min(lim.max_concurrent, hard_max)
+                    M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
+        if lim.queue_mode != mode:
             if not (mode == "off" and lim.queue_enabled):
                 lim.set_queue_mode(mode)
                 log(f"bearer-mode bid={bid} queue_mode={mode}")

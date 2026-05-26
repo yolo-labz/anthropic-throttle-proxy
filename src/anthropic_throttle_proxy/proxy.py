@@ -230,16 +230,22 @@ _last_advice_ts: float = 0.0
 _direct_fallback_lock: asyncio.Lock | None = None
 
 
-def _effective_queue_mode(via: str) -> str:
-    """Admission mode for this request.
+def _effective_admission(via: str) -> tuple[str, int]:
+    """Admission mode and hard cap for this request.
 
     Local deployments normally run ``THROTTLE_QUEUE_MODE=off`` because the
-    central tier owns the fleet-wide fair queue. If central is configured but
-    currently down, direct fallback must not become a pass-through firehose.
+    central tier owns the fleet-wide fair queue. Runtime evidence from Opus
+    4.7/1M bursts showed central-only admission reacts too late for same-host
+    dogpiles, so a central-backed local proxy still keeps a small fair queue.
     """
-    if config.QUEUE_MODE == "off" and config.CENTRAL_URL and via == "direct":
-        return "fair"
-    return config.QUEUE_MODE
+    if config.QUEUE_MODE == "off" and config.CENTRAL_URL:
+        return "fair", max(1, min(config.CENTRAL_LOCAL_MAX_CONCURRENT, config.MAX_CONCURRENT))
+    return config.QUEUE_MODE, config.MAX_CONCURRENT
+
+
+def _effective_queue_mode(via: str) -> str:
+    """Backward-compatible helper for tests and older callers."""
+    return _effective_admission(via)[0]
 
 
 def _get_direct_fallback_lock() -> asyncio.Lock:
@@ -797,11 +803,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
     url, client_timeout, via = pick_target(path, request.query_string)
-    queue_mode = _effective_queue_mode(via)
+    queue_mode, hard_max = _effective_admission(via)
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
     # dispatched round-robin per client connection.
-    limiter = await _get_bearer_limiter(bid, queue_mode)
+    limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
     bstate = bearer_state[bid]
     cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
     counters = _Counters(bid, cid, bstate, cstate)

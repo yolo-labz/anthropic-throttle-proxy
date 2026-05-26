@@ -45,6 +45,15 @@ MIN_DISPATCH_GAP_S = float(os.environ.get("THROTTLE_MIN_DISPATCH_GAP_MS", "0")) 
 # Central-tier opt-in: when set, the local proxy forwards each request to
 # this URL instead of straight to upstream. Empty = direct upstream.
 CENTRAL_URL = os.environ.get("THROTTLE_CENTRAL_URL", "").rstrip("/")
+# Local safety valve for desktop/client-side proxies that normally run
+# THROTTLE_QUEUE_MODE=off because a central tier is configured. Central still
+# owns fleet-wide admission, but the local tier must not pass a same-host burst
+# through unbounded: Claude Code can launch several large Opus requests before
+# central/AIMD feedback arrives. This cap is only used by that central-backed
+# local safety mode; explicit fair/reactive deployments keep MAX_CONCURRENT.
+CENTRAL_LOCAL_MAX_CONCURRENT = int(
+    os.environ.get("THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT", "2")
+)
 CENTRAL_HEALTH_PATH = "/__throttle/health"
 CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL", "30"))
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
