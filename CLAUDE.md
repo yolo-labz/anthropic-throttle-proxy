@@ -54,6 +54,35 @@ Entry: `python -m anthropic_throttle_proxy` → `__main__.py` → `proxy.main()`
 - AIMD math (`shrink_on_pushback`, `ramp_on_success`) has a cooldown of `THROTTLE_AIMD_BACKOFF_S` (default 30 s) after each shrink before growth can resume — preserve the cooldown gate when refactoring.
 - `prometheus_client` `CollectorRegistry` is process-local, not the default global one. Required because uvicorn-style workers would double-register metrics; we currently run single-worker but keep the registry isolated anyway.
 
+## Incident workflow and adversarial review
+
+Throttle incidents are not solved by a plausible code patch. They are solved
+only when the runtime symptom, code path, Nix pin, and host activation are all
+verified.
+
+Before changing throttle behavior, central fallback, limiter state, request
+pacing, Nix pins, or deployment config:
+
+1. Capture live evidence first: local `/__throttle/health`, central
+   `/__throttle/health`, `journalctl --user -u anthropic-throttle-proxy`, the
+   current user unit `ExecStart`, and the current Nix store path.
+2. State the hypothesis in one sentence.
+3. Identify what would falsify the hypothesis before editing.
+4. Add or update tests that exercise the exact failure path.
+5. Run targeted tests, full pytest, and ruff.
+6. Verify the deployed runtime, not just the merged PR.
+
+**Mandatory Codex adversarial review:** before merging any throttle-path fix or
+declaring a throttle incident solved, ask Codex for adversarial review. Provide
+Codex the symptom, hypothesis, live evidence, diff, tests, and deployment plan.
+Codex must challenge causality, central/local fallback behavior, limiter mode
+transitions, Nix fixed-output hashes, and whether the activated host is actually
+running the new store path. Address the findings before merge; if a finding is
+not acted on, document the evidence-backed reason.
+
+See `handoff.md` for the 25/05/2026 incident and the mistakes that led to this
+rule.
+
 ## Local dev quickstart
 
 ```sh
