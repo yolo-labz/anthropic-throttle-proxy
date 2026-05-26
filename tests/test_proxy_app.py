@@ -134,6 +134,7 @@ async def client(monkeypatch) -> TestClient:
     _reset_proxy_state()
 
     app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_get("/", proxy.root_probe)
     app.router.add_get("/__throttle/health", proxy.health)
     app.router.add_get("/metrics", proxy.metrics)
     attach_ui(app)
@@ -165,6 +166,16 @@ async def test_metrics_endpoint_exposes_prometheus(client: TestClient) -> None:
     assert resp.headers["Content-Type"].startswith("text/plain")
     text = await resp.text()
     assert "anthropic_inflight" in text
+
+
+async def test_root_probe_is_local_and_not_queued(client: TestClient) -> None:
+    resp = await client.head("/")
+
+    assert resp.status == 200
+    assert config.state["queued"] == 0
+    assert config.state["inflight"] == 0
+    assert config.state["served"] == 0
+    assert config.bearer_state == {}
 
 
 async def test_post_messages_streams_and_mints_bearer(client: TestClient) -> None:
