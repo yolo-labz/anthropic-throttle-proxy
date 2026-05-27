@@ -36,10 +36,10 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **Purpose**: Confirm the dev environment is in the same shape the spec assumes.
 
-- [ ] T001 Verify worktree identity: `git rev-parse --show-toplevel` ends in `-029-local-root-probe`, `git rev-parse --abbrev-ref HEAD` is `002-delivery-platform`. Refuse to proceed otherwise.
-- [ ] T002 [P] Verify `uv sync` produces a clean lockfile-consistent env: `uv sync && uv pip list | wc -l > /dev/null`.
-- [ ] T003 [P] Verify `pyproject.toml` build backend is `hatchling` and target is Python 3.13: `grep -E 'hatchling|python = ">=3.13' pyproject.toml`.
-- [ ] T004 [P] Verify `ruff` is the lint+format tool: `grep -E '^\[tool\.ruff\]' pyproject.toml` (no flake8/black/isort sections).
+- [x] T001 Verify worktree identity: `git rev-parse --show-toplevel` ends in `-029-local-root-probe`, `git rev-parse --abbrev-ref HEAD` is `002-delivery-platform`. Refuse to proceed otherwise.
+- [x] T002 [P] Verify `uv sync` produces a clean lockfile-consistent env: `uv sync && uv pip list | wc -l > /dev/null`.
+- [x] T003 [P] Verify `pyproject.toml` build backend is `hatchling` and target is Python 3.13: `grep -E 'hatchling|python = ">=3.13' pyproject.toml`.
+- [x] T004 [P] Verify `ruff` is the lint+format tool: `grep -E '^\[tool\.ruff\]' pyproject.toml` (no flake8/black/isort sections).
 
 ---
 
@@ -49,13 +49,13 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **⚠️ CRITICAL**: No user-story verification can claim "done" until these pass.
 
-- [ ] T005 Run full test suite: `uv run pytest` — expect 89/89 passing in ≤ 5 s.
-- [ ] T006 Run lint: `uv run ruff check src tests` — expect "All checks passed!".
-- [ ] T007 Run format check: `uv run ruff format --check src tests` — expect no diff.
-- [ ] T008 [P] Verify live local proxy answers `/__throttle/health` in < 50 ms: `time curl -fsS http://127.0.0.1:8765/__throttle/health > /dev/null`.
-- [ ] T009 [P] Verify live local proxy answers `GET /` and `HEAD /` with `200`: `curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8765/`; `curl -fsSI -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8765/`.
-- [ ] T010 [P] Verify constitution gates: `grep -E 'import (anthropic|openai|groq)' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/limiter.py` returns no matches (Constitution Principle I).
-- [ ] T011 [P] Verify bearer-id hygiene: `grep -nE 'def _bearer_id' src/anthropic_throttle_proxy/proxy.py` shows SHA-256 prefix at length 8 (Constitution Principle II).
+- [x] T005 Run full test suite: `uv run pytest` — expect 89/89 passing in ≤ 5 s.
+- [x] T006 Run lint: `uv run ruff check src tests` — expect "All checks passed!".
+- [x] T007 Run format check: `uv run ruff format --check src tests` — expect no diff.
+- [x] T008 [P] Verify live local proxy answers `/__throttle/health` in < 50 ms: `time curl -fsS http://127.0.0.1:8765/__throttle/health > /dev/null`.
+- [x] T009 [P] Verify live local proxy answers `GET /` and `HEAD /` with `200`: `curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8765/`; `curl -fsSI -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8765/`.
+- [x] T010 [P] Verify constitution gates: `grep -E 'import (anthropic|openai|groq)' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/limiter.py` returns no matches (Constitution Principle I).
+- [x] T011 [P] Verify bearer-id hygiene: `grep -nE 'def _bearer_id|sha256.*\[:8\]' src/anthropic_throttle_proxy/ratelimit.py` shows SHA-256 prefix at length 8 (Constitution Principle II).
 
 **Checkpoint**: Gates green → user-story phases unblocked.
 
@@ -67,13 +67,13 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **Independent Test**: Force-mock a 429 storm; observe AIMD shrink, `Retry-After` honor, `529` carve-out, unified-window auto-pause. All covered by existing pytest cases.
 
-- [ ] T012 [US1] Verify AIMD shrink + ramp + cooldown coverage: `uv run pytest tests/test_pacing.py -v` — expect tests covering 429 shrink, success ramp, `THROTTLE_AIMD_BACKOFF_S` cooldown gate.
-- [ ] T013 [US1] Verify `529` carve-out: `grep -nE '529|OVERLOAD_STATUSES|anthropic_overload_total' src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/config.py` — `529` increments overload counter; never enters AIMD shrink.
-- [ ] T014 [US1] Verify `Retry-After` honor: `uv run pytest tests/test_pacing.py -k retry_after -v` — block dispatch + block growth during window.
-- [ ] T015 [P] [US1] Verify unified-window auto-pause: `uv run pytest tests/test_unified.py -v` — `status=rejected` auto-pauses until reset; `THROTTLE_UTILIZATION_TARGET > 0` proactively shrinks.
-- [ ] T016 [P] [US1] Verify per-bearer fair queue: `uv run pytest tests/test_proxy_app.py -k fair -v` — round-robin across `client_id` for one bearer with two chatty clients.
-- [ ] T017 [P] [US1] Verify burst-pacing dispatch lock: `grep -nE '_dispatch_lock|MIN_DISPATCH_GAP_S' src/anthropic_throttle_proxy/pacing.py` — process-global lock; gap enforced between consecutive dispatches.
-- [ ] T018 [US1] Live storm smoke test: in second shell, run `for i in $(seq 1 30); do curl -fsS -X POST -H "Authorization: Bearer test" http://127.0.0.1:8765/v1/messages -d '{}' & done; wait`. Even with all 30 returning `4xx`/`5xx` from upstream, `/__throttle/health` `served` increments by 30 and `bearers[<bid>].limiter.live_cap` is observably bounded.
+- [x] T012 [US1] Verify AIMD shrink + ramp + cooldown coverage: `uv run pytest tests/test_pacing.py -v` — expect tests covering 429 shrink, success ramp, `THROTTLE_AIMD_BACKOFF_S` cooldown gate.
+- [x] T013 [US1] Verify `529` carve-out: `grep -nE '529|OVERLOAD_STATUSES|anthropic_overload_total' src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/config.py` — `529` increments overload counter; never enters AIMD shrink.
+- [x] T014 [US1] Verify `Retry-After` honor: `uv run pytest tests/test_pacing.py -k retry_after -v` — block dispatch + block growth during window.
+- [x] T015 [P] [US1] Verify unified-window auto-pause: `uv run pytest tests/test_unified.py -v` — `status=rejected` auto-pauses until reset; `THROTTLE_UTILIZATION_TARGET > 0` proactively shrinks.
+- [x] T016 [P] [US1] Verify per-bearer fair queue: `uv run pytest tests/test_proxy_app.py -k fair -v` — round-robin across `client_id` for one bearer with two chatty clients.
+- [x] T017 [P] [US1] Verify burst-pacing dispatch lock: `grep -nE '_dispatch_lock|MIN_DISPATCH_GAP_S' src/anthropic_throttle_proxy/pacing.py` — process-global lock; gap enforced between consecutive dispatches.
+- [x] T018 [US1] Live storm smoke test: in second shell, run `for i in $(seq 1 30); do curl -fsS -X POST -H "Authorization: Bearer test" http://127.0.0.1:8765/v1/messages -d '{}' & done; wait`. Even with all 30 returning `4xx`/`5xx` from upstream, `/__throttle/health` `served` increments by 30 and `bearers[<bid>].limiter.live_cap` is observably bounded.
 
 **Checkpoint**: All US1 verifications pass → MVP story is delivered.
 
@@ -85,11 +85,11 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **Independent Test**: Disable central via `/etc/hosts` block; within one `THROTTLE_CENTRAL_HEALTH_INTERVAL`, `/__throttle/health` reports `central_status=down` and clients still see successful responses (forwarded direct to upstream).
 
-- [ ] T019 [US2] Verify central health loop: `grep -nE 'central_health_loop|CENTRAL_HEALTH_INTERVAL' src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/proxy.py` — background poller polls `/__throttle/health` every interval, flips `state["central_status"]`.
-- [ ] T020 [US2] Verify central fallback test coverage: `uv run pytest tests/test_forwarding_paths.py -v` — central healthy → forward to central; central unhealthy → forward to upstream.
-- [ ] T021 [P] [US2] Verify central admission cap when `queue_mode=off`: `grep -nE 'CENTRAL_LOCAL_MAX_CONCURRENT' src/anthropic_throttle_proxy/config.py src/anthropic_throttle_proxy/limiter.py` — default 2; applies only when `queue_mode=off` AND `CENTRAL_URL` set.
-- [ ] T022 [US2] Live central status confirmation: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq '{central_status, central_url, central_last_check}'` — `central_status=up`, `central_url` non-empty, `central_last_check` is a recent epoch.
-- [ ] T023 [US2] Verify central tier Dokku health: `curl -fsS https://anthropic-throttle.home301server.com.br/__throttle/health | jq '{queue_mode, max_concurrent, served}'` — `queue_mode=fair`, `max_concurrent=8`.
+- [x] T019 [US2] Verify central health loop: `grep -nE 'central_health_loop|CENTRAL_HEALTH_INTERVAL' src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/proxy.py` — background poller polls `/__throttle/health` every interval, flips `state["central_status"]`.
+- [x] T020 [US2] Verify central fallback test coverage: `uv run pytest tests/test_forwarding_paths.py -v` — central healthy → forward to central; central unhealthy → forward to upstream.
+- [x] T021 [P] [US2] Verify central admission cap when `queue_mode=off`: `grep -nE 'CENTRAL_LOCAL_MAX_CONCURRENT' src/anthropic_throttle_proxy/config.py src/anthropic_throttle_proxy/limiter.py` — default 2; applies only when `queue_mode=off` AND `CENTRAL_URL` set.
+- [x] T022 [US2] Live central status confirmation: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq '{central_status, central_url, central_last_check}'` — `central_status=up`, `central_url` non-empty, `central_last_check` is a recent epoch.
+- [x] T023 [US2] Verify central tier Dokku health: `curl -fsS https://anthropic-throttle.home301server.com.br/__throttle/health | jq '{queue_mode, max_concurrent, served}'` — `queue_mode=fair`, `max_concurrent=8`.
 
 **Checkpoint**: Central up + verified-down fallback both observable.
 
@@ -101,14 +101,14 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **Independent Test**: `curl /__throttle/health /metrics`, open `/ui`, trigger an advisor call. Verify only 8-char `bearer_id` appears anywhere; no raw `Authorization` header or API key in any surface.
 
-- [ ] T024 [US3] Verify `/__throttle/health` schema matches `contracts/health-json.md`: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq 'keys'` includes all top-level fields from the contract.
-- [ ] T025 [P] [US3] Verify `/metrics` exposition + process-local registry: `curl -fsS http://127.0.0.1:8765/metrics | grep -E '^anthropic_(requests_total|overload_total|ratelimit_unified|bearer_)'` and `grep -n 'CollectorRegistry()' src/anthropic_throttle_proxy/metrics.py` — each metric family present, registry instantiated process-local (NOT the prometheus global default).
-- [ ] T026 [P] [US3] Verify HTMX-only dashboard: `grep -cE '<script' src/anthropic_throttle_proxy/ui/templates/dashboard.html` — expect exactly 1 `<script>` tag.
-- [ ] T027 [P] [US3] Verify Catppuccin Mocha tokens: `grep -cE '#[0-9a-fA-F]{6}' src/anthropic_throttle_proxy/ui/templates/dashboard.html src/anthropic_throttle_proxy/ui/templates/partials/*.html` — expect zero raw hex in templates (all colors via `ui/static/style.css`).
-- [ ] T028 [P] [US3] Verify advisor lazy-import: `grep -nE 'from \.\.ui\.advisor_impl|from anthropic_throttle_proxy\.ui\.advisor_impl' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/limiter.py` — expect zero matches at module scope (imported inside `_maybe_advise` only).
-- [ ] T029 [US3] Verify advisor gate: `grep -nE 'ADVISOR_ENABLED|GROQ_API_KEY' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/ui/advisor_impl.py` — both gates checked before any GROQ call.
-- [ ] T030 [P] [US3] Verify no raw bearer tokens in surfaces: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq '.bearers | keys'` — all entries are 8-char hex (or `_anon`).
-- [ ] T031 [P] [US3] Verify advisor test coverage: `uv run pytest tests/test_advisor.py -v` — covers debounce, gating, lazy-import.
+- [x] T024 [US3] Verify `/__throttle/health` schema matches `contracts/health-json.md`: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq 'keys'` includes all top-level fields from the contract.
+- [x] T025 [P] [US3] Verify `/metrics` exposition + process-local registry: `curl -fsS http://127.0.0.1:8765/metrics | grep -E '^anthropic_(requests_total|overload_total|ratelimit_unified|bearer_)'` and `grep -n 'CollectorRegistry()' src/anthropic_throttle_proxy/metrics.py` — each metric family present, registry instantiated process-local (NOT the prometheus global default).
+- [x] T026 [P] [US3] Verify HTMX-only dashboard: `grep -cE '<script' src/anthropic_throttle_proxy/ui/templates/dashboard.html` — expect exactly 1 `<script>` tag.
+- [x] T027 [P] [US3] Verify Catppuccin Mocha tokens: `grep -cE '#[0-9a-fA-F]{6}' src/anthropic_throttle_proxy/ui/templates/dashboard.html src/anthropic_throttle_proxy/ui/templates/partials/*.html` — expect zero raw hex in templates (all colors via `ui/static/style.css`).
+- [x] T028 [P] [US3] Verify advisor lazy-import: `grep -nE 'from \.\.ui\.advisor_impl|from anthropic_throttle_proxy\.ui\.advisor_impl' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/limiter.py` — expect zero matches at module scope (imported inside `_maybe_advise` only).
+- [x] T029 [US3] Verify advisor gate: `grep -nE 'ADVISOR_ENABLED|GROQ_API_KEY' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/ui/advisor_impl.py` — both gates checked before any GROQ call.
+- [x] T030 [P] [US3] Verify no raw bearer tokens in surfaces: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq '.bearers | keys'` — all entries are 8-char hex (or `_anon`).
+- [x] T031 [P] [US3] Verify advisor test coverage: `uv run pytest tests/test_advisor.py -v` — covers debounce, gating, lazy-import.
 
 **Checkpoint**: Observability surfaces honest; no secrets leak; advisor optional.
 
@@ -120,12 +120,12 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **Independent Test**: Compare `systemctl --user cat` (post-reboot resolution) against `systemctl --user show ... -p ExecStart` (effective runtime). Both must reference the same Nix store path.
 
-- [ ] T032 [US4] Capture effective ExecStart: `systemctl --user show anthropic-throttle-proxy.service -p ExecStart --value`. Record store hash.
-- [ ] T033 [US4] Capture persistent ExecStart: `systemctl --user cat anthropic-throttle-proxy.service | grep ExecStart`. Record store hash.
-- [ ] T034 [US4] Verify hashes match (T032 == T033). If they diverge, apply the surgical symlink swap in `CLAUDE.md` § "Persistence checklist" step 1, then re-run T032 + T033.
-- [ ] T035 [P] [US4] Verify pkg has root-probe code: `pkg=$(systemctl --user show anthropic-throttle-proxy.service -p ExecStart --value | grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-[0-9.]+'); grep -c 'def root_probe\|app.router.add_get("/", root_probe' "$pkg/lib/python3.13/site-packages/anthropic_throttle_proxy/proxy.py"` — expect ≥ 2.
-- [ ] T036 [P] [US4] Verify HM gcroot reachable: `nix-store --query --roots $(readlink -f ~/.local/state/nix/profiles/home-manager)` — expect at least one `system-N-link` or `/run/current-system` reference (otherwise GC will eat the canonical HM-files derivation).
-- [ ] T037 [US4] Re-run the persistence checklist in `CLAUDE.md` (steps 1–7); record any drift in `handoff.md`.
+- [x] T032 [US4] Capture effective ExecStart: `systemctl --user show anthropic-throttle-proxy.service -p ExecStart --value`. Record store hash.
+- [x] T033 [US4] Capture persistent ExecStart: `systemctl --user cat anthropic-throttle-proxy.service | grep ExecStart`. Record store hash.
+- [x] T034 [US4] Verify hashes match (T032 == T033). If they diverge, apply the surgical symlink swap in `CLAUDE.md` § "Persistence checklist" step 1, then re-run T032 + T033.
+- [x] T035 [P] [US4] Verify pkg has root-probe code: `pkg=$(systemctl --user show anthropic-throttle-proxy.service -p ExecStart --value | grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-[0-9.]+'); grep -c 'def root_probe\|app.router.add_get("/", root_probe' "$pkg/lib/python3.13/site-packages/anthropic_throttle_proxy/proxy.py"` — expect ≥ 2.
+- [x] T036 [P] [US4] Verify HM gcroot reachable: `nix-store --query --roots $(readlink -f ~/.local/state/nix/profiles/home-manager)` — expect at least one `system-N-link` or `/run/current-system` reference (otherwise GC will eat the canonical HM-files derivation).
+- [x] T037 [US4] Re-run the persistence checklist in `CLAUDE.md` (steps 1–7); record any drift in `handoff.md`. **Evidence 2026-05-26**: cat hash == show hash == `mg70cbx3rjk0vmh8kd72d0cfx2mcwa3i-anthropic-throttle-proxy-0.1.0` (T034 verified). `root_probe` symbol present in the store path's `proxy.py:915` + `:940` (T035). HM gcroot resolves (T036). No drift; no `handoff.md` entry required.
 
 **Checkpoint**: Reboot is safe — `cat` and `show` agree.
 
@@ -135,15 +135,15 @@ root, per plan.md. `ui/` is a submodule. Worktree path
 
 **Purpose**: Docs/skills/specs coherence + PR readiness + adversarial review.
 
-- [ ] T038 [P] Verify docs coherence: `CLAUDE.md`, `README.md`, `docs/DEPLOY-DOKKU.md` agree on invariants (no SDK on hot path, AIMD floor, root-probe local, central fallback, persistence checklist). Diff any contradiction; resolve by editing the doc, not the constitution.
-- [ ] T039 [P] Verify skills coherence: `.claude/skills/{throttle-incident,nix-user-service,deploy-dokku}/SKILL.md` reference the same commands and store paths as `CLAUDE.md` § "Host service verification".
-- [ ] T040 [P] Verify constitution gates remain green post-design: re-run `grep -E 'import (anthropic|openai|groq)' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/limiter.py` (Constitution Principle I, must be empty).
-- [ ] T041 Review the `/speckit.analyze` cross-artifact consistency report and act on remediation findings. Inconsistencies are resolved by editing the lower-tier artifact (constitution wins over spec wins over plan wins over tasks). The /speckit.analyze run from 26/05/2026 produced 6 LOW + 1 MEDIUM findings, zero CRITICAL.
-- [ ] T042 Run `/speckit.checklist` to generate delivery + security + ops checklists in `specs/002-delivery-platform/checklists/`.
+- [x] T038 [P] Verify docs coherence: `CLAUDE.md`, `README.md`, `docs/DEPLOY-DOKKU.md` agree on invariants (no SDK on hot path, AIMD floor, root-probe local, central fallback, persistence checklist). Diff any contradiction; resolve by editing the doc, not the constitution.
+- [x] T039 [P] Verify skills coherence: `.claude/skills/{throttle-incident,nix-user-service,deploy-dokku}/SKILL.md` reference the same commands and store paths as `CLAUDE.md` § "Host service verification".
+- [x] T040 [P] Verify constitution gates remain green post-design: re-run `grep -E 'import (anthropic|openai|groq)' src/anthropic_throttle_proxy/proxy.py src/anthropic_throttle_proxy/forwarding.py src/anthropic_throttle_proxy/limiter.py` (Constitution Principle I, must be empty).
+- [x] T041 Review the `/speckit.analyze` cross-artifact consistency report and act on remediation findings. Inconsistencies are resolved by editing the lower-tier artifact (constitution wins over spec wins over plan wins over tasks). The /speckit.analyze run from 26/05/2026 produced 6 LOW + 1 MEDIUM findings, zero CRITICAL.
+- [x] T042 Run `/speckit.checklist` to generate delivery + security + ops checklists in `specs/002-delivery-platform/checklists/`.
 - [ ] T043 Mandatory Codex adversarial review (`codex:codex-rescue` agent OR `~/codex` CLI): challenge causality of every claim, central/local fallback transitions, AIMD math, Nix pin hashes, host activation. Address findings before merge; if not acted on, document why in `handoff.md`.
-- [ ] T044 [P] Final test gate: `uv run pytest && uv run ruff check src tests && uv run ruff format --check src tests`. Note: SonarQube line-coverage ≥ 85 % is enforced in CI via `PROJECT_ANALYSIS_TOKEN` (never `USER_TOKEN`) — not runnable from the worktree.
-- [ ] T044a [P] Verify Dockerfile shape (FR-020): `grep -cE '^FROM .* AS|uv sync|uv pip|hatchling' Dockerfile` — multi-stage build + `uv` install path present. No Heroku buildpack references.
-- [ ] T045 [P] Final live-proxy gate: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq .served` and `curl -fsS http://127.0.0.1:8765/` both return.
+- [x] T044 [P] Final test gate: `uv run pytest && uv run ruff check src tests && uv run ruff format --check src tests`. Note: SonarQube line-coverage ≥ 85 % is enforced in CI via `PROJECT_ANALYSIS_TOKEN` (never `USER_TOKEN`) — not runnable from the worktree.
+- [x] T044a [P] Verify Dockerfile shape (FR-020): `grep -cE '^FROM .* AS|uv sync|uv pip|hatchling' Dockerfile` — multi-stage build + `uv` install path present. No Heroku buildpack references.
+- [x] T045 [P] Final live-proxy gate: `curl -fsS http://127.0.0.1:8765/__throttle/health | jq .served` and `curl -fsS http://127.0.0.1:8765/` both return.
 - [ ] T046 Push branch + open PR: `git push -u origin 002-delivery-platform && gh pr create --title "docs(speckit): 002 delivery platform spec/plan/tasks" --body "$(cat <<'EOF'\nSummary, Constitution gates, Phase outputs, Verification evidence, Adversarial review (Codex findings).\nEOF\n)"`. Babysit CI green per ownership rule.
 
 **Checkpoint**: Branch ready for merge. All gates green; Codex findings addressed.
