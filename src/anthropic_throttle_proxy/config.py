@@ -63,7 +63,7 @@ CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT
 # cooldown of consecutive successes. Net: opens to the full hardware
 # parallelism Pedro asks for, but backs off the moment Anthropic pushes
 # back — no static cap to babysit.
-AIMD_MIN = int(os.environ.get("THROTTLE_AIMD_MIN", "1"))
+AIMD_MIN = max(1, int(os.environ.get("THROTTLE_AIMD_MIN", "1")))
 AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # AIMD multiplicative-decrease factor. TCP Reno halves (0.5, deep teeth, fast

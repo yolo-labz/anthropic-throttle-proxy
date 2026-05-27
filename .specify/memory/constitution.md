@@ -119,8 +119,9 @@ single tab and immune to JS supply-chain attacks.
 
 - Python ≥ 3.13. Lint and format with `ruff` (line length 100). Test
   with `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"`). Coverage
-  gate ~85% via SonarQube `PROJECT_ANALYSIS_TOKEN` (never
-  `USER_TOKEN`).
+  aspiration ~85% via SonarQube `PROJECT_ANALYSIS_TOKEN` (never
+  `USER_TOKEN`); scan runs only when `SONAR_HOST_URL` is configured and
+  is not a numeric CI-fail gate today.
 - Build with `uv` + `hatchling`. Deploy via Dokku Dockerfile (multi-stage
   uv build, no Heroku buildpacks).
 - `prometheus_client` MUST use a process-local `CollectorRegistry`, never

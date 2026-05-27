@@ -54,7 +54,7 @@ Send one request. Re-curl `/__throttle/health`. Expected change:
 ## 2. Local tier — central-backed mode
 
 ```sh
-export THROTTLE_CENTRAL_URL=https://anthropic-throttle.<your-host>
+export THROTTLE_CENTRAL_URL=http://anthropic-throttle.<your-host>  # https only if Dokku terminates TLS
 uv run python -m anthropic_throttle_proxy
 ```
 
@@ -91,7 +91,7 @@ git push dokku main
 Wait for the build. Then:
 
 ```sh
-curl -fsS https://anthropic-throttle.<your-host>/__throttle/health | jq .
+curl -fsS http://anthropic-throttle.<your-host>/__throttle/health | jq .  # use https only with TLS terminator
 ```
 
 Expected: 200 with the health JSON. `queue_mode=fair`,
@@ -143,7 +143,9 @@ uv run ruff format --check src tests
 ```
 
 All three must pass before pushing. CI runs the same gates plus
-SonarQube line coverage (≥ ~85% via `PROJECT_ANALYSIS_TOKEN`).
+SonarQube line coverage (≥ ~85% aspirational via `PROJECT_ANALYSIS_TOKEN`
+when `SONAR_HOST_URL` is configured; not a numeric CI gate today — see
+spec FR-021).
 
 ## What to do if something is wrong
 
