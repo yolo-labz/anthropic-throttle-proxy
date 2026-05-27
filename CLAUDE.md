@@ -83,6 +83,196 @@ not acted on, document the evidence-backed reason.
 See `handoff.md` for the 25/05/2026 incident and the mistakes that led to this
 rule.
 
+## Host service verification
+
+Pedro's desktop runs this proxy as a Nix/Home Manager user service. Treat
+`systemctl --user cat` and `systemctl --user show` as two different evidence
+surfaces:
+
+- `systemctl --user cat anthropic-throttle-proxy.service` shows the persisted
+  unit plus persisted drop-ins. **This is what reboot will execute.**
+- `systemctl --user show anthropic-throttle-proxy.service -p ExecStart -p
+  FragmentPath -p DropInPaths -p ActiveState -p SubState` shows the effective
+  runtime state after daemon reloads, transient overrides, and restarts.
+  **This is what is currently running.**
+- Runtime drop-ins under `/run/user/$(id -u)/systemd/user/...` survive
+  `daemon-reload` but are wiped on logout/reboot. They can silently mask a
+  stale persistent unit. **A transient `ExecStart=` override hides a stale
+  base unit until the next reboot, at which point the service silently
+  regresses.**
+
+Full capture sequence (run in this order):
+
+```sh
+# 1. EFFECTIVE runtime (merged base+drop-ins, what systemd executes now)
+systemctl --user show anthropic-throttle-proxy.service \
+  -p ExecStart -p FragmentPath -p DropInPaths -p EnvironmentFiles \
+  -p MainPID -p ActiveState -p SubState
+
+# 2. BASE unit + drop-in chain (what reboot will resolve to)
+systemctl --user cat anthropic-throttle-proxy.service
+
+# 3. Persistent symlink target (Home Manager's published unit)
+readlink ~/.config/systemd/user/anthropic-throttle-proxy.service
+
+# 4. Drop-in inventory (persistent vs transient)
+ls -la ~/.config/systemd/user/anthropic-throttle-proxy.service.d/
+ls -la /run/user/$(id -u)/systemd/user/anthropic-throttle-proxy.service.d/
+
+# 5. Wire-level health (proves the running PID actually serves traffic)
+curl -fsS http://127.0.0.1:8765/__throttle/health | jq
+
+# 6. Service journal (last failure window)
+journalctl --user -u anthropic-throttle-proxy.service -n 80 --no-pager
+
+# 7. Trace the Nix store path actually on the cmdline
+pid=$(systemctl --user show anthropic-throttle-proxy.service -p MainPID --value)
+tr '\0' '\n' </proc/$pid/cmdline | grep anthropic-throttle-proxy
+
+# 8. HM profile pointer vs activated NixOS toplevel's HM closure
+readlink -f ~/.local/state/nix/profiles/home-manager
+nix-store -qR "$(readlink /run/current-system)" | grep home-manager-generation
+# These two MUST match. If not, a `nh os switch` was deferred (niri-guard
+# rewrites to `nh os boot`) and the persistent symlink is stale.
+```
+
+### Persistence checklist (apply after any HM / Nix / systemd-user fix)
+
+Run this checklist verbatim. Do not declare persistence fixed without all
+boxes ticked.
+
+1. **Surgical symlink swap** if HM activation was deferred (niri-guard host):
+   ```sh
+   TOPLEVEL=$(readlink /run/current-system)
+   HM_FILES=$(nix-store -qR "$TOPLEVEL" | grep -E 'home-manager-files$' | head -1)
+   # verify ExecStart in that HM-files's unit BEFORE swapping
+   grep ExecStart "$HM_FILES/.config/systemd/user/anthropic-throttle-proxy.service"
+   ln -sfn "$HM_FILES/.config/systemd/user/anthropic-throttle-proxy.service" \
+     ~/.config/systemd/user/anthropic-throttle-proxy.service
+   ```
+2. **`systemctl --user daemon-reload`** so systemd re-reads the chain.
+3. **Verify base and effective ExecStart match** (no transient drop-in masking):
+   ```sh
+   systemctl --user cat anthropic-throttle-proxy.service | grep ExecStart
+   systemctl --user show anthropic-throttle-proxy.service -p ExecStart --value
+   ```
+4. **Remove redundant transient drop-ins**:
+   ```sh
+   /run/current-system/sw/bin/rm -f \
+     /run/user/$(id -u)/systemd/user/anthropic-throttle-proxy.service.d/override.conf
+   systemctl --user daemon-reload
+   ```
+5. **Restart when safe, then re-verify**:
+   ```sh
+   pre=$(curl -fsS http://127.0.0.1:8765/__throttle/health | jq .served)
+   systemctl --user restart anthropic-throttle-proxy.service
+   sleep 2
+   systemctl --user is-active anthropic-throttle-proxy.service
+   curl -fsS http://127.0.0.1:8765/__throttle/health \
+     | jq '{served,inflight,queue_mode,central_status}'
+   ```
+6. **Confirm pkg has the load-bearing code**. For PR #29 root probes:
+   ```sh
+   pkg=$(systemctl --user show anthropic-throttle-proxy.service \
+     -p ExecStart --value | grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-0\.1\.0')
+   grep -c 'def root_probe\|app.router.add_get("/", root_probe' \
+     "$pkg/lib/python3.13/site-packages/anthropic_throttle_proxy/proxy.py"
+   # expect >= 2
+   ```
+7. **Nix gcroot guard** — canonical HM-files must be reachable from a gcroot:
+   ```sh
+   nix-store --query --roots "$HM_FILES" | grep -E 'system-[0-9]+-link|/run/current-system'
+   ```
+
+### Stale-unit / root-probe incident (26/05/2026)
+
+PR #29 (`fix: handle root probes locally`) shipped the new package and the
+NixOS pin was bumped to `b1555ad`. But the persistent user-unit symlink kept
+pointing at the pre-root-probe package because the host runs `niri-guard`,
+which rewrites `nh os switch` → `nh os boot`. The runtime drop-in
+(`/run/user/1000/systemd/user/anthropic-throttle-proxy.service.d/override.conf`)
+masked the regression: `systemctl --user show` reported the new package, but
+`systemctl --user cat` showed the old one. A reboot would have regressed the
+service back to a build without root-probe handling, breaking `GET /` probes
+for downstream tools.
+
+Forensic chain:
+
+- `~/.config/systemd/user/anthropic-throttle-proxy.service` → old
+  `8b4zq94h...home-manager-files` → unit ExecStart `v3hcv7w...` (pre-PR-29).
+- `/run/current-system` HM-files dep → `2yqrq9...home-manager-files` → unit
+  ExecStart `mg70cbx3...` (PR-29 correct).
+- HM profile pointer (`~/.local/state/nix/profiles/home-manager`) stuck at
+  gen 488 = `wh3678v4...home-manager-generation` → pkg `xybx7arq...`
+  (older than `v3hcv7w`).
+- Three different generations live in store, only the runtime drop-in pinned
+  the right one in memory.
+
+Three durable lessons:
+
+1. **Always use both `show` and `cat`.** `show` answers "what is running
+   now"; `cat` answers "what will run after reboot". Disagreement means a
+   transient drop-in is hiding stale state.
+2. **Root probes must be handled locally.** The proxy forwards everything
+   else to `THROTTLE_UPSTREAM`, but `GET /` and `HEAD /` are infrastructure
+   probes (load balancers, Dokku healthchecks, curl smoke tests) that should
+   not consume a bearer slot. PR #29 added a local 200 OK; any future code
+   path that re-introduces the catch-all for `/` is a regression.
+3. **Persistence != activation.** A merged PR + bumped Nix pin + green CI
+   only proves the *artifact* is correct. Whether the *host* is running it
+   requires the verification chain above.
+
+## Repo worktree policy
+
+This repo follows the global mandatory worktree-first rule
+(`~/Documents/Code/CLAUDE.md` and `~/.claude/CLAUDE.md`).
+
+- **Never edit on `main`.** `git rev-parse --show-toplevel` must end in a
+  `-NNN-<slug>` directory before any `Edit` / `Write` / `Bash` mutation.
+- **Use `.worktrees/<branch>` for in-repo feature work** (preferred when
+  scope is bounded and short-lived; survives merge cleanly). Example:
+  `.worktrees/anthropic-throttle-proxy-029-local-root-probe`.
+- For cross-repo work coordinated with `~/NixOS`, use a sibling worktree
+  under `~/NixOS-NNN-<slug>` for the NixOS half (the convention sibling
+  agents already follow — see `git -C ~/NixOS worktree list`).
+- **Never `git stash`** in this repo. Open another worktree.
+- **Never push to `main` directly.** PR workflow only (conventional commit
+  subject ≤ 72 chars, `Co-Authored-By` trailer, rebase before push, wait
+  for CI, then `gh pr merge --squash --delete-branch`).
+- Do not overwrite sibling-agent work in adjacent worktrees (e.g.
+  `~/NixOS-719-home-zellij-tabs` for fonts/statusline). Coordinate by
+  checking `git -C <sibling> log --oneline -5` before any edit that could
+  conflict.
+
+## Project-local skills
+
+Agents should use the repo-local skills in `.claude/skills/` when the
+request matches their trigger:
+
+- **`throttle-incident`** — triage live throttle failures, central
+  fallback, queue buildup, 429/503/529 storms, and root-probe regressions.
+- **`nix-user-service`** — verify desktop/Home Manager activation for this
+  user service and catch persistent-vs-runtime systemd mismatches.
+- **`deploy-dokku`** — deploy or verify the central Dokku instance without
+  confusing container health with local desktop health.
+
+### Skill design notes
+
+When authoring or editing the skills above:
+
+- One skill per recurring incident shape. Do not bundle unrelated flows.
+- Skills must capture **evidence first, hypothesis second**. The body of
+  each `SKILL.md` is a checklist of commands + expected outputs, not a
+  prose essay.
+- Skills must reference the `Incident workflow and adversarial review`
+  section above. Codex adversarial review is mandatory before declaring
+  any throttle-path fix done.
+- Skills must prefer commands already run and observed-good on the host. When a
+  command is a template for another host, mark placeholders clearly.
+- Keep `.claude/settings.json` minimal and task-specific. Do not blindly
+  enable global skills (browser automation, generic frontend-design,
+  unrelated spec/PR skills) that this repo does not need.
+
 ## Local dev quickstart
 
 ```sh
