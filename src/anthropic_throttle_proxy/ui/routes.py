@@ -139,11 +139,28 @@ async def stats_partial(request: web.Request) -> web.Response:
 
 
 async def advisor(request: web.Request) -> web.Response:
-    """POST /ui/advisor — ask GROQ to recommend knob tweaks."""
+    """POST /ui/advisor — ask GROQ to recommend knob tweaks.
+
+    Always returns 200 with a rendered HTML partial so HTMX swaps the
+    response into ``#advisor-out`` regardless of error state. Returning
+    non-2xx would leave the dashboard's response area silently empty,
+    which Pedro reported on 27/05/2026 ("groq integration that does not
+    work" — the integration *did* work, but errors landed off-screen).
+    """
     if os.environ.get("ADVISOR_ENABLED", "false").lower() != "true":
-        return web.Response(
-            status=503,
-            text="ADVISOR_ENABLED=false. Set the env var + GROQ_API_KEY to enable.",
+        return aiohttp_jinja2.render_template(
+            "partials/advisor.html",
+            request,
+            {
+                "recommendation": None,
+                "snapshot": None,
+                "error": (
+                    "Advisor is disabled. Set `ADVISOR_ENABLED=true` and "
+                    "`GROQ_API_KEY` (proxy reads them from the EnvironmentFile "
+                    "at ~/.local/state/anthropic-throttle-proxy/groq.env), "
+                    "then restart the service."
+                ),
+            },
         )
     # Lazy import — keeps the advisor (and its HTTP client) off the hot path.
     from .advisor_impl import recommend
@@ -152,13 +169,19 @@ async def advisor(request: web.Request) -> web.Response:
     try:
         recommendation = await recommend(snapshot)
     except Exception as exc:
-        # Best-effort: the advisor must never 500 the dashboard — surface the
-        # error text to the user instead of propagating.
-        return web.Response(status=500, text=f"advisor error: {exc!s}")
+        return aiohttp_jinja2.render_template(
+            "partials/advisor.html",
+            request,
+            {
+                "recommendation": None,
+                "snapshot": snapshot,
+                "error": f"Advisor call failed: {exc!s}",
+            },
+        )
     return aiohttp_jinja2.render_template(
         "partials/advisor.html",
         request,
-        {"recommendation": recommendation, "snapshot": snapshot},
+        {"recommendation": recommendation, "snapshot": snapshot, "error": None},
     )
 
 

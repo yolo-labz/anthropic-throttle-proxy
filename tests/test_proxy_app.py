@@ -283,11 +283,17 @@ async def test_ui_stats_partial_renders(client: TestClient) -> None:
     assert resp.status == 200
 
 
-async def test_ui_advisor_disabled_returns_503(client: TestClient, monkeypatch) -> None:
+async def test_ui_advisor_disabled_renders_inline_error(client: TestClient, monkeypatch) -> None:
+    """Disabled advisor returns 200 with an HTML error partial so HTMX swaps
+    it into #advisor-out instead of silently dropping the response on
+    non-2xx. Pedro reported 27/05/2026 the integration looked broken; the
+    cause was the prior 503 never surfacing in the dashboard."""
     monkeypatch.delenv("ADVISOR_ENABLED", raising=False)
     resp = await client.post("/ui/advisor")
-    assert resp.status == 503
-    assert "ADVISOR_ENABLED" in await resp.text()
+    assert resp.status == 200
+    body = await resp.text()
+    assert "advisor-output err" in body
+    assert "ADVISOR_ENABLED" in body
 
 
 async def test_get_passthrough_non_messages_path(client: TestClient) -> None:

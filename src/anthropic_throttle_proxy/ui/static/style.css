@@ -169,20 +169,43 @@ h2 {
 }
 
 /* ── bearers table ──────────────────────────────────────────────────── */
+.bearers-wrap {
+  /* Wrapper isolates horizontal overflow under ~1024px viewports — fixed
+     table-layout would otherwise push the page out instead of scrolling
+     just the table. tabindex=0 on the wrapper keeps keyboard scroll. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 6px;
+  /* Subtle focus ring so the operator notices when keyboard-scrolling. */
+  outline: none;
+}
+.bearers-wrap:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctp-teal) 35%, transparent); }
 table.bearers {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+  table-layout: fixed;
+  min-width: 64rem;
 }
+/* Column widths — fixed layout keeps headers anchored above their values
+   even when the data is short or long. */
+table.bearers .col-bearer { width: 9rem; }
+table.bearers .col-num    { width: 6.5rem; }
+table.bearers .col-aimd   { width: 6rem; }
+table.bearers .col-window { width: 10.5rem; }
 table.bearers th,
 table.bearers td {
   text-align: right;
-  padding: 0.55rem 0.7rem;
+  padding: 0.6rem 0.85rem;
   border-bottom: 1px solid var(--ctp-surface0);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 table.bearers th:first-child,
 table.bearers td:first-child { text-align: left; }
+table.bearers th.th-center,
+table.bearers td.td-center { text-align: center; }
 table.bearers thead th {
   color: var(--ctp-overlay0);
   font-size: 0.66rem;
@@ -191,8 +214,18 @@ table.bearers thead th {
   font-weight: 500;
   border-bottom-color: var(--ctp-surface1);
 }
+table.bearers thead th[title] { cursor: help; }
 table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
 table.bearers code { font-family: var(--mono); color: var(--ctp-peach); background: transparent; }
+
+/* Mobile — hide the API-key-only columns (req-left, retry-after) on narrow
+   viewports; Max OAuth bearers don't populate them anyway. */
+@media (max-width: 920px) {
+  table.bearers th:nth-child(7),
+  table.bearers th:nth-child(8),
+  table.bearers td:nth-child(7),
+  table.bearers td:nth-child(8) { display: none; }
+}
 
 .num { font-family: var(--mono); }
 .aimd { font-family: var(--mono); }
@@ -255,6 +288,24 @@ button:active { background: var(--ctp-surface2); }
   border-radius: 8px;
 }
 .advisor-output h3 { margin: 0 0 0.4rem; color: var(--ctp-teal); font-size: 0.95rem; }
+.advisor-output.err { border-left-color: var(--ctp-red); }
+.advisor-output.err h3 { color: var(--ctp-red); }
+.advisor-empty {
+  margin-top: 1rem;
+  padding: 0.7rem 1rem;
+  background: var(--ctp-mantle);
+  border: 1px dashed var(--ctp-surface1);
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.advisor-empty code {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ctp-peach);
+  background: var(--ctp-crust);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}
 .advisor-output pre {
   background: var(--ctp-crust);
   padding: 0.6rem;
@@ -322,6 +373,13 @@ footer a:hover { color: var(--ctp-teal); text-decoration: underline; }
 }
 .config-section > summary:hover { color: var(--ctp-text); }
 .config-section[open] > summary { color: var(--ctp-text); border-bottom: 1px solid var(--ctp-surface0); }
+.config-section > summary .summary-hint {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--ctp-overlay0);
+}
+.config-section > summary .summary-hint::after { content: attr(data-closed); }
+.config-section[open] > summary .summary-hint::after { content: attr(data-open); }
 
 .config-toast {
   font-family: var(--mono);
