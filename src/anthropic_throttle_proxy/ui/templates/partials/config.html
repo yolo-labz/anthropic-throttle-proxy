@@ -40,7 +40,8 @@
       </div>
 
       <div class="config-control">
-        <form hx-post="/ui/config" hx-target="#config" hx-swap="innerHTML"
+        <form action="/ui/config" method="post"
+              hx-post="/ui/config" hx-target="#config" hx-swap="innerHTML"
               hx-trigger="change delay:250ms"
               class="config-form">
           <input type="hidden" name="key" value="{{ k.key }}">
@@ -79,7 +80,8 @@
         </form>
 
         {% if k.override %}
-          <form hx-post="/ui/config/reset" hx-target="#config" hx-swap="innerHTML"
+          <form action="/ui/config/reset" method="post"
+                hx-post="/ui/config/reset" hx-target="#config" hx-swap="innerHTML"
                 hx-confirm="reset {{ k.label }} to env default ({{ default }})?"
                 class="config-reset">
             <input type="hidden" name="key" value="{{ k.key }}">
