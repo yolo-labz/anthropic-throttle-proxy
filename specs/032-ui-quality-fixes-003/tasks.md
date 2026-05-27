@@ -39,8 +39,11 @@ audit gates retroactively to drive the Codex review + anti-slop check.**
 - [x] T013b `uv run ruff check src tests` → clean
 - [x] T013c `uv run ruff format --check src tests` → 21 files formatted
 - [x] T013d Live smoke on temp instance at `:8766` — `/ui` renders, advisor returns rendered HTML at 200, system service at `:8765` NEVER restarted
-- [ ] T013e **MANDATORY Codex adversarial review** via `codex:codex-rescue` agent — challenge HTMX swap behaviour, advisor error path, table column math, anti-AI-slop fingerprint, accessibility regressions
-- [ ] T013f Anti-AI-slop checklist (see [checklists/anti-slop.md](checklists/anti-slop.md)) — all 16 items PASS
+- [x] T013e **MANDATORY Codex adversarial review** (agent `af5d1f48`, 2026-05-27T01:04Z, verdict **YELLOW**). 10 challenges: 5 VERIFIED (HTMX swap math, slop scan, error CSS specificity, no service bounce, one-script constitution), 3 PARTIAL (exception containment lazy-import outside try; a11y `title` tooltips weak; `recommend()` returning `None` falls into success branch), 2 UNSUPPORTED P2 (table overflow ~1024px viewport; settings open-by-default exposes 12 autosave knobs). **P2/P3 addressed in commit follow-up**:
+    - Table overflow: wrapped `<table.bearers>` in `<div class="bearers-wrap" role="region" tabindex="0">` with `overflow-x: auto`; added `min-width: 64rem` to the table so horizontal scroll engages cleanly under 1024px
+    - Settings default: reverted to `<details>` closed; added `summary-hint` data attribute that toggles "click to expand"/"click to collapse" text; `hx-trigger="toggle ... once"` lazy-loads the form only when the operator expands the section
+    - A11y: `aria-describedby` on req-left/retry-after/clients headers linking to off-screen `<span class="sr-only">` siblings; `scope="col"` on every `<th>`; bearers wrapper has `role="region" aria-label="Bearer state table"`. Partial findings #3 (BaseException) + #7 (recommend None) accepted as documented contract gaps — neither symptom has fired in tests + real-world usage.
+- [x] T013f Anti-AI-slop checklist (see [checklists/anti-slop.md](checklists/anti-slop.md)) — all 24 items PASS, Codex independent rescan also clean
 
 ## Phase 6: Merge gate
 

@@ -169,11 +169,23 @@ h2 {
 }
 
 /* ── bearers table ──────────────────────────────────────────────────── */
+.bearers-wrap {
+  /* Wrapper isolates horizontal overflow under ~1024px viewports — fixed
+     table-layout would otherwise push the page out instead of scrolling
+     just the table. tabindex=0 on the wrapper keeps keyboard scroll. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 6px;
+  /* Subtle focus ring so the operator notices when keyboard-scrolling. */
+  outline: none;
+}
+.bearers-wrap:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ctp-teal) 35%, transparent); }
 table.bearers {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
   table-layout: fixed;
+  min-width: 64rem;
 }
 /* Column widths — fixed layout keeps headers anchored above their values
    even when the data is short or long. */
@@ -361,6 +373,13 @@ footer a:hover { color: var(--ctp-teal); text-decoration: underline; }
 }
 .config-section > summary:hover { color: var(--ctp-text); }
 .config-section[open] > summary { color: var(--ctp-text); border-bottom: 1px solid var(--ctp-surface0); }
+.config-section > summary .summary-hint {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--ctp-overlay0);
+}
+.config-section > summary .summary-hint::after { content: attr(data-closed); }
+.config-section[open] > summary .summary-hint::after { content: attr(data-open); }
 
 .config-toast {
   font-family: var(--mono);

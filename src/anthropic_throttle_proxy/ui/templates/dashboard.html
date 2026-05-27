@@ -51,12 +51,13 @@
       </div>
     </section>
 
-    <details class="config-section" open>
+    <details class="config-section">
       <summary>
         <span>settings</span>
-        <span class="muted">live overrides · persisted across restarts</span>
+        <span class="muted">12 live overrides · autosave on change · persisted across restarts</span>
+        <span class="muted summary-hint" data-closed="click to expand" data-open="click to collapse" aria-hidden="true"></span>
       </summary>
-      <section id="config" hx-get="/ui/config" hx-trigger="load" hx-target="#config" hx-swap="innerHTML">
+      <section id="config" hx-get="/ui/config" hx-trigger="toggle from:closest details once" hx-target="#config" hx-swap="innerHTML">
         <p class="muted">Loading…</p>
       </section>
     </details>
