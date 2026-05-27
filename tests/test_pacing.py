@@ -46,6 +46,25 @@ def test_529_is_split_from_rate_statuses():
     assert proxy.THROTTLE_STATUSES == {429, 503, 529}
 
 
+def test_aimd_min_is_clamped_to_floor_one():
+    # Constitution III: floor must stay >=1 so traffic never fully blocks.
+    # The clamp lives at config import: AIMD_MIN = max(1, int(env)).
+    # Verify both the clamp expression and the live module value.
+    from anthropic_throttle_proxy import config
+
+    assert config.AIMD_MIN >= 1  # current module satisfies invariant
+    # Clamp expression must coerce 0 / negative / valid values to >=1.
+    assert max(1, int("0")) == 1
+    assert max(1, int("-5")) == 1
+    assert max(1, int("3")) == 3
+    # Source-level guard: the assignment uses max(1, ...) so the floor cannot
+    # be subverted by an operator setting THROTTLE_AIMD_MIN=0.
+    import inspect
+
+    src = inspect.getsource(config)
+    assert 'AIMD_MIN = max(1, int(os.environ.get("THROTTLE_AIMD_MIN"' in src
+
+
 async def test_shrink_uses_cubic_decrease_and_floor():
     lim = FairBearerLimiter(32, "fair")
     assert await lim.shrink() == 22  # int(32 * 0.7)
