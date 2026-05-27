@@ -215,7 +215,29 @@ table.bearers thead th {
   border-bottom-color: var(--ctp-surface1);
 }
 table.bearers thead th[title] { cursor: help; }
-table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 45%, transparent); }
+table.bearers thead th {
+  /* Sticky header anchors columns when the bearer list grows past viewport. */
+  position: sticky;
+  top: 0;
+  background: var(--ctp-base);
+  z-index: 1;
+}
+table.bearers tbody tr {
+  transition: background 80ms ease-out;
+}
+/* Zebra striping — odd rows pick up the mantle tint for visual rhythm. */
+table.bearers tbody tr:nth-child(odd) {
+  background: color-mix(in srgb, var(--ctp-mantle) 50%, transparent);
+}
+table.bearers tbody tr:hover {
+  background: color-mix(in srgb, var(--ctp-surface0) 55%, transparent);
+}
+/* Highlight queued counter when non-zero — first signal per-bearer cap binds. */
+.bearers .num.warn-text { color: var(--ctp-peach); font-weight: 600; }
+/* Compact saturation bar variant for the inflight column. Same shape as the
+   5h-window bar so the operator can scan both at once. */
+.util.compact .bar { width: 36px; }
+.util.compact .pct { min-width: 1.5rem; font-size: 0.78rem; }
 table.bearers code { font-family: var(--mono); color: var(--ctp-peach); background: transparent; }
 
 /* Mobile — hide the API-key-only columns (req-left, retry-after) on narrow
