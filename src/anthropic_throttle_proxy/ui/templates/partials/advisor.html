@@ -1,3 +1,15 @@
+{% if error %}
+<div class="advisor-output err" role="alert">
+  <h3>Advisor error</h3>
+  <p class="muted">{{ error }}</p>
+  {% if snapshot %}
+  <details>
+    <summary>Snapshot at error time</summary>
+    <pre><code>{{ snapshot | tojson(indent=2) }}</code></pre>
+  </details>
+  {% endif %}
+</div>
+{% else %}
 <div class="advisor-output">
   <h3>Recommendation</h3>
   <div class="markdown">{{ recommendation }}</div>
@@ -6,3 +18,4 @@
     <pre><code>{{ snapshot | tojson(indent=2) }}</code></pre>
   </details>
 </div>
+{% endif %}

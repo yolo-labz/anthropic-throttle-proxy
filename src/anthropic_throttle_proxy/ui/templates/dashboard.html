@@ -34,24 +34,24 @@
       {% include "partials/stats.html" %}
     </section>
 
-    {% if advisor_enabled %}
-      <section id="advisor">
-        <h2>Advisor</h2>
-        <p class="muted">Ask GROQ to read the live snapshot and propose knob tweaks. Also fires automatically on a throttle event (latest diagnosis appears above).</p>
-        <button hx-post="/ui/advisor" hx-target="#advisor-out" hx-swap="innerHTML"
-                hx-indicator="#advisor-spin">
-          Ask advisor
-        </button>
-        <span id="advisor-spin" class="htmx-indicator">…thinking</span>
-        <div id="advisor-out"></div>
-      </section>
-    {% else %}
-      <section id="advisor" class="muted">
-        Advisor disabled. Set <code>ADVISOR_ENABLED=true</code> + <code>GROQ_API_KEY</code> to enable.
-      </section>
-    {% endif %}
+    <section id="advisor">
+      <h2>Advisor</h2>
+      <p class="muted">Ask GROQ to read the live snapshot and propose knob tweaks. Also fires automatically on a throttle event (latest diagnosis appears above).</p>
+      <button hx-post="/ui/advisor"
+              hx-target="#advisor-out"
+              hx-swap="innerHTML scroll:#advisor-out:top"
+              hx-indicator="#advisor-spin">
+        Ask advisor
+      </button>
+      <span id="advisor-spin" class="htmx-indicator">…thinking</span>
+      <div id="advisor-out">
+        {% if not advisor_enabled %}
+          <p class="muted advisor-empty">Advisor is disabled. Set <code>ADVISOR_ENABLED=true</code> + <code>GROQ_API_KEY</code> (in the proxy's <code>EnvironmentFile</code>) to enable. The button will surface the exact error here on click.</p>
+        {% endif %}
+      </div>
+    </section>
 
-    <details class="config-section">
+    <details class="config-section" open>
       <summary>
         <span>settings</span>
         <span class="muted">live overrides · persisted across restarts</span>

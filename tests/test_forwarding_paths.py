@@ -375,6 +375,8 @@ async def test_ui_advisor_enabled_returns_recommendation(env, monkeypatch) -> No
 
 
 async def test_ui_advisor_enabled_surfaces_error(env, monkeypatch) -> None:
+    """Recommendation failure renders an HTML error partial at 200 so HTMX
+    swaps it into #advisor-out. See test_ui_advisor_disabled_renders_inline_error."""
     tc, _ = env
     monkeypatch.setenv("ADVISOR_ENABLED", "true")
 
@@ -383,5 +385,7 @@ async def test_ui_advisor_enabled_surfaces_error(env, monkeypatch) -> None:
 
     monkeypatch.setattr(advisor_impl, "recommend", boom)
     resp = await tc.post("/ui/advisor")
-    assert resp.status == 500
-    assert "advisor error" in await resp.text()
+    assert resp.status == 200
+    body = await resp.text()
+    assert "advisor-output err" in body
+    assert "groq exploded" in body

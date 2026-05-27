@@ -261,8 +261,12 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "setter": _set_max_concurrent,
         "units": "slots",
         "help": (
-            "Hard ceiling on in-flight requests per bearer. "
-            "AIMD shrinks live cap below this on pushback."
+            "Hard ceiling on in-flight requests per bearer when queueMode is "
+            "'fair'/'reactive', or when central is down and the proxy falls "
+            "back direct. AIMD shrinks the live cap below this on 429/503 "
+            "pushback. In queueMode='off' + central set, this is shadowed "
+            "by 'central_local_max_concurrent' (which is the actual binding "
+            "cap). Suggested: 64 on Max-tier (bursts absorbed by 5h window)."
         ),
     },
     "min_dispatch_gap_ms": {
@@ -273,7 +277,13 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: int(MIN_DISPATCH_GAP_S * 1000),
         "setter": _set_min_dispatch_gap_ms,
         "units": "ms",
-        "help": "Minimum gap between two consecutive upstream POSTs (burst pacing). 0 = disabled.",
+        "help": (
+            "Process-global minimum gap between consecutive upstream POSTs "
+            "(burst pacing). Orthogonal to concurrency caps — paces RATE, "
+            "not parallelism. Suggested: 0 on local (no rate cap), 50 on "
+            "central (smooth fleet-wide bursts). Raise only if Anthropic "
+            "starts 429ing despite headroom on concurrency."
+        ),
     },
     "central_local_max_concurrent": {
         "label": "Central fallback local cap",
@@ -284,8 +294,12 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "setter": _set_central_local_max_concurrent,
         "units": "slots",
         "help": (
-            "Local fair-queue cap while forwarding through a central proxy, "
-            "and when falling back direct if central is down."
+            "THE binding per-bearer cap when queueMode='off' + a central "
+            "URL is set: same-host Claude Code bursts share this small fair "
+            "queue before egress to central (or direct fallback). Doubles "
+            "as the direct-fallback cap when central is down. Suggested: "
+            "24 (central has max=32; 4 bearers × 24 = 96 burst absorbed by "
+            "central's fair queue). Lower if Anthropic starts 429ing."
         ),
     },
     "utilization_target": {
@@ -297,8 +311,12 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "setter": _set_utilization_target,
         "units": "(0=off)",
         "help": (
-            "Proactively shrink AIMD ceiling once the binding 5h/7d "
-            "unified-window crosses this fraction."
+            "Smoothness lever for Claude Max OAuth bearers. When the "
+            "binding 5h/7d unified-window utilisation crosses this "
+            "fraction, the proxy proactively shrinks the live cap BEFORE "
+            "a hard window block lands. Set to 0.85 to glide into the "
+            "last 15% of window budget instead of slamming into a wall. "
+            "0.0 disables (legacy default)."
         ),
     },
     "aimd_min": {
@@ -309,7 +327,13 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: AIMD_MIN,
         "setter": _set_aimd_min,
         "units": "slots",
-        "help": "Floor under multiplicative-decrease shrink. Live cap never drops below this.",
+        "help": (
+            "Floor under multiplicative-decrease shrink — live cap NEVER "
+            "drops below this even after sustained 429 storm. Constitution "
+            "III backstops env values below 1 via a clamp. Suggested: 8 "
+            "on Max-tier so a sub-agent swarm survives pushback without "
+            "collapsing to single-slot serialisation."
+        ),
     },
     "aimd_backoff_s": {
         "label": "AIMD cooldown",
@@ -319,7 +343,13 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: AIMD_BACKOFF_S,
         "setter": _set_aimd_backoff_s,
         "units": "s",
-        "help": "After a shrink, wait this many seconds before additive-increase can resume.",
+        "help": (
+            "After a shrink, wait this many seconds before additive-"
+            "increase can resume. Suggested: 5s on Max-tier (fast "
+            "recovery, Anthropic's pushback windows are short). 30s is "
+            "the conservative default for API-key tiers with stricter "
+            "per-key rate limits."
+        ),
     },
     "aimd_ramp_after": {
         "label": "AIMD ramp threshold",
@@ -329,7 +359,12 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: AIMD_RAMP_AFTER,
         "setter": _set_aimd_ramp_after,
         "units": "successes",
-        "help": "Consecutive 200s past the cooldown before live cap grows by +1.",
+        "help": (
+            "Consecutive 200s past the cooldown before live cap grows by "
+            "+1. Suggested: 3 (smooth, predictable growth). 1 oscillates "
+            "the cap per-response; ≥10 stalls recovery after a transient "
+            "pushback."
+        ),
     },
     "aimd_decrease": {
         "label": "AIMD shrink factor",
@@ -340,8 +375,12 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "setter": _set_aimd_decrease,
         "units": "x",
         "help": (
-            "Multiplicative-decrease factor on 429/503. "
-            "0.5 = TCP Reno; 0.7 = CUBIC-style (default)."
+            "Multiplicative-decrease factor on 429/503. 0.5 = TCP Reno "
+            "(aggressive halving, deep sawtooth). 0.7 = CUBIC (default, "
+            "shallower sawtooth, higher average utilisation). 0.9+ "
+            "UNDER-REACTS to real overload → cascade of 429s → user-"
+            "visible stalls (research: Netflix concurrency-limits). "
+            "Stick to 0.7 unless you have evidence to move."
         ),
     },
     "body_shrink_cap_bytes": {
@@ -352,7 +391,13 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: _get_body_shrink_attr("CAP_BYTES", 0),
         "setter": _set_body_shrink_cap_bytes,
         "units": "bytes",
-        "help": "Soft cap below which body_shrink does not trim. 0 disables the whole feature.",
+        "help": (
+            "Soft cap below which body_shrink does not trim. 0 disables "
+            "the whole feature. Bodies above this size get older "
+            "tool_result blocks dropped (preserves the last "
+            "'keep_turns' messages) before they hit Anthropic's hard "
+            "32 MiB cap and 413 your request."
+        ),
     },
     "body_shrink_keep_turns": {
         "label": "Body-shrink keep turns",
@@ -362,7 +407,12 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: _get_body_shrink_attr("KEEP_TURNS", 4),
         "setter": _set_body_shrink_keep_turns,
         "units": "msgs",
-        "help": "Trailing messages left untouched by the trimmer.",
+        "help": (
+            "Trailing messages left untouched by the trimmer — the most "
+            "recent N user/assistant turns always survive body-shrink. "
+            "Raise if you see the model losing recent context after "
+            "shrink fires."
+        ),
     },
     "body_shrink_min_block_bytes": {
         "label": "Body-shrink min block",
@@ -372,14 +422,25 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "getter": lambda: _get_body_shrink_attr("MIN_BLOCK_BYTES", 2048),
         "setter": _set_body_shrink_min_block_bytes,
         "units": "bytes",
-        "help": "Skip trimming tool_result blocks whose serialized size is below this threshold.",
+        "help": (
+            "Skip trimming tool_result blocks whose serialised size is "
+            "below this threshold — saves you trimming tiny noise blocks "
+            "where the savings are negligible but the readability loss "
+            "is real."
+        ),
     },
     "advisor_enabled": {
         "label": "GROQ advisor",
         "type": "bool",
         "getter": lambda: os.environ.get("ADVISOR_ENABLED", "false").strip().lower() == "true",
         "setter": _set_advisor_enabled,
-        "help": "Auto-fire a GROQ diagnosis on throttle events. Requires GROQ_API_KEY.",
+        "help": (
+            "Auto-fire a GROQ diagnosis on 429/503/529 events (debounced) "
+            "and surface it under 'Latest auto-diagnosis'. Also enables "
+            "the on-demand 'Ask advisor' button. Requires GROQ_API_KEY in "
+            "the EnvironmentFile (~/.local/state/anthropic-throttle-proxy/"
+            "groq.env)."
+        ),
     },
 }
 

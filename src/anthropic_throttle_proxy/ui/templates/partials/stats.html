@@ -17,17 +17,28 @@
 {% if bearers %}
 <h2>Bearers · {{ bearers | length }}</h2>
 <table class="bearers">
+  <colgroup>
+    <col class="col-bearer">
+    <col class="col-num">
+    <col class="col-num">
+    <col class="col-num">
+    <col class="col-aimd">
+    <col class="col-window">
+    <col class="col-num">
+    <col class="col-num">
+    <col class="col-num">
+  </colgroup>
   <thead>
     <tr>
       <th>bearer</th>
       <th>inflight</th>
       <th>queued</th>
       <th>served</th>
-      <th>aimd</th>
+      <th class="th-center">aimd</th>
       <th>5h window</th>
-      <th>req left</th>
-      <th>retry-after</th>
-      <th>clients</th>
+      <th title="anthropic-ratelimit-requests-remaining (API-key tiers only)">req left</th>
+      <th title="seconds the proxy is honouring from the upstream Retry-After header">retry-after</th>
+      <th title="distinct client_id values currently sharing this bearer's queue">clients</th>
     </tr>
   </thead>
   <tbody>
@@ -37,26 +48,26 @@
       <td class="num">{{ b.inflight }}</td>
       <td class="num">{{ b.queued }}</td>
       <td class="num">{{ "{:,}".format(b.served) }}</td>
-      <td>
+      <td class="td-center">
         {% if b.limiter %}
           {% set live = b.limiter.max_concurrent %}
           {% set hard = b.limiter.hard_max %}
-          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}">{{ live }}/{{ hard }}</span>
+          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}" title="live / hard ceiling">{{ live }}/{{ hard }}</span>
         {% else %}
-          —
+          <span class="muted">—</span>
         {% endif %}
       </td>
       <td>
         {% if b.unified and b.unified.util_5h is not none %}
           {% set pct = (b.unified.util_5h * 100) | round(0) | int %}
           {% set rejected = b.unified.status == "rejected" %}
-          <span class="util">
+          <span class="util" title="5h unified-window utilisation (OAuth/Max only)">
             <span class="bar"><i class="{% if rejected or pct >= 90 %}crit{% elif pct >= 75 %}warn{% endif %}" style="width: {{ [pct, 100] | min }}%"></i></span>
             <span class="pct">{{ pct }}%</span>
             {% if rejected %}<span class="tag-rejected">rejected</span>{% endif %}
           </span>
         {% else %}
-          —
+          <span class="muted">—</span>
         {% endif %}
       </td>
       <td class="num">{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
