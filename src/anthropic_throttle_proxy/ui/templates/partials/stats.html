@@ -31,12 +31,12 @@
   </colgroup>
   <thead>
     <tr>
-      <th scope="col">bearer</th>
-      <th scope="col">inflight</th>
-      <th scope="col">queued</th>
-      <th scope="col">served</th>
-      <th scope="col" class="th-center">aimd</th>
-      <th scope="col">5h window</th>
+      <th scope="col" title="8-char sha256 prefix of the Authorization bearer (raw token never logged)">bearer</th>
+      <th scope="col" title="in-flight requests through this bearer right now">inflight</th>
+      <th scope="col" title="requests queued waiting for a free slot">queued</th>
+      <th scope="col" title="lifetime served counter since this proxy instance started">served</th>
+      <th scope="col" class="th-center" title="AIMD: live cap / hard ceiling. Live shrinks below hard on 429/503 pushback.">aimd</th>
+      <th scope="col" title="5h unified-window utilisation (OAuth/Max only). Proactive shrink fires at utilization_target.">5h window</th>
       <th scope="col" aria-describedby="hdr-reqleft" title="anthropic-ratelimit-requests-remaining (API-key tiers only)">req left</th>
       <th scope="col" aria-describedby="hdr-retryafter" title="seconds the proxy is honouring from the upstream Retry-After header">retry-after</th>
       <th scope="col" aria-describedby="hdr-clients" title="distinct client_id values currently sharing this bearer's queue">clients</th>
@@ -45,15 +45,22 @@
   <tbody>
     {% for b in bearers %}
     <tr>
-      <td><code>{{ b.bearer_id }}</code></td>
-      <td class="num">{{ b.inflight }}</td>
-      <td class="num">{{ b.queued }}</td>
+      <td><code title="copy via row select; bearer hash is sha256-truncated">{{ b.bearer_id }}</code></td>
+      <td class="num">
+        {% set lcap = (b.limiter.max_concurrent if b.limiter else 0) %}
+        {% set sat = ((b.inflight / lcap) * 100) | round(0) | int if lcap > 0 else 0 %}
+        <span class="util compact" title="{{ b.inflight }} of {{ lcap }} slots in use ({{ sat }}%)">
+          <span class="bar"><i class="{% if sat >= 100 %}crit{% elif sat >= 75 %}warn{% endif %}" style="width: {{ [sat, 100] | min }}%"></i></span>
+          <span class="pct">{{ b.inflight }}</span>
+        </span>
+      </td>
+      <td class="num{% if b.queued > 0 %} warn-text{% endif %}">{{ b.queued }}</td>
       <td class="num">{{ "{:,}".format(b.served) }}</td>
       <td class="td-center">
         {% if b.limiter %}
           {% set live = b.limiter.max_concurrent %}
           {% set hard = b.limiter.hard_max %}
-          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}" title="live / hard ceiling">{{ live }}/{{ hard }}</span>
+          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}" title="live cap {{ live }} / hard ceiling {{ hard }} (shrinks under 429/503)">{{ live }}/{{ hard }}</span>
         {% else %}
           <span class="muted">—</span>
         {% endif %}
