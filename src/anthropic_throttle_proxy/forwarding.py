@@ -50,26 +50,50 @@ def pick_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout, str]
     return url, client_timeout, via
 
 
-async def _poll_central_once(session: aiohttp.ClientSession) -> None:
-    """One central health probe; swallow + record any failure as DOWN.
+def _record_central_sample(healthy: bool, detail: str = "") -> None:
+    """Fold one probe result into the hysteresis counters and flip status only
+    once a consecutive-sample threshold is crossed.
 
-    Logs only on a status transition (up↔down) so a steady state stays quiet.
+    A single transient miss no longer abandons central (which would flip the
+    whole local fleet to direct fallback); it takes ``CENTRAL_HEALTH_FAIL_THRESHOLD``
+    consecutive failures to go DOWN and ``CENTRAL_HEALTH_OK_THRESHOLD`` consecutive
+    successes to go UP. Logs only on an actual transition so steady state is quiet.
+    """
+    st = config.state
+    if healthy:
+        st["central_consecutive_ok"] = int(st.get("central_consecutive_ok", 0)) + 1
+        st["central_consecutive_fail"] = 0
+        if (
+            st["central_status"] != "up"
+            and st["central_consecutive_ok"] >= config.CENTRAL_HEALTH_OK_THRESHOLD
+        ):
+            log(f"central {config.CENTRAL_URL} is UP (after {st['central_consecutive_ok']} ok)")
+            st["central_status"] = "up"
+    else:
+        st["central_consecutive_fail"] = int(st.get("central_consecutive_fail", 0)) + 1
+        st["central_consecutive_ok"] = 0
+        if (
+            st["central_status"] != "down"
+            and st["central_consecutive_fail"] >= config.CENTRAL_HEALTH_FAIL_THRESHOLD
+        ):
+            log(f"central DOWN: {detail} (after {st['central_consecutive_fail']} fails)")
+            st["central_status"] = "down"
+
+
+async def _poll_central_once(session: aiohttp.ClientSession) -> None:
+    """One central health probe; fold the result into the hysteresis counters.
+
+    Never raises — a failed probe is recorded as an unhealthy sample.
     """
     try:
         async with session.get(config.CENTRAL_URL + config.CENTRAL_HEALTH_PATH) as r:
             if r.status == 200:
                 await r.read()
-                if config.state["central_status"] != "up":
-                    log(f"central {config.CENTRAL_URL} is UP")
-                config.state["central_status"] = "up"
+                _record_central_sample(True)
             else:
-                if config.state["central_status"] != "down":
-                    log(f"central health returned {r.status} → DOWN")
-                config.state["central_status"] = "down"
+                _record_central_sample(False, f"health returned {r.status}")
     except Exception as exc:
-        if config.state["central_status"] != "down":
-            log(f"central unreachable: {exc!r} → DOWN")
-        config.state["central_status"] = "down"
+        _record_central_sample(False, f"unreachable: {exc!r}")
 
 
 async def central_health_loop() -> None:

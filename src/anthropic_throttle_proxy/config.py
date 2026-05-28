@@ -56,6 +56,19 @@ CENTRAL_HEALTH_PATH = "/__throttle/health"
 CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL", "30"))
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
 CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT", "10"))
+# Central-health hysteresis: a single transient probe miss must NOT abandon
+# central — that flips the whole local fleet to direct fallback and risks an
+# unqueued firehose (the 25/05/2026 incident shape). Require FAIL_THRESHOLD
+# consecutive failed probes before declaring central DOWN, and OK_THRESHOLD
+# consecutive healthy probes before re-declaring UP. Asymmetric on purpose: slow
+# to drop (protects the data plane), modest to re-adopt (don't trust a flapping
+# central immediately). Both floor at 1 = legacy flip-on-every-sample behaviour.
+CENTRAL_HEALTH_FAIL_THRESHOLD = max(
+    1, int(os.environ.get("THROTTLE_CENTRAL_HEALTH_FAIL_THRESHOLD", "3"))
+)
+CENTRAL_HEALTH_OK_THRESHOLD = max(
+    1, int(os.environ.get("THROTTLE_CENTRAL_HEALTH_OK_THRESHOLD", "2"))
+)
 
 # PR #575: AIMD reactive throttle. "Wide open + throttle as we need":
 # start at MAX_CONCURRENT (the hard ceiling), shrink multiplicatively on
@@ -101,6 +114,9 @@ state: dict[str, object] = {
     "upstream_retries": 0,
     "central_status": "unknown",
     "central_last_check": 0,
+    # Consecutive same-result probe counters backing the health hysteresis above.
+    "central_consecutive_ok": 0,
+    "central_consecutive_fail": 0,
     # last_advisor holds {"text", "ts", "trigger"} from the GROQ advisor.
     "last_advisor": None,
 }

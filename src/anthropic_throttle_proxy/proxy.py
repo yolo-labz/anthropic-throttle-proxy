@@ -535,7 +535,11 @@ async def _retry_direct_once(
     """
     if via == "central":
         log(f"central forward failed: {first_exc!r} → marking DOWN, retrying direct")
+        # A real failed request is a stronger signal than a health probe, so we
+        # force DOWN immediately (bypassing the probe-fail threshold). Reset the
+        # ok streak so recovery still has to clear the OK_THRESHOLD hysteresis.
         state["central_status"] = "down"
+        state["central_consecutive_ok"] = 0
         retry_url, retry_timeout, _ = pick_target(path, request.query_string)
         retry_where = "during direct-retry"
     else:

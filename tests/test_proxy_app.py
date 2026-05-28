@@ -50,14 +50,15 @@ def _make_upstream() -> web.Application:
             return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
         if mode == "529":
             return web.Response(status=529, headers={"retry-after": "0"})
-        if mode == "unified":
+        if mode in ("unified", "unified-high"):
+            util_5h = "0.92" if mode == "unified-high" else "0.42"
             return web.Response(
                 status=200,
                 body=_SSE_BODY,
                 headers={
                     "content-type": "text/event-stream",
                     "anthropic-ratelimit-unified-status": "allowed",
-                    "anthropic-ratelimit-unified-5h-utilization": "0.42",
+                    "anthropic-ratelimit-unified-5h-utilization": util_5h,
                     "anthropic-ratelimit-unified-7d-utilization": "0.1",
                 },
             )
@@ -113,6 +114,8 @@ def _reset_proxy_state() -> None:
             "upstream_retries": 0,
             "central_status": "unknown",
             "central_last_check": 0,
+            "central_consecutive_ok": 0,
+            "central_consecutive_fail": 0,
             "last_advisor": None,
         }
     )
@@ -260,6 +263,44 @@ async def test_unified_utilization_surfaced(client: TestClient) -> None:
     assert status == 200
     bid = next(iter(config.bearer_state))
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.42
+
+
+async def test_unified_proactive_shrink_fires_via_http(client: TestClient, monkeypatch) -> None:
+    """FR-008 (Codex PARTIAL #3, PR #30): proactive util-shrink was only covered
+    at the _apply_unified unit level. Drive it through the real HTTP path: a
+    bearer whose binding 5h window (0.92) crosses UTILIZATION_TARGET (0.85) must
+    have its live cap shrunk one CUBIC step below the hard ceiling."""
+    # observe/fair so the AIMD ceiling can move (shrink is a no-op in off mode).
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.85)
+    status, _ = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-opus-4-7"}',
+        headers={"Authorization": "Bearer oauth-util-high", "X-Stub-Mode": "unified-high"},
+    )
+    assert status == 200
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
+    assert lim.max_concurrent < lim.hard_max
+
+
+async def test_unified_no_shrink_when_target_off_via_http(client: TestClient, monkeypatch) -> None:
+    """Mirror of the above with UTILIZATION_TARGET=0 (default): high utilization
+    is surfaced but the live cap is untouched — observe-only, no proactive shrink.
+    Same observe mode as the positive case, so the only variable is the target."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    assert proxy.UTILIZATION_TARGET == 0
+    status, _ = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-opus-4-7"}',
+        headers={"Authorization": "Bearer oauth-util-off", "X-Stub-Mode": "unified-high"},
+    )
+    assert status == 200
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
+    assert lim.max_concurrent == lim.hard_max
 
 
 async def test_health_reflects_inflight_after_traffic(client: TestClient) -> None:
