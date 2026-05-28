@@ -333,7 +333,11 @@ async def test_central_health_loop_noop_without_central(monkeypatch) -> None:
     await asyncio.wait_for(forwarding.central_health_loop(), timeout=1.0)
 
 
-async def test_poll_central_once_up_then_down() -> None:
+async def test_poll_central_once_up_then_down(monkeypatch) -> None:
+    # Pin thresholds so the assertions don't depend on ambient env (the legacy
+    # 1/1 setting would otherwise change which probe count flips the status).
+    monkeypatch.setattr(config, "CENTRAL_HEALTH_OK_THRESHOLD", 2)
+    monkeypatch.setattr(config, "CENTRAL_HEALTH_FAIL_THRESHOLD", 3)
     _reset()
     health_app = web.Application()
 
@@ -349,11 +353,9 @@ async def test_poll_central_once_up_then_down() -> None:
         config.CENTRAL_URL = url
         config.state["central_status"] = "unknown"
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # First healthy probe is not enough — needs OK_THRESHOLD in a row.
+            # Cold start adopts central on the FIRST healthy probe (the OK_THRESHOLD
+            # delay applies only on recovery from down — see the recovery test).
             await forwarding._poll_central_once(session)
-            assert config.state["central_status"] == "unknown"
-            for _ in range(config.CENTRAL_HEALTH_OK_THRESHOLD - 1):
-                await forwarding._poll_central_once(session)
         assert config.state["central_status"] == "up"
     finally:
         await server.close()
@@ -371,13 +373,38 @@ async def test_poll_central_once_up_then_down() -> None:
     config.CENTRAL_URL = ""
 
 
-async def test_central_single_probe_blip_does_not_flap() -> None:
+async def test_central_cold_start_adopts_on_first_probe(monkeypatch) -> None:
+    """Regression (Codex review, PR #35): from the initial 'unknown' state the
+    first healthy probe must flip to UP even with OK_THRESHOLD>1. Otherwise every
+    restart/deploy routes traffic direct-to-upstream for a full health interval —
+    the exact unqueued firehose the hysteresis is meant to prevent."""
+    monkeypatch.setattr(config, "CENTRAL_HEALTH_OK_THRESHOLD", 5)
+    _reset()  # central_status == "unknown"
+    forwarding._record_central_sample(True)
+    assert config.state["central_status"] == "up"
+    assert config.state["central_consecutive_ok"] == 1
+
+
+async def test_central_recovery_from_down_needs_ok_threshold(monkeypatch) -> None:
+    """Re-adoption after a DOWN is guarded by OK_THRESHOLD (don't trust a flapping
+    central immediately) — unlike cold start, which adopts on the first probe."""
+    monkeypatch.setattr(config, "CENTRAL_HEALTH_OK_THRESHOLD", 2)
+    _reset()
+    config.state["central_status"] = "down"
+
+    forwarding._record_central_sample(True)
+    assert config.state["central_status"] == "down"  # 1 ok < OK_THRESHOLD(2)
+    forwarding._record_central_sample(True)
+    assert config.state["central_status"] == "up"  # 2nd consecutive ok clears it
+
+
+async def test_central_single_probe_blip_does_not_flap(monkeypatch) -> None:
     """Regression (Codex PARTIAL #1, PR #30): a lone failed probe while central
     is healthy must NOT flip status to DOWN — that flapped the whole local fleet
     to direct fallback on 27/05/2026 even though central was serving traffic."""
+    monkeypatch.setattr(config, "CENTRAL_HEALTH_FAIL_THRESHOLD", 3)
     _reset()
     config.state["central_status"] = "up"
-    config.state["central_consecutive_ok"] = config.CENTRAL_HEALTH_OK_THRESHOLD
 
     # One transient miss, well under FAIL_THRESHOLD → still UP, fallback unchanged.
     forwarding._record_central_sample(False, "transient")

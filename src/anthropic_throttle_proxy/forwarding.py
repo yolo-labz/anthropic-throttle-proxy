@@ -63,10 +63,16 @@ def _record_central_sample(healthy: bool, detail: str = "") -> None:
     if healthy:
         st["central_consecutive_ok"] = int(st.get("central_consecutive_ok", 0)) + 1
         st["central_consecutive_fail"] = 0
-        if (
-            st["central_status"] != "up"
-            and st["central_consecutive_ok"] >= config.CENTRAL_HEALTH_OK_THRESHOLD
-        ):
+        if st["central_status"] == "up":
+            return
+        # Cold start ("unknown") adopts central on the FIRST healthy probe. There is
+        # no established relationship to protect, and defaulting to direct upstream
+        # during startup/restart recreates the unqueued-upstream firehose this
+        # hysteresis exists to prevent (Codex review, PR #35). The OK_THRESHOLD
+        # re-adoption delay applies ONLY when recovering from a DOWN — there we
+        # don't trust a flapping central immediately.
+        ok_needed = config.CENTRAL_HEALTH_OK_THRESHOLD if st["central_status"] == "down" else 1
+        if st["central_consecutive_ok"] >= ok_needed:
             log(f"central {config.CENTRAL_URL} is UP (after {st['central_consecutive_ok']} ok)")
             st["central_status"] = "up"
     else:
