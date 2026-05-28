@@ -144,7 +144,17 @@ boxes ticked.
 1. **Surgical symlink swap** if HM activation was deferred (niri-guard host):
    ```sh
    TOPLEVEL=$(readlink /run/current-system)
-   HM_FILES=$(nix-store -qR "$TOPLEVEL" | grep -E 'home-manager-files$' | head -1)
+   # Resolve HM-files deterministically. The old recipe ran
+   #   nix-store -qR "$TOPLEVEL" | grep home-manager-files | head -1
+   # over the FULL transitive closure, so on a multi-user / multi-generation
+   # store `head -1` could pick a STALE sibling's files dir (the 26/05/2026
+   # stale-unit incident). Instead: find the single home-manager-generation in
+   # the activated closure, then take the single home-manager-files it directly
+   # references. Fail loud on any ambiguity rather than silently mis-pick.
+   HM_GEN=$(nix-store -qR "$TOPLEVEL" | grep -E 'home-manager-generation$')
+   [ "$(printf '%s\n' "$HM_GEN"   | grep -c .)" -eq 1 ] || { echo "ambiguous home-manager-generation:"; printf '%s\n' "$HM_GEN"; return 1 2>/dev/null || exit 1; }
+   HM_FILES=$(nix-store -q --references "$HM_GEN" | grep -E 'home-manager-files$')
+   [ "$(printf '%s\n' "$HM_FILES" | grep -c .)" -eq 1 ] || { echo "ambiguous home-manager-files:"; printf '%s\n' "$HM_FILES"; return 1 2>/dev/null || exit 1; }
    # verify ExecStart in that HM-files's unit BEFORE swapping
    grep ExecStart "$HM_FILES/.config/systemd/user/anthropic-throttle-proxy.service"
    ln -sfn "$HM_FILES/.config/systemd/user/anthropic-throttle-proxy.service" \
