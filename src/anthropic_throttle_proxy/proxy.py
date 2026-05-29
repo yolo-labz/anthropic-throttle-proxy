@@ -959,11 +959,10 @@ def main() -> None:
     )
     # shutdown_timeout: on SIGTERM, aiohttp closes the listener (no new conns)
     # then waits this long for in-flight streaming turns to finish before
-    # force-closing. Default 60s is shorter than many agentic turns; raising it
-    # (THROTTLE_SHUTDOWN_TIMEOUT_S, default 120) lets a deploy/restart drain
-    # most turns instead of SIGKILLing them. Requires the systemd unit's
-    # TimeoutStopSec >= this value (set in the NixOS anthropic-throttle-proxy
-    # module) or systemd kills the process first.
+    # force-closing. The bare default (config.SHUTDOWN_TIMEOUT_S=85s) sits under
+    # systemd's 90s DefaultTimeoutStopSec so it is always honored; the NixOS
+    # module couples a higher value with a matching TimeoutStopSec. Turns that
+    # exceed the window are still cut.
     web.run_app(
         app,
         host=config.LISTEN_HOST,

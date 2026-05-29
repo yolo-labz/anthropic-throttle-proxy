@@ -36,13 +36,18 @@ else:
 
 # Graceful-shutdown drain window. aiohttp's web.run_app stops accepting new
 # connections on SIGTERM, then waits this long for in-flight requests (streaming
-# /v1/messages turns) to finish before force-closing them. The aiohttp default
-# is 60s — too short for multi-minute agentic turns, so a deploy/restart
-# SIGKILLs every active turn (the 29/05/2026 fleet-wide "socket connection
-# closed unexpectedly"). 120s lets the large majority drain; the systemd unit's
-# TimeoutStopSec MUST be >= this + slack or systemd SIGKILLs first. Outlier
-# multi-minute turns can still be cut — pair with not restarting under load.
-SHUTDOWN_TIMEOUT_S = float(os.environ.get("THROTTLE_SHUTDOWN_TIMEOUT_S", "120"))
+# /v1/messages turns) to finish before force-closing them. aiohttp's default is
+# 60s; a deploy/restart with turns in flight force-closes them (the 29/05/2026
+# fleet-wide "socket connection closed unexpectedly").
+#
+# The bare default here is 85s — deliberately UNDER systemd's 90s
+# DefaultTimeoutStopSec — so aiohttp finishes its graceful drain+close before
+# systemd would SIGKILL, i.e. this value is honored even under a stock unit.
+# Raising it past ~90s only takes effect if the supervising unit's
+# TimeoutStopSec is raised to match; the NixOS module sets BOTH this env var and
+# TimeoutStopSec from one coupled option so they cannot drift. Turns that do not
+# finish within the window are still cut — pair with not restarting under load.
+SHUTDOWN_TIMEOUT_S = float(os.environ.get("THROTTLE_SHUTDOWN_TIMEOUT_S", "85"))
 
 # Burst pacing (standalone-repo #1, 20/05/2026): minimum gap in milliseconds
 # between consecutive dispatches to the upstream / central. 0 = disabled.
