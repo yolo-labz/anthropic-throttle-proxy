@@ -171,6 +171,27 @@ async def test_metrics_endpoint_exposes_prometheus(client: TestClient) -> None:
     assert "anthropic_inflight" in text
 
 
+async def test_start_time_gauge_registered(client: TestClient) -> None:
+    # PR #037 observability: the start-time gauge is registered on the
+    # process-local registry so a restart shows up as a step change in
+    # /metrics. The gauge exists even before main() runs (which is what sets
+    # the actual value), so its HELP line must appear in the scrape.
+    text = await (await client.get("/metrics")).text()
+    assert "anthropic_proxy_start_time_seconds" in text
+
+
+def test_start_time_gauge_on_process_local_registry() -> None:
+    # The gauge object lives on the isolated REGISTRY, never the global default.
+    from prometheus_client import REGISTRY as _DEFAULT_GLOBAL
+
+    from anthropic_throttle_proxy import metrics
+
+    assert (
+        "anthropic_proxy_start_time_seconds" in metrics.REGISTRY._names_to_collectors  # noqa: SLF001 — registry introspection in test
+    )
+    assert "anthropic_proxy_start_time_seconds" not in _DEFAULT_GLOBAL._names_to_collectors  # noqa: SLF001
+
+
 async def test_root_probe_is_local_and_not_queued(client: TestClient) -> None:
     resp = await client.head("/")
 
@@ -420,3 +441,43 @@ def test_compute_status_retry_after_throttles_and_annotates() -> None:
 def test_compute_status_notes_passthrough_when_queue_off() -> None:
     out = _compute_status([_bearer("aa", util=0.20)], "off")
     assert out["detail"].endswith("queue off (passthrough)")
+
+
+# ---------------------------------------------------------------------------
+# PR #037: storm early-warning latch (proxy._maybe_warn_storm)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def storm_log(monkeypatch) -> list[str]:
+    """Capture proxy.log lines and reset the storm latch around each test."""
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    monkeypatch.setattr(proxy, "_storm_warned", False)
+    monkeypatch.setattr(config, "STORM_WARN_RETRIES", 25)
+    yield lines
+    proxy._storm_warned = False
+
+
+def test_storm_warn_fires_once_on_crossing(storm_log: list[str]) -> None:
+    proxy._maybe_warn_storm(24)  # below threshold — silent
+    assert storm_log == []
+    proxy._maybe_warn_storm(25)  # crosses — one warning
+    proxy._maybe_warn_storm(40)  # still over — no repeat
+    storms = [m for m in storm_log if "STORM WARNING" in m]
+    assert len(storms) == 1
+    assert "retries=25" in storms[0]
+    assert "THROTTLE_STORM_WARN_RETRIES=25" in storms[0]
+
+
+def test_storm_warn_rearms_after_drop_below(storm_log: list[str]) -> None:
+    proxy._maybe_warn_storm(30)  # warn
+    proxy._maybe_warn_storm(2)  # counter fell back (fresh process / reset)
+    proxy._maybe_warn_storm(30)  # warn again on the next crossing
+    assert len([m for m in storm_log if "STORM WARNING" in m]) == 2
+
+
+def test_storm_warn_disabled_when_threshold_non_positive(storm_log: list[str], monkeypatch) -> None:
+    monkeypatch.setattr(config, "STORM_WARN_RETRIES", 0)
+    proxy._maybe_warn_storm(1000)
+    assert [m for m in storm_log if "STORM WARNING" in m] == []
