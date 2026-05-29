@@ -19,6 +19,7 @@ from prometheus_client import (
 __all__ = [
     "CONTENT_TYPE_LATEST",
     "REGISTRY",
+    "M_START_TIME",
     "M_REQUESTS",
     "M_TOKENS",
     "M_COST",
@@ -44,6 +45,15 @@ __all__ = [
 ]
 
 REGISTRY = CollectorRegistry()
+# Process start time, set once in proxy.main(). A step change in this gauge is
+# a restart — the proxy can be SIGKILLed mid-stream (29/05/2026: 8 in-flight
+# streams dropped, the only evidence was a single journald line). Surfacing it
+# as a metric makes restarts visible as a jump in Grafana/Gatus.
+M_START_TIME = Gauge(
+    "anthropic_proxy_start_time_seconds",
+    "Unix start time of the proxy process; a step change = a restart.",
+    registry=REGISTRY,
+)
 M_REQUESTS = Counter(
     "anthropic_requests_total",
     "Requests processed by the throttle proxy, labeled by HTTP method, status, and model.",

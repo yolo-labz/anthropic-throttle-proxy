@@ -101,6 +101,7 @@ from .metrics import (
     M_QUEUED,
     M_QUEUED_BEARER,
     M_REQUESTS,
+    M_START_TIME,
     M_TOKENS,
     M_UPSTREAM_RETRIES,
     M_UTIL_5H,
@@ -185,6 +186,7 @@ __all__ = [
     "M_QUEUED",
     "M_QUEUED_BEARER",
     "M_REQUESTS",
+    "M_START_TIME",
     "M_TOKENS",
     "M_UPSTREAM_RETRIES",
     "M_UTIL_5H",
@@ -226,6 +228,36 @@ ADVISOR_DEBOUNCE_S = float(os.environ.get("ADVISOR_DEBOUNCE_S", "120"))
 # a task, so a bare `create_task(...)` whose result is never awaited can be
 # garbage-collected mid-flight. Hold the ref until the task is done.
 _background_tasks: set[asyncio.Task] = set()
+
+# Storm early-warning latch. The process-global upstream-retry counter only
+# grows; we want ONE WARNING line each time it crosses STORM_WARN_RETRIES, not
+# one per request once it's over. Latch on the way up, reset when the counter
+# falls back below the threshold (a fresh process or a manual state reset) so a
+# later storm warns again.
+_storm_warned = False
+
+
+def _maybe_warn_storm(retries: int) -> None:
+    """Emit one WARNING line per upward crossing of ``config.STORM_WARN_RETRIES``.
+
+    Reads ``config.STORM_WARN_RETRIES`` via attribute access so a future runtime
+    override is honoured. No-op when the threshold is non-positive (disabled).
+    """
+    global _storm_warned
+    threshold = config.STORM_WARN_RETRIES
+    if threshold <= 0:
+        return
+    if retries >= threshold:
+        if not _storm_warned:
+            _storm_warned = True
+            log(
+                f"STORM WARNING: upstream retries={retries} exceeded "
+                f"THROTTLE_STORM_WARN_RETRIES={threshold} — likely a "
+                f"stale-token / 429 storm"
+            )
+    elif _storm_warned:
+        _storm_warned = False
+
 
 _last_advice_ts: float = 0.0
 _direct_fallback_lock: asyncio.Lock | None = None
@@ -744,6 +776,7 @@ async def _finalize(
         f"queued={counters.s['queued']} served={counters.s['served']} "
         f"disc={counters.s['client_disconnects']} retries={counters.s['upstream_retries']}"
     )
+    _maybe_warn_storm(counters.s["upstream_retries"])
 
 
 async def handler(request: web.Request) -> web.StreamResponse:
@@ -927,6 +960,9 @@ def main() -> None:
     """Boot the aiohttp app: bind locks, mount routes + UI, and serve forever."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    # Record the process start time once. A step change in this gauge is a
+    # restart — the only durable signal that the proxy was bounced mid-stream.
+    M_START_TIME.set(time.time())
     # PR #22: re-apply any persisted /ui/config overrides on top of the env
     # defaults loaded at import time. Runs BEFORE limiter / pacing locks are
     # bound so any overridden MAX_CONCURRENT / AIMD_MIN / MIN_DISPATCH_GAP_S

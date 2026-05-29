@@ -93,6 +93,12 @@ OVERLOAD_STATUSES = {529}
 # Any throttle-ish status worth an advisor diagnosis.
 THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
 
+# Storm early-warning: when the process-global upstream-retry counter crosses
+# this threshold, the proxy emits ONE WARNING line (likely a stale-token / 429
+# storm). It does not change throttle behaviour — purely an observability hint
+# so a retry pile-up is greppable instead of buried in per-request "done" lines.
+STORM_WARN_RETRIES = int(os.environ.get("THROTTLE_STORM_WARN_RETRIES", "25"))
+
 HOP_HEADERS = {
     "connection",
     "keep-alive",

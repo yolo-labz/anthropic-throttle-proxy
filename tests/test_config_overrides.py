@@ -149,3 +149,10 @@ def test_knob_snapshot_marks_overridden_rows():
     rows = {r["key"]: r for r in config.knob_snapshot()}
     assert rows["max_concurrent"]["override"] is True
     assert rows["min_dispatch_gap_ms"]["override"] is False
+
+
+def test_storm_warn_retries_default_is_25():
+    # PR #037 observability: env-derived default for the storm early-warning
+    # threshold. Overridable via THROTTLE_STORM_WARN_RETRIES.
+    assert config.STORM_WARN_RETRIES == 25
+    assert isinstance(config.STORM_WARN_RETRIES, int)
