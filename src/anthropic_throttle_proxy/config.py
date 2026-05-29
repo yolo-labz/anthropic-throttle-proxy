@@ -34,6 +34,21 @@ if QUEUE_MODE not in {"off", "observe", "fair", "reactive"}:
 else:
     log_mode = ""
 
+# Graceful-shutdown drain window. aiohttp's web.run_app stops accepting new
+# connections on SIGTERM, then waits this long for in-flight requests (streaming
+# /v1/messages turns) to finish before force-closing them. aiohttp's default is
+# 60s; a deploy/restart with turns in flight force-closes them (the 29/05/2026
+# fleet-wide "socket connection closed unexpectedly").
+#
+# The bare default here is 85s — deliberately UNDER systemd's 90s
+# DefaultTimeoutStopSec — so aiohttp finishes its graceful drain+close before
+# systemd would SIGKILL, i.e. this value is honored even under a stock unit.
+# Raising it past ~90s only takes effect if the supervising unit's
+# TimeoutStopSec is raised to match; the NixOS module sets BOTH this env var and
+# TimeoutStopSec from one coupled option so they cannot drift. Turns that do not
+# finish within the window are still cut — pair with not restarting under load.
+SHUTDOWN_TIMEOUT_S = float(os.environ.get("THROTTLE_SHUTDOWN_TIMEOUT_S", "85"))
+
 # Burst pacing (standalone-repo #1, 20/05/2026): minimum gap in milliseconds
 # between consecutive dispatches to the upstream / central. 0 = disabled.
 # Smooths the ms-scale dogpile that hits Anthropic when 15 parallel TUIs all

@@ -957,7 +957,20 @@ def main() -> None:
         f"upstream={config.UPSTREAM} central={config.CENTRAL_URL or '(direct)'} "
         f"dispatch_gap_ms={int(config.MIN_DISPATCH_GAP_S * 1000)}"
     )
-    web.run_app(app, host=config.LISTEN_HOST, port=config.LISTEN_PORT, print=None, loop=loop)
+    # shutdown_timeout: on SIGTERM, aiohttp closes the listener (no new conns)
+    # then waits this long for in-flight streaming turns to finish before
+    # force-closing. The bare default (config.SHUTDOWN_TIMEOUT_S=85s) sits under
+    # systemd's 90s DefaultTimeoutStopSec so it is always honored; the NixOS
+    # module couples a higher value with a matching TimeoutStopSec. Turns that
+    # exceed the window are still cut.
+    web.run_app(
+        app,
+        host=config.LISTEN_HOST,
+        port=config.LISTEN_PORT,
+        print=None,
+        loop=loop,
+        shutdown_timeout=config.SHUTDOWN_TIMEOUT_S,
+    )
 
 
 if __name__ == "__main__":
