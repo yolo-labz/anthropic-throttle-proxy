@@ -957,7 +957,21 @@ def main() -> None:
         f"upstream={config.UPSTREAM} central={config.CENTRAL_URL or '(direct)'} "
         f"dispatch_gap_ms={int(config.MIN_DISPATCH_GAP_S * 1000)}"
     )
-    web.run_app(app, host=config.LISTEN_HOST, port=config.LISTEN_PORT, print=None, loop=loop)
+    # shutdown_timeout: on SIGTERM, aiohttp closes the listener (no new conns)
+    # then waits this long for in-flight streaming turns to finish before
+    # force-closing. Default 60s is shorter than many agentic turns; raising it
+    # (THROTTLE_SHUTDOWN_TIMEOUT_S, default 120) lets a deploy/restart drain
+    # most turns instead of SIGKILLing them. Requires the systemd unit's
+    # TimeoutStopSec >= this value (set in the NixOS anthropic-throttle-proxy
+    # module) or systemd kills the process first.
+    web.run_app(
+        app,
+        host=config.LISTEN_HOST,
+        port=config.LISTEN_PORT,
+        print=None,
+        loop=loop,
+        shutdown_timeout=config.SHUTDOWN_TIMEOUT_S,
+    )
 
 
 if __name__ == "__main__":
