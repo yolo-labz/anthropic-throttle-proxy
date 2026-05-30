@@ -307,6 +307,47 @@ async def test_exhausted_retry_returns_502(env, monkeypatch) -> None:
     assert config.state["upstream_retries"] >= 1
 
 
+async def test_forward_once_propagates_client_disconnect(monkeypatch) -> None:
+    """Regression: local client disconnects must not look like central failure.
+
+    Under a many-pane Claude burst, `StreamResponse.write()` can raise
+    ClientConnectionResetError("Cannot write to closing transport") after the
+    client side gives up. That is not evidence that central is unhealthy; if
+    `_forward_once` turns it into an upstream error, the caller marks central
+    down and retries direct, wasting throughput and bypassing fleet admission.
+    """
+
+    async def ok(request: web.Request) -> web.Response:
+        await request.read()
+        return web.Response(text="ok")
+
+    async def raise_client_disconnect(
+        _request: web.Request, _upstream: aiohttp.ClientResponse
+    ) -> forwarding.ForwardResult:
+        raise aiohttp.ClientConnectionResetError("Cannot write to closing transport")
+
+    monkeypatch.setattr(forwarding, "_stream_response", raise_client_disconnect)
+
+    upstream = TestServer(web.Application())
+    upstream.app.router.add_route("*", "/{path:.*}", ok)
+    await upstream.start_server()
+
+    class FakeRequest:
+        method = "POST"
+
+    try:
+        with pytest.raises(aiohttp.ClientConnectionResetError):
+            await forwarding._forward_once(
+                FakeRequest(),
+                {},
+                b"{}",
+                str(upstream.make_url("/v1/messages")),
+                aiohttp.ClientTimeout(total=2),
+            )
+    finally:
+        await upstream.close()
+
+
 async def test_pace_dispatch_enforces_gap(monkeypatch) -> None:
     pacing.set_lock(asyncio.Lock())
     pacing._last_dispatch_ts = 0.0
