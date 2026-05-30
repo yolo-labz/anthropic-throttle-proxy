@@ -67,6 +67,15 @@ def test_set_override_central_local_max_concurrent_propagates():
     assert config.CENTRAL_LOCAL_MAX_CONCURRENT == 6
 
 
+def test_set_override_aimd_initial_concurrent_propagates():
+    try:
+        config.set_override("aimd_initial_concurrent", "3")
+        assert config.RUNTIME_OVERRIDES["aimd_initial_concurrent"] == 3
+        assert config.AIMD_INITIAL_CONCURRENT == 3
+    finally:
+        config.reset_override("aimd_initial_concurrent")
+
+
 def test_set_override_bounds_check_rejects_too_low():
     with pytest.raises(ValueError, match="below min"):
         config.set_override("max_concurrent", "0")

@@ -85,13 +85,15 @@ CENTRAL_HEALTH_OK_THRESHOLD = max(
     1, int(os.environ.get("THROTTLE_CENTRAL_HEALTH_OK_THRESHOLD", "2"))
 )
 
-# PR #575: AIMD reactive throttle. "Wide open + throttle as we need":
-# start at MAX_CONCURRENT (the hard ceiling), shrink multiplicatively on
-# upstream pushback (429/503/529), and ramp back up additively after a
-# cooldown of consecutive successes. Net: opens to the full hardware
-# parallelism Pedro asks for, but backs off the moment Anthropic pushes
-# back — no static cap to babysit.
+# PR #575: AIMD reactive throttle, revised by PR #40 into cap discovery:
+# `MAX_CONCURRENT` is only the hard upper bound; new bearers start at
+# `AIMD_INITIAL_CONCURRENT`, grow additively after clean successes, and shrink
+# multiplicatively on upstream pushback. Net: the proxy discovers the account's
+# current usable parallelism instead of requiring a static cap to babysit.
 AIMD_MIN = max(1, int(os.environ.get("THROTTLE_AIMD_MIN", "1")))
+AIMD_INITIAL_CONCURRENT = max(
+    AIMD_MIN, int(os.environ.get("THROTTLE_AIMD_INITIAL_CONCURRENT", str(AIMD_MIN)))
+)
 AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # AIMD multiplicative-decrease factor. TCP Reno halves (0.5, deep teeth, fast
@@ -251,6 +253,10 @@ def _set_aimd_min(v: int) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "AIMD_MIN", v)
 
 
+def _set_aimd_initial_concurrent(v: int) -> None:
+    _set_module_attr("anthropic_throttle_proxy.config", "AIMD_INITIAL_CONCURRENT", v)
+
+
 def _set_aimd_backoff_s(v: float) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "AIMD_BACKOFF_S", v)
 
@@ -374,6 +380,22 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "III backstops env values below 1 via a clamp. Suggested: 8 "
             "on Max-tier so a sub-agent swarm survives pushback without "
             "collapsing to single-slot serialisation."
+        ),
+    },
+    "aimd_initial_concurrent": {
+        "label": "AIMD initial cap",
+        "type": "int",
+        "min": 1,
+        "max": 512,
+        "getter": lambda: AIMD_INITIAL_CONCURRENT,
+        "setter": _set_aimd_initial_concurrent,
+        "units": "slots",
+        "help": (
+            "Live cap assigned to a newly seen bearer before the proxy has "
+            "evidence for that account's current safe parallelism. Set this "
+            "low so account switches and service restarts start conservatively; "
+            "AIMD then grows the cap after clean 2xx responses. Suggested: 1 "
+            "on central, 1-2 on local direct fallback."
         ),
     },
     "aimd_backoff_s": {

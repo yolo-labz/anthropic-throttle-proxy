@@ -72,6 +72,7 @@ async def test_apply_unified_pauses_when_rejected():
 async def test_apply_unified_glides_when_target_crossed(monkeypatch):
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.85)
     lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
     await proxy._apply_unified("bid1", {}, lim, _oauth_meta(util_5h="0.9"))
     assert lim.max_concurrent == 22  # shrank one CUBIC step (32*0.7)
 
@@ -79,6 +80,7 @@ async def test_apply_unified_glides_when_target_crossed(monkeypatch):
 async def test_apply_unified_no_shrink_below_target(monkeypatch):
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.95)
     lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
     await proxy._apply_unified("bid1", {}, lim, _oauth_meta(util_5h="0.87"))
     assert lim.max_concurrent == 32  # below target → surface only
 
@@ -87,6 +89,7 @@ async def test_apply_unified_target_off_is_observe_only():
     # UTILIZATION_TARGET defaults to 0 → never shrinks proactively, even at 0.99.
     assert proxy.UTILIZATION_TARGET == 0
     lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
     bstate = {}
     await proxy._apply_unified("bid1", bstate, lim, _oauth_meta(util_5h="0.99"))
     assert lim.max_concurrent == 32

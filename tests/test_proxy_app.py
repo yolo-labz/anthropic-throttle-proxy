@@ -296,6 +296,7 @@ async def test_429_without_retry_after_is_held_and_retried(
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
     status, _ = await _post_and_settle(
         client,
         data=b'{"model":"claude-opus-4-7"}',
@@ -304,8 +305,9 @@ async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> 
     assert status == 529
     bid = next(iter(config.bearer_state))
     lim = config.bearer_limiters[bid]
-    # 529 = Anthropic-side overload → ceiling must stay at the hard max.
-    assert lim.max_concurrent == lim.hard_max
+    # 529 = Anthropic-side overload → live cap is paused but not shrunk.
+    assert lim.max_concurrent == 3
+    assert lim.hard_max == config.MAX_CONCURRENT
 
 
 async def test_unified_utilization_surfaced(client: TestClient) -> None:
@@ -354,7 +356,8 @@ async def test_unified_no_shrink_when_target_off_via_http(client: TestClient, mo
     bid = next(iter(config.bearer_state))
     lim = config.bearer_limiters[bid]
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
-    assert lim.max_concurrent == lim.hard_max
+    assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
+    assert lim.hard_max == config.MAX_CONCURRENT
 
 
 async def test_health_reflects_inflight_after_traffic(client: TestClient) -> None:

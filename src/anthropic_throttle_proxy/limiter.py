@@ -26,6 +26,11 @@ def set_lock(lock: asyncio.Lock) -> None:
     bearer_limiter_lock = lock
 
 
+def _initial_live_cap(hard_max: int) -> int:
+    """Initial AIMD live cap for a new bearer, bounded by the hard ceiling."""
+    return min(hard_max, max(config.AIMD_MIN, config.AIMD_INITIAL_CONCURRENT))
+
+
 async def _retune_limiter_hard_max(bid: str, lim: FairBearerLimiter, hard_max: int) -> None:
     """Apply an operator hard-ceiling change to an existing limiter."""
     if hard_max == lim.hard_max:
@@ -35,8 +40,8 @@ async def _retune_limiter_hard_max(bid: str, lim: FairBearerLimiter, hard_max: i
         lim.hard_max = hard_max
         if hard_max < old_hard_max:
             lim.max_concurrent = min(lim.max_concurrent, hard_max)
-        elif lim.max_concurrent >= old_hard_max:
-            lim.max_concurrent = hard_max
+        # Increasing the hard ceiling must not jump the live cap. AIMD should
+        # discover the new safe ceiling through successful traffic.
         if lim.queue_enabled:
             lim._try_dispatch()
         M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
@@ -65,13 +70,11 @@ class FairBearerLimiter:
     """
 
     def __init__(self, max_concurrent: int, queue_mode: str) -> None:
-        # PR #575: AIMD — `hard_max` is the operator-set ceiling (e.g. 32).
-        # `max_concurrent` is the LIVE ceiling that AIMD adjusts down on
-        # upstream 429/503/529 and slowly ramps back up after a cooldown.
-        # Starting at hard_max = "wide open" by default; we only narrow if
-        # Anthropic pushes back. Pedro's "wide open + throttle as we need".
+        # PR #575/PR #40: `hard_max` is the operator-set upper bound (e.g. 32).
+        # `max_concurrent` is the LIVE ceiling that starts conservatively, grows
+        # after clean traffic, and shrinks on upstream 429/503.
         self.hard_max = max_concurrent
-        self.max_concurrent = max_concurrent
+        self.max_concurrent = _initial_live_cap(max_concurrent)
         self.queue_mode = queue_mode
         # PR #580: split queue from observation. `observe` mode bypasses
         # the fair-RR queue (instant slot acquire) but DOES move AIMD
@@ -352,9 +355,9 @@ async def _get_bearer_limiter(
                 "unified": None,
                 "clients": {},
             }
-            M_AIMD_MAX.labels(bearer=bid).set(hard_max)
+            M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
             log(
-                f"bearer-new bid={bid} max_concurrent={hard_max} "
+                f"bearer-new bid={bid} max_concurrent={lim.max_concurrent} "
                 f"hard_max={hard_max} queue_mode={mode}"
             )
         else:

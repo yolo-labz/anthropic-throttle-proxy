@@ -39,6 +39,7 @@ would corrupt in-flight requests; the dashboard shows them as
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `THROTTLE_AIMD_MIN` | `1` | Floor of multiplicative-decrease. Live cap never drops below this. Constitution Principle III — must be ≥ 1. |
+| `THROTTLE_AIMD_INITIAL_CONCURRENT` | `1` | Initial live cap for a newly seen bearer. It is bounded by `CLAUDE_API_THROTTLE_MAX`; AIMD grows from here after clean traffic. |
 | `THROTTLE_AIMD_BACKOFF_S` | `30` | Seconds after a shrink before additive-increase can resume. |
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 200s past the cooldown before live cap grows by +1. |
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Shrink factor on `429`/`503`. `0.5` = TCP Reno (deep teeth); `0.7` = CUBIC-style (default, higher avg utilization). |
