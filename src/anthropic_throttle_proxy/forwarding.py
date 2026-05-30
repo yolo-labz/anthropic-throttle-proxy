@@ -187,5 +187,12 @@ async def _forward_once(
                 allow_redirects=False,
             ) as upstream:
                 return await _stream_response(request, upstream)
+        except aiohttp.ClientConnectionResetError:
+            # Raised by StreamResponse.write/write_eof when the Claude client
+            # closes its local socket while we are streaming. Let proxy.handler
+            # record this as a client disconnect; treating it as an upstream or
+            # central failure wastes a retry and can push the local proxy into
+            # direct fallback under load.
+            raise
         except (TimeoutError, aiohttp.ClientError) as exc:
             return None, None, None, exc, None
