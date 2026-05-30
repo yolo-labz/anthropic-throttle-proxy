@@ -507,6 +507,8 @@ class _Attempt:
         self.final_status = 0
         self.captured: bytearray | None = None
         self.meta: dict[str, str] | None = None
+        self.started_at: float | None = None
+        self.context: dict[str, str] = {}
 
 
 def _record_disconnect(
@@ -515,10 +517,17 @@ def _record_disconnect(
     """Account a client disconnect (no upstream retry) and build a 499 reply."""
     state["client_disconnects"] += 1
     M_CLIENT_DISCONNECTS.inc()
-    if where == "first":
-        log(f"client-disconnect path=/{path} {type(exc).__name__}: {exc} (no upstream retry)")
-    else:
-        log(f"client-disconnect {where} path=/{path}")
+    parts = ["client-disconnect", f"where={where}", f"path=/{path}"]
+    for key in ("method", "bid", "cid", "via", "model"):
+        value = attempt.context.get(key)
+        if value:
+            parts.append(f"{key}={value}")
+    if attempt.started_at is not None:
+        parts.append(f"elapsed_ms={int((time.time() - attempt.started_at) * 1000)}")
+    exc_text = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    parts.append(f"exc={exc_text!r}")
+    parts.append("no_upstream_retry=true")
+    log(" ".join(parts))
     attempt.final_status = 499
     return web.Response(status=499)
 
@@ -913,6 +922,14 @@ async def handler(request: web.Request) -> web.StreamResponse:
             await limiter.wait_retry_after()
             t0 = time.time()
             attempt = _Attempt()
+            attempt.started_at = t0
+            attempt.context = {
+                "method": request.method,
+                "bid": bid,
+                "cid": cid,
+                "via": via,
+                "model": model_label,
+            }
             try:
                 return await _forward_with_retry(
                     request,
