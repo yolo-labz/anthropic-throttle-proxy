@@ -114,6 +114,14 @@ THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
 # client request and retry after the AIMD/Retry-After pause instead of handing the
 # first transient 429/503/529 directly to Claude.
 RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIES", "1")))
+# Maximum Retry-After window we will keep an HTTP request open for. Anthropic can
+# return account-window Retry-After values measured in hours; honoring those
+# inside a live client request just creates local gateway timeouts and a queue
+# pile-up. Longer windows are still recorded on the bearer limiter, but current
+# and new requests fail fast with 429 instead of sleeping behind the proxy.
+MAX_HOLD_RETRY_AFTER_S = max(
+    0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "15"))
+)
 
 # Storm early-warning: when the process-global upstream-retry counter crosses
 # this threshold, the proxy emits ONE WARNING line (likely a stale-token / 429
@@ -268,6 +276,10 @@ def _set_aimd_ramp_after(v: int) -> None:
 
 def _set_aimd_decrease(v: float) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "AIMD_DECREASE", v)
+
+
+def _set_max_hold_retry_after_s(v: float) -> None:
+    _set_module_attr("anthropic_throttle_proxy.config", "MAX_HOLD_RETRY_AFTER_S", v)
 
 
 def _set_body_shrink_cap_bytes(v: int) -> None:
@@ -445,6 +457,22 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "UNDER-REACTS to real overload → cascade of 429s → user-"
             "visible stalls (research: Netflix concurrency-limits). "
             "Stick to 0.7 unless you have evidence to move."
+        ),
+    },
+    "max_hold_retry_after_s": {
+        "label": "Max held Retry-After",
+        "type": "float",
+        "min": 0.0,
+        "max": 3600.0,
+        "getter": lambda: MAX_HOLD_RETRY_AFTER_S,
+        "setter": _set_max_hold_retry_after_s,
+        "units": "s",
+        "help": (
+            "Largest upstream Retry-After window the proxy will hold a live "
+            "client request open for before retrying. Longer windows are "
+            "recorded for the bearer, then requests fail fast with 429 so "
+            "Claude sees the real rate-limit state instead of timing out "
+            "behind the local gateway."
         ),
     },
     "body_shrink_cap_bytes": {

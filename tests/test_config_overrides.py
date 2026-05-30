@@ -76,6 +76,12 @@ def test_set_override_aimd_initial_concurrent_propagates():
         config.reset_override("aimd_initial_concurrent")
 
 
+def test_set_override_max_hold_retry_after_propagates():
+    config.set_override("max_hold_retry_after_s", "2.5")
+    assert config.RUNTIME_OVERRIDES["max_hold_retry_after_s"] == 2.5
+    assert config.MAX_HOLD_RETRY_AFTER_S == 2.5
+
+
 def test_set_override_bounds_check_rejects_too_low():
     with pytest.raises(ValueError, match="below min"):
         config.set_override("max_concurrent", "0")
