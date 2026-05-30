@@ -43,6 +43,7 @@ would corrupt in-flight requests; the dashboard shows them as
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 200s past the cooldown before live cap grows by +1. |
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Shrink factor on `429`/`503`. `0.5` = TCP Reno (deep teeth); `0.7` = CUBIC-style (default, higher avg utilization). |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | When > 0, proactively shrink the AIMD ceiling once the binding 5h/7d unified-window utilization crosses this fraction. `0` = disabled. |
+| `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` responses. The proxy waits the upstream `Retry-After` value when present, otherwise `THROTTLE_AIMD_BACKOFF_S`, before retrying. |
 
 ## Body shrink (runtime-mutable, client-side guard)
 

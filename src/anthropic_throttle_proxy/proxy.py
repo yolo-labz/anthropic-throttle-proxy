@@ -75,6 +75,7 @@ from .config import (
     MIN_DISPATCH_GAP_S,
     OVERLOAD_STATUSES,
     QUEUE_MODE,
+    RATE_PUSHBACK_RETRIES,
     THROTTLE_STATUSES,
     UPSTREAM,
     bearer_limiters,
@@ -147,6 +148,7 @@ __all__ = [
     "MIN_DISPATCH_GAP_S",
     "OVERLOAD_STATUSES",
     "QUEUE_MODE",
+    "RATE_PUSHBACK_RETRIES",
     "THROTTLE_STATUSES",
     "UPSTREAM",
     "bearer_limiters",
@@ -617,20 +619,50 @@ async def _forward_with_retry(
     url: str,
     client_timeout: aiohttp.ClientTimeout,
     attempt: _Attempt,
+    bid: str,
+    limiter: FairBearerLimiter,
 ) -> web.StreamResponse | web.Response:
     """Forward once, then retry direct on upstream error. Behavior-identical to
     the original inline chain: a central failure marks central DOWN and retries
     direct; a direct failure retries direct once; client disconnects yield 499.
     """
-    try:
-        response, exc = await _try_forward(request, headers, body, url, client_timeout, attempt)
-    except _CLIENT_DISCONNECT_EXC as cexc:
-        return _record_disconnect(path, "first", cexc, attempt)
-    if exc is None:
+    pushback_retries = 0
+    while True:
+        try:
+            response, exc = await _try_forward(request, headers, body, url, client_timeout, attempt)
+        except _CLIENT_DISCONNECT_EXC as cexc:
+            return _record_disconnect(path, "first", cexc, attempt)
+        if exc is not None:
+            return await _retry_direct_once(
+                request, headers, body, path, via, url, client_timeout, exc, attempt
+            )
+        if (
+            response is not None
+            and not response.prepared
+            and attempt.final_status in THROTTLE_STATUSES
+            and pushback_retries < config.RATE_PUSHBACK_RETRIES
+        ):
+            pushback_retries += 1
+            await _aimd_feedback(bid, limiter, attempt)
+            _schedule_advisor(bid, attempt.final_status)
+            retry_after = _parse_retry_after(attempt.meta)
+            pause = retry_after if retry_after > 0 else config.AIMD_BACKOFF_S
+            log(
+                f"rate-pushback-retry bid={bid} status={attempt.final_status} "
+                f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
+                f"pause={pause} retry_after={retry_after}"
+            )
+            await limiter.wait_retry_after()
+            continue
         return response
-    return await _retry_direct_once(
-        request, headers, body, path, via, url, client_timeout, exc, attempt
-    )
+
+
+def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:
+    """Return the pause seconds and whether it was synthesized locally."""
+    retry_after = _parse_retry_after(meta)
+    if retry_after > 0:
+        return retry_after, False
+    return max(0.0, config.AIMD_BACKOFF_S), True
 
 
 async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt) -> None:
@@ -644,19 +676,25 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
         if new_max is not None:
             M_AIMD_MAX.labels(bearer=bid).set(new_max)
-        if retry_after > 0:
-            limiter.note_retry_after(retry_after)
+        pause, synthetic_pause = _pushback_pause(attempt.meta)
+        if pause > 0:
+            limiter.note_retry_after(pause)
         log(
             f"aimd-shrink bid={bid} status={final_status} "
-            f"max_concurrent={new_max} retry_after={retry_after}"
+            f"max_concurrent={new_max} retry_after={retry_after} "
+            f"pause={pause} synthetic_pause={synthetic_pause}"
         )
     elif final_status in OVERLOAD_STATUSES:
         # 529 = upstream overloaded (not our usage): honor any retry-after but
         # do NOT shrink the ceiling.
         M_AIMD_OVERLOAD.labels(bearer=bid).inc()
-        if retry_after > 0:
-            limiter.note_retry_after(retry_after)
-        log(f"overload bid={bid} status={final_status} retry_after={retry_after} (no shrink)")
+        pause, synthetic_pause = _pushback_pause(attempt.meta)
+        if pause > 0:
+            limiter.note_retry_after(pause)
+        log(
+            f"overload bid={bid} status={final_status} retry_after={retry_after} "
+            f"pause={pause} synthetic_pause={synthetic_pause} (no shrink)"
+        )
     elif final_status and 200 <= final_status < 400:
         new_max = await limiter.grow()
         if new_max is not None:
@@ -875,7 +913,16 @@ async def handler(request: web.Request) -> web.StreamResponse:
             attempt = _Attempt()
             try:
                 return await _forward_with_retry(
-                    request, headers, body, path, via, url, client_timeout, attempt
+                    request,
+                    headers,
+                    body,
+                    path,
+                    via,
+                    url,
+                    client_timeout,
+                    attempt,
+                    bid,
+                    limiter,
                 )
             finally:
                 await _finalize(
