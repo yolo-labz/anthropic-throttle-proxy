@@ -154,7 +154,7 @@ async def test_central_up_off_mode_still_uses_local_safety_queue(env, monkeypatc
     assert lim.queue_mode == "fair"
     assert lim.queue_enabled is True
     assert lim.hard_max == 2
-    assert lim.max_concurrent == 2
+    assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
 
 
 async def test_existing_limiter_raises_when_central_local_cap_increases(env, monkeypatch) -> None:
@@ -179,7 +179,7 @@ async def test_existing_limiter_raises_when_central_local_cap_increases(env, mon
     bid = next(iter(config.bearer_limiters))
     lim = config.bearer_limiters[bid]
     assert lim.hard_max == 4
-    assert lim.max_concurrent == 4
+    assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
 
 
 async def test_runtime_override_retunes_existing_central_local_limiter(
@@ -210,7 +210,7 @@ async def test_runtime_override_retunes_existing_central_local_limiter(
     await _settle()
 
     assert lim.hard_max == 5
-    assert lim.max_concurrent == 5
+    assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
     config.RUNTIME_OVERRIDES.pop("central_local_max_concurrent", None)
 
 

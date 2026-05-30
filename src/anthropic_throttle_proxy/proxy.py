@@ -60,6 +60,7 @@ from .body_shrink import shrink_body
 from .config import (
     AIMD_BACKOFF_S,
     AIMD_DECREASE,
+    AIMD_INITIAL_CONCURRENT,
     AIMD_MIN,
     AIMD_RAMP_AFTER,
     AIMD_STATUSES,
@@ -133,6 +134,7 @@ __all__ = [
     # config scalars + shared state
     "AIMD_BACKOFF_S",
     "AIMD_DECREASE",
+    "AIMD_INITIAL_CONCURRENT",
     "AIMD_MIN",
     "AIMD_RAMP_AFTER",
     "AIMD_STATUSES",

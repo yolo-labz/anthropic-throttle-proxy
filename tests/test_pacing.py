@@ -67,6 +67,7 @@ def test_aimd_min_is_clamped_to_floor_one():
 
 async def test_shrink_uses_cubic_decrease_and_floor():
     lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
     assert await lim.shrink() == 22  # int(32 * 0.7)
     assert await lim.shrink() == 15  # int(22 * 0.7)
     lim.max_concurrent = 2
@@ -113,3 +114,30 @@ def test_snapshot_exposes_retry_after_until():
     snap = lim.snapshot()
     assert "retry_after_until" in snap
     assert snap["retry_after_until"] > time.time()
+
+
+def test_new_limiter_starts_at_initial_live_cap(monkeypatch):
+    monkeypatch.setattr(proxy.config, "AIMD_INITIAL_CONCURRENT", 2)
+    lim = FairBearerLimiter(8, "fair")
+    assert lim.hard_max == 8
+    assert lim.max_concurrent == 2
+
+
+async def test_hard_cap_increase_keeps_live_cap_for_discovery(monkeypatch):
+    from anthropic_throttle_proxy import limiter as limiter_mod
+
+    monkeypatch.setattr(proxy.config, "AIMD_INITIAL_CONCURRENT", 1)
+    lim = FairBearerLimiter(1, "fair")
+    await limiter_mod._retune_limiter_hard_max("bid", lim, 8)  # noqa: SLF001
+    assert lim.hard_max == 8
+    assert lim.max_concurrent == 1
+
+
+async def test_clean_successes_grow_from_initial_cap(monkeypatch):
+    monkeypatch.setattr(proxy.config, "AIMD_INITIAL_CONCURRENT", 1)
+    monkeypatch.setattr(proxy.config, "AIMD_RAMP_AFTER", 2)
+    monkeypatch.setattr(proxy.config, "AIMD_BACKOFF_S", 0)
+    lim = FairBearerLimiter(4, "fair")
+    assert await lim.grow() is None
+    assert await lim.grow() == 2
+    assert lim.max_concurrent == 2
