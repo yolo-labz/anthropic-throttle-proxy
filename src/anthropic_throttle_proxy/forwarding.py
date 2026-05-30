@@ -33,8 +33,14 @@ ForwardResult = tuple[
 
 
 def pick_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout, str]:
-    """Choose upstream URL for this request: central if healthy, else direct."""
-    if config.CENTRAL_URL and config.state["central_status"] == "up":
+    """Choose upstream URL for this request.
+
+    A configured central tier is preferred until it is explicitly marked down.
+    Cold-starting as direct while the first health probe is still pending lets
+    restart bursts bypass fleet-wide admission before central has a chance to
+    answer, which recreates the rate-limit storm this proxy is meant to absorb.
+    """
+    if config.CENTRAL_URL and config.state["central_status"] != "down":
         base = config.CENTRAL_URL
         client_timeout = aiohttp.ClientTimeout(
             total=None, sock_read=600, sock_connect=config.CENTRAL_FORWARD_TIMEOUT

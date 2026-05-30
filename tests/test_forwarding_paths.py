@@ -333,6 +333,27 @@ async def test_central_health_loop_noop_without_central(monkeypatch) -> None:
     await asyncio.wait_for(forwarding.central_health_loop(), timeout=1.0)
 
 
+def test_pick_target_prefers_central_during_cold_start(monkeypatch) -> None:
+    """Cold-start central_status=unknown must not leak the first request direct.
+
+    The health loop adopts central on its first good probe, but live restarts can
+    receive queued systemd-socket requests before that probe runs. Those requests
+    still need fleet-wide central admission; only an explicit DOWN routes direct.
+    """
+    _reset()
+    monkeypatch.setattr(config, "CENTRAL_URL", "http://central.example")
+    monkeypatch.setattr(config, "UPSTREAM", "https://api.example")
+
+    url, _timeout, via = forwarding.pick_target("v1/messages", "beta=1")
+    assert via == "central"
+    assert url == "http://central.example/v1/messages?beta=1"
+
+    config.state["central_status"] = "down"
+    url, _timeout, via = forwarding.pick_target("v1/messages", "")
+    assert via == "direct"
+    assert url == "https://api.example/v1/messages"
+
+
 async def test_poll_central_once_up_then_down(monkeypatch) -> None:
     # Pin thresholds so the assertions don't depend on ambient env (the legacy
     # 1/1 setting would otherwise change which probe count flips the status).
