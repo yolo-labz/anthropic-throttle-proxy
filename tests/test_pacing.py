@@ -80,10 +80,12 @@ async def test_note_and_wait_retry_after():
     lim = FairBearerLimiter(8, "fair")
     until = lim.note_retry_after(0.05)
     assert until > time.time()
+    assert lim.retry_after_remaining() > 0
     t0 = time.time()
     await lim.wait_retry_after()
     assert time.time() - t0 >= 0.04  # actually waited out the window
     # Window closed → no-op, returns promptly.
+    assert lim.retry_after_remaining() == 0
     t1 = time.time()
     await lim.wait_retry_after()
     assert time.time() - t1 < 0.02

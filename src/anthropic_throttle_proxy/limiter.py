@@ -189,6 +189,10 @@ class FairBearerLimiter:
         self._last_throttle_at = max(self._last_throttle_at, time.time())
         return self._retry_after_until
 
+    def retry_after_remaining(self) -> float:
+        """Seconds left in the current Retry-After window, or 0 when clear."""
+        return max(0.0, self._retry_after_until - time.time())
+
     async def wait_retry_after(self) -> None:
         """Sleep until any outstanding Retry-After window has elapsed.
 
@@ -196,7 +200,7 @@ class FairBearerLimiter:
         explicit back-off instead of spinning requests against a known-closed
         window. No-op when no Retry-After is pending.
         """
-        wait = self._retry_after_until - time.time()
+        wait = self.retry_after_remaining()
         if wait > 0:
             await asyncio.sleep(wait)
 

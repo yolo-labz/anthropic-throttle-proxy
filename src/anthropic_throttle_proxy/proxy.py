@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import socket
 import time
@@ -74,6 +75,7 @@ from .config import (
     LISTEN_HOST,
     LISTEN_PORT,
     MAX_CONCURRENT,
+    MAX_HOLD_RETRY_AFTER_S,
     MIN_DISPATCH_GAP_S,
     OVERLOAD_STATUSES,
     QUEUE_MODE,
@@ -148,6 +150,7 @@ __all__ = [
     "LISTEN_HOST",
     "LISTEN_PORT",
     "MAX_CONCURRENT",
+    "MAX_HOLD_RETRY_AFTER_S",
     "MIN_DISPATCH_GAP_S",
     "OVERLOAD_STATUSES",
     "QUEUE_MODE",
@@ -664,8 +667,6 @@ async def _forward_with_retry(
             and pushback_retries < config.RATE_PUSHBACK_RETRIES
         ):
             pushback_retries += 1
-            await _aimd_feedback(bid, limiter, attempt)
-            _schedule_advisor(bid, attempt.final_status)
             retry_after = _parse_retry_after(attempt.meta)
             pause = retry_after if retry_after > 0 else config.AIMD_BACKOFF_S
             log(
@@ -673,6 +674,14 @@ async def _forward_with_retry(
                 f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
                 f"pause={pause} retry_after={retry_after}"
             )
+            if (
+                fast_fail := _retry_after_fast_fail_response(
+                    bid, path, pause, source="pushback"
+                )
+            ) is not None:
+                return fast_fail
+            await _aimd_feedback(bid, limiter, attempt)
+            _schedule_advisor(bid, attempt.final_status)
             await limiter.wait_retry_after()
             continue
         return response
@@ -684,6 +693,31 @@ def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:
     if retry_after > 0:
         return retry_after, False
     return max(0.0, config.AIMD_BACKOFF_S), True
+
+
+def _retry_after_fast_fail_response(
+    bid: str,
+    path: str,
+    remaining_s: float,
+    *,
+    source: str,
+) -> web.Response | None:
+    """Return a local 429 when the known Retry-After window is too long to hold."""
+    if remaining_s <= config.MAX_HOLD_RETRY_AFTER_S:
+        return None
+    retry_after_s = max(1, math.ceil(remaining_s))
+    log(
+        f"retry-after-fast-fail bid={bid} path=/{path} source={source} "
+        f"remaining={retry_after_s} max_hold={config.MAX_HOLD_RETRY_AFTER_S}"
+    )
+    return web.Response(
+        status=429,
+        headers={"retry-after": str(retry_after_s)},
+        text=(
+            "upstream retry-after window is active; failing fast instead "
+            "of holding the local gateway request\n"
+        ),
+    )
 
 
 async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt) -> None:
@@ -906,6 +940,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
     # dispatched round-robin per client connection.
     limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+    if (
+        fast_fail := _retry_after_fast_fail_response(
+            bid, path, limiter.retry_after_remaining(), source="pre-dispatch"
+        )
+    ) is not None:
+        return fast_fail
     bstate = bearer_state[bid]
     cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
     counters = _Counters(bid, cid, bstate, cstate)

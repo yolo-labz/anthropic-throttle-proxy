@@ -53,6 +53,12 @@ def _make_upstream() -> web.Application:
         mode = request.headers.get("X-Stub-Mode", "ok")
         if mode == "429":
             return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
+        if mode == "429-long-retry-after":
+            return web.Response(
+                status=429,
+                headers={"retry-after": "3600", **_RATELIMIT_HEADERS},
+                text="rate limited",
+            )
         if mode == "429-once":
             seen_429_once += 1
             if seen_429_once == 1:
@@ -309,6 +315,52 @@ async def test_429_without_retry_after_is_held_and_retried(
     lim = config.bearer_limiters[bid]
     assert lim.max_concurrent < lim.hard_max
     assert config.state["served"] == 2
+
+
+async def test_long_retry_after_fails_fast_without_sleeping(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+
+    t0 = time.monotonic()
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={
+            "Authorization": "Bearer long-retry-after",
+            "X-Stub-Mode": "429-long-retry-after",
+        },
+    )
+
+    assert status == 429
+    assert time.monotonic() - t0 < 1.0
+    assert b"holding the local gateway request" in streamed
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    assert lim.retry_after_remaining() > 3500
+
+
+async def test_active_long_retry_after_window_fails_fast_before_queue(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    bid = proxy._bearer_id({"authorization": "Bearer predispatch-long-retry"})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    lim.note_retry_after(3600)
+
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={"Authorization": "Bearer predispatch-long-retry"},
+    )
+
+    assert status == 429
+    assert b"holding the local gateway request" in streamed
+    assert config.state["queued"] == 0
+    assert lim.snapshot()["queued_total"] == 0
 
 
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:
