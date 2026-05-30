@@ -12,6 +12,7 @@ and dashboard branches that the pure-function tests don't reach.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from aiohttp import web
@@ -43,11 +44,20 @@ def _make_upstream() -> web.Application:
     """Build the stub upstream app. Behaviour is driven by request headers so a
     single server can return 200 / 429 / 529 / unified depending on the test."""
 
+    seen_429_once = 0
+
     async def messages(request: web.Request) -> web.StreamResponse:
+        nonlocal seen_429_once
         await request.read()
         mode = request.headers.get("X-Stub-Mode", "ok")
         if mode == "429":
             return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
+        if mode == "429-once":
+            seen_429_once += 1
+            if seen_429_once == 1:
+                return web.Response(
+                    status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS}
+                )
         if mode == "529":
             return web.Response(status=529, headers={"retry-after": "0"})
         if mode in ("unified", "unified-high"):
@@ -249,6 +259,8 @@ async def test_bearer_token_never_appears_in_state(client: TestClient) -> None:
 async def test_429_triggers_aimd_shrink(client: TestClient, monkeypatch) -> None:
     # observe/fair so AIMD counters move; default QUEUE_MODE is off → patch it.
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 5)
     status, _ = await _post_and_settle(
         client,
         data=b'{"model":"claude-sonnet-4-6"}',
@@ -259,10 +271,31 @@ async def test_429_triggers_aimd_shrink(client: TestClient, monkeypatch) -> None
     lim = config.bearer_limiters[bid]
     # Live ceiling shrank below the hard ceiling after the 429 pushback.
     assert lim.max_concurrent < lim.hard_max
+    assert lim._retry_after_until > time.time() + 4  # noqa: SLF001
+
+
+async def test_429_without_retry_after_is_held_and_retried(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 0.01)
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={"Authorization": "Bearer retry-after-zero", "X-Stub-Mode": "429-once"},
+    )
+    assert status == 200
+    assert b"message_stop" in streamed
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    assert lim.max_concurrent < lim.hard_max
+    assert config.state["served"] == 2
 
 
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
     status, _ = await _post_and_settle(
         client,
         data=b'{"model":"claude-opus-4-7"}',

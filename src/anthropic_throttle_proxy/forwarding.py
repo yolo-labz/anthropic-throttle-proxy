@@ -125,6 +125,12 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
         k: v for k, v in upstream.headers.items() if k.lower() not in config.HOP_HEADERS
     }
     meta = _extract_ratelimit(upstream.headers)
+    if upstream.status in config.THROTTLE_STATUSES:
+        body = await upstream.read()
+        captured = bytearray(body[: 1024 * 1024])
+        return web.Response(status=upstream.status, headers=resp_headers, body=body), (
+            upstream.status
+        ), captured, None, meta
     response = web.StreamResponse(status=upstream.status, headers=resp_headers)
     await response.prepare(request)
     captured = bytearray()

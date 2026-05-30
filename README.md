@@ -76,6 +76,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_AIMD_BACKOFF_S` | `30` | Cooldown after a shrink before ramping back up. |
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 2xx responses required to bump the live ceiling by one. |
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Multiplicative-decrease factor on rate pushback. `0.5` = TCP-Reno (deep cut), `0.7` = CUBIC (gentler, stays nearer the limit). |
+| `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` before the proxy returns the pushback response to the client. Uses `Retry-After` when present, otherwise `THROTTLE_AIMD_BACKOFF_S`. |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | OAuth only. When `>0` (e.g. `0.9`), proactively shrinks the ceiling once the binding 5h/7d window utilization crosses this — eases off *before* hitting "rejected". `0` = surface utilization only. |
 | `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
 | `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |

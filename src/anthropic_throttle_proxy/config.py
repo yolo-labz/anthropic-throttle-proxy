@@ -107,6 +107,10 @@ AIMD_STATUSES = {429, 503}
 OVERLOAD_STATUSES = {529}
 # Any throttle-ish status worth an advisor diagnosis.
 THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
+# When upstream returns HTTP pushback before streaming a response body, hold the
+# client request and retry after the AIMD/Retry-After pause instead of handing the
+# first transient 429/503/529 directly to Claude.
+RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIES", "1")))
 
 # Storm early-warning: when the process-global upstream-retry counter crosses
 # this threshold, the proxy emits ONE WARNING line (likely a stale-token / 429
