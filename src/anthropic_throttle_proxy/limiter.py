@@ -31,29 +31,41 @@ def _initial_live_cap(hard_max: int) -> int:
     return min(hard_max, max(config.AIMD_MIN, config.AIMD_INITIAL_CONCURRENT))
 
 
-async def _retune_limiter_hard_max(bid: str, lim: FairBearerLimiter, hard_max: int) -> None:
+async def _retune_limiter_hard_max(
+    bid: str,
+    lim: FairBearerLimiter,
+    hard_max: int,
+    *,
+    live_floor: int | None = None,
+) -> None:
     """Apply an operator hard-ceiling change to an existing limiter."""
-    if hard_max == lim.hard_max:
+    if hard_max == lim.hard_max and live_floor is None:
         return
     async with lim._lock:
         old_hard_max = lim.hard_max
         lim.hard_max = hard_max
         if hard_max < old_hard_max:
             lim.max_concurrent = min(lim.max_concurrent, hard_max)
-        # Increasing the hard ceiling must not jump the live cap. AIMD should
-        # discover the new safe ceiling through successful traffic.
+        if live_floor is not None:
+            lim.max_concurrent = max(
+                lim.max_concurrent,
+                min(hard_max, max(config.AIMD_MIN, live_floor)),
+            )
+        # Increasing the hard ceiling alone must not jump the live cap. AIMD
+        # should discover new safe ceiling by traffic. An explicit live_floor is
+        # different: that is the operator raising the AIMD warm-start cap.
         if lim.queue_enabled:
             lim._try_dispatch()
         M_AIMD_MAX.labels(bearer=bid).set(lim.max_concurrent)
         log(f"bearer-retune bid={bid} hard_max={hard_max} max_concurrent={lim.max_concurrent}")
 
 
-async def retune_existing_limiters(hard_max: int) -> None:
+async def retune_existing_limiters(hard_max: int, *, live_floor: int | None = None) -> None:
     """Retune every already-allocated bearer limiter to a new hard ceiling."""
     async with bearer_limiter_lock:
         limiters = list(config.bearer_limiters.items())
     for bid, lim in limiters:
-        await _retune_limiter_hard_max(bid, lim, hard_max)
+        await _retune_limiter_hard_max(bid, lim, hard_max, live_floor=live_floor)
 
 
 class FairBearerLimiter:

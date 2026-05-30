@@ -342,8 +342,20 @@ async def _apply_unified(
     if UTILIZATION_TARGET > 0:
         binding = _binding_utilization(unified)
         if binding is not None and binding >= UTILIZATION_TARGET:
+            # Unified utilization stays high until the server-side reset. Shrink
+            # once for that reset window; repeated per-response shrink collapses
+            # active Claude swarms to one slot without any real 429/503 signal.
+            reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d")
+            if reset:
+                shrink_key = f"{UTILIZATION_TARGET}:{reset}"
+            else:
+                cooldown = max(1.0, config.AIMD_BACKOFF_S)
+                shrink_key = f"{UTILIZATION_TARGET}:bucket:{int(time.time() // cooldown)}"
+            if bstate.get("_util_shrink_key") == shrink_key:
+                return
             new_max = await limiter.shrink()
             if new_max is not None:
+                bstate["_util_shrink_key"] = shrink_key
                 M_AIMD_SHRINKS.labels(bearer=bid, status="util").inc()
                 M_AIMD_MAX.labels(bearer=bid).set(new_max)
                 log(

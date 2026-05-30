@@ -67,11 +67,18 @@ def test_set_override_central_local_max_concurrent_propagates():
     assert config.CENTRAL_LOCAL_MAX_CONCURRENT == 6
 
 
-def test_set_override_aimd_initial_concurrent_propagates():
+def test_set_override_aimd_initial_concurrent_propagates(monkeypatch):
+    retunes = []
+    monkeypatch.setattr(
+        config,
+        "_schedule_existing_limiter_retune",
+        lambda *, live_floor=None: retunes.append(live_floor),
+    )
     try:
         config.set_override("aimd_initial_concurrent", "3")
         assert config.RUNTIME_OVERRIDES["aimd_initial_concurrent"] == 3
         assert config.AIMD_INITIAL_CONCURRENT == 3
+        assert retunes == [3]
     finally:
         config.reset_override("aimd_initial_concurrent")
 
