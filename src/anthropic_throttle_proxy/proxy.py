@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import time
 from typing import TYPE_CHECKING
 
@@ -956,6 +957,46 @@ async def root_probe(request: web.Request) -> web.Response:
     return web.Response(text="anthropic-throttle-proxy\n")
 
 
+def _systemd_listen_sockets() -> list[socket.socket]:
+    """Return socket-activation FDs passed by systemd, duplicated for aiohttp."""
+    listen_fds_raw = os.environ.get("LISTEN_FDS")
+    if not listen_fds_raw:
+        return []
+    try:
+        listen_fds = int(listen_fds_raw)
+    except ValueError:
+        return []
+    if listen_fds <= 0:
+        return []
+
+    listen_pid = os.environ.get("LISTEN_PID")
+    if listen_pid:
+        try:
+            if int(listen_pid) != os.getpid():
+                return []
+        except ValueError:
+            return []
+
+    sockets: list[socket.socket] = []
+    try:
+        for fd in range(3, 3 + listen_fds):
+            dup_fd = os.dup(fd)
+            os.set_inheritable(dup_fd, False)
+            sock = socket.socket(fileno=dup_fd)
+            sock.setblocking(False)
+            sockets.append(sock)
+    except OSError:
+        for sock in sockets:
+            sock.close()
+        raise
+    finally:
+        # Match sd_listen_fds(unset_environment=1): child processes should not
+        # accidentally inherit stale activation metadata.
+        for key in ("LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES"):
+            os.environ.pop(key, None)
+    return sockets
+
+
 def main() -> None:
     """Boot the aiohttp app: bind locks, mount routes + UI, and serve forever."""
     loop = asyncio.new_event_loop()
@@ -987,8 +1028,14 @@ def main() -> None:
     app.router.add_route("*", "/{path:.*}", handler)
     if config.log_mode:
         log(f"invalid THROTTLE_QUEUE_MODE={config.log_mode!r}; falling back to off")
+    sockets = _systemd_listen_sockets()
+    listen_desc = (
+        f"{len(sockets)} systemd socket(s)"
+        if sockets
+        else f"{config.LISTEN_HOST}:{config.LISTEN_PORT}"
+    )
     log(
-        f"listening on {config.LISTEN_HOST}:{config.LISTEN_PORT} "
+        f"listening on {listen_desc} "
         f"max_concurrent={config.MAX_CONCURRENT} queue_mode={config.QUEUE_MODE} "
         f"upstream={config.UPSTREAM} central={config.CENTRAL_URL or '(direct)'} "
         f"dispatch_gap_ms={int(config.MIN_DISPATCH_GAP_S * 1000)}"
@@ -999,14 +1046,17 @@ def main() -> None:
     # systemd's 90s DefaultTimeoutStopSec so it is always honored; the NixOS
     # module couples a higher value with a matching TimeoutStopSec. Turns that
     # exceed the window are still cut.
-    web.run_app(
-        app,
-        host=config.LISTEN_HOST,
-        port=config.LISTEN_PORT,
-        print=None,
-        loop=loop,
-        shutdown_timeout=config.SHUTDOWN_TIMEOUT_S,
-    )
+    run_kwargs = {
+        "print": None,
+        "loop": loop,
+        "shutdown_timeout": config.SHUTDOWN_TIMEOUT_S,
+    }
+    if sockets:
+        run_kwargs["sock"] = sockets
+    else:
+        run_kwargs["host"] = config.LISTEN_HOST
+        run_kwargs["port"] = config.LISTEN_PORT
+    web.run_app(app, **run_kwargs)
 
 
 if __name__ == "__main__":
