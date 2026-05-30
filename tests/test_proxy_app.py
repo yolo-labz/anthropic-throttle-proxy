@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -477,6 +478,50 @@ def test_compute_status_retry_after_throttles_and_annotates() -> None:
 def test_compute_status_notes_passthrough_when_queue_off() -> None:
     out = _compute_status([_bearer("aa", util=0.20)], "off")
     assert out["detail"].endswith("queue off (passthrough)")
+
+
+# ---------------------------------------------------------------------------
+# PR #043: client-disconnect attribution
+# ---------------------------------------------------------------------------
+
+
+def test_record_disconnect_logs_request_context(monkeypatch) -> None:
+    _reset_proxy_state()
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    attempt = proxy._Attempt()
+    attempt.started_at = time.time() - 1
+    attempt.context = {
+        "method": "POST",
+        "bid": "48be3268",
+        "cid": "127.0.0.1:57112",
+        "via": "central",
+        "model": "claude-opus-4-8",
+    }
+
+    response = proxy._record_disconnect(
+        "v1/messages",
+        "first",
+        aiohttp.ClientConnectionResetError("Cannot write to closing transport"),
+        attempt,
+    )
+
+    assert response.status == 499
+    assert attempt.final_status == 499
+    assert config.state["client_disconnects"] == 1
+    assert len(lines) == 1
+    line = lines[0]
+    assert "where=first" in line
+    assert "path=/v1/messages" in line
+    assert "method=POST" in line
+    assert "bid=48be3268" in line
+    assert "cid=127.0.0.1:57112" in line
+    assert "via=central" in line
+    assert "model=claude-opus-4-8" in line
+    assert "elapsed_ms=" in line
+    assert "ClientConnectionResetError" in line
+    assert "no_upstream_retry=true" in line
 
 
 # ---------------------------------------------------------------------------
