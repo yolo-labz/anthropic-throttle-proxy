@@ -201,7 +201,7 @@ def _effective_existing_limiter_hard_max() -> int:
     return MAX_CONCURRENT
 
 
-def _schedule_existing_limiter_retune() -> None:
+def _schedule_existing_limiter_retune(*, live_floor: int | None = None) -> None:
     """Best-effort hot retune for already-allocated bearer limiters."""
     try:
         import asyncio
@@ -210,7 +210,10 @@ def _schedule_existing_limiter_retune() -> None:
         loop = asyncio.get_running_loop()
         limiter_mod = importlib.import_module("anthropic_throttle_proxy.limiter")
         loop.create_task(
-            limiter_mod.retune_existing_limiters(_effective_existing_limiter_hard_max())
+            limiter_mod.retune_existing_limiters(
+                _effective_existing_limiter_hard_max(),
+                live_floor=live_floor,
+            )
         )
     except RuntimeError:
         # No running event loop during import/tests; the next request will retune
@@ -260,10 +263,12 @@ def _set_central_local_max_concurrent(v: int) -> None:
 
 def _set_aimd_min(v: int) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "AIMD_MIN", v)
+    _schedule_existing_limiter_retune(live_floor=v)
 
 
 def _set_aimd_initial_concurrent(v: int) -> None:
     _set_module_attr("anthropic_throttle_proxy.config", "AIMD_INITIAL_CONCURRENT", v)
+    _schedule_existing_limiter_retune(live_floor=v)
 
 
 def _set_aimd_backoff_s(v: float) -> None:

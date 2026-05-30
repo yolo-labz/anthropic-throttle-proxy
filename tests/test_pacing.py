@@ -135,6 +135,18 @@ async def test_hard_cap_increase_keeps_live_cap_for_discovery(monkeypatch):
     assert lim.max_concurrent == 1
 
 
+async def test_explicit_live_floor_lifts_existing_limiter(monkeypatch):
+    from anthropic_throttle_proxy import limiter as limiter_mod
+
+    monkeypatch.setattr(proxy.config, "AIMD_INITIAL_CONCURRENT", 1)
+    lim = FairBearerLimiter(12, "fair")
+    assert lim.max_concurrent == 1
+
+    await limiter_mod._retune_limiter_hard_max("bid", lim, 12, live_floor=6)  # noqa: SLF001
+    assert lim.hard_max == 12
+    assert lim.max_concurrent == 6
+
+
 async def test_clean_successes_grow_from_initial_cap(monkeypatch):
     monkeypatch.setattr(proxy.config, "AIMD_INITIAL_CONCURRENT", 1)
     monkeypatch.setattr(proxy.config, "AIMD_RAMP_AFTER", 2)
