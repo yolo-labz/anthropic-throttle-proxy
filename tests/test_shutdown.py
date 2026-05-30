@@ -30,3 +30,20 @@ def test_main_passes_shutdown_timeout_to_run_app(monkeypatch):
     proxy.main()
 
     assert captured.get("shutdown_timeout") == 123.0
+
+
+def test_main_uses_systemd_socket_activation(monkeypatch):
+    captured: dict = {}
+    inherited_socket = object()
+
+    monkeypatch.setattr(proxy.web, "run_app", lambda app, **kw: captured.update(kw))
+    monkeypatch.setattr(proxy.asyncio, "set_event_loop", lambda _loop: None)
+    monkeypatch.setattr(config, "load_overrides", lambda: None)
+    monkeypatch.setattr(config, "CENTRAL_URL", "")
+    monkeypatch.setattr(proxy, "_systemd_listen_sockets", lambda: [inherited_socket])
+
+    proxy.main()
+
+    assert captured["sock"] == [inherited_socket]
+    assert "host" not in captured
+    assert "port" not in captured
