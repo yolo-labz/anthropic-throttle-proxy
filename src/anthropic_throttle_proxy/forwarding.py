@@ -99,11 +99,16 @@ async def _poll_central_once(session: aiohttp.ClientSession) -> None:
     """
     try:
         async with session.get(config.CENTRAL_URL + config.CENTRAL_HEALTH_PATH) as r:
-            if r.status == 200:
-                await r.read()
+            try:
+                payload = await r.json(content_type=None)
+            except Exception:
+                payload = {}
+            upstream_egress_ok = payload.get("upstream_egress_ok", True)
+            if r.status == 200 and upstream_egress_ok:
                 _record_central_sample(True)
             else:
-                _record_central_sample(False, f"health returned {r.status}")
+                detail = payload.get("upstream_egress_error") or f"health returned {r.status}"
+                _record_central_sample(False, str(detail))
     except Exception as exc:
         _record_central_sample(False, f"unreachable: {exc!r}")
 
@@ -157,6 +162,7 @@ async def _forward_once(
     body: bytes | None,
     url: str,
     client_timeout: aiohttp.ClientTimeout,
+    retryable_statuses: set[int] | None = None,
 ) -> ForwardResult:
     """Forward request to URL and stream the response back.
 
@@ -186,6 +192,16 @@ async def _forward_once(
                 data=body,
                 allow_redirects=False,
             ) as upstream:
+                if retryable_statuses and upstream.status in retryable_statuses:
+                    payload = await upstream.read()
+                    snippet = payload[:500].decode("utf-8", "replace").strip()
+                    return (
+                        None,
+                        upstream.status,
+                        bytearray(payload[: 1024 * 1024]),
+                        RuntimeError(f"retryable upstream status {upstream.status}: {snippet}"),
+                        _extract_ratelimit(upstream.headers),
+                    )
                 return await _stream_response(request, upstream)
         except aiohttp.ClientConnectionResetError:
             # Raised by StreamResponse.write/write_eof when the Claude client

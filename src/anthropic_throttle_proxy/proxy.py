@@ -43,6 +43,7 @@ import os
 import socket
 import time
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 import aiohttp
 from aiohttp import web
@@ -539,6 +540,7 @@ async def _try_forward(
     url: str,
     client_timeout: aiohttp.ClientTimeout,
     attempt: _Attempt,
+    retryable_statuses: set[int] | None = None,
 ) -> tuple[web.StreamResponse | None, Exception | None]:
     """One ``_forward_once`` call, recording success bookkeeping into ``attempt``.
 
@@ -547,7 +549,7 @@ async def _try_forward(
     retry. Client-side disconnects propagate as exceptions to the caller.
     """
     response, status, captured, exc, meta = await _forward_once(
-        request, headers, body, url, client_timeout
+        request, headers, body, url, client_timeout, retryable_statuses
     )
     if captured is not None:
         attempt.captured = captured
@@ -640,7 +642,15 @@ async def _forward_with_retry(
     pushback_retries = 0
     while True:
         try:
-            response, exc = await _try_forward(request, headers, body, url, client_timeout, attempt)
+            response, exc = await _try_forward(
+                request,
+                headers,
+                body,
+                url,
+                client_timeout,
+                attempt,
+                retryable_statuses={500, 502, 504} if via == "central" else None,
+            )
         except _CLIENT_DISCONNECT_EXC as cexc:
             return _record_disconnect(path, "first", cexc, attempt)
         if exc is not None:
@@ -966,6 +976,23 @@ async def handler(request: web.Request) -> web.StreamResponse:
             log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
 
 
+async def _check_upstream_egress() -> tuple[bool, str]:
+    parsed = urlsplit(config.UPSTREAM)
+    host = parsed.hostname
+    if not host:
+        return True, ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    loop = asyncio.get_running_loop()
+    try:
+        await asyncio.wait_for(
+            loop.getaddrinfo(host, port, type=socket.SOCK_STREAM),
+            timeout=config.UPSTREAM_HEALTH_TIMEOUT,
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    return True, ""
+
+
 async def health(_request: web.Request) -> web.Response:
     """GET /__throttle/health — fast JSON snapshot of proxy + per-bearer state."""
     # Reflect status into the gauge for /metrics scrape; encoded as 1/0/-1.
@@ -981,8 +1008,8 @@ async def health(_request: web.Request) -> web.Response:
         if lim is not None:
             view["limiter"] = lim.snapshot()
         bearers_view[bid] = view
-    return web.json_response(
-        {
+    upstream_egress_ok, upstream_egress_error = await _check_upstream_egress()
+    body = {
             "inflight": state["inflight"],
             "queued": state["queued"],
             "served": state["served"],
@@ -992,6 +1019,8 @@ async def health(_request: web.Request) -> web.Response:
             "queue_mode": config.QUEUE_MODE,
             "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
             "upstream": config.UPSTREAM,
+            "upstream_egress_ok": upstream_egress_ok,
+            "upstream_egress_error": upstream_egress_error,
             "central_url": config.CENTRAL_URL,
             "central_status": cs,
             "central_last_check": state["central_last_check"],
@@ -1000,7 +1029,7 @@ async def health(_request: web.Request) -> web.Response:
             # shows fleet parallelism + fair-RR queue depths in one glance.
             "bearers": bearers_view,
         }
-    )
+    return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
 
 async def metrics(_request: web.Request) -> web.Response:

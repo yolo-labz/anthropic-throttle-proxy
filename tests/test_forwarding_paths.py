@@ -109,6 +109,71 @@ async def test_central_failover_marks_down_and_retries_direct(env, monkeypatch) 
     assert config.state["upstream_retries"] >= 1
 
 
+async def test_central_502_marks_down_and_retries_direct(env, monkeypatch) -> None:
+    tc, upstream_url = env
+
+    async def central_error(_request: web.Request) -> web.Response:
+        return web.Response(status=502, text="upstream error: dns")
+
+    central = TestServer(web.Application())
+    central.app.router.add_route("*", "/{path:.*}", central_error)
+    await central.start_server()
+    try:
+        monkeypatch.setattr(config, "CENTRAL_URL", str(central.make_url("")).rstrip("/"))
+        monkeypatch.setattr(config, "UPSTREAM", upstream_url)
+        config.state["central_status"] = "up"
+
+        resp = await tc.post(
+            "/v1/messages",
+            data=b'{"model":"claude-haiku-4-5"}',
+            headers={"Authorization": "Bearer central-502"},
+        )
+        body = await resp.read()
+        await _settle()
+
+        assert resp.status == 200
+        assert b"message_stop" in body
+        assert config.state["central_status"] == "down"
+        assert config.state["upstream_retries"] >= 1
+    finally:
+        await central.close()
+
+
+async def test_central_health_marks_bad_upstream_egress_unhealthy(monkeypatch) -> None:
+    _reset()
+    monkeypatch.setattr(config, "CENTRAL_URL", "http://central.example")
+    responses: list[web.Response] = []
+
+    class FakeHealthResponse:
+        status = 503
+
+        async def json(self, *, content_type=None):  # noqa: ARG002 - matches aiohttp API
+            return {
+                "upstream_egress_ok": False,
+                "upstream_egress_error": "gaierror(-3)",
+            }
+
+    class FakeSession:
+        def get(self, _url: str):
+            class ResponseContext:
+                async def __aenter__(self):
+                    response = FakeHealthResponse()
+                    responses.append(response)
+                    return response
+
+                async def __aexit__(self, *_exc):
+                    return False
+
+            return ResponseContext()
+
+    await forwarding._poll_central_once(FakeSession())  # type: ignore[arg-type]
+
+    assert config.state["central_status"] == "unknown"
+    await forwarding._poll_central_once(FakeSession())  # type: ignore[arg-type]
+    await forwarding._poll_central_once(FakeSession())  # type: ignore[arg-type]
+    assert config.state["central_status"] == "down"
+
+
 async def test_central_down_off_mode_uses_local_fair_queue(env, monkeypatch) -> None:
     tc, _ = env
     monkeypatch.setattr(config, "QUEUE_MODE", "off")
@@ -252,7 +317,9 @@ async def test_central_failure_direct_retry_is_serialized(monkeypatch) -> None:
     active = 0
     max_active = 0
 
-    async def fake_try_forward(_request, _headers, _body, _url, _timeout, attempt):
+    async def fake_try_forward(
+        _request, _headers, _body, _url, _timeout, attempt, retryable_statuses=None
+    ):
         nonlocal active, max_active
         active += 1
         max_active = max(max_active, active)
