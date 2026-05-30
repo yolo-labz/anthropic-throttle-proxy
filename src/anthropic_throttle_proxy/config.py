@@ -71,6 +71,7 @@ CENTRAL_HEALTH_PATH = "/__throttle/health"
 CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL", "30"))
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
 CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT", "10"))
+UPSTREAM_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_TIMEOUT", "1.5"))
 # Central-health hysteresis: a single transient probe miss must NOT abandon
 # central — that flips the whole local fleet to direct fallback and risks an
 # unqueued firehose (the 25/05/2026 incident shape). Require FAIL_THRESHOLD

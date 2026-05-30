@@ -170,8 +170,25 @@ async def test_health_fast_and_shaped(client: TestClient) -> None:
     body = await resp.json()
     assert body["max_concurrent"] == config.MAX_CONCURRENT
     assert body["upstream"] == config.UPSTREAM
+    assert body["upstream_egress_ok"] is True
+    assert body["upstream_egress_error"] == ""
     assert "bearers" in body
     assert body["central_status"] == "unknown"
+
+
+async def test_health_returns_503_when_upstream_egress_probe_fails(
+    client: TestClient, monkeypatch
+) -> None:
+    async def broken_egress() -> tuple[bool, str]:
+        return False, "gaierror(-3)"
+
+    monkeypatch.setattr(proxy, "_check_upstream_egress", broken_egress)
+
+    resp = await client.get("/__throttle/health")
+    assert resp.status == 503
+    body = await resp.json()
+    assert body["upstream_egress_ok"] is False
+    assert body["upstream_egress_error"] == "gaierror(-3)"
 
 
 async def test_metrics_endpoint_exposes_prometheus(client: TestClient) -> None:
