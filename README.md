@@ -114,6 +114,28 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design write-up.
 
+## Supply chain
+
+Every release (a `vX.Y.Z` tag, or a manual `Release attestation` dispatch)
+builds the Docker image and publishes **build-provenance + SBOM attestations**
+bound to its registry digest through GitHub's native attestation API (keyless
+OIDC — no long-lived signing keys). Both a CycloneDX and an SPDX SBOM are
+attested. See [`.github/workflows/attest.yml`](.github/workflows/attest.yml).
+
+Verify a published image before trusting it:
+
+```sh
+gh attestation verify \
+  oci://ghcr.io/yolo-labz/anthropic-throttle-proxy:<tag> \
+  --owner yolo-labz
+```
+
+A green result proves the image was built by this repo's workflow from the
+tagged commit — not rebuilt or tampered with downstream.
+
+CI gate: every PR is red unless `ruff check`, `ruff format --check`, and the
+full `pytest` suite pass ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

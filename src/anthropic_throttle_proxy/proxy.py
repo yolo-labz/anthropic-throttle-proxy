@@ -687,9 +687,7 @@ async def _forward_with_retry(
                 f"pause={pause} retry_after={retry_after}"
             )
             if (
-                fast_fail := _retry_after_fast_fail_response(
-                    bid, path, pause, source="pushback"
-                )
+                fast_fail := _retry_after_fast_fail_response(bid, path, pause, source="pushback")
             ) is not None:
                 return fast_fail
             await _aimd_feedback(bid, limiter, attempt)
@@ -1062,25 +1060,25 @@ async def health(_request: web.Request) -> web.Response:
         bearers_view[bid] = view
     upstream_egress_ok, upstream_egress_error = await _check_upstream_egress()
     body = {
-            "inflight": state["inflight"],
-            "queued": state["queued"],
-            "served": state["served"],
-            "client_disconnects": state["client_disconnects"],
-            "upstream_retries": state["upstream_retries"],
-            "max_concurrent": config.MAX_CONCURRENT,
-            "queue_mode": config.QUEUE_MODE,
-            "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
-            "upstream": config.UPSTREAM,
-            "upstream_egress_ok": upstream_egress_ok,
-            "upstream_egress_error": upstream_egress_error,
-            "central_url": config.CENTRAL_URL,
-            "central_status": cs,
-            "central_last_check": state["central_last_check"],
-            "last_advisor": state["last_advisor"],
-            # PR #562/#573: per-bearer + per-client view so /__throttle/health
-            # shows fleet parallelism + fair-RR queue depths in one glance.
-            "bearers": bearers_view,
-        }
+        "inflight": state["inflight"],
+        "queued": state["queued"],
+        "served": state["served"],
+        "client_disconnects": state["client_disconnects"],
+        "upstream_retries": state["upstream_retries"],
+        "max_concurrent": config.MAX_CONCURRENT,
+        "queue_mode": config.QUEUE_MODE,
+        "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
+        "upstream": config.UPSTREAM,
+        "upstream_egress_ok": upstream_egress_ok,
+        "upstream_egress_error": upstream_egress_error,
+        "central_url": config.CENTRAL_URL,
+        "central_status": cs,
+        "central_last_check": state["central_last_check"],
+        "last_advisor": state["last_advisor"],
+        # PR #562/#573: per-bearer + per-client view so /__throttle/health
+        # shows fleet parallelism + fair-RR queue depths in one glance.
+        "bearers": bearers_view,
+    }
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
 
