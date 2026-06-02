@@ -58,6 +58,12 @@ jobs:
           else
             version="0.1.0-dispatch.$(git rev-parse --short HEAD)"
           fi
+          # Refuse to build/push/move :latest for a non-semver tag (e.g. a typo
+          # like `vlatest` or `vfoo`); only vMAJOR.MINOR.PATCH[-pre] may publish.
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::refusing to publish non-semver version '$version'"
+            exit 1
+          fi
           epoch="$(git log -1 --format=%ct)"
           {
             echo "image=$image"
@@ -78,7 +84,8 @@ jobs:
           IMAGE: ${{ steps.meta.outputs.image }}
           VERSION: ${{ steps.meta.outputs.version }}
           BUILD_DATE: ${{ steps.meta.outputs.build_date }}
-          # SOURCE_DATE_EPOCH makes the build byte-reproducible.
+          # BuildKit reads SOURCE_DATE_EPOCH from the environment to normalize
+          # layer timestamps, making the image bytes reproducible across rebuilds.
           SOURCE_DATE_EPOCH: ${{ steps.meta.outputs.epoch }}
         run: |
           tags="--tag $IMAGE:$VERSION"
@@ -124,7 +131,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest SBOM (CycloneDX)
-        uses: actions/attest-sbom@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -132,7 +139,7 @@ jobs:
           push-to-registry: true
 
       - name: Attest SBOM (SPDX)
-        uses: actions/attest-sbom@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
