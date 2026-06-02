@@ -62,9 +62,7 @@ def _make_upstream() -> web.Application:
         if mode == "429-once":
             seen_429_once += 1
             if seen_429_once == 1:
-                return web.Response(
-                    status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS}
-                )
+                return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
         if mode == "529":
             return web.Response(status=529, headers={"retry-after": "0"})
         if mode in ("unified", "unified-high"):
@@ -298,9 +296,7 @@ async def test_429_triggers_aimd_shrink(client: TestClient, monkeypatch) -> None
     assert lim._retry_after_until > time.time() + 4  # noqa: SLF001
 
 
-async def test_429_without_retry_after_is_held_and_retried(
-    client: TestClient, monkeypatch
-) -> None:
+async def test_429_without_retry_after_is_held_and_retried(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_MODE", "fair")
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
     monkeypatch.setattr(config, "AIMD_BACKOFF_S", 0.01)

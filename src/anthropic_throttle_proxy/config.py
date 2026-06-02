@@ -119,9 +119,7 @@ RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIE
 # inside a live client request just creates local gateway timeouts and a queue
 # pile-up. Longer windows are still recorded on the bearer limiter, but current
 # and new requests fail fast with 429 instead of sleeping behind the proxy.
-MAX_HOLD_RETRY_AFTER_S = max(
-    0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "15"))
-)
+MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "15")))
 
 # Storm early-warning: when the process-global upstream-retry counter crosses
 # this threshold, the proxy emits ONE WARNING line (likely a stale-token / 429
