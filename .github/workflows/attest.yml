@@ -130,15 +130,14 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
-      # actions/attest-sbom is deprecated; the unified actions/attest carries the
-      # SBOM as the predicate with the matching CycloneDX/SPDX predicate-type.
+      # actions/attest-sbom is deprecated; the unified actions/attest takes the
+      # SBOM via sbom-path and sets the CycloneDX/SPDX predicate-type itself.
       - name: Attest SBOM (CycloneDX)
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          predicate-type: https://cyclonedx.org/bom
-          predicate-path: sbom.cdx.json
+          sbom-path: sbom.cdx.json
           push-to-registry: true
 
       - name: Attest SBOM (SPDX)
@@ -146,8 +145,7 @@ jobs:
         with:
           subject-name: ${{ steps.meta.outputs.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          predicate-type: https://spdx.dev/Document/v2.3
-          predicate-path: sbom.spdx.json
+          sbom-path: sbom.spdx.json
           push-to-registry: true
 
       # Self-proving evidence: crypto-verify each attestation (signature +
