@@ -1,0 +1,56 @@
+name: CI
+
+# Required status gate: a PR is red unless ruff (lint + format) and the full
+# pytest suite pass. No `|| true`, no skip-swallow — the checks actually run.
+# Coverage stays in sonar.yml (advisory); this gate runs pytest without
+# coverage so it is fast and not a wasteful second coverage pass.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Deny-all at workflow scope; each job re-grants the minimum it needs.
+permissions: {}
+
+# Cancel superseded runs on the same ref (new push to a PR voids the old run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: ruff + pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up uv + Python 3.13
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies (locked)
+        run: uv sync --frozen --group dev
+
+      - name: Ruff lint
+        run: uv run ruff check src tests
+
+      - name: Ruff format check
+        run: uv run ruff format --check src tests
+
+      - name: Pytest
+        run: uv run pytest -q
