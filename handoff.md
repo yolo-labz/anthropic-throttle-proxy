@@ -1,10 +1,417 @@
-# Handoff: throttle incident 25/05/2026
+# Handoff: throttle incidents
 
 This handoff is for the next Claude Code session touching this repository.
-Read it before changing throttle behavior, Nix pins, deployment, or host
-activation.
+Read it before changing throttle behavior, central deployment, Nix pins, or
+host activation. Latest incident first.
 
-## What was wrong
+---
+
+## 06/06/2026 — central nginx upstream stale after Dokku-host reboot
+
+### What was wrong
+
+Pedro's prior Claude Code session crashed with:
+
+    API Error: The socket connection was closed unexpectedly. This is often a
+    network or firewall issue. ...
+    500 ... anthropic-throttle.home301server.com.br
+
+Local proxy stayed healthy. The failure was central-only, between Dokku's
+nginx vhost and the `anthropic-throttle.web.1` container.
+
+**Causality status: ◐ partially verified, NOT proven.**
+`dokku proxy:build-config anthropic-throttle` repaired the central tier,
+but the pre-recovery `/home/dokku/anthropic-throttle/nginx.conf` was
+never captured. The stale-upstream-IP theory below is the *most likely
+mechanism*, not a proven root cause. The missing falsifier is the
+pre-recovery upstream IP (or nginx error-log lines showing connection
+attempts against an old container IP). See "Required wording change"
+note at the bottom of this section.
+
+Most likely mechanism, in five steps. Each line marks whether the
+evidence was captured pre-recovery (P), post-recovery (POST), or is
+inference (I) not measured here:
+
+1. (P) Pedro ran `sudo apt-get upgrade -y` on the Dokku host at 19:11:29
+   on 2026-06-06 (`/var/log/apt/history.log`). The upgrade bumped
+   `docker-ce` / `docker-ce-cli` / `docker-ce-rootless-extras`
+   29.5.2 → 29.5.3, `dokku` 0.38.10 → 0.38.17, plus `cloud-init`,
+   `apparmor`, `firmware-sof-signed`, `trivy`. (P) `dockerd` restarted
+   at 19:11:48 (host journal). (I) "First container-IP-shuffle event"
+   is inferred from Docker IPAM behavior — not measured here, because
+   the pre-event container IP was not captured.
+
+2. (P) At 19:17:49 Pedro ran `sudo systemctl reboot` (`sudo[2284478]:
+   notroot : COMMAND=/usr/bin/systemctl reboot`, followed by
+   `systemd-logind: System is rebooting`). Orderly shutdown, not a
+   crash. The pre-staged kernel (5.15 → 5.15.124, installed Jun 3 06:00
+   by unattended-upgrades) finally activated. (I) "Second IP-shuffle
+   event" — again inferred, not measured.
+
+3. (POST) `anthropic-throttle.web.1` came up on bridge IP `10.0.0.24`
+   (`dokku ps:report` after recovery). Docker's default IPAM is
+   sequential, not stable across daemon restarts or host reboots, so
+   the IP *may* have been different before either event — but the
+   pre-event IP was never captured, so this remains hypothesis.
+
+4. (I, unproven) Dokku does NOT auto-regenerate per-app
+   `/home/dokku/<app>/nginx.conf` on host reboot, on dockerd restart,
+   or on container respawn. The hypothesis is that the vhost kept
+   serving a stale `upstream` directive against an unreachable old IP.
+   This is the unproven step: the pre-recovery vhost was not preserved
+   before running `proxy:build-config`, which destroyed the forensic
+   artifact.
+
+5. (I) nginx returned 502 / `connection closed by upstream` to the
+   local proxy. Local proxy's central forward failed; PR #23
+   (25/05/2026 fix, merged as `78c2c43d`) promoted local admission to
+   `fair` and fell back to direct upstream. Pedro saw a user-visible
+   `500 ... anthropic-throttle.home301server.com.br`, which means
+   *some* failures escaped the queue + retry path. Whether that is
+   expected (e.g. the central response had already started streaming
+   when nginx returned 502, so retry was unsafe) or a remaining
+   fallback bug is an open question — see Follow-up #5.
+
+Plausible alternatives that are NOT ruled out and would also explain
+the symptom:
+
+- The Dokku 0.38.10 → 0.38.17 upgrade itself changed proxy-config
+  behavior, failed a postinst hook, or left nginx serving an older
+  config until `proxy:build-config` repaired it. The doc does not
+  prove this is *not* what happened.
+- `nginx -t` could have failed silently after the upgrade. The cert
+  mismatch on the same vhost (Follow-up #1) is independent evidence
+  that nginx-side state on this host is already in a confused state,
+  which makes silent reload failure not implausible.
+- `dokku-watchdog` or app-level healthcheck flap could have
+  temporarily marked the container unhealthy and routed nginx away
+  from it. We did not pull watchdog / Docker-event / healthcheck logs
+  before recovery.
+- This may not be app-specific. We did not enumerate other Dokku
+  apps' `/home/dokku/<app>/nginx.conf` vs live `dokku ps:report` IPs,
+  so the scope ("only this app drifted" vs "many drifted") is
+  unverified.
+
+### The first hypothesis was wrong
+
+Initial framing: "unattended-upgrades nightly run rebooted the host
+because a kernel upgrade landed."
+
+Falsified by:
+
+- `last reboot | head -3` → `Sat Jun 6 19:19  still running`, prev boot
+  `Jun 4 04:01 → Jun 6 19:17`. Single recent boot, matched the
+  failure window.
+- `last shutdown | head -3` → `Sat Jun 6 19:17 - 19:19 (00:01)`. Orderly
+  1-minute shutdown.
+- Journal at 19:17:49 → `sudo[2284478]: notroot :
+  COMMAND=/usr/bin/systemctl reboot`. Pedro triggered it manually.
+- `/var/log/unattended-upgrades/unattended-upgrades.log` had no 19:1x
+  entries on 2026-06-06; last cycles were 06:20 and 09:35. The kernel
+  was pre-installed at 06:00 on Jun 3 but only activated by Pedro's
+  manual reboot.
+
+Actual trigger: Pedro's interactive `apt-get upgrade -y` (which cycled
+dockerd as a side effect of the docker-ce 29.5.2 → 29.5.3 bump),
+followed by `systemctl reboot`. Whether *those host events* caused
+container IP drift, and whether IP drift caused the bad vhost, is the
+unproven step (see "Causality status" above).
+
+### The fix that shipped
+
+Recovery was a single Dokku command on the host:
+
+    dokku proxy:build-config anthropic-throttle
+
+This regenerated `/home/dokku/anthropic-throttle/nginx.conf` with
+`upstream anthropic-throttle-8765 { server 10.0.0.24:8765; }`. The
+command's own output reported nginx reload success, but no separate
+`nginx -t` / `systemctl reload nginx` / `journalctl -u nginx` /
+`nginx -T` was captured to independently prove workers picked up the
+new config — see Mistake #6.
+
+Verified after recovery (all POST-recovery; the matching pre-recovery
+captures do not exist):
+
+- `curl http://anthropic-throttle.home301server.com.br/__throttle/health`
+  from the Dokku host (NOT from the local-proxy host through DNS) →
+  `queue_mode=fair`, `served` counter climbing, no 502.
+- Local proxy `/__throttle/health` (loopback `127.0.0.1:8765`) →
+  `central_status=up`, `via=null` (central path active), `served`
+  resuming. This proves the local proxy's *own* central probe
+  recovered; it does not independently re-test the same DNS + nginx
+  vhost + container path the failing requests took. See Mistake #2.
+- `/home/dokku/anthropic-throttle/nginx.conf` mtime updated to 19:43,
+  post-recovery upstream IP matched `dokku ps:report` container IP.
+  The pre-recovery upstream IP and mtime were not captured, so we
+  cannot show the file actually changed in a way that would explain
+  the symptom.
+
+Container at recovery (POST):
+
+- CID `fa93c1b363c`, IP `10.0.0.24`, FinishedAt 19:19:47 → StartedAt
+  19:19:51, RestartCount=0, ExitCode=0, OOMKilled=false. Reboot
+  recovery, not a deliberate dokku op.
+
+No code or Nix pin changed. This was a host-side data-plane recovery,
+not a proxy-software bug.
+
+### Open follow-ups
+
+These are separate from the inline incident work above; tracked here
+so the next session does not re-discover them. Numbered for
+cross-reference from Mistakes and the workflow section.
+
+1. **TLS regression on the external HTTPS endpoint — incident-relevant,
+   not cosmetic.** `curl -v
+   https://anthropic-throttle.home301server.com.br/__throttle/health`
+   serves the `ai-docs.home301server.com.br` certificate — SAN
+   mismatch. Local proxy uses `THROTTLE_CENTRAL_URL=http://...` so the
+   workflow is unaffected, but the public HTTPS path is broken AND it
+   means the nginx server-name → cert binding for this vhost is
+   already in a confused state. That makes the silent-stale-config /
+   silent-reload-failure alternative (see "What was wrong" plausible
+   alternatives) more credible, not less. Investigate `dokku
+   letsencrypt:list` together with this incident's nginx state, not
+   as a separate cosmetic bug.
+
+2. **Systemic guard against this exact failure mode.** The host
+   already runs `/usr/local/bin/authelia-upstream-sync.sh` every
+   minute via cron to resync that app's upstream IP after container
+   drift. The same pattern generalizes: a small cron that diffs
+   `dokku ps:report <app>` container IP against the upstream in
+   `/home/dokku/<app>/nginx.conf` and runs `dokku proxy:build-config
+   <app>` on mismatch — for *every* Dokku app, not just this one.
+   Alternative: pin container IPs via Docker IPAM. Either prevents
+   the next reboot or `apt upgrade docker-ce` from silently breaking
+   any app on this host.
+
+3. **Post-upgrade / post-reboot Dokku app proxy consistency check.**
+   Add a one-shot script that runs after every `apt upgrade` and on
+   every boot: enumerate `/home/dokku/*/nginx.conf`, compare each
+   `upstream` IP to the live `dokku ps:report` container IP, and
+   either alert or auto-`proxy:build-config` on mismatch. Closes the
+   same gap as #2 but at the boundary, not on a polling cron.
+
+4. **Local proxy log/metric distinguishing central failure modes.**
+   The local proxy currently treats any central forward failure as
+   one bucket. Distinguish: HTTP 502 from nginx, connection refused
+   (no nginx), socket close mid-stream, DNS failure, timeout. The
+   user-visible 500 in this incident does not tell us which one
+   Pedro hit, which makes it impossible to decide whether the
+   fallback behaved as designed. Add separate counters
+   `central_failure_total{kind="..."}`.
+
+5. **Regression test: does central HTTP 502 trigger direct fallback?**
+   Open question from "What was wrong" #5 / Mistake #4. Add a test
+   that stands up a fake central returning 502, runs a request
+   through the local proxy in central-configured mode, and asserts
+   either (a) the request succeeded via direct fallback, or (b) the
+   request failed with a documented status. Either way the answer
+   becomes contract, not folklore.
+
+6. **Alert for central returning 502 from nginx.** Prometheus rule
+   on the local proxy or the central tier (whichever sees nginx 502
+   on the central forward) so the next occurrence pages instead of
+   surfacing as a session crash. Pair with a runbook entry pointing
+   at this handoff.
+
+7. **Audit ALL Dokku apps for stale upstream risk now, not after the
+   next incident.** Run the diff in #3 once today across the host;
+   find any other apps whose vhost upstream IP doesn't match the
+   live container, and rebuild them. The reboot at 19:17 may have
+   left more apps in this state — we did not check. Plain HTTP
+   smoke tests of externally important apps would be a faster
+   first pass than enumerating files.
+
+8. **Enable `dokku events:list` event logging.** Currently disabled
+   on this host, so the Dokku-side audit trail beyond the journal
+   is gone. Enable it as part of systemic hardening; this incident
+   would have been easier to triage with a Dokku-side event timeline.
+
+### Mistakes made during the session
+
+Do not repeat these. Numbered for cross-reference.
+
+1. **The biggest miss: failed to preserve pre-recovery evidence
+   before running `dokku proxy:build-config`.** The pre-recovery
+   `/home/dokku/anthropic-throttle/nginx.conf` (with the suspected
+   stale upstream IP) was never copied or printed. The fix command
+   destroyed the most important forensic artifact in this incident.
+   Also missed before recovery: `nginx -T | grep -A3
+   anthropic-throttle`, `/var/log/nginx/error.log` lines for the
+   failing hostname, `docker events --since '30m ago'`, `dokku logs
+   anthropic-throttle`, full `docker inspect anthropic-throttle.web.1`.
+   After this, root cause could only be inferred, not proven.
+
+2. **Did not verify central health from the failing path.**
+   Re-checked health by curling
+   `http://anthropic-throttle.home301server.com.br/__throttle/health`
+   from the Dokku host itself, and by hitting `127.0.0.1:8765` on the
+   local proxy. Neither retraces the actual failing path: from the
+   local-proxy host, through the configured `THROTTLE_CENTRAL_URL`,
+   through DNS, through nginx vhost, to the Dokku container. That
+   end-to-end check was skipped.
+
+3. **Did not check blast radius across other Dokku apps.** If host
+   reboot or `apt upgrade docker-ce` causes upstream-IP drift, every
+   per-app vhost on this host is at risk. The session never
+   enumerated `/home/dokku/*/nginx.conf` upstreams against live
+   `dokku ps:report` IPs. Other apps may still be drifting silently.
+
+4. **Did not rule out alternative causes.** The four candidates
+   below were left uneliminated, any of which would have produced
+   the same symptom:
+   - The Dokku 0.38.10 → 0.38.17 upgrade itself (config-handler
+     behavior change, failed postinst hook, nginx-config-test
+     failure after the upgrade).
+   - `dokku-watchdog` or app-level healthcheck flap routing nginx
+     away from a temporarily-unhealthy container.
+   - A stale `nginx -t` failure that prevented reload and left
+     workers on an old config, made more plausible by the cert
+     mismatch on the same vhost (Follow-up #1).
+   - A central-side throttle-proxy crash that recovered before
+     evidence was captured.
+
+   Pulling `dokku logs anthropic-throttle`, watchdog logs, Docker
+   events, and `journalctl -u nginx` *before* recovery would have
+   ruled these in or out.
+
+5. **Did not run `dokku events:list` early.** It would have been
+   the fastest Dokku-side audit signal. The fact that it returns
+   "Events logger disabled" on this host is itself a finding —
+   that should have been caught in this session, not left as a
+   passive follow-up.
+
+6. **Did not independently verify nginx reload after
+   `proxy:build-config`.** The fix command's own stdout reported
+   reload success; no separate `nginx -t`, `systemctl status nginx`,
+   `journalctl -u nginx --since`, or `nginx -T` was run to prove
+   workers picked up the new config. Given the cert mismatch on the
+   same vhost (Follow-up #1), nginx state on this host is already
+   suspect and silent reload failure is not impossible.
+
+7. **Treated `apt upgrade` and `unattended-upgrades` as synonyms.**
+   They are different operators (manual interactive vs nightly
+   background), with different evidence trails. Always check
+   `/var/log/apt/history.log` AND
+   `/var/log/unattended-upgrades/unattended-upgrades.log`, not just
+   one.
+
+8. **First search for stale nginx config looked under
+   `/etc/nginx/conf.d/`.** Since Dokku 0.30 the per-app vhost lives
+   at `/home/dokku/<app>/nginx.conf`, with overrides under
+   `/home/dokku/<app>/nginx.conf.d/`. Verify `dokku version` (0.38.17
+   here) before locating files.
+
+9. **Initial hypothesis named "kernel auto-reboot" without first
+   running `last reboot` and `last shutdown`.** The trigger evidence
+   was one journal line away. Capture audit trails before forming
+   hypotheses.
+
+10. **Did not initially separate "container respawned" (`FinishedAt
+    19:19:47 → StartedAt 19:19:51`) from "host rebooted" (boot ID
+    flip at 19:17:56 → 19:19:42).** The four-second container gap
+    looked like a deliberate `dokku ps:restart`; it was actually
+    Docker-daemon recovery during the reboot. `last reboot` plus
+    boot ID inspection disambiguates.
+
+### How Claude should have solved it
+
+The correct workflow when central is unhealthy and local is fine:
+
+1. **Capture host-side audit trail first, before forming hypotheses:**
+   - `last reboot | head -3`
+   - `last shutdown | head -3`
+   - `journalctl --since '2 hours ago' | grep -E 'sudo|systemd-logind: System is'`
+   - `/var/log/apt/history.log` last block (manual upgrades)
+   - `/var/log/unattended-upgrades/unattended-upgrades.log` last cycle
+   - `dokku version` (locates per-app nginx.conf path)
+   - `dokku events:list` (and surface "logger disabled" as a
+     finding, not a passive follow-up)
+
+2. **State hypothesis in one sentence with an explicit falsifier.**
+   Example: "central nginx upstream is stale because the container IP
+   changed after a host event; falsifier: if `dokku ps:report` IP
+   matches the `upstream` line in `/home/dokku/<app>/nginx.conf`, the
+   IP-drift theory is wrong."
+
+3. **Preserve pre-fix evidence — this is the step the 06/06/2026
+   session skipped.** Before any recovery command, copy or print:
+   - `/home/dokku/<app>/nginx.conf` (the suspected stale file —
+     `cp` it aside, do NOT just `cat` it once)
+   - `nginx -T 2>/dev/null | grep -A 3 -E "<app>|<hostname>"`
+   - `/var/log/nginx/error.log` lines for the failing hostname
+     (`grep <hostname> /var/log/nginx/error.log | tail -200`)
+   - `journalctl -u nginx --since '2 hours ago'`
+   - `docker events --since '30m ago' --until 'now'` (post-hoc
+     replay; otherwise capture live next time)
+   - `dokku logs <app> --tail`
+   - `docker inspect <app>.web.1` full output
+   - `dokku ps:report <app>` (current container IP)
+   - For multi-network apps, every IP from `docker inspect`'s
+     `NetworkSettings.Networks` map, not just the bridge IP
+
+4. **Prove or falsify the upstream-IP path against current state:**
+   - Diff captured `dokku ps:report` IP against `grep -A1 upstream
+     /home/dokku/<app>/nginx.conf`.
+   - Mismatch → confirms IP drift, the most likely mechanism.
+   - Match → IP drift falsified; reach for the other candidates
+     (Mistake #4 alternatives: Dokku upgrade behavior, watchdog
+     flap, failed nginx reload, cert/server-name binding bug,
+     central-proxy crash).
+
+5. **Apply minimal reversible recovery:**
+   - `dokku proxy:build-config <app>`
+
+6. **Independently verify nginx reload, NOT just the Dokku
+   command's stdout:**
+   - `nginx -t` (must print `syntax is ok` / `test is successful`)
+   - `journalctl -u nginx --since <timestamp>` (look for reload
+     line + zero errors)
+   - `nginx -T 2>/dev/null | grep -A 3 <app>` confirms live config
+     matches the new file
+   - File mtime alone (as in this incident) is NOT sufficient —
+     workers may not have picked it up.
+
+7. **Re-verify the failing path end-to-end, not loopback:**
+   - `curl -v $THROTTLE_CENTRAL_URL/__throttle/health` from the
+     local-proxy host, through DNS + nginx vhost + container.
+     Loopback `127.0.0.1:8765` and Dokku-host-local curls do NOT
+     retrace the failing path.
+   - Local proxy `central_status=up` and `via=null` are necessary
+     but not sufficient.
+
+8. **Audit blast radius before declaring done:**
+   - Enumerate `/home/dokku/*/nginx.conf` upstream IPs vs `dokku
+     ps:report` per app on the same host. If multiple apps drifted,
+     this is a host-wide event, not an app-specific one.
+
+9. **Document this incident, run Codex adversarial review per the
+   section below, address findings, ship the doc PR, then file
+   the open follow-ups as separate issues.**
+
+### Required wording change (carried over from Codex review)
+
+Per Codex's adversarial review of an earlier draft of this section:
+the root-cause language was overclaiming. The honest framing —
+preserved here so a future session does not regress it — is:
+
+> Most likely mechanism: host upgrade/reboot caused container or
+> proxy state drift, and `dokku proxy:build-config anthropic-throttle`
+> repaired nginx-to-container routing. We did not preserve the
+> pre-recovery nginx upstream, so stale-IP causality is not proven.
+> The missing falsifier is the old upstream IP or nginx error logs
+> showing connection attempts to an old container IP.
+
+Mark every future incident's evidence with (P) / (POST) / (I) so the
+proven-vs-inferred boundary stays visible.
+
+---
+
+## 25/05/2026 — local fallback bypassing local queue
+
+### What was wrong
 
 Pedro reported Claude Code requests sitting at "typed but no spinner" and
 server-side rate limiting while the local proxy was configured as
@@ -40,7 +447,7 @@ The fix that shipped:
   - `/nix/store/055538y8i9r96lycpq5mx2pc6yk6mhnv-nixos-system-desktop-26.05.20260523.3d8f0f3`
   - active user unit points at `/nix/store/ffl8ngpi6y4f49vps94r6w7w89nfsa59-anthropic-throttle-proxy-0.1.0`
 
-## Mistakes made during the session
+### Mistakes made during the session
 
 Do not repeat these.
 
@@ -61,7 +468,7 @@ Do not repeat these.
   combining health JSON, journal lines, and the exact fallback path in code.
   Similar-looking rate-limit incidents are not enough evidence.
 
-## How Claude should have solved it
+### How Claude should have solved it
 
 The correct incident workflow is:
 
@@ -95,26 +502,39 @@ The correct incident workflow is:
     - `curl http://127.0.0.1:8765/__throttle/health` responds
     - journal shows the fixed store path and no bind failure
 
-## Required adversarial review
+---
+
+## Required adversarial review (applies to all incidents)
 
 Before merging a throttle behavior change, ask Codex for adversarial review.
 The review prompt must include:
 
 - the user-visible symptom
 - the one-sentence hypothesis
-- live health/journal evidence
-- the exact code diff
+- live health/journal evidence, marked (P) pre-recovery, (POST)
+  post-recovery, or (I) inference
+- the exact code diff (or recovery action, for host-side incidents)
 - test results
 - the deployment/pin/activation plan
+- for host-side incidents: pre-recovery captures of the suspected
+  stale config (e.g. `/home/dokku/<app>/nginx.conf`), nginx error
+  logs for the failing hostname, `docker events`, `dokku logs`,
+  and the relevant `journalctl -u nginx` window
 
 Codex must be asked to look specifically for:
 
-- unproven causality
+- unproven causality, especially "correlation dressed up as root cause"
 - fallback paths that still bypass local queueing
 - limiter mode transitions that can strand queued futures
 - central/local behavior mismatches
 - Nix pin or fixed-output hash mistakes
 - host activation gaps where merged code is not actually running
+- for host-side incidents: container-IP drift, stale per-app nginx
+  vhost, mismatch between `dokku ps:report` and
+  `/home/dokku/<app>/nginx.conf`, silent `nginx -t` / reload
+  failures, and blast radius across other apps on the same host
+- whether pre-recovery forensic artifacts were preserved before the
+  fix command was run
 
 Do not merge or declare the incident solved until the adversarial findings are
 addressed or explicitly documented with evidence.
