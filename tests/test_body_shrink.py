@@ -13,8 +13,9 @@ from __future__ import annotations
 import json
 
 import pytest
+from aiohttp.test_utils import make_mocked_request
 
-from anthropic_throttle_proxy import body_shrink
+from anthropic_throttle_proxy import body_shrink, proxy
 
 
 def _body(messages, model="claude-opus-4-7"):
@@ -36,6 +37,42 @@ def _user_with(blocks: list[dict]) -> dict:
 
 def _assistant_with(blocks: list[dict]) -> dict:
     return {"role": "assistant", "content": blocks}
+
+
+def test_apply_body_shrink_trims_and_refreshes_content_length(monkeypatch):
+    # proxy._apply_body_shrink wraps shrink_body with the handler's metrics +
+    # Content-Length refresh. Cover the trimmed branch.
+    monkeypatch.setattr(body_shrink, "CAP_BYTES", 8000)
+    monkeypatch.setattr(body_shrink, "KEEP_TURNS", 2)
+    monkeypatch.setattr(body_shrink, "MIN_BLOCK_BYTES", 100)
+    body = _body(
+        [
+            _user_with([_tool_result("a", 5000)]),
+            _assistant_with([{"type": "text", "text": "ok"}]),
+            _user_with([_tool_result("b", 5000)]),
+            _assistant_with([{"type": "text", "text": "ok"}]),
+            _user_with([_tool_result("c", 5000)]),
+            _user_with([{"type": "text", "text": "now"}]),
+        ]
+    )
+    assert len(body) > 8000
+    req = make_mocked_request("POST", "/v1/messages", headers={"Authorization": "Bearer t"})
+    headers: dict[str, str] = {}
+    out = proxy._apply_body_shrink(req, body, "v1/messages", "claude-opus-4-8", headers)
+    assert len(out) < len(body)  # trimmed
+    assert headers["Content-Length"] == str(len(out))  # refreshed to the new size
+
+
+def test_apply_body_shrink_passthrough_leaves_body_and_headers(monkeypatch):
+    # Under-cap v1/messages → passthrough breadcrumb branch, body untouched,
+    # Content-Length only set when the proxy actually mutates the body.
+    monkeypatch.setattr(body_shrink, "CAP_BYTES", 1024 * 1024)
+    body = _body([_user_with([{"type": "text", "text": "hi"}])])
+    req = make_mocked_request("POST", "/v1/messages", headers={"Authorization": "Bearer t"})
+    headers: dict[str, str] = {}
+    out = proxy._apply_body_shrink(req, body, "v1/messages", "claude-opus-4-8", headers)
+    assert out == body
+    assert "Content-Length" not in headers
 
 
 def test_passthrough_under_cap(monkeypatch):

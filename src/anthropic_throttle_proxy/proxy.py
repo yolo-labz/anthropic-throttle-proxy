@@ -287,7 +287,7 @@ _last_advice_ts: float = 0.0
 _direct_fallback_lock: asyncio.Lock | None = None
 
 
-def _effective_admission(via: str) -> tuple[str, int]:
+def _effective_admission() -> tuple[str, int]:
     """Admission mode and hard cap for this request.
 
     Local deployments normally run ``THROTTLE_QUEUE_MODE=off`` because the
@@ -298,11 +298,6 @@ def _effective_admission(via: str) -> tuple[str, int]:
     if config.QUEUE_MODE == "off" and config.CENTRAL_URL:
         return "fair", max(1, min(config.CENTRAL_LOCAL_MAX_CONCURRENT, config.MAX_CONCURRENT))
     return config.QUEUE_MODE, config.MAX_CONCURRENT
-
-
-def _effective_queue_mode(via: str) -> str:
-    """Backward-compatible helper for tests and older callers."""
-    return _effective_admission(via)[0]
 
 
 def _get_direct_fallback_lock() -> asyncio.Lock:
@@ -728,6 +723,20 @@ async def _retry_direct_once(
     return web.Response(status=502, text=f"upstream error: {exc2}\n")
 
 
+def _should_retry_pushback(
+    response: web.StreamResponse | web.Response | None,
+    attempt: _Attempt,
+    pushback_retries: int,
+) -> bool:
+    """True when an unprepared throttle response is still within the retry budget."""
+    return (
+        response is not None
+        and not response.prepared
+        and attempt.final_status in THROTTLE_STATUSES
+        and pushback_retries < config.RATE_PUSHBACK_RETRIES
+    )
+
+
 async def _forward_with_retry(
     request: web.Request,
     headers: Mapping[str, str],
@@ -762,12 +771,7 @@ async def _forward_with_retry(
             return await _retry_direct_once(
                 request, headers, body, path, via, url, client_timeout, exc, attempt
             )
-        if (
-            response is not None
-            and not response.prepared
-            and attempt.final_status in THROTTLE_STATUSES
-            and pushback_retries < config.RATE_PUSHBACK_RETRIES
-        ):
+        if _should_retry_pushback(response, attempt, pushback_retries):
             pushback_retries += 1
             retry_after = _parse_retry_after(attempt.meta)
             pause = retry_after if retry_after > 0 else config.AIMD_BACKOFF_S
@@ -973,6 +977,46 @@ async def _finalize(
     _maybe_warn_storm(counters.s["upstream_retries"])
 
 
+def _apply_body_shrink(
+    request: web.Request,
+    body: bytes,
+    path: str,
+    model_label: str,
+    headers: dict[str, str],
+) -> bytes:
+    """Trim oversize POST /v1/messages bodies (PR #15) and emit diagnostics.
+
+    Returns the (possibly trimmed) body and refreshes ``headers['Content-Length']``
+    in place when it shrinks. Behavior-identical to the former inline block; the
+    no-trim ``v1/messages`` case logs a passthrough breadcrumb (PR #17).
+    """
+    body, shrink_meta = shrink_body(body, path)
+    if shrink_meta.get("trimmed"):
+        still = "true" if shrink_meta.get("still_oversize") else "false"
+        M_BODY_SHRINK_TRIMMED.labels(model=model_label, still_oversize=still).inc()
+        M_BODY_SHRINK_BYTES_SAVED.labels(model=model_label).inc(shrink_meta.get("bytes_saved", 0))
+        log(
+            f"body_shrink bid={_bearer_id(request.headers)} model={model_label} "
+            f"original={shrink_meta['original_bytes']} "
+            f"final={shrink_meta['final_bytes']} "
+            f"blocks_trimmed={shrink_meta['blocks_trimmed']} "
+            f"saved={shrink_meta['bytes_saved']} "
+            f"still_oversize={shrink_meta['still_oversize']}"
+        )
+        # When the proxy MUTATES the body we have to refresh Content-Length; the
+        # header dict we forward was built from the ORIGINAL request and would
+        # lie about the payload size if we left it untouched.
+        headers["Content-Length"] = str(len(body))
+    elif "v1/messages" in path and shrink_meta.get("original_bytes") is not None:
+        reason = shrink_meta.get("reason", "under-cap")
+        log(
+            f"body_passthrough bid={_bearer_id(request.headers)} "
+            f"model={model_label} bytes={shrink_meta['original_bytes']} "
+            f"reason={reason}"
+        )
+    return body
+
+
 async def handler(request: web.Request) -> web.StreamResponse:
     """Main reverse-proxy handler: queue, forward (with retry), and stream back.
 
@@ -993,49 +1037,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
     # See body_shrink.py for the algorithm + trade-offs (cache invalidation,
     # breadcrumb stubs, hard floor on single-attachment overruns).
     if body is not None and request.method == "POST":
-        body, shrink_meta = shrink_body(body, path)
-        if shrink_meta.get("trimmed"):
-            still = "true" if shrink_meta.get("still_oversize") else "false"
-            M_BODY_SHRINK_TRIMMED.labels(model=model_label, still_oversize=still).inc()
-            M_BODY_SHRINK_BYTES_SAVED.labels(model=model_label).inc(
-                shrink_meta.get("bytes_saved", 0)
-            )
-            log(
-                f"body_shrink bid={_bearer_id(request.headers)} model={model_label} "
-                f"original={shrink_meta['original_bytes']} "
-                f"final={shrink_meta['final_bytes']} "
-                f"blocks_trimmed={shrink_meta['blocks_trimmed']} "
-                f"saved={shrink_meta['bytes_saved']} "
-                f"still_oversize={shrink_meta['still_oversize']}"
-            )
-            # When the proxy MUTATES the body we have to refresh Content-Length;
-            # the header dict we forward was built from the ORIGINAL request and
-            # would lie about the payload size if we left it untouched.
-            headers["Content-Length"] = str(len(body))
-        elif "v1/messages" in path and shrink_meta.get("original_bytes") is not None:
-            # PR #17: passthrough diagnostic. body_shrink only logs when it
-            # actually trims; the no-trim case is silent. That made it
-            # impossible to correlate Anthropic 413s with the actual request
-            # size — the operator could only see `served=413` in the done
-            # line and had to guess whether the body was 5 MiB or 31 MiB.
-            # This terse log fires for every POST /v1/messages that
-            # body_shrink did not rewrite, so the bytes-on-the-wire are
-            # always observable. ``reason`` is "under-cap" when the body
-            # was already small enough (the common case) and otherwise
-            # carries the bail-out reason from body_shrink (``non-json``,
-            # ``no-messages-array``, ``disabled``…). Counter and metric
-            # remain unchanged — this is purely a log signal.
-            reason = shrink_meta.get("reason", "under-cap")
-            log(
-                f"body_passthrough bid={_bearer_id(request.headers)} "
-                f"model={model_label} bytes={shrink_meta['original_bytes']} "
-                f"reason={reason}"
-            )
+        body = _apply_body_shrink(request, body, path, model_label, headers)
 
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
     url, client_timeout, via = pick_target(path, request.query_string)
-    queue_mode, hard_max = _effective_admission(via)
+    queue_mode, hard_max = _effective_admission()
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
     # dispatched round-robin per client connection.
@@ -1172,7 +1179,7 @@ async def health(_request: web.Request) -> web.Response:
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
 
-async def metrics(_request: web.Request) -> web.Response:
+async def metrics(_request: web.Request) -> web.Response:  # NOSONAR: aiohttp handler
     """GET /metrics — Prometheus scrape endpoint."""
     M_INFLIGHT.set(state["inflight"])
     M_QUEUED.set(state["queued"])
@@ -1185,7 +1192,7 @@ async def metrics(_request: web.Request) -> web.Response:
     )
 
 
-async def root_probe(request: web.Request) -> web.Response:
+async def root_probe(request: web.Request) -> web.Response:  # NOSONAR: aiohttp handler
     """GET/HEAD / — local connectivity probe, never forwarded upstream."""
     if request.method == "HEAD":
         return web.Response(status=200)

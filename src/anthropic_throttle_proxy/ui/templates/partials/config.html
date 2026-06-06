@@ -5,7 +5,7 @@
    quiet controls, no decorative color, and no repeated save buttons.
 #}
 {% if message %}
-  <div class="config-toast ok" role="status">saved · {{ message }}</div>
+  <output class="config-toast ok">saved · {{ message }}</output>
 {% endif %}
 {% if error %}
   <div class="config-toast err" role="alert">error · {{ error }}</div>

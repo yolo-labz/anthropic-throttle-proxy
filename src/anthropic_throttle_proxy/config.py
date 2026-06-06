@@ -245,65 +245,74 @@ def _set_module_attr(module_path: str, attr: str, value: _Any) -> None:
     setattr(mod, attr, value)
 
 
+# Fully-qualified module names for the runtime monkeypatch targets, named once
+# so SonarQube python:S1192 (duplicated string literal) stays clean. f-strings
+# keep the bare dotted literal out of the source (only ".config" etc. appear).
+_PKG = "anthropic_throttle_proxy"
+_MOD_CONFIG = f"{_PKG}.config"
+_MOD_BODY_SHRINK = f"{_PKG}.body_shrink"
+_MOD_PROXY = f"{_PKG}.proxy"
+
+
 def _set_max_concurrent(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "MAX_CONCURRENT", v)
+    _set_module_attr(_MOD_CONFIG, "MAX_CONCURRENT", v)
     _schedule_existing_limiter_retune()
 
 
 def _set_min_dispatch_gap_ms(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "MIN_DISPATCH_GAP_S", float(v) / 1000.0)
+    _set_module_attr(_MOD_CONFIG, "MIN_DISPATCH_GAP_S", float(v) / 1000.0)
 
 
 def _set_central_local_max_concurrent(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "CENTRAL_LOCAL_MAX_CONCURRENT", v)
+    _set_module_attr(_MOD_CONFIG, "CENTRAL_LOCAL_MAX_CONCURRENT", v)
     _schedule_existing_limiter_retune()
 
 
 def _set_aimd_min(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "AIMD_MIN", v)
+    _set_module_attr(_MOD_CONFIG, "AIMD_MIN", v)
     _schedule_existing_limiter_retune(live_floor=v)
 
 
 def _set_aimd_initial_concurrent(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "AIMD_INITIAL_CONCURRENT", v)
+    _set_module_attr(_MOD_CONFIG, "AIMD_INITIAL_CONCURRENT", v)
     _schedule_existing_limiter_retune(live_floor=v)
 
 
 def _set_aimd_backoff_s(v: float) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "AIMD_BACKOFF_S", v)
+    _set_module_attr(_MOD_CONFIG, "AIMD_BACKOFF_S", v)
 
 
 def _set_aimd_ramp_after(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "AIMD_RAMP_AFTER", v)
+    _set_module_attr(_MOD_CONFIG, "AIMD_RAMP_AFTER", v)
 
 
 def _set_aimd_decrease(v: float) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "AIMD_DECREASE", v)
+    _set_module_attr(_MOD_CONFIG, "AIMD_DECREASE", v)
 
 
 def _set_max_hold_retry_after_s(v: float) -> None:
-    _set_module_attr("anthropic_throttle_proxy.config", "MAX_HOLD_RETRY_AFTER_S", v)
+    _set_module_attr(_MOD_CONFIG, "MAX_HOLD_RETRY_AFTER_S", v)
 
 
 def _set_body_shrink_cap_bytes(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.body_shrink", "CAP_BYTES", v)
+    _set_module_attr(_MOD_BODY_SHRINK, "CAP_BYTES", v)
 
 
 def _set_body_shrink_keep_turns(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.body_shrink", "KEEP_TURNS", max(2, v))
+    _set_module_attr(_MOD_BODY_SHRINK, "KEEP_TURNS", max(2, v))
 
 
 def _set_body_shrink_min_block_bytes(v: int) -> None:
-    _set_module_attr("anthropic_throttle_proxy.body_shrink", "MIN_BLOCK_BYTES", v)
+    _set_module_attr(_MOD_BODY_SHRINK, "MIN_BLOCK_BYTES", v)
 
 
 def _set_utilization_target(v: float) -> None:
-    _set_module_attr("anthropic_throttle_proxy.proxy", "UTILIZATION_TARGET", v)
+    _set_module_attr(_MOD_PROXY, "UTILIZATION_TARGET", v)
 
 
 def _set_advisor_enabled(v: bool) -> None:
     os.environ["ADVISOR_ENABLED"] = "true" if v else "false"
-    _set_module_attr("anthropic_throttle_proxy.proxy", "ADVISOR_ENABLED", bool(v))
+    _set_module_attr(_MOD_PROXY, "ADVISOR_ENABLED", bool(v))
 
 
 # EDITABLE_KNOBS is the single source of truth the UI consumes. Each entry:
@@ -545,7 +554,7 @@ def _get_body_shrink_attr(name: str, default: _Any) -> _Any:
     try:
         import importlib
 
-        mod = importlib.import_module("anthropic_throttle_proxy.body_shrink")
+        mod = importlib.import_module(_MOD_BODY_SHRINK)
         return getattr(mod, name, default)
     except Exception:
         return default
@@ -556,7 +565,7 @@ def _get_proxy_attr(name: str, default: _Any) -> _Any:
     try:
         import importlib
 
-        mod = importlib.import_module("anthropic_throttle_proxy.proxy")
+        mod = importlib.import_module(_MOD_PROXY)
         return getattr(mod, name, default)
     except Exception:
         return default

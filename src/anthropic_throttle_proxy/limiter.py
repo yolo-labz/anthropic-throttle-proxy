@@ -378,8 +378,7 @@ async def _get_bearer_limiter(
             )
         else:
             await _retune_limiter_hard_max(bid, lim, hard_max)
-        if lim.queue_mode != mode:
-            if not (mode == "off" and lim.queue_enabled):
-                lim.set_queue_mode(mode)
-                log(f"bearer-mode bid={bid} queue_mode={mode}")
+        if lim.queue_mode != mode and not (mode == "off" and lim.queue_enabled):
+            lim.set_queue_mode(mode)
+            log(f"bearer-mode bid={bid} queue_mode={mode}")
         return lim
