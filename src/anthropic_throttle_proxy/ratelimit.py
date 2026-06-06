@@ -198,6 +198,29 @@ def _binding_utilization(unified: Mapping[str, object]) -> float | None:
     return max(candidates) if candidates else None
 
 
+def _binding_window(unified: Mapping[str, object]) -> str | None:
+    """Name ("5h"/"7d") of the window ``_binding_utilization`` selects.
+
+    Mirrors that helper's selection so the early-warning signal can label which
+    window is binding. ``None`` when no utilization is present.
+    """
+    u5h = unified.get("util_5h")
+    u7d = unified.get("util_7d")
+    claim = unified.get("representative_claim")
+    if claim == "five_hour" and u5h is not None:
+        return "5h"
+    if claim == "seven_day" and u7d is not None:
+        return "7d"
+    if u5h is None and u7d is None:
+        return None
+    if u7d is None:
+        return "5h"
+    if u5h is None:
+        return "7d"
+    # Tie-break matches max(): 7d only wins when strictly greater.
+    return "7d" if u7d > u5h else "5h"
+
+
 def _extract_model_from_body(body: bytes | None) -> str:
     """Pull the ``model`` field from a POST /v1/messages JSON body."""
     if not body:

@@ -112,6 +112,7 @@ from .metrics import (
     M_UPSTREAM_RETRIES,
     M_UTIL_5H,
     M_UTIL_7D,
+    M_UTIL_WARNINGS,
     REGISTRY,
     generate_latest,
 )
@@ -119,6 +120,7 @@ from .pricing import _pricing_for
 from .ratelimit import (
     _bearer_id,
     _binding_utilization,
+    _binding_window,
     _client_id,
     _extract_model_from_body,
     _extract_ratelimit,
@@ -171,6 +173,7 @@ __all__ = [
     "_pricing_for",
     "_bearer_id",
     "_binding_utilization",
+    "_binding_window",
     "_client_id",
     "_extract_model_from_body",
     "_extract_ratelimit",
@@ -200,8 +203,10 @@ __all__ = [
     "M_UPSTREAM_RETRIES",
     "M_UTIL_5H",
     "M_UTIL_7D",
+    "M_UTIL_WARNINGS",
     # defined in this module
     "UTILIZATION_TARGET",
+    "UTILIZATION_WARN",
     "ADVISOR_ENABLED",
     "ADVISOR_DEBOUNCE_S",
     "_apply_unified",
@@ -224,6 +229,16 @@ __all__ = [
 # Defined HERE (not in config) because the test-suite monkeypatches it on the
 # ``proxy`` namespace, and ``_apply_unified`` below reads the module global.
 UTILIZATION_TARGET = float(os.environ.get("THROTTLE_UTILIZATION_TARGET", "0"))
+
+# WS-B2 early-warning (observability only). When the binding unified window
+# crosses this fraction while still "allowed", emit ONE WARNING line + a counter
+# per (bearer, reset-window) — the pre-"rejected" signal the journal previously
+# lacked (the 06/06/2026 5h-window incident logged nothing until the 429 itself).
+# Warn-ONLY: it never shrinks the ceiling, so it is INDEPENDENT of
+# UTILIZATION_TARGET (which IS a brake, default off) and safe to leave on. Set
+# <= 0 to disable. Defined here (not config) for the same monkeypatch reason as
+# UTILIZATION_TARGET.
+UTILIZATION_WARN = float(os.environ.get("THROTTLE_UTILIZATION_WARN", "0.9"))
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
@@ -298,6 +313,115 @@ def _get_direct_fallback_lock() -> asyncio.Lock:
     return _direct_fallback_lock
 
 
+def _per_reset_debounce_key(prefix: str, reset: int | None) -> str:
+    """One stable key per (prefix, reset window) for once-per-window debouncing.
+
+    Falls back to an AIMD-backoff time bucket when the reset epoch is missing,
+    so a window with no reset header still debounces instead of firing per
+    response. Shared by the warn signal and the opt-in glide.
+    """
+    if reset:
+        return f"{prefix}:{reset}"
+    cooldown = max(1.0, config.AIMD_BACKOFF_S)
+    return f"{prefix}:bucket:{int(time.time() // cooldown)}"
+
+
+def _maybe_warn_unified(
+    bid: str,
+    bstate: dict[str, object],
+    unified: Mapping[str, object],
+) -> None:
+    """Emit ONE early-warning per (bearer, window, reset) when nearing the cap.
+
+    Warn-ONLY: never shrinks the ceiling (that is ``UTILIZATION_TARGET``'s job,
+    default off), so it is safe to leave on and gives the pre-"rejected" signal
+    the journal previously lacked. Flat guard clauses keep cognitive complexity
+    low. No-op when disabled or below threshold.
+    """
+    if UTILIZATION_WARN <= 0:
+        return
+    binding = _binding_utilization(unified)
+    if binding is None or binding < UTILIZATION_WARN:
+        return
+    window = _binding_window(unified) or "?"
+    reset = unified.get(f"reset_{window}") or unified.get("reset")
+    warn_key = _per_reset_debounce_key(window, reset)
+    if bstate.get("_util_warn_key") == warn_key:
+        return
+    bstate["_util_warn_key"] = warn_key
+    M_UTIL_WARNINGS.labels(bearer=bid, window=window).inc()
+    reset_in = int(reset - time.time()) if reset else -1
+    log(
+        f"unified-warning bid={bid} window={window} "
+        f"util={binding:.2f}>={UTILIZATION_WARN:.2f} reset_in={reset_in}s "
+        f"(approaching cap, still allowed)"
+    )
+
+
+def _publish_unified_gauges(bid: str, unified: Mapping[str, object]) -> None:
+    """Mirror the 5h/7d utilization fractions onto their Prometheus gauges."""
+    if unified.get("util_5h") is not None:
+        M_UTIL_5H.labels(bearer=bid).set(unified["util_5h"])
+    if unified.get("util_7d") is not None:
+        M_UTIL_7D.labels(bearer=bid).set(unified["util_7d"])
+
+
+def _maybe_pause_rejected(
+    bid: str,
+    limiter: FairBearerLimiter,
+    unified: Mapping[str, object],
+) -> bool:
+    """Pause the bearer until reset when a window is already "rejected".
+
+    Returns ``True`` when a window is rejected (caller must stop) — this
+    preempts the 429 + ClientConnectionReset storm of hammering an exhausted
+    cap. ``False`` when no window is rejected.
+    """
+    rejected = "rejected" in (
+        unified.get("status"),
+        unified.get("status_5h"),
+        unified.get("status_7d"),
+    )
+    if not rejected:
+        return False
+    reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d") or 0
+    pause = reset - time.time()
+    if pause > 0:
+        limiter.note_retry_after(pause)
+        log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
+    return True
+
+
+async def _maybe_glide(
+    bid: str,
+    bstate: dict[str, object],
+    limiter: FairBearerLimiter,
+    unified: Mapping[str, object],
+) -> None:
+    """Opt-in proactive shrink as the binding window nears the cap (WS-B2).
+
+    No-op unless ``UTILIZATION_TARGET > 0`` and the binding window crosses it.
+    Shrinks ONCE per reset window — repeated per-response shrink collapses an
+    active swarm to one slot without any real 429/503 signal. Default off.
+    """
+    if UTILIZATION_TARGET <= 0:
+        return
+    binding = _binding_utilization(unified)
+    if binding is None or binding < UTILIZATION_TARGET:
+        return
+    reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d")
+    shrink_key = _per_reset_debounce_key(f"target-{UTILIZATION_TARGET}", reset)
+    if bstate.get("_util_shrink_key") == shrink_key:
+        return
+    new_max = await limiter.shrink()
+    if new_max is None:
+        return
+    bstate["_util_shrink_key"] = shrink_key
+    M_AIMD_SHRINKS.labels(bearer=bid, status="util").inc()
+    M_AIMD_MAX.labels(bearer=bid).set(new_max)
+    log(f"util-shrink bid={bid} util={binding:.2f}>={UTILIZATION_TARGET} max_concurrent={new_max}")
+
+
 async def _apply_unified(
     bid: str,
     bstate: dict[str, object],
@@ -306,12 +430,14 @@ async def _apply_unified(
 ) -> None:
     """React to OAuth unified-window headers (WS-B2).
 
-    1. Surface utilization (gauges + bearer_state) — always.
-    2. Proactive pause: if a window is already "rejected", stop dispatching to
-       this bearer until its reset epoch — preempts the 429 + the
-       ClientConnectionReset storm that comes with hammering an exhausted cap.
-    3. Opt-in glide: when ``UTILIZATION_TARGET > 0`` and the binding window
-       crosses it while still "allowed", shrink one AIMD step to ease off early.
+    A flat pipeline of single-purpose helpers (each kept low-complexity):
+    1. ``_publish_unified_gauges`` — surface utilization, always.
+    2. ``_maybe_pause_rejected`` — pause until reset if a window is already
+       "rejected"; preempts the 429 + ClientConnectionReset storm.
+    2b. ``_maybe_warn_unified`` — log one early-warning per window before the
+        cap (observability only, never shrinks).
+    3. ``_maybe_glide`` — opt-in proactive shrink near the cap
+       (``UTILIZATION_TARGET > 0``, default off).
 
     Never raises into the hot path (caller wraps in try/except).
     """
@@ -319,49 +445,11 @@ async def _apply_unified(
     if not unified:
         return
     bstate["unified"] = unified
-    if unified.get("util_5h") is not None:
-        M_UTIL_5H.labels(bearer=bid).set(unified["util_5h"])
-    if unified.get("util_7d") is not None:
-        M_UTIL_7D.labels(bearer=bid).set(unified["util_7d"])
-
-    # 2. Proactive pause when the server already says rejected.
-    rejected = "rejected" in (
-        unified.get("status"),
-        unified.get("status_5h"),
-        unified.get("status_7d"),
-    )
-    if rejected:
-        reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d") or 0
-        pause = reset - time.time()
-        if pause > 0:
-            limiter.note_retry_after(pause)
-            log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
+    _publish_unified_gauges(bid, unified)
+    if _maybe_pause_rejected(bid, limiter, unified):
         return
-
-    # 3. Opt-in proactive glide toward the cap.
-    if UTILIZATION_TARGET > 0:
-        binding = _binding_utilization(unified)
-        if binding is not None and binding >= UTILIZATION_TARGET:
-            # Unified utilization stays high until the server-side reset. Shrink
-            # once for that reset window; repeated per-response shrink collapses
-            # active Claude swarms to one slot without any real 429/503 signal.
-            reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d")
-            if reset:
-                shrink_key = f"{UTILIZATION_TARGET}:{reset}"
-            else:
-                cooldown = max(1.0, config.AIMD_BACKOFF_S)
-                shrink_key = f"{UTILIZATION_TARGET}:bucket:{int(time.time() // cooldown)}"
-            if bstate.get("_util_shrink_key") == shrink_key:
-                return
-            new_max = await limiter.shrink()
-            if new_max is not None:
-                bstate["_util_shrink_key"] = shrink_key
-                M_AIMD_SHRINKS.labels(bearer=bid, status="util").inc()
-                M_AIMD_MAX.labels(bearer=bid).set(new_max)
-                log(
-                    f"util-shrink bid={bid} util={binding:.2f}>={UTILIZATION_TARGET} "
-                    f"max_concurrent={new_max}"
-                )
+    _maybe_warn_unified(bid, bstate, unified)
+    await _maybe_glide(bid, bstate, limiter, unified)
 
 
 def _advisor_snapshot(

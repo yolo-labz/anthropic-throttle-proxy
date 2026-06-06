@@ -108,3 +108,112 @@ async def test_apply_unified_target_off_is_observe_only():
     await proxy._apply_unified("bid1", bstate, lim, _oauth_meta(util_5h="0.99"))
     assert lim.max_concurrent == 32
     assert bstate["unified"]["util_5h"] == 0.99  # but still surfaced
+
+
+# --- WS-B2 early-warning (PR #49): warn-only signal before "rejected" ---------
+
+
+def _warn_count(bid: str, window: str) -> float:
+    """Current value of the unified-warning counter for one (bearer, window)."""
+    val = proxy.REGISTRY.get_sample_value(
+        "anthropic_ratelimit_unified_warnings_total",
+        {"bearer": bid, "window": window},
+    )
+    return val or 0.0
+
+
+def test_binding_window_mirrors_binding_utilization():
+    # representative_claim wins.
+    assert (
+        proxy._binding_window(
+            {"util_5h": 0.87, "util_7d": 0.6, "representative_claim": "five_hour"}
+        )
+        == "5h"
+    )
+    assert (
+        proxy._binding_window({"util_5h": 0.5, "util_7d": 0.9, "representative_claim": "seven_day"})
+        == "7d"
+    )
+    # Unknown claim → the window max() would pick (7d only when strictly greater).
+    assert proxy._binding_window({"util_5h": 0.5, "util_7d": 0.9}) == "7d"
+    assert proxy._binding_window({"util_5h": 0.9, "util_7d": 0.5}) == "5h"
+    # Single window present, or none.
+    assert proxy._binding_window({"util_7d": 0.4}) == "7d"
+    assert proxy._binding_window({}) is None
+
+
+def test_utilization_warn_default_on():
+    # The warn-only early signal ships ON by default (pure observability, never
+    # shrinks — distinct from the default-off UTILIZATION_TARGET brake).
+    assert proxy.UTILIZATION_WARN == 0.9
+
+
+async def test_apply_unified_warns_without_shrinking(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    assert proxy.UTILIZATION_TARGET == 0  # brake off → warn must not shrink
+    lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
+    bid = "warn-bid-shrink"
+    before = _warn_count(bid, "5h")
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(util_5h="0.95"))
+    assert _warn_count(bid, "5h") == before + 1  # one warning emitted
+    assert lim.max_concurrent == 32  # ceiling untouched (warn-only)
+
+
+async def test_apply_unified_warns_once_per_reset_window(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "warn-bid-once"
+    bstate = {}
+    reset = int(time.time()) + 300
+    before = _warn_count(bid, "5h")
+    await proxy._apply_unified(bid, bstate, lim, _oauth_meta(util_5h="0.95", reset=reset))
+    await proxy._apply_unified(bid, bstate, lim, _oauth_meta(util_5h="0.97", reset=reset))
+    assert _warn_count(bid, "5h") == before + 1  # debounced within the window
+
+
+async def test_apply_unified_warns_again_on_new_window(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "warn-bid-newwin"
+    bstate = {}
+    before = _warn_count(bid, "5h")
+    await proxy._apply_unified(
+        bid, bstate, lim, _oauth_meta(util_5h="0.95", reset=int(time.time()) + 300)
+    )
+    await proxy._apply_unified(
+        bid, bstate, lim, _oauth_meta(util_5h="0.95", reset=int(time.time()) + 9000)
+    )
+    assert _warn_count(bid, "5h") == before + 2  # new reset epoch → warns again
+
+
+async def test_apply_unified_no_warn_below_threshold(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "warn-bid-below"
+    before = _warn_count(bid, "5h")
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(util_5h="0.87"))  # < 0.9
+    assert _warn_count(bid, "5h") == before
+
+
+async def test_apply_unified_warn_disabled(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.0)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "warn-bid-off"
+    before = _warn_count(bid, "5h")
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(util_5h="0.99"))
+    assert _warn_count(bid, "5h") == before  # disabled → silent even at 0.99
+
+
+async def test_apply_unified_rejected_skips_warn(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    lim = FairBearerLimiter(8, "fair")
+    bid = "warn-bid-rejected"
+    reset = int(time.time()) + 300
+    before = _warn_count(bid, "5h")
+    await proxy._apply_unified(
+        bid, {}, lim, _oauth_meta(status="rejected", util_5h="0.99", reset=reset)
+    )
+    # rejected → proactive pause; the warn path is short-circuited before it.
+    assert lim._retry_after_until > time.time() + 250
+    assert _warn_count(bid, "5h") == before
