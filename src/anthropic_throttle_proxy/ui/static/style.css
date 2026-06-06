@@ -213,15 +213,13 @@ table.bearers thead th {
   letter-spacing: 0.08em;
   font-weight: 500;
   border-bottom-color: var(--ctp-surface1);
-}
-table.bearers thead th[title] { cursor: help; }
-table.bearers thead th {
   /* Sticky header anchors columns when the bearer list grows past viewport. */
   position: sticky;
   top: 0;
   background: var(--ctp-base);
   z-index: 1;
 }
+table.bearers thead th[title] { cursor: help; }
 table.bearers tbody tr {
   transition: background 80ms ease-out;
 }
