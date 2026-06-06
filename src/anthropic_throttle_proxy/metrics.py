@@ -185,3 +185,11 @@ M_UTIL_7D = Gauge(
     ["bearer"],
     registry=REGISTRY,
 )
+M_UTIL_WARNINGS = Counter(
+    "anthropic_ratelimit_unified_warnings_total",
+    "Binding unified window crossed THROTTLE_UTILIZATION_WARN while still "
+    "'allowed' — the early signal before a 'rejected'/429. Counted once per "
+    "(bearer, window) reset cycle. Warn-only: does NOT shrink the ceiling.",
+    ["bearer", "window"],
+    registry=REGISTRY,
+)
