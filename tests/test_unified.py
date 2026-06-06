@@ -217,3 +217,31 @@ async def test_apply_unified_rejected_skips_warn(monkeypatch):
     # rejected → proactive pause; the warn path is short-circuited before it.
     assert lim._retry_after_until > time.time() + 250
     assert _warn_count(bid, "5h") == before
+
+
+async def test_apply_unified_warn_on_window_tie_labels_5h(monkeypatch):
+    # u5h == u7d at the threshold: binding value is the tie, window labels 5h
+    # (7d wins only when strictly greater), matching _binding_utilization.
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "warn-bid-tie"
+    before5h = _warn_count(bid, "5h")
+    before7d = _warn_count(bid, "7d")
+    await proxy._apply_unified(
+        bid, {}, lim, _oauth_meta(util_5h="0.95", util_7d="0.95", claim=None)
+    )
+    assert _warn_count(bid, "5h") == before5h + 1
+    assert _warn_count(bid, "7d") == before7d  # not double-counted on the 7d window
+
+
+async def test_apply_unified_api_key_traffic_is_silent(monkeypatch):
+    # API-key traffic carries no unified-* headers → _parse_unified is empty →
+    # _apply_unified returns before warn. No counter move, no crash, no state.
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "warn-bid-apikey"
+    before = _warn_count(bid, "5h")
+    bstate = {}
+    await proxy._apply_unified(bid, bstate, lim, {"retry-after": "5"})
+    assert bstate == {}  # nothing surfaced
+    assert _warn_count(bid, "5h") == before

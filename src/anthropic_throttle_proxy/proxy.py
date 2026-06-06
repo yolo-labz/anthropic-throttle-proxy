@@ -410,7 +410,9 @@ async def _maybe_glide(
     if binding is None or binding < UTILIZATION_TARGET:
         return
     reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d")
-    shrink_key = _per_reset_debounce_key(f"target-{UTILIZATION_TARGET}", reset)
+    # Prefix is the bare target so the key is byte-identical to the pre-refactor
+    # format — a hot code-reload that keeps bearer_state won't shrink twice.
+    shrink_key = _per_reset_debounce_key(str(UTILIZATION_TARGET), reset)
     if bstate.get("_util_shrink_key") == shrink_key:
         return
     new_max = await limiter.shrink()
