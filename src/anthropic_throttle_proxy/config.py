@@ -97,6 +97,28 @@ AIMD_INITIAL_CONCURRENT = max(
 )
 AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
+# Adaptive ramp (PR #53, 06/06/2026 stall incident): the live cap recovers via
+# additive-increase every ``AIMD_RAMP_AFTER`` consecutive 200s, but a fixed
+# threshold cannot tell an *isolated* transient 429 from a *sustained* storm —
+# both pay the same recovery cost. RAMP_AFTER=10 × per-req ≈11s ≈ ~110s tail
+# after every shrink (this dominates the AIMD_BACKOFF_S=30 cooldown), including
+# ones that should have been single blips. Adaptive ramp keeps the slow path
+# for storms (≥STORM_THRESHOLD shrinks inside the 2× AIMD_BACKOFF_S lookback
+# window — likely sustained pushback, don't ramp fast)
+# and switches to RAMP_AFTER_FAST when the shrink history is sparse (likely
+# transient, recover quickly). The BACKOFF_S cooldown still gates ramps inside
+# every active storm, so faster ramping cannot oscillate the ceiling under load.
+AIMD_RAMP_AFTER_FAST = max(1, int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER_FAST", "5")))
+# Upper bound on STORM_THRESHOLD. The limiter's `_shrink_history` deque is sized
+# to exactly this many timestamps, so `_recent_shrinks` can count up to (and
+# storm mode `recent >= threshold` is reachable for) any value in [1, MAX]. A
+# threshold above the deque depth could never be counted (recent caps at the
+# deque length), silently forcing FAST during real storms — the bug Codex caught
+# on #53. Keep this == the deque maxlen == the aimd_storm_threshold knob's max.
+AIMD_STORM_THRESHOLD_MAX = 100
+AIMD_STORM_THRESHOLD = max(
+    1, min(AIMD_STORM_THRESHOLD_MAX, int(os.environ.get("THROTTLE_AIMD_STORM_THRESHOLD", "3")))
+)
 # AIMD multiplicative-decrease factor. TCP Reno halves (0.5, deep teeth, fast
 # convergence, more wasted headroom); CUBIC cuts ~30% (0.7, shallower sawtooth,
 # higher average utilisation). We default to 0.7 to glide closer to the limit
@@ -286,6 +308,14 @@ def _set_aimd_ramp_after(v: int) -> None:
     _set_module_attr(_MOD_CONFIG, "AIMD_RAMP_AFTER", v)
 
 
+def _set_aimd_ramp_after_fast(v: int) -> None:
+    _set_module_attr(_MOD_CONFIG, "AIMD_RAMP_AFTER_FAST", v)
+
+
+def _set_aimd_storm_threshold(v: int) -> None:
+    _set_module_attr(_MOD_CONFIG, "AIMD_STORM_THRESHOLD", v)
+
+
 def _set_aimd_decrease(v: float) -> None:
     _set_module_attr(_MOD_CONFIG, "AIMD_DECREASE", v)
 
@@ -440,7 +470,7 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         ),
     },
     "aimd_ramp_after": {
-        "label": "AIMD ramp threshold",
+        "label": "AIMD slow ramp threshold",
         "type": "int",
         "min": 1,
         "max": 10000,
@@ -449,9 +479,45 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "units": "successes",
         "help": (
             "Consecutive 200s past the cooldown before live cap grows by "
-            "+1. Suggested: 3 (smooth, predictable growth). 1 oscillates "
-            "the cap per-response; ≥10 stalls recovery after a transient "
-            "pushback."
+            "+1, applied during STORM mode (≥aimd_storm_threshold shrinks "
+            "inside the 2× aimd_backoff_s window). Isolated transient shrinks "
+            "recover via "
+            "aimd_ramp_after_fast instead. Suggested: 10 (current default — "
+            "patient under sustained pushback)."
+        ),
+    },
+    "aimd_ramp_after_fast": {
+        "label": "AIMD fast ramp threshold",
+        "type": "int",
+        "min": 1,
+        "max": 10000,
+        "getter": lambda: AIMD_RAMP_AFTER_FAST,
+        "setter": _set_aimd_ramp_after_fast,
+        "units": "successes",
+        "help": (
+            "Consecutive 200s before live cap grows by +1, applied after an "
+            "ISOLATED shrink (fewer than aimd_storm_threshold shrinks in the "
+            "last 2× aimd_backoff_s window). Should be < aimd_ramp_after — the whole "
+            "point of the adaptive ramp is to recover fast from a single 429 "
+            "blip, while keeping the slow ramp for actual storms. Suggested: "
+            "5 (≈ half the storm-mode tail latency)."
+        ),
+    },
+    "aimd_storm_threshold": {
+        "label": "AIMD storm threshold",
+        "type": "int",
+        "min": 1,
+        "max": AIMD_STORM_THRESHOLD_MAX,
+        "getter": lambda: AIMD_STORM_THRESHOLD,
+        "setter": _set_aimd_storm_threshold,
+        "units": "shrinks",
+        "help": (
+            "Shrink count inside the 2× aimd_backoff_s window that promotes "
+            "ramp behaviour from FAST to SLOW. ≥N = sustained storm = slow ramp; "
+            "otherwise = "
+            "isolated transient = fast ramp. STORM_THRESHOLD=1 disables the "
+            "adaptive path entirely (every shrink is treated as a storm). "
+            "Suggested: 3."
         ),
     },
     "aimd_decrease": {
