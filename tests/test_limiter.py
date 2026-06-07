@@ -434,7 +434,7 @@ def test_snapshot_returns_expected_keys() -> None:
     assert snap["queued_total"] == 0
     # Fresh limiter has no shrink history → SLOW (clean) path active.
     # FAST is a *recovery* signal, only applied while ≥1 shrink is still in
-    # the BACKOFF_S window AND the storm threshold has not been crossed.
+    # the 2× BACKOFF_S lookback window AND the storm threshold not crossed.
     assert snap["recent_shrinks"] == 0
     assert snap["storm_mode"] is False
     assert snap["effective_ramp_after"] == config.AIMD_RAMP_AFTER
@@ -492,7 +492,7 @@ def test_effective_ramp_after_is_slow_at_threshold() -> None:
 
 
 def test_effective_ramp_after_decays_when_history_ages_out() -> None:
-    """Storm-mode auto-clears when timestamps exit the BACKOFF_S window.
+    """Storm-mode auto-clears when timestamps exit the 2× BACKOFF_S window.
 
     Aged-out history means recent==0 → three-state semantics resolve to
     SLOW (clean state), NOT FAST (FAST is the isolated-recovery middle
@@ -555,9 +555,7 @@ async def test_may_grow_uses_fast_threshold_after_isolated_shrink() -> None:
     assert config.AIMD_RAMP_AFTER_FAST < config.AIMD_RAMP_AFTER
 
 
-async def test_may_grow_uses_slow_threshold_under_storm(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_may_grow_uses_slow_threshold_under_storm() -> None:
     """During an active storm, FAST=5 successes are NOT enough — SLOW=10 holds.
 
     Inject the storm signal (recent shrink timestamps) directly rather than

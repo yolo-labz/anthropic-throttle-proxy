@@ -100,10 +100,11 @@ AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # Adaptive ramp (PR #53, 06/06/2026 stall incident): the live cap recovers via
 # additive-increase every ``AIMD_RAMP_AFTER`` consecutive 200s, but a fixed
 # threshold cannot tell an *isolated* transient 429 from a *sustained* storm —
-# both pay the same recovery cost. RAMP_AFTER=10 + per-req ≈11s + BACKOFF_S=10
-# = ~110s tail after every shrink, including ones that should have been single
-# blips. Adaptive ramp keeps the slow path for storms (≥STORM_THRESHOLD shrinks
-# inside the BACKOFF_S window — likely sustained pushback, don't ramp fast)
+# both pay the same recovery cost. RAMP_AFTER=10 × per-req ≈11s ≈ ~110s tail
+# after every shrink (this dominates the AIMD_BACKOFF_S=30 cooldown), including
+# ones that should have been single blips. Adaptive ramp keeps the slow path
+# for storms (≥STORM_THRESHOLD shrinks inside the 2× AIMD_BACKOFF_S lookback
+# window — likely sustained pushback, don't ramp fast)
 # and switches to RAMP_AFTER_FAST when the shrink history is sparse (likely
 # transient, recover quickly). The BACKOFF_S cooldown still gates ramps inside
 # every active storm, so faster ramping cannot oscillate the ceiling under load.
@@ -470,7 +471,8 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "help": (
             "Consecutive 200s past the cooldown before live cap grows by "
             "+1, applied during STORM mode (≥aimd_storm_threshold shrinks "
-            "inside aimd_backoff_s). Isolated transient shrinks recover via "
+            "inside the 2× aimd_backoff_s window). Isolated transient shrinks "
+            "recover via "
             "aimd_ramp_after_fast instead. Suggested: 10 (current default — "
             "patient under sustained pushback)."
         ),
@@ -486,7 +488,7 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "help": (
             "Consecutive 200s before live cap grows by +1, applied after an "
             "ISOLATED shrink (fewer than aimd_storm_threshold shrinks in the "
-            "last aimd_backoff_s). Should be < aimd_ramp_after — the whole "
+            "last 2× aimd_backoff_s window). Should be < aimd_ramp_after — the whole "
             "point of the adaptive ramp is to recover fast from a single 429 "
             "blip, while keeping the slow ramp for actual storms. Suggested: "
             "5 (≈ half the storm-mode tail latency)."
@@ -501,8 +503,9 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "setter": _set_aimd_storm_threshold,
         "units": "shrinks",
         "help": (
-            "Shrink count inside aimd_backoff_s that promotes ramp behaviour "
-            "from FAST to SLOW. ≥N = sustained storm = slow ramp; otherwise = "
+            "Shrink count inside the 2× aimd_backoff_s window that promotes "
+            "ramp behaviour from FAST to SLOW. ≥N = sustained storm = slow ramp; "
+            "otherwise = "
             "isolated transient = fast ramp. STORM_THRESHOLD=1 disables the "
             "adaptive path entirely (every shrink is treated as a storm). "
             "Suggested: 3."
