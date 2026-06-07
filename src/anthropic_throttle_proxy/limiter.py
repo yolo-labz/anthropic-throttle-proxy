@@ -108,10 +108,15 @@ class FairBearerLimiter:
         self._retry_after_until = 0.0
         # PR #53: adaptive ramp — sliding window of recent shrink timestamps.
         # _effective_ramp_after() uses this to pick FAST (isolated transient)
-        # vs SLOW (sustained storm) additive-increase. ``maxlen`` bounds memory
-        # under pathological storms; well above any plausible STORM_THRESHOLD,
-        # so aged-out entries self-evict instead of growing unbounded.
-        self._shrink_history: collections.deque[float] = collections.deque(maxlen=32)
+        # vs SLOW (sustained storm) additive-increase. ``maxlen`` is sized to
+        # config.AIMD_STORM_THRESHOLD_MAX so EVERY valid storm threshold stays
+        # reachable: `_recent_shrinks` caps at the deque length, so a maxlen
+        # below the threshold ceiling would make storm mode (recent >= threshold)
+        # impossible and silently force FAST during real storms. Aged-out entries
+        # self-evict, bounding memory under pathological storms.
+        self._shrink_history: collections.deque[float] = collections.deque(
+            maxlen=config.AIMD_STORM_THRESHOLD_MAX
+        )
 
     def set_queue_mode(self, queue_mode: str) -> None:
         """Switch the limiter's admission mode for future acquires.

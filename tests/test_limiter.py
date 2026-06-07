@@ -622,3 +622,30 @@ def test_shrink_history_deque_bounded_by_maxlen() -> None:
     for i in range(cap * 2):
         lim._shrink_history.append(float(i))
     assert len(lim._shrink_history) == cap
+
+
+def test_storm_threshold_max_is_reachable_at_history_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The aimd_storm_threshold knob ceiling must be countable (Codex #53 review).
+
+    ``_recent_shrinks`` caps at the deque length, so if ``_shrink_history`` were
+    shorter than ``AIMD_STORM_THRESHOLD_MAX`` a threshold above the history depth
+    could never be reached — storm mode (``recent >= threshold``) would be
+    impossible and FAST silently forced during every storm. Sizing the deque to
+    ``AIMD_STORM_THRESHOLD_MAX`` keeps the whole ``[1, MAX]`` knob range honest.
+    """
+    lim = limiter.FairBearerLimiter(8, "fair")
+    # Structural invariant: history depth == the advertised knob ceiling.
+    assert lim._shrink_history.maxlen == config.AIMD_STORM_THRESHOLD_MAX
+    assert config.EDITABLE_KNOBS["aimd_storm_threshold"]["max"] == config.AIMD_STORM_THRESHOLD_MAX
+
+    # Drive the knob to its advertised ceiling; the storm must be detectable.
+    threshold = config.AIMD_STORM_THRESHOLD_MAX
+    monkeypatch.setattr(config, "AIMD_STORM_THRESHOLD", threshold)
+    now = time.time()
+    # MAX shrinks, all inside the 2× AIMD_BACKOFF_S lookback window.
+    lim._shrink_history.extend(now - 0.001 * i for i in range(threshold))
+    assert lim._recent_shrinks(now) == threshold
+    # recent >= threshold ⇒ SLOW (storm protection holds), NOT FAST.
+    assert lim._effective_ramp_after(now) == config.AIMD_RAMP_AFTER

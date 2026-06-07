@@ -109,7 +109,16 @@ AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # transient, recover quickly). The BACKOFF_S cooldown still gates ramps inside
 # every active storm, so faster ramping cannot oscillate the ceiling under load.
 AIMD_RAMP_AFTER_FAST = max(1, int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER_FAST", "5")))
-AIMD_STORM_THRESHOLD = max(1, int(os.environ.get("THROTTLE_AIMD_STORM_THRESHOLD", "3")))
+# Upper bound on STORM_THRESHOLD. The limiter's `_shrink_history` deque is sized
+# to exactly this many timestamps, so `_recent_shrinks` can count up to (and
+# storm mode `recent >= threshold` is reachable for) any value in [1, MAX]. A
+# threshold above the deque depth could never be counted (recent caps at the
+# deque length), silently forcing FAST during real storms — the bug Codex caught
+# on #53. Keep this == the deque maxlen == the aimd_storm_threshold knob's max.
+AIMD_STORM_THRESHOLD_MAX = 100
+AIMD_STORM_THRESHOLD = max(
+    1, min(AIMD_STORM_THRESHOLD_MAX, int(os.environ.get("THROTTLE_AIMD_STORM_THRESHOLD", "3")))
+)
 # AIMD multiplicative-decrease factor. TCP Reno halves (0.5, deep teeth, fast
 # convergence, more wasted headroom); CUBIC cuts ~30% (0.7, shallower sawtooth,
 # higher average utilisation). We default to 0.7 to glide closer to the limit
@@ -498,7 +507,7 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "label": "AIMD storm threshold",
         "type": "int",
         "min": 1,
-        "max": 100,
+        "max": AIMD_STORM_THRESHOLD_MAX,
         "getter": lambda: AIMD_STORM_THRESHOLD,
         "setter": _set_aimd_storm_threshold,
         "units": "shrinks",
