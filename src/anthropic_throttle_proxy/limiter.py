@@ -106,6 +106,12 @@ class FairBearerLimiter:
         self._last_throttle_at = 0.0
         self._successes_since_throttle = 0
         self._retry_after_until = 0.0
+        # PR #53: adaptive ramp — sliding window of recent shrink timestamps.
+        # _effective_ramp_after() uses this to pick FAST (isolated transient)
+        # vs SLOW (sustained storm) additive-increase. ``maxlen`` bounds memory
+        # under pathological storms; well above any plausible STORM_THRESHOLD,
+        # so aged-out entries self-evict instead of growing unbounded.
+        self._shrink_history: collections.deque[float] = collections.deque(maxlen=32)
 
     def set_queue_mode(self, queue_mode: str) -> None:
         """Switch the limiter's admission mode for future acquires.
@@ -144,20 +150,68 @@ class FairBearerLimiter:
             self.max_concurrent = new_max
             self._last_throttle_at = time.time()
             self._successes_since_throttle = 0
+            self._shrink_history.append(self._last_throttle_at)
             return new_max
+
+    def _recent_shrinks(self, now: float | None = None) -> int:
+        """Count shrinks whose timestamp is inside ``2 * AIMD_BACKOFF_S``.
+
+        The lookback intentionally extends past the cooldown gate by 2× so
+        FAST recovery is *reachable in practice*. With a 1× window, ``grow``
+        unblocks at exactly ``last_throttle_at + AIMD_BACKOFF_S``, which is
+        the same instant the shrink timestamp ages out — recent collapses to
+        0 and ``_effective_ramp_after`` always returns SLOW. Doubling the
+        window opens an ``(AIMD_BACKOFF_S, 2 * AIMD_BACKOFF_S)`` post-cooldown
+        band where FAST is observable. Storm detection still fires at
+        ``STORM_THRESHOLD`` shrinks within the wider window — sustained
+        pushback drops back to SLOW the moment the third shrink lands.
+
+        Cheap O(maxlen) scan — typical len ≤ STORM_THRESHOLD; pathological
+        storms cap at the deque's ``maxlen``. Snapshot/_may_grow callers may
+        pass an explicit ``now`` to amortise the ``time.time()`` syscall.
+        """
+        if now is None:
+            now = time.time()
+        cutoff = now - 2 * config.AIMD_BACKOFF_S
+        return sum(1 for ts in self._shrink_history if ts > cutoff)
+
+    def _effective_ramp_after(self, now: float | None = None) -> int:
+        """SLOW (default / storm) vs FAST (isolated recovery) ramp threshold.
+
+        Three-state semantics — FAST is a *recovery* signal, not the default:
+
+        - ``recent_shrinks == 0`` ⇒ SLOW. Clean state preserves the
+          conservative pre-adaptive default and keeps backward compat with
+          callers that pre-date PR #53 (e.g. ``test_clean_successes_grow``).
+        - ``1 ≤ recent_shrinks < AIMD_STORM_THRESHOLD`` ⇒ FAST. One or two
+          isolated 429s should not cost the full slow recovery — this is the
+          whole point of the adaptive ramp.
+        - ``recent_shrinks ≥ AIMD_STORM_THRESHOLD`` ⇒ SLOW. Sustained
+          pushback; don't ramp aggressively or we will oscillate.
+
+        Clamp invariant: ``effective ≤ AIMD_RAMP_AFTER``. If an operator
+        accidentally sets ``AIMD_RAMP_AFTER_FAST > AIMD_RAMP_AFTER`` we
+        silently honour the floor — FAST must never be slower than SLOW.
+        """
+        slow = config.AIMD_RAMP_AFTER
+        recent = self._recent_shrinks(now)
+        if recent == 0 or recent >= config.AIMD_STORM_THRESHOLD:
+            return slow
+        return min(config.AIMD_RAMP_AFTER_FAST, slow)
 
     def _may_grow(self) -> bool:
         """True when all four AIMD additive-increase guards currently hold.
 
         Caller must hold ``self._lock``. Guards (all required): enough
-        consecutive successes since the last shrink; the backoff cooldown has
-        elapsed; no open Retry-After window (we don't ramp while the server's
-        explicit window is still open, even past the cooldown); and we are
-        below the operator's hard ceiling.
+        consecutive successes since the last shrink (threshold is adaptive —
+        SLOW under storm, FAST after an isolated transient); the backoff
+        cooldown has elapsed; no open Retry-After window (we don't ramp while
+        the server's explicit window is still open, even past the cooldown);
+        and we are below the operator's hard ceiling.
         """
         now = time.time()
         return (
-            self._successes_since_throttle >= config.AIMD_RAMP_AFTER
+            self._successes_since_throttle >= self._effective_ramp_after(now)
             and now - self._last_throttle_at >= config.AIMD_BACKOFF_S
             and now >= self._retry_after_until
             and self.max_concurrent < self.hard_max
@@ -304,6 +358,9 @@ class FairBearerLimiter:
 
     def snapshot(self) -> dict[str, object]:
         """Cheap dict snapshot for /__throttle/health."""
+        now = time.time()
+        recent = self._recent_shrinks(now)
+        effective = self._effective_ramp_after(now)
         return {
             "inflight": self.inflight,
             "max_concurrent": self.max_concurrent,
@@ -317,6 +374,15 @@ class FairBearerLimiter:
             "queued_total": sum(len(q) for q in self._queues.values()),
             "queued_per_client": {cid: len(q) for cid, q in self._queues.items()},
             "rr_order": list(self._rr_order),
+            # PR #53 adaptive ramp visibility — operator can read whether this
+            # bearer is currently in storm mode + which ramp it will use next.
+            # storm_mode is True ONLY when recent_shrinks crossed the threshold;
+            # a fresh / clean limiter also returns SLOW from _effective_ramp_after
+            # but is NOT a storm. Comparing effective == AIMD_RAMP_AFTER would
+            # conflate the two states.
+            "recent_shrinks": recent,
+            "storm_mode": recent >= config.AIMD_STORM_THRESHOLD,
+            "effective_ramp_after": effective,
         }
 
 
