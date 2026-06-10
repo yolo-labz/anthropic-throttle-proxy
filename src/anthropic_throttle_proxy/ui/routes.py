@@ -16,12 +16,14 @@ UI must not break /v1/messages.
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import aiohttp_jinja2
 import jinja2
 from aiohttp import web
 
+from .. import accounts as _accounts
 from .. import config as _config
 
 # Lazy import: keep the proxy hot path free of UI deps.
@@ -112,12 +114,14 @@ def _compute_status(bearers: list[dict], queue_mode: str) -> dict[str, object]:
 def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
+    labels = _accounts.bearer_labels()
     bearers = []
     for bid, bstate in _proxy.bearer_state.items():
         lim = _proxy.bearer_limiters.get(bid)
         bearers.append(
             {
                 "bearer_id": bid,
+                "account": labels.get(bid),
                 "inflight": bstate.get("inflight", 0),
                 "queued": bstate.get("queued", 0),
                 "served": bstate.get("served", 0),
@@ -127,6 +131,7 @@ def _collect_view() -> dict[str, object]:
             }
         )
     return {
+        "accounts": _accounts.account_view(bearers, time.time()),
         "status": _compute_status(bearers, _proxy.QUEUE_MODE),
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
