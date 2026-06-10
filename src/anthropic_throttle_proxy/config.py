@@ -149,6 +149,13 @@ MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_
 # so a retry pile-up is greppable instead of buried in per-request "done" lines.
 STORM_WARN_RETRIES = int(os.environ.get("THROTTLE_STORM_WARN_RETRIES", "25"))
 
+# Optional dashboard feature: "LABEL:/path/to/.credentials.json,LABEL:..." maps
+# local Claude Code credential files to account labels so /ui can name bearers
+# and show per-account 5h/7d usage. Unset (the default, and always on the
+# central Dokku tier where no cred files exist) hides the panel entirely.
+# Parsed lazily by accounts.py — never touched on the hot path.
+ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
+
 HOP_HEADERS = {
     "connection",
     "keep-alive",

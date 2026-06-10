@@ -239,12 +239,13 @@ table.bearers tbody tr:hover {
 table.bearers code { font-family: var(--mono); color: var(--ctp-peach); background: transparent; }
 
 /* Mobile — hide the API-key-only columns (req-left, retry-after) on narrow
-   viewports; Max OAuth bearers don't populate them anyway. */
+   viewports; Max OAuth bearers don't populate them anyway. Scoped away from
+   the accounts table (7 cols — nth 8/9 don't exist there, but keep it explicit). */
 @media (max-width: 920px) {
-  table.bearers th:nth-child(7),
-  table.bearers th:nth-child(8),
-  table.bearers td:nth-child(7),
-  table.bearers td:nth-child(8) { display: none; }
+  table.bearers:not(.accounts) th:nth-child(8),
+  table.bearers:not(.accounts) th:nth-child(9),
+  table.bearers:not(.accounts) td:nth-child(8),
+  table.bearers:not(.accounts) td:nth-child(9) { display: none; }
 }
 
 .num { font-family: var(--mono); }
@@ -261,6 +262,27 @@ table.bearers code { font-family: var(--mono); color: var(--ctp-peach); backgrou
   padding: 0.02rem 0.3rem;
   margin-left: 0.35rem;
 }
+
+/* ── per-account usage table ────────────────────────────────────────── */
+.acct { font-family: var(--mono); font-weight: 600; color: var(--ctp-blue); }
+.bearers .warn-text { color: var(--ctp-peach); }
+
+.tag-stale {
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  color: var(--ctp-subtext0);
+  border: 1px solid var(--ctp-surface2);
+  border-radius: 4px;
+  padding: 0.02rem 0.3rem;
+  margin-left: 0.35rem;
+}
+
+.tok { font-size: 0.82rem; }
+.tok-fresh    { color: var(--ctp-subtext0); }
+.tok-expiring { color: var(--ctp-peach); }
+.tok-expired  { color: var(--ctp-red); font-weight: 600; }
+
+.reset-in { display: block; font-size: 0.72rem; margin-top: 0.15rem; }
 
 /* inline utilization bar (server sets fill width via inline style) */
 .util { display: inline-flex; align-items: center; gap: 0.5rem; justify-content: flex-end; }
