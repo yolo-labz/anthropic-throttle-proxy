@@ -15,6 +15,9 @@ UI must not break /v1/messages.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 import os
 import time
 from pathlib import Path
@@ -25,6 +28,7 @@ from aiohttp import web
 
 from .. import accounts as _accounts
 from .. import config as _config
+from .. import metrics as _metrics
 
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
@@ -111,7 +115,29 @@ def _compute_status(bearers: list[dict], queue_mode: str) -> dict[str, object]:
     return {"level": level, "verdict": verdict, "detail": detail}
 
 
-def _collect_view() -> dict[str, object]:
+def _publish_account_gauges(
+    endpoint: dict[str, dict[str, object]], identity: dict[str, object]
+) -> None:
+    """Mirror endpoint truth into /metrics so Grafana sees what /ui sees."""
+    for label, path in _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
+        usage = (endpoint.get(path) or {}).get("usage")
+        if not isinstance(usage, dict):
+            continue
+        for window, ukey, rkey in (("5h", "util_5h", "reset_5h"), ("7d", "util_7d", "reset_7d")):
+            util, reset = usage.get(ukey), usage.get(rkey)
+            if util is not None:
+                _metrics.M_ACCOUNT_USAGE.labels(label, window).set(util)
+            if reset is not None:
+                _metrics.M_ACCOUNT_RESET.labels(label, window).set(reset)
+    if identity["collapsed"]:
+        _metrics.M_ACCOUNTS_DISTINCT.set(0)
+    elif int(identity["known"]) >= 2:  # type: ignore[call-overload]
+        _metrics.M_ACCOUNTS_DISTINCT.set(1)
+    else:
+        _metrics.M_ACCOUNTS_DISTINCT.set(-1)
+
+
+async def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
     labels = _accounts.bearer_labels()
@@ -130,8 +156,14 @@ def _collect_view() -> dict[str, object]:
                 "limiter": lim.snapshot() if lim is not None else None,
             }
         )
+    now = time.time()
+    endpoint = await _accounts.refresh_endpoint(now)
+    accounts_view = _accounts.account_view(bearers, now, endpoint)
+    identity = _accounts.identity_state(accounts_view)
+    _publish_account_gauges(endpoint, identity)
     return {
-        "accounts": _accounts.account_view(bearers, time.time()),
+        "accounts": accounts_view,
+        "identity": identity,
         "status": _compute_status(bearers, _proxy.QUEUE_MODE),
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
@@ -152,12 +184,12 @@ def _collect_view() -> dict[str, object]:
 
 async def index(request: web.Request) -> web.Response:  # NOSONAR: aiohttp handler
     """GET /ui — render the full HTMX dashboard page."""
-    return aiohttp_jinja2.render_template("dashboard.html", request, _collect_view())
+    return aiohttp_jinja2.render_template("dashboard.html", request, await _collect_view())
 
 
 async def stats_partial(request: web.Request) -> web.Response:  # NOSONAR: aiohttp handler
     """GET /ui/stats — render the live stats ``<table>`` partial (hx-polled)."""
-    return aiohttp_jinja2.render_template("partials/stats.html", request, _collect_view())
+    return aiohttp_jinja2.render_template("partials/stats.html", request, await _collect_view())
 
 
 async def advisor(request: web.Request) -> web.Response:
@@ -187,7 +219,7 @@ async def advisor(request: web.Request) -> web.Response:
     # Lazy import — keeps the advisor (and its HTTP client) off the hot path.
     from .advisor_impl import recommend
 
-    snapshot = _collect_view()
+    snapshot = await _collect_view()
     try:
         recommendation = await recommend(snapshot)
     except Exception as exc:
@@ -266,6 +298,40 @@ async def config_reset(request: web.Request) -> web.Response:
     )
 
 
+# Background cadence for the account-endpoint refresher: keeps /metrics
+# gauges + the email cache warm with NO dashboard viewer. 300s matches the
+# polling guidance the usage endpoint tolerates comfortably (its own TTL
+# inside refresh_endpoint additionally dedupes against dashboard renders).
+_REFRESH_INTERVAL_S = 300.0
+
+
+async def _account_refresh_loop() -> None:
+    """Slow loop publishing account endpoint truth to /metrics."""
+    log = logging.getLogger("throttle.ui.accounts")
+    while True:
+        try:
+            now = time.time()
+            endpoint = await _accounts.refresh_endpoint(now)
+            view = _accounts.account_view([], now, endpoint)
+            _publish_account_gauges(endpoint, _accounts.identity_state(view))
+        except Exception as exc:  # noqa: BLE001 — a UI nicety must never crash the app
+            log.debug("account endpoint refresh failed: %s", exc)
+        await asyncio.sleep(_REFRESH_INTERVAL_S)
+
+
+async def _start_account_refresher(app: web.Application) -> None:
+    if _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
+        app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
+
+
+async def _stop_account_refresher(app: web.Application) -> None:
+    task = app.get("_account_refresher")
+    if task is not None:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 def attach_ui(app: web.Application) -> None:
     """Wire jinja2 + the /ui routes onto an existing aiohttp app."""
     aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(str(_TEMPLATES)))
@@ -276,3 +342,5 @@ def attach_ui(app: web.Application) -> None:
     app.router.add_post("/ui/config/reset", config_reset)
     app.router.add_post("/ui/advisor", advisor)
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
+    app.on_startup.append(_start_account_refresher)
+    app.on_cleanup.append(_stop_account_refresher)

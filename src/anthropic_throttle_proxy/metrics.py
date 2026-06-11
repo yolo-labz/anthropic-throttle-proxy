@@ -116,6 +116,25 @@ M_CENTRAL_STATUS = Gauge(
     "Central-tier health: 1=up, 0=down, -1=unknown (no central configured).",
     registry=REGISTRY,
 )
+# PR #55: account-scoped endpoint truth (set by the UI's slow refresher —
+# absent until THROTTLE_ACCOUNT_CRED_PATHS is configured AND a fetch lands).
+M_ACCOUNT_USAGE = Gauge(
+    "anthropic_account_usage_fraction",
+    "Per-account unified-window utilization (0..1) from /api/oauth/usage.",
+    ["account", "window"],
+    registry=REGISTRY,
+)
+M_ACCOUNT_RESET = Gauge(
+    "anthropic_account_resets_at_seconds",
+    "Per-account unified-window reset instant (epoch s) from /api/oauth/usage.",
+    ["account", "window"],
+    registry=REGISTRY,
+)
+M_ACCOUNTS_DISTINCT = Gauge(
+    "anthropic_accounts_identity_distinct",
+    "1=credential files belong to distinct accounts, 0=COLLAPSED to one, -1=unknown.",
+    registry=REGISTRY,
+)
 # PR #575: AIMD ceiling per bearer + shrink counter.
 M_AIMD_MAX = Gauge(
     "anthropic_aimd_max_concurrent",
