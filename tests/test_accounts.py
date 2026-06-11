@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import UTC
 
 import pytest
 
@@ -34,8 +35,60 @@ def _write_cred(path, token: str, expires_at_ms: int | None = None) -> None:
 @pytest.fixture(autouse=True)
 def _clean_cache():
     accounts._cache.clear()
+    accounts._endpoint_cache.clear()
+    accounts._email_cache.clear()
+    accounts._endpoint_locks.clear()
     yield
     accounts._cache.clear()
+    accounts._endpoint_cache.clear()
+    accounts._email_cache.clear()
+    accounts._endpoint_locks.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """No test may reach the real OAuth endpoints — default to transport error
+    (the panel then renders exactly the pre-#55 bearer view)."""
+
+    async def _offline(url: str, token: str):
+        return 0, None
+
+    monkeypatch.setattr(accounts, "_get_json", _offline)
+
+
+def _stub_endpoint(monkeypatch, responses: dict[str, dict[str, tuple[int, dict | None]]]):
+    """Route fake endpoint responses by token: {token: {"usage"|"profile": (status, body)}}."""
+
+    async def fake(url: str, token: str):
+        kind = "usage" if "usage" in url else "profile"
+        return responses.get(token, {}).get(kind, (0, None))
+
+    monkeypatch.setattr(accounts, "_get_json", fake)
+
+
+def _iso(epoch: float) -> str:
+    from datetime import datetime
+
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+
+
+def _usage_body(
+    u5: float = 40.0,
+    u7: float = 84.0,
+    r5: float = NOW + 3600,
+    r7: float = NOW + 3 * DAY,
+    **buckets,
+) -> dict:
+    body = {
+        "five_hour": {"utilization": u5, "resets_at": _iso(r5)},
+        "seven_day": {"utilization": u7, "resets_at": _iso(r7)},
+        "seven_day_sonnet": None,
+        "seven_day_opus": None,
+        "iguana_necktie": None,  # schema-churn junk the parser must ignore
+        "extra_usage": None,
+    }
+    body.update(buckets)
+    return body
 
 
 # ── parse_spec ──────────────────────────────────────────────────────────
@@ -289,3 +342,181 @@ async def test_ui_stats_hides_panel_when_unconfigured(monkeypatch):
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
     html = await _render_stats()
     assert "Accounts ·" not in html
+
+
+# ── endpoint truth (PR #55) ─────────────────────────────────────────────
+
+
+def test_parse_usage_percent_iso_and_nulls():
+    body = _usage_body(
+        u5=97.0,
+        u7=59.0,
+        seven_day_opus={"utilization": 12.5, "resets_at": _iso(NOW + 2 * DAY)},
+        extra_usage={"is_enabled": True, "used_credits": 3.5, "currency": "BRL"},
+    )
+    usage = accounts._parse_usage(body)
+    assert usage["util_5h"] == pytest.approx(0.97)  # percent → fraction
+    assert usage["util_7d"] == pytest.approx(0.59)
+    assert usage["reset_5h"] == int(NOW + 3600)
+    assert usage["sonnet"] is None  # null bucket tolerated
+    assert usage["opus"]["util"] == pytest.approx(0.125)
+    assert usage["extra"] == {"used": 3.5, "currency": "BRL"}
+
+
+def test_parse_usage_garbage_tolerated():
+    usage = accounts._parse_usage(
+        {"five_hour": {"utilization": "97", "resets_at": 12345}, "seven_day": "nope"}
+    )
+    assert usage["util_5h"] is None  # string percent rejected, not crashed
+    assert usage["reset_5h"] is None
+    assert usage["util_7d"] is None
+    assert usage["extra"] is None
+
+
+async def test_endpoint_overrides_stale_bearer(tmp_path, monkeypatch):
+    # The 10/06 blind spot in panel form: the proxy's last-seen snapshot says
+    # 30%/45% while the account is REALLY at 97%/59% — endpoint truth wins.
+    token = "tok-live"  # noqa: S105
+    cred = tmp_path / "a.json"
+    _write_cred(cred, token, expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    _stub_endpoint(
+        monkeypatch,
+        {
+            token: {
+                "usage": (200, _usage_body(u5=97.0, u7=59.0)),
+                "profile": (200, {"account": {"email": "a@x"}}),
+            }
+        },
+    )
+    endpoint = await accounts.refresh_endpoint(NOW)
+    bearers = [
+        {
+            "bearer_id": _expected_bid(token),
+            "unified": {
+                "util_5h": 0.30,
+                "reset_5h": int(NOW + 4000),
+                "status_5h": "allowed",
+                "util_7d": 0.45,
+                "reset_7d": int(NOW + 3 * DAY),
+                "status_7d": "allowed",
+            },
+        }
+    ]
+    (view,) = accounts.account_view(bearers, NOW, endpoint)
+    assert view["src"] == "endpoint"
+    assert view["win5"]["pct"] == 97
+    assert view["win7"]["pct"] == 59
+    assert view["email"] == "a@x"
+
+
+async def test_endpoint_stale_falls_back_to_bearer(tmp_path, monkeypatch):
+    token = "tok-stale"  # noqa: S105
+    cred = tmp_path / "a.json"
+    _write_cred(cred, token)
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    accounts._endpoint_cache[str(cred)] = {
+        "fetched": NOW - accounts.ENDPOINT_STALE_MAX_S - 1,
+        "usage": accounts._parse_usage(_usage_body(u5=97.0)),
+        "err": None,
+    }
+    bearers = [
+        {
+            "bearer_id": _expected_bid(token),
+            "unified": {"util_5h": 0.30, "reset_5h": int(NOW + 4000), "status_5h": "allowed"},
+        }
+    ]
+    (view,) = accounts.account_view(bearers, NOW, dict(accounts._endpoint_cache))
+    assert view["src"] == "proxy"  # stale endpoint reading no longer overrides
+    assert view["win5"]["pct"] == 30
+
+
+async def test_endpoint_401_surfaces_and_drops_usage(tmp_path, monkeypatch):
+    token = "tok-dead"  # noqa: S105
+    cred = tmp_path / "a.json"
+    _write_cred(cred, token)
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    _stub_endpoint(monkeypatch, {token: {"usage": (401, None)}})
+    endpoint = await accounts.refresh_endpoint(NOW)
+    (view,) = accounts.account_view([], NOW, endpoint)
+    assert view["src"] == "none"
+    assert "401" in view["endpoint_err"]
+
+
+async def test_endpoint_rejected_styling_at_cap(tmp_path, monkeypatch):
+    token = "tok-cap"  # noqa: S105
+    cred = tmp_path / "a.json"
+    _write_cred(cred, token)
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    _stub_endpoint(monkeypatch, {token: {"usage": (200, _usage_body(u5=100.0, u7=80.0))}})
+    endpoint = await accounts.refresh_endpoint(NOW)
+    (view,) = accounts.account_view([], NOW, endpoint)
+    assert view["win5"]["pct"] == 100
+    assert view["win5"]["rejected"] is True
+
+
+async def test_email_cache_invalidated_on_cred_rewrite(tmp_path, monkeypatch):
+    # The 11/06 contamination vector: a /login rewrites the credential file.
+    # The email must follow the FILE, not a time-based cache.
+    cred = tmp_path / "a.json"
+    _write_cred(cred, "tok-one")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    _stub_endpoint(
+        monkeypatch,
+        {
+            "tok-one": {
+                "usage": (200, _usage_body()),
+                "profile": (200, {"account": {"email": "one@x"}}),
+            },
+            "tok-two": {
+                "usage": (200, _usage_body()),
+                "profile": (200, {"account": {"email": "two@x"}}),
+            },
+        },
+    )
+    await accounts.refresh_endpoint(NOW)
+    assert accounts.account_email(str(cred)) == "one@x"
+    _write_cred(cred, "tok-two")
+    os.utime(cred, ns=(os.stat(cred).st_mtime_ns + 1, os.stat(cred).st_mtime_ns + 1))
+    accounts._endpoint_cache.clear()  # force the next refresh past the TTL
+    await accounts.refresh_endpoint(NOW + accounts.ENDPOINT_TTL_S + 1)
+    assert accounts.account_email(str(cred)) == "two@x"
+
+
+def test_identity_state_verdicts():
+    collapsed = accounts.identity_state([{"email": "x@y"}, {"email": "x@y"}])
+    assert collapsed["collapsed"] is True and collapsed["email"] == "x@y"
+    distinct = accounts.identity_state([{"email": "a@y"}, {"email": "b@y"}])
+    assert distinct["collapsed"] is False
+    unknown = accounts.identity_state([{"email": None}, {"email": "a@y"}])
+    assert unknown["collapsed"] is False and unknown["known"] == 1
+
+
+async def test_ui_stats_renders_identity_banner(tmp_path, monkeypatch):
+    # Both credential files hold the SAME account → the panel must say so
+    # loudly (the live 11/06 failure was invisible in every surface).
+    import time as _time
+
+    now = _time.time()
+    cred_a, cred_b = tmp_path / "a.json", tmp_path / "b.json"
+    _write_cred(cred_a, "tok-a", expires_at_ms=int((now + 3600) * 1000))
+    _write_cred(cred_b, "tok-b", expires_at_ms=int((now + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred_a},B:{cred_b}")
+    same = {"account": {"email": "same@x"}}
+    _stub_endpoint(
+        monkeypatch,
+        {
+            "tok-a": {
+                "usage": (200, _usage_body(r5=now + 3600, r7=now + 3 * DAY)),
+                "profile": (200, same),
+            },
+            "tok-b": {
+                "usage": (200, _usage_body(r5=now + 3600, r7=now + 3 * DAY)),
+                "profile": (200, same),
+            },
+        },
+    )
+    html = await _render_stats()
+    assert "accounts collapsed" in html
+    assert "same@x" in html
+    assert 'class="src src-endpoint"' in html

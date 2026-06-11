@@ -16,15 +16,25 @@
 
 {% if accounts %}
 <h2>Accounts · {{ accounts | length }}</h2>
+{% if identity and identity.collapsed %}
+<div class="status crit identity-banner" role="alert">
+  <span class="dot"></span>
+  <span class="verdict">accounts collapsed</span>
+  <span class="detail">every configured credential file belongs to {{ identity.email }} — switching accounts is cosmetic and half the fleet capacity is gone (a hand-/login likely wrote the browser's active account into the wrong dir).</span>
+</div>
+{% endif %}
 <section class="bearers-wrap" aria-label="Per-account usage table">
 <table class="bearers accounts">
   <thead>
     <tr>
-      <th scope="col" title="Label from THROTTLE_ACCOUNT_CRED_PATHS">account</th>
+      <th scope="col" title="Label from THROTTLE_ACCOUNT_CRED_PATHS + the account email from /api/oauth/profile">account</th>
       <th scope="col" title="Current bearer hash derived from the account's credentials file (rotates with the access token, ~8h)">bearer</th>
+      <th scope="col" title="Where the usage reading comes from: endpoint = /api/oauth/usage (account-scoped server truth) · proxy = this proxy's last-seen unified headers · none = no reading">src</th>
       <th scope="col" title="Access-token freshness from the credentials file. Expired beyond 90 min = the refresh pipeline (token broker) is failing.">token</th>
-      <th scope="col" title="5h unified-window utilisation last seen by this proxy. 'reset' = the window rolled over since that reading.">5h window</th>
-      <th scope="col" title="7d unified-window utilisation last seen by this proxy">7d window</th>
+      <th scope="col" title="5h unified-window utilisation. 'reset' = the window rolled over since the reading.">5h window</th>
+      <th scope="col" title="7d unified-window utilisation (all models)">7d window</th>
+      <th scope="col" title="Model-metered 7d windows (Sonnet / Opus) when the plan reports them">7d sonnet·opus</th>
+      <th scope="col" title="Usage credits spent this month (extra usage beyond plan windows)">credits</th>
       <th scope="col" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = exactly on budget; ≥1.15× = the fleet-pace alert threshold.">pace</th>
       <th scope="col" title="Projected time until the 7d window exhausts at the current pace. Shown only when it lands before the cycle resets.">7d ETA</th>
     </tr>
@@ -32,7 +42,10 @@
   <tbody>
     {% for a in accounts %}
     <tr>
-      <td><span class="acct">{{ a.label }}</span></td>
+      <td>
+        <span class="acct">{{ a.label }}</span>
+        {% if a.email %}<div class="muted email">{{ a.email }}</div>{% endif %}
+      </td>
       <td>
         {% if a.bearer_id %}
           <code>{{ a.bearer_id }}</code>
@@ -40,6 +53,10 @@
         {% else %}
           <span class="warn-text">{{ a.error }}</span>
         {% endif %}
+      </td>
+      <td>
+        <span class="src src-{{ a.src }}">{{ a.src }}</span>
+        {% if a.endpoint_err %}<div class="warn-text endpoint-err" title="{{ a.endpoint_err }}">⚠</div>{% endif %}
       </td>
       <td>
         {% if a.token %}
@@ -66,6 +83,21 @@
         {% endif %}
       </td>
       {% endfor %}
+      <td>
+        {% if a.sonnet or a.opus %}
+          {% if a.sonnet %}<span class="muted">S</span> <span class="pct">{{ a.sonnet.pct }}%</span>{% endif %}
+          {% if a.opus %}<span class="muted">O</span> <span class="pct{% if a.opus.pct >= 90 %} warn-text{% endif %}">{{ a.opus.pct }}%</span>{% endif %}
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
+      <td class="num">
+        {% if a.extra and a.extra.used is not none %}
+          {{ "%.2f" | format(a.extra.used) }} {{ a.extra.currency }}
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
       <td class="num{% if a.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(a.pace) if a.pace is not none else "—" }}</td>
       <td class="num">{{ "in " + a.eta if a.eta else "—" }}</td>
     </tr>

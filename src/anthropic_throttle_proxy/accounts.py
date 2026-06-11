@@ -20,10 +20,14 @@ hashed and dropped — only the 8-hex prefix survives, matching invariant #2
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
+from datetime import datetime
 from typing import Any
+
+import aiohttp
 
 from . import config
 
@@ -199,36 +203,79 @@ def _token_view(expires_at_ms: int | None, now: float) -> dict[str, str] | None:
     }
 
 
-def account_view(bearers: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
-    """Merge the credential-file snapshot with live per-bearer proxy state.
+def _endpoint_usage(
+    endpoint: dict[str, dict[str, Any]] | None, path: str, now: float
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Usable endpoint usage for a path (fresh enough), plus its error note."""
+    entry = (endpoint or {}).get(path)
+    if entry is None:
+        return None, None
+    usage = entry.get("usage")
+    if usage is not None and now - entry["fetched"] <= ENDPOINT_STALE_MAX_S:
+        return usage, entry.get("err")
+    return None, entry.get("err")
 
-    ``bearers`` is the JSON-safe list `_collect_view` builds (each dict has
-    ``bearer_id`` + ``unified``). Accounts whose current bearer the proxy has
-    not seen yet (e.g. B parked) still render — with ``seen=False`` and no
-    window data — because "B invisible" was exactly the 10/06 blind spot.
+
+def account_view(
+    bearers: list[dict[str, Any]],
+    now: float,
+    endpoint: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Merge credential files, endpoint truth, and per-bearer proxy state.
+
+    Source precedence per account (the ``src`` field names the winner):
+    ``endpoint`` — fresh ``/api/oauth/usage`` reading (account-scoped server
+    truth; immune to idle-account staleness and token rotation) →
+    ``proxy`` — this proxy's last-seen unified headers for the account's
+    current bearer → ``none``. Accounts whose current bearer the proxy has
+    not seen still render — "B invisible" was exactly the 10/06 blind spot.
     """
     by_id = {b["bearer_id"]: b for b in bearers}
     out: list[dict[str, Any]] = []
     for acct in account_snapshot():
         bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
-        unified = (bearer or {}).get("unified") or {}
-        pace, eta = _pace_eta(unified.get("util_7d"), unified.get("reset_7d"), now)
+        usage, endpoint_err = _endpoint_usage(endpoint, acct["path"], now)
+        if usage is not None:
+            src = "endpoint"
+            # The endpoint has no status field; at/over 100% the window IS
+            # rejecting — style it so.
+            status_5h = "rejected" if (usage["util_5h"] or 0) >= 1.0 else None
+            status_7d = "rejected" if (usage["util_7d"] or 0) >= 1.0 else None
+            win5 = _window_view(usage["util_5h"], usage["reset_5h"], status_5h, now)
+            win7 = _window_view(usage["util_7d"], usage["reset_7d"], status_7d, now)
+            pace, eta = _pace_eta(usage["util_7d"], usage["reset_7d"], now)
+            sonnet, opus, extra = usage["sonnet"], usage["opus"], usage["extra"]
+        else:
+            unified = (bearer or {}).get("unified") or {}
+            src = "proxy" if unified else "none"
+            win5 = _window_view(
+                unified.get("util_5h"),
+                unified.get("reset_5h"),
+                unified.get("status_5h") or unified.get("status"),
+                now,
+            )
+            win7 = _window_view(
+                unified.get("util_7d"), unified.get("reset_7d"), unified.get("status_7d"), now
+            )
+            pace, eta = _pace_eta(unified.get("util_7d"), unified.get("reset_7d"), now)
+            sonnet = opus = extra = None
         out.append(
             {
                 "label": acct["label"],
                 "bearer_id": acct["bearer_id"],
                 "error": acct["error"],
                 "seen": bearer is not None,
+                "email": account_email(acct["path"]),
+                "src": src,
+                "endpoint_err": endpoint_err,
                 "token": _token_view(acct["expires_at"], now),
-                "win5": _window_view(
-                    unified.get("util_5h"),
-                    unified.get("reset_5h"),
-                    unified.get("status_5h") or unified.get("status"),
-                    now,
-                ),
-                "win7": _window_view(
-                    unified.get("util_7d"), unified.get("reset_7d"), unified.get("status_7d"), now
-                ),
+                "win5": win5,
+                "win7": win7,
+                "sonnet": _window_view(sonnet["util"], sonnet["reset"], None, now)
+                if sonnet
+                else None,
+                "opus": _window_view(opus["util"], opus["reset"], None, now) if opus else None,
+                "extra": extra,
                 "pace": pace,
                 "pace_warn": pace is not None and pace >= PACE_WARN,
                 "eta": eta,
@@ -240,3 +287,207 @@ def account_view(bearers: list[dict[str, Any]], now: float) -> list[dict[str, An
 def bearer_labels() -> dict[str, str]:
     """Reverse map ``bearer_id → account label`` for annotating bearer rows."""
     return {a["bearer_id"]: a["label"] for a in account_snapshot() if a["bearer_id"]}
+
+
+# --- /api/oauth/usage endpoint truth (PR #55) -------------------------------
+# The bearer merge above shows what THIS PROXY last saw — blind to idle
+# accounts (frozen last-seen snapshots) and to token rotation, the exact
+# 10-11/06 picker incidents. ``GET /api/oauth/usage`` is account-scoped
+# server-side truth keyed by the credential itself; NixOS PR #909 moved
+# claude-account-pick onto it, and this section gives the dashboard the same
+# eyes (plus the profile email, which exposes the 11/06 identity-collapse
+# failure where both credential files held the SAME account).
+#
+# UI-only: refreshed from the dashboard render path and a slow background
+# loop in ``attach_ui`` — never from the proxy hot path. The access token is
+# read, sent as a header, and dropped (invariant #2: never logged, never
+# stored beyond the request).
+
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+_OAUTH_BETA = "oauth-2025-04-20"
+
+# Fetch cadence mirrors claude-account-pick: 90s TTL collapses dashboard
+# polling to ≤1 request per account; readings older than the stale ceiling
+# are no better than the proxy's last-seen view and stop overriding it.
+ENDPOINT_TTL_S = 90.0
+ENDPOINT_STALE_MAX_S = 1800.0
+_FETCH_TIMEOUT_S = 6.0
+
+# path -> {"fetched": epoch, "usage": parsed|None, "err": str|None}
+_endpoint_cache: dict[str, dict[str, Any]] = {}
+# path -> (cred mtime_ns, email). Keyed by credential mtime so a re-/login
+# (the 11/06 contamination vector) invalidates the email instantly — the
+# 24h-style time cache the picker first shipped hid a collision for up to a
+# day (Codex finding, fixed the same way there).
+_email_cache: dict[str, tuple[int, str]] = {}
+_endpoint_locks: dict[str, asyncio.Lock] = {}
+
+
+def _iso_epoch(value: Any) -> int | None:
+    """ISO-8601 (fractional seconds + offset) → epoch seconds, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(value).timestamp())
+    except ValueError:
+        return None
+
+
+def _pct_fraction(value: Any) -> float | None:
+    """Endpoint percent (0-100) → internal fraction 0..1, or None.
+
+    The unified response HEADERS carry fractions while this endpoint carries
+    percent — the scale drifted across observers once already, so coerce
+    defensively rather than assume.
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    return max(0.0, float(value)) / 100.0
+
+
+def _parse_usage(body: dict[str, Any]) -> dict[str, Any]:
+    """Endpoint JSON → internal usage dict. Unknown keys / null buckets ok.
+
+    The schema visibly churns (nullable buckets, experimental keys like
+    ``tangelo``) — parse only what the panel renders and ignore the rest.
+    """
+
+    def window(name: str) -> tuple[float | None, int | None]:
+        bucket = body.get(name)
+        if not isinstance(bucket, dict):
+            return None, None
+        return _pct_fraction(bucket.get("utilization")), _iso_epoch(bucket.get("resets_at"))
+
+    util_5h, reset_5h = window("five_hour")
+    util_7d, reset_7d = window("seven_day")
+    out: dict[str, Any] = {
+        "util_5h": util_5h,
+        "reset_5h": reset_5h,
+        "util_7d": util_7d,
+        "reset_7d": reset_7d,
+    }
+    for key, name in (("sonnet", "seven_day_sonnet"), ("opus", "seven_day_opus")):
+        util, reset = window(name)
+        out[key] = {"util": util, "reset": reset} if util is not None else None
+    extra = body.get("extra_usage")
+    if isinstance(extra, dict) and extra.get("is_enabled"):
+        used = extra.get("used_credits")
+        out["extra"] = {
+            "used": float(used) if isinstance(used, (int, float)) else None,
+            "currency": str(extra.get("currency") or ""),
+        }
+    else:
+        out["extra"] = None
+    return out
+
+
+def _read_token(path: str) -> str | None:
+    """Access token from a credentials file — caller sends + drops it."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            token = (json.load(fh).get("claudeAiOauth") or {}).get("accessToken")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return token if isinstance(token, str) and token else None
+
+
+async def _get_json(url: str, token: str) -> tuple[int, dict[str, Any] | None]:
+    """One authenticated GET. Returns (status, body|None); 0 = transport error."""
+    timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
+    headers = {"Authorization": f"Bearer {token}", "anthropic-beta": _OAUTH_BETA}
+    try:
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.get(url, headers=headers) as resp,
+        ):
+            if resp.status != 200:
+                return resp.status, None
+            body = await resp.json(content_type=None)
+            return 200, body if isinstance(body, dict) else None
+    except (TimeoutError, aiohttp.ClientError):
+        return 0, None
+
+
+async def _refresh_email(path: str, token: str) -> None:
+    """Profile email, re-fetched only when the credential file changed."""
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        return
+    cached = _email_cache.get(path)
+    if cached is not None and cached[0] == mtime:
+        return
+    status, body = await _get_json(PROFILE_URL, token)
+    if status == 200 and body:
+        email = (body.get("account") or {}).get("email")
+        if isinstance(email, str) and email:
+            _email_cache[path] = (mtime, email)
+
+
+async def _refresh_one(path: str, now: float) -> None:
+    """TTL-gated, single-flight refresh of one account's endpoint entry."""
+    entry = _endpoint_cache.get(path)
+    if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
+        return
+    lock = _endpoint_locks.setdefault(path, asyncio.Lock())
+    async with lock:
+        entry = _endpoint_cache.get(path)
+        if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
+            return
+        token = _read_token(path)
+        if token is None:
+            return
+        status, body = await _get_json(USAGE_URL, token)
+        if status == 200 and body is not None:
+            _endpoint_cache[path] = {"fetched": now, "usage": _parse_usage(body), "err": None}
+            await _refresh_email(path, token)
+        elif status == 401:
+            # Credential invalid server-side — surface it and DROP the stale
+            # numbers (a dead account's old readings must not style the panel
+            # as healthy). The bearer-view fallback still renders.
+            _endpoint_cache[path] = {
+                "fetched": now,
+                "usage": None,
+                "err": "credential rejected (401) — refresh pipeline?",
+            }
+        elif entry is not None:
+            # 429/5xx/timeout: keep serving the stale entry (the panel ages
+            # it out at the stale ceiling) but mark the failure.
+            entry["err"] = f"usage endpoint unavailable ({status or 'timeout'})"
+        else:
+            _endpoint_cache[path] = {
+                "fetched": 0.0,
+                "usage": None,
+                "err": f"usage endpoint unavailable ({status or 'timeout'})",
+            }
+
+
+async def refresh_endpoint(now: float) -> dict[str, dict[str, Any]]:
+    """Refresh all configured accounts; return ``path → cache entry``."""
+    paths = [path for _, path in parse_spec(config.ACCOUNT_CRED_PATHS)]
+    if paths:
+        await asyncio.gather(*(_refresh_one(p, now) for p in paths))
+    return {p: _endpoint_cache[p] for p in paths if p in _endpoint_cache}
+
+
+def account_email(path: str) -> str | None:
+    """Best-known profile email for a credential path (may be absent)."""
+    cached = _email_cache.get(path)
+    return cached[1] if cached else None
+
+
+def identity_state(accounts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Cross-account identity verdict for the panel banner.
+
+    ``collapsed`` when ≥2 accounts have a KNOWN email and they are all the
+    same — the 11/06 failure where a hand-/login wrote account B's credential
+    into A's directory and every "switch" became cosmetic.
+    """
+    emails = [a["email"] for a in accounts if a.get("email")]
+    collapsed = len(emails) >= 2 and len(set(emails)) == 1
+    return {
+        "collapsed": collapsed,
+        "email": emails[0] if collapsed else None,
+        "known": len(emails),
+    }

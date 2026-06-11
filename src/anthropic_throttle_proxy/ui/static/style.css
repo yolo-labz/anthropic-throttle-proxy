@@ -627,3 +627,30 @@ footer a:hover { color: var(--ctp-teal); text-decoration: underline; }
     justify-content: flex-start;
   }
 }
+
+/* PR #55: account endpoint-truth panel */
+.identity-banner {
+  margin-bottom: 0.6rem;
+}
+.accounts .email {
+  font-size: 0.7rem;
+  margin-top: 0.15rem;
+}
+.src {
+  font-size: 0.72rem;
+  padding: 0.08rem 0.4rem;
+  border-radius: 3px;
+  background: var(--ctp-surface0);
+  color: var(--ctp-subtext0);
+}
+.src-endpoint {
+  color: var(--ctp-teal);
+}
+.src-none {
+  color: var(--ctp-overlay0);
+}
+.endpoint-err {
+  display: inline;
+  margin-left: 0.3rem;
+  cursor: help;
+}
