@@ -1,0 +1,44 @@
+name: mypy
+# Per-language type gate for the yolo-labz Python archetype (ruff + mypy).
+# Initial tier is REPORT-ONLY: mypy runs on every PR and posts findings to the
+# job summary, but `continue-on-error` keeps it non-blocking while the legacy
+# type-debt baseline is burned down. Ratchet to blocking by deleting the
+# `continue-on-error: true` line once `mypy` is clean (report-only -> block;
+# never loosen). This is the GitHub-native report-only — NOT `|| true`.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions: {}
+jobs:
+  mypy:
+    name: mypy (report-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: '3.12'
+      - name: mypy
+        continue-on-error: true
+        run: |
+          if [ -d src ]; then TGT=src; else TGT=.; fi
+          {
+            echo '## mypy report (report-only — non-blocking initial tier)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          uvx mypy@2.1.0 --ignore-missing-imports --no-error-summary "$TGT" 2>&1 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
