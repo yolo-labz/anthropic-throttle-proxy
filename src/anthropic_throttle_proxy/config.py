@@ -156,6 +156,18 @@ STORM_WARN_RETRIES = int(os.environ.get("THROTTLE_STORM_WARN_RETRIES", "25"))
 # Parsed lazily by accounts.py — never touched on the hot path.
 ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
 
+# THROTTLE_ACTIVE_CRED_PATH names the single credential file the whole fleet
+# reads (e.g. ~/.claude/.credentials.json) under the single-active-account
+# failover model. A captive broker swaps that file between accounts on a 7d
+# limit; the hot path compares each EXHAUSTED request's bearer against this
+# file's current bearer and, when they differ, returns a local 401 "nudge" so
+# the stale tab re-reads the swapped credential (claude's 401 self-heal) and
+# adopts the live account, instead of being fast-failed for the multi-day
+# Retry-After. Unset (the default, and always on the central Dokku tier) keeps
+# the unchanged fast-fail behavior. The token is read, hashed to its 8-hex
+# bearer_id, and dropped — never logged (invariant #2).
+ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
+
 HOP_HEADERS = {
     "connection",
     "keep-alive",

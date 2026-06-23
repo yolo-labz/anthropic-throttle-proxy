@@ -38,6 +38,7 @@ test-suite keep working unchanged.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -101,6 +102,7 @@ from .metrics import (
     M_CENTRAL_STATUS,
     M_CLIENT_DISCONNECTS,
     M_COST,
+    M_CREDENTIAL_NUDGE,
     M_DURATION,
     M_INFLIGHT,
     M_INFLIGHT_BEARER,
@@ -189,6 +191,7 @@ __all__ = [
     "M_AIMD_MAX",
     "M_AIMD_OVERLOAD",
     "M_AIMD_SHRINKS",
+    "M_CREDENTIAL_NUDGE",
     "M_CENTRAL_STATUS",
     "M_CLIENT_DISCONNECTS",
     "M_COST",
@@ -673,6 +676,7 @@ async def _retry_direct_once(
     client_timeout: aiohttp.ClientTimeout,
     first_exc: Exception,
     attempt: _Attempt,
+    bid: str = "",
 ) -> web.StreamResponse | web.Response:
     """One direct retry after the first attempt's upstream error.
 
@@ -717,6 +721,19 @@ async def _retry_direct_once(
     except _CLIENT_DISCONNECT_EXC as cexc:
         return _record_disconnect(path, retry_where, cexc, attempt)
     if exc2 is None:
+        # A direct-fallback throttle response (central down + the account
+        # exhausted upstream) skips the pushback loop, so apply the same
+        # nudge/fast-fail here — otherwise a stale tab gets a raw multi-day
+        # Retry-After 429 instead of the 401 credential re-read nudge. Short
+        # retry-afters fall through (fast-fail returns None) unchanged. ``bid``
+        # is empty only in unit tests that bypass the nudge wiring.
+        if bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES:
+            pause = _parse_retry_after(attempt.meta)
+            pause = pause if pause > 0 else config.AIMD_BACKOFF_S
+            if (
+                ff := _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
+            ) is not None:
+                return ff
         return response
     log(f"upstream-error final path=/{path}: {exc2!r}")
     attempt.final_status = 502
@@ -769,7 +786,7 @@ async def _forward_with_retry(
             return _record_disconnect(path, "first", cexc, attempt)
         if exc is not None:
             return await _retry_direct_once(
-                request, headers, body, path, via, url, client_timeout, exc, attempt
+                request, headers, body, path, via, url, client_timeout, exc, attempt, bid
             )
         if _should_retry_pushback(response, attempt, pushback_retries):
             pushback_retries += 1
@@ -799,6 +816,71 @@ def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:
     return max(0.0, config.AIMD_BACKOFF_S), True
 
 
+# Cache of the active-account credential's bearer id, keyed by (mtime_ns, size)
+# so the common case is one stat() per fast-fail decision.
+_active_bearer_cache: tuple[int, int, str] | None = None
+
+
+def _active_account_bearer() -> str:
+    """Bearer id of the fleet's current active credential, or '' when disabled.
+
+    ``config.ACTIVE_CRED_PATH`` (``THROTTLE_ACTIVE_CRED_PATH``) names the single
+    credential file every tab reads under the single-active-account failover
+    model. A captive broker swaps it between accounts on a 7d limit; comparing
+    an exhausted request's bearer against this is what lets the proxy 401-nudge
+    a stale tab into re-reading the swapped file. The token is hashed exactly as
+    ``_bearer_id`` hashes the Authorization header and immediately dropped
+    (invariant #2). mtime/size cached; returns '' on any miss so the caller
+    falls back to the historical fast-fail.
+    """
+    path = config.ACTIVE_CRED_PATH
+    if not path:
+        return ""
+    global _active_bearer_cache
+    try:
+        st = os.stat(path)
+    except OSError:
+        _active_bearer_cache = None
+        return ""
+    key = (st.st_mtime_ns, st.st_size)
+    cached = _active_bearer_cache
+    if cached is not None and cached[:2] == key:
+        return cached[2]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            token = (json.load(fh).get("claudeAiOauth") or {}).get("accessToken")
+    except (OSError, ValueError, AttributeError):
+        _active_bearer_cache = None
+        return ""
+    if not isinstance(token, str) or not token:
+        _active_bearer_cache = None
+        return ""
+    bid = hashlib.sha256(f"Bearer {token}".encode("utf-8", "replace")).hexdigest()[:8]
+    _active_bearer_cache = (key[0], key[1], bid)
+    return bid
+
+
+def _credential_nudge_response(bid: str, path: str, source: str) -> web.Response:
+    """Local 401 that triggers claude's credential re-read (see ACTIVE_CRED_PATH).
+
+    Returned INSTEAD of the long-Retry-After 429 when the fleet's active account
+    was swapped out from under a still-running tab. The body mirrors an Anthropic
+    auth error so the client's 401 self-heal fires; it carries no Retry-After (a
+    401 means "re-read your creds", not "back off"). NOT a rewritten upstream
+    token — the proxy never injects a bearer (invariants #2/#5 hold).
+    """
+    M_CREDENTIAL_NUDGE.labels(bearer=bid).inc()
+    log(f"credential-nudge bid={bid} path=/{path} source={source}")
+    return web.Response(
+        status=401,
+        content_type="application/json",
+        text=(
+            '{"type":"error","error":{"type":"authentication_error",'
+            '"message":"throttle-proxy: active account changed; re-read credentials"}}'
+        ),
+    )
+
+
 def _retry_after_fast_fail_response(
     bid: str,
     path: str,
@@ -806,9 +888,21 @@ def _retry_after_fast_fail_response(
     *,
     source: str,
 ) -> web.Response | None:
-    """Return a local 429 when the known Retry-After window is too long to hold."""
+    """Return a local 401 nudge or 429 when the Retry-After window is too long.
+
+    When ``ACTIVE_CRED_PATH`` is set and the active credential's bearer differs
+    from this exhausted request's bearer, the fleet has failed over to the other
+    account and this tab is stale: return a 401 so claude re-reads the swapped
+    credential and adopts the live account (no restart). Otherwise fall back to
+    the historical 429 fast-fail. Once a tab adopts the new token its bearer
+    matches the active one, so no further nudge fires — no loop, and if BOTH
+    accounts are exhausted the 429 is the correct answer.
+    """
     if remaining_s <= config.MAX_HOLD_RETRY_AFTER_S:
         return None
+    active = _active_account_bearer()
+    if active and active != bid:
+        return _credential_nudge_response(bid, path, source)
     retry_after_s = max(1, math.ceil(remaining_s))
     log(
         f"retry-after-fast-fail bid={bid} path=/{path} source={source} "
