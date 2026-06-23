@@ -6,6 +6,66 @@ host activation. Latest incident first.
 
 ---
 
+## 23/06/2026 - desktop Claude Code tabs all rate-limited
+
+### What was wrong
+
+Pedro reported that no Claude Code tab on desktop was working and asked whether
+the previous session `c430b7c3-a6ac-4293-bf40-590a663a3ebe` had broken
+anything.
+
+Live proxy state was healthy: `/__throttle/health` returned
+`inflight=0`, `queued=0`, `queue_mode=fair`, `central_status=up`, and
+`upstream_egress_ok=true`; `/` returned `anthropic-throttle-proxy`. The
+service was also active under systemd with no transient override drop-in.
+
+There were two independent local problems:
+
+1. `~/.zshrc` had a `fable-tag` helper with an implicit malformed default model
+   (`claude-fable-5[1m`, later accidentally reduced to `claude-fable-5]` during
+   cleanup). This could write bad `.claude/settings.local.json` files and force
+   Claude Code away from its default model selection.
+2. The repo root had an untracked `.claude/settings.local.json` containing only
+   `"model": "claude-fable-5[1m]"`, so Claude Code launched from this repo read
+   a bad project-local model override.
+
+The previous session was also manipulating Claude account profiles. Its task
+list included logging `~/.claude-b` into `pedrobalbino@pm.me` and a pending
+task to restore `~/.claude` to `pedrobalbino@proton.me`. At repair time,
+`~/.claude/.claude.json` already identified A as `pedrobalbino@proton.me`.
+
+### What was repaired
+
+- Changed `fable-tag` in `~/.zshrc` so it has no implicit model default. It now
+  requires an explicit model argument before writing any `model` key.
+- Removed the repo-local untracked `.claude/settings.local.json`, letting
+  Claude Code use its default model from this repo.
+- Removed the stale malformed `model` key from `~/.claude/settings.json.tmp`.
+- Terminated 40 stale `.claude-wrapped` processes with `TERM` so new tabs load
+  the repaired settings and current credential files. No `KILL` was needed.
+
+### Remaining hard limit
+
+The proxy still reported real upstream quota pressure after cleanup. Three
+bearer hashes were held behind `Retry-After` until the 7-day reset at
+`26/06/2026 07:00 -03`; one had `util_7d=1.0`. The current A/B credential
+hashes did not match those blocked hashes, so fresh Claude tabs should not
+inherit the old in-memory exhausted tokens. If new tabs still fail, capture a
+fresh `/__throttle/health` and map the active credential hash before changing
+proxy behavior.
+
+### Verified state after cleanup
+
+- No `.claude-wrapped` processes remained.
+- `~/.claude/settings.json` and `~/.claude/settings.json.tmp` both returned
+  `has("model") == false`.
+- The repo-local `.claude/settings.local.json` no longer existed.
+- `~/.claude/.claude.json` reported `pedrobalbino@proton.me`.
+- `/__throttle/health` still returned `inflight=0`, `queued=0`,
+  `central_status=up`, and `upstream_egress_ok=true`.
+
+---
+
 ## 06/06/2026 — central nginx upstream stale after Dokku-host reboot
 
 ### What was wrong
