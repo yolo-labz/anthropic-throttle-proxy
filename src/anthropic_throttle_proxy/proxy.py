@@ -676,6 +676,7 @@ async def _retry_direct_once(
     client_timeout: aiohttp.ClientTimeout,
     first_exc: Exception,
     attempt: _Attempt,
+    bid: str,
 ) -> web.StreamResponse | web.Response:
     """One direct retry after the first attempt's upstream error.
 
@@ -720,6 +721,18 @@ async def _retry_direct_once(
     except _CLIENT_DISCONNECT_EXC as cexc:
         return _record_disconnect(path, retry_where, cexc, attempt)
     if exc2 is None:
+        # A direct-fallback throttle response (central down + the account
+        # exhausted upstream) skips the pushback loop, so apply the same
+        # nudge/fast-fail here — otherwise a stale tab gets a raw multi-day
+        # Retry-After 429 instead of the 401 credential re-read nudge. Short
+        # retry-afters fall through (fast-fail returns None) unchanged.
+        if not response.prepared and attempt.final_status in THROTTLE_STATUSES:
+            pause = _parse_retry_after(attempt.meta)
+            pause = pause if pause > 0 else config.AIMD_BACKOFF_S
+            if (
+                ff := _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
+            ) is not None:
+                return ff
         return response
     log(f"upstream-error final path=/{path}: {exc2!r}")
     attempt.final_status = 502
@@ -772,7 +785,7 @@ async def _forward_with_retry(
             return _record_disconnect(path, "first", cexc, attempt)
         if exc is not None:
             return await _retry_direct_once(
-                request, headers, body, path, via, url, client_timeout, exc, attempt
+                request, headers, body, path, via, url, client_timeout, exc, attempt, bid
             )
         if _should_retry_pushback(response, attempt, pushback_retries):
             pushback_retries += 1

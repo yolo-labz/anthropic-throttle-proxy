@@ -535,17 +535,25 @@ def test_active_account_bearer_disabled(monkeypatch: pytest.MonkeyPatch) -> None
     assert proxy._active_account_bearer() == ""
 
 
-def test_active_account_bearer_reads_and_caches(
+def test_active_account_bearer_reads_caches_and_invalidates(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """Reads the cred file → bearer_id matching the header hash; second call caches."""
+    """Reads cred → bearer_id (header hash); caches by (mtime, size); a swap to the
+    other account invalidates the cache so the next read returns the NEW bearer."""
     cred = tmp_path / ".credentials.json"
-    expected = _write_cred(cred, "sk-ant-oat01-AAA")
+    bid_a = _write_cred(cred, "sk-ant-oat01-AAA")
     monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
     monkeypatch.setattr(proxy, "_active_bearer_cache", None)
-    assert proxy._active_account_bearer() == expected
-    # Second call hits the (mtime, size) cache and is still correct.
-    assert proxy._active_account_bearer() == expected
+    assert proxy._active_account_bearer() == bid_a
+    # The (mtime, size, bearer) snapshot is now cached for the cheap repeat path.
+    st = os.stat(cred)
+    assert proxy._active_bearer_cache == (st.st_mtime_ns, st.st_size, bid_a)
+    assert proxy._active_account_bearer() == bid_a
+    # Broker swaps the active credential to the other account (distinct length →
+    # (mtime, size) key changes): the cache must invalidate and re-read.
+    bid_b = _write_cred(cred, "sk-ant-oat01-BBBBBBBBBBBBBBBBBBBB")
+    assert bid_b != bid_a
+    assert proxy._active_account_bearer() == bid_b
 
 
 def test_active_account_bearer_missing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
