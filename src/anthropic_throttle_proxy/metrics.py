@@ -35,6 +35,7 @@ __all__ = [
     "M_AIMD_SHRINKS",
     "M_AIMD_GROWS",
     "M_AIMD_OVERLOAD",
+    "M_CREDENTIAL_NUDGE",
     "M_BODY_SHRINK_TRIMMED",
     "M_BODY_SHRINK_BYTES_SAVED",
     "M_RATELIMIT_REQUESTS_REMAINING",
@@ -158,6 +159,19 @@ M_AIMD_OVERLOAD = Counter(
     "anthropic_overload_total",
     "Upstream 529 overloaded events (Anthropic-side capacity, not your usage). "
     "Does NOT shrink the ceiling; retry-after is still honored.",
+    ["bearer"],
+    registry=REGISTRY,
+)
+# Credential-failover nudge: when the captive broker swaps the fleet's single
+# active credential file to the other account on a 7d limit, a still-running
+# tab keeps the old (now-exhausted) token in memory. Instead of fast-failing it
+# for the multi-day Retry-After, the proxy returns a LOCAL 401 so claude's 401
+# self-heal re-reads the swapped file and adopts the live account (no restart).
+# This is NOT a rewritten upstream token (invariant #2/#5 hold).
+M_CREDENTIAL_NUDGE = Counter(
+    "anthropic_credential_nudge_total",
+    "Local 401 nudges sent to stale tabs after a captive-broker account swap, "
+    "so claude re-reads the swapped credential and adopts the live account.",
     ["bearer"],
     registry=REGISTRY,
 )

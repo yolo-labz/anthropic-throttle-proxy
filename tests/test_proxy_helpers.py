@@ -17,6 +17,8 @@ isolate one branch per case. Pacing/forwarding/integration paths live in
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import socket
 from typing import Any, cast
@@ -512,3 +514,101 @@ def test_main_logs_invalid_queue_mode_warning(monkeypatch, capsys) -> None:
     assert "invalid THROTTLE_QUEUE_MODE" in err
     # Format spec is ``{config.log_mode!r}`` so the value appears single-quoted.
     assert "'garbage-mode'" in err
+
+
+# ---------------------------------------------------------------------------
+# credential-failover nudge (THROTTLE_ACTIVE_CRED_PATH) — PR #59
+# ---------------------------------------------------------------------------
+
+
+def _write_cred(path: Any, token: str) -> str:
+    """Write a minimal Claude credentials file; return the bearer_id the proxy
+    would compute for that token (sha256 of the full ``Bearer <token>`` header)."""
+    path.write_text(json.dumps({"claudeAiOauth": {"accessToken": token}}))
+    return hashlib.sha256(f"Bearer {token}".encode("utf-8", "replace")).hexdigest()[:8]
+
+
+def test_active_account_bearer_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty ACTIVE_CRED_PATH → '' (feature off; callers keep the old fast-fail)."""
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", "")
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    assert proxy._active_account_bearer() == ""
+
+
+def test_active_account_bearer_reads_and_caches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Reads the cred file → bearer_id matching the header hash; second call caches."""
+    cred = tmp_path / ".credentials.json"
+    expected = _write_cred(cred, "sk-ant-oat01-AAA")
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    assert proxy._active_account_bearer() == expected
+    # Second call hits the (mtime, size) cache and is still correct.
+    assert proxy._active_account_bearer() == expected
+
+
+def test_active_account_bearer_missing_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Missing/unreadable cred path → '' (never raises into the hot path)."""
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(tmp_path / "nope.json"))
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    assert proxy._active_account_bearer() == ""
+
+
+def test_active_account_bearer_malformed(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Cred file without an access token → '' (degrade, do not crash)."""
+    cred = tmp_path / ".credentials.json"
+    cred.write_text("{not json")
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    assert proxy._active_account_bearer() == ""
+
+
+def test_fast_fail_holds_within_max(monkeypatch: pytest.MonkeyPatch) -> None:
+    """remaining <= MAX_HOLD → None (hold the request; neither fast-fail nor nudge)."""
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", "")
+    assert proxy._retry_after_fast_fail_response("bid1", "v1/messages", 5.0, source="t") is None
+
+
+def test_fast_fail_429_when_nudge_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No ACTIVE_CRED_PATH → historical 429 fast-fail carrying Retry-After."""
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", "")
+    resp = proxy._retry_after_fast_fail_response("bid1", "v1/messages", 9000.0, source="t")
+    assert resp is not None
+    assert resp.status == 429
+    assert resp.headers["retry-after"] == "9000"
+
+
+def test_fast_fail_429_when_bearer_is_active(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Request bearer == active on-disk bearer → 429: re-reading would not help,
+    and a 401 here would loop. This is the both-accounts-exhausted case."""
+    cred = tmp_path / ".credentials.json"
+    active_bid = _write_cred(cred, "sk-ant-oat01-LIVE")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    resp = proxy._retry_after_fast_fail_response(active_bid, "v1/messages", 9000.0, source="t")
+    assert resp is not None
+    assert resp.status == 429
+
+
+def test_fast_fail_401_nudge_when_account_swapped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Stale request bearer != swapped active bearer → 401 nudge (no Retry-After),
+    so claude's self-heal re-reads the swapped credential and adopts the account."""
+    cred = tmp_path / ".credentials.json"
+    active_bid = _write_cred(cred, "sk-ant-oat01-NEWACCOUNT")
+    assert active_bid != "staletab"  # the bearer mismatch is what triggers the nudge
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    resp = proxy._retry_after_fast_fail_response("staletab", "v1/messages", 9000.0, source="t")
+    assert resp is not None
+    assert resp.status == 401
+    assert "authentication_error" in resp.text
+    assert "retry-after" not in {k.lower() for k in resp.headers}
