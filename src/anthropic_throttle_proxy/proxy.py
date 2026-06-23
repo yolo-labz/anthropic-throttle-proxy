@@ -676,7 +676,7 @@ async def _retry_direct_once(
     client_timeout: aiohttp.ClientTimeout,
     first_exc: Exception,
     attempt: _Attempt,
-    bid: str,
+    bid: str = "",
 ) -> web.StreamResponse | web.Response:
     """One direct retry after the first attempt's upstream error.
 
@@ -725,8 +725,9 @@ async def _retry_direct_once(
         # exhausted upstream) skips the pushback loop, so apply the same
         # nudge/fast-fail here — otherwise a stale tab gets a raw multi-day
         # Retry-After 429 instead of the 401 credential re-read nudge. Short
-        # retry-afters fall through (fast-fail returns None) unchanged.
-        if not response.prepared and attempt.final_status in THROTTLE_STATUSES:
+        # retry-afters fall through (fast-fail returns None) unchanged. ``bid``
+        # is empty only in unit tests that bypass the nudge wiring.
+        if bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES:
             pause = _parse_retry_after(attempt.meta)
             pause = pause if pause > 0 else config.AIMD_BACKOFF_S
             if (

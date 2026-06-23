@@ -620,3 +620,44 @@ def test_fast_fail_401_nudge_when_account_swapped(
     assert resp.status == 401
     assert "authentication_error" in resp.text
     assert "retry-after" not in {k.lower() for k in resp.headers}
+
+
+async def test_retry_direct_once_nudges_swapped_account(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The central-down direct-retry path (which skips the pushback loop) still
+    applies the 401 nudge when the active account was swapped — covers the wiring
+    of bid into ``_retry_direct_once`` (Codex MAJOR for PR #59)."""
+    cred = tmp_path / ".credentials.json"
+    cred.write_text('{"claudeAiOauth": {"accessToken": "sk-ant-oat01-DIRECT"}}')
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    monkeypatch.setattr(config, "CENTRAL_URL", "")
+    monkeypatch.setattr(config, "UPSTREAM", "http://direct.example")
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+    config.state["central_status"] = "up"
+
+    async def stub(*args: Any, **_kw: Any) -> tuple[Any, None]:
+        att = args[5]
+        att.final_status = 429
+        att.meta = {"retry-after": "88888"}
+        att.response = proxy.web.Response(status=429)
+        return att.response, None
+
+    monkeypatch.setattr(proxy, "_try_forward", stub)
+    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+
+    resp = await proxy._retry_direct_once(
+        fake_request,
+        {},
+        None,
+        "v1/messages",
+        "central",
+        "http://x/v1/messages",
+        proxy.aiohttp.ClientTimeout(total=1),
+        RuntimeError("central down"),
+        proxy._Attempt(),
+        "stale-bearer",
+    )
+    assert resp.status == 401
+    assert "authentication_error" in resp.text

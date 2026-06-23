@@ -347,7 +347,6 @@ async def test_central_failure_direct_retry_is_serialized(monkeypatch) -> None:
             timeout,
             RuntimeError("central down"),
             proxy._Attempt(),
-            "serialized-bearer",
         )
 
     responses = await asyncio.gather(*(one_retry() for _ in range(4)))
@@ -355,55 +354,6 @@ async def test_central_failure_direct_retry_is_serialized(monkeypatch) -> None:
     assert [r.status for r in responses] == [200, 200, 200, 200]
     assert max_active == 1
     assert config.state["upstream_retries"] == 4
-
-
-async def test_central_down_direct_retry_nudges_swapped_account(monkeypatch, tmp_path) -> None:
-    """Central-down direct-retry that meets a long Retry-After 429 returns the 401
-    credential nudge (not a raw multi-day 429) when the active account was swapped.
-
-    Covers the Codex MAJOR for PR #59: the direct-fallback path bypasses the
-    pushback loop, so the nudge must be applied inside ``_retry_direct_once`` too.
-    """
-    cred = tmp_path / ".credentials.json"
-    cred.write_text('{"claudeAiOauth": {"accessToken": "sk-ant-oat01-NEWACCOUNT"}}')
-    monkeypatch.setattr(config, "QUEUE_MODE", "off")
-    monkeypatch.setattr(config, "CENTRAL_URL", "")  # no serialize lock on this path
-    monkeypatch.setattr(config, "UPSTREAM", "http://direct.example")
-    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
-    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
-    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
-    config.state["central_status"] = "up"
-    config.state["upstream_retries"] = 0
-
-    async def fake_try_forward(
-        _request, _headers, _body, _url, _timeout, attempt, retryable_statuses=None
-    ):
-        attempt.final_status = 429
-        attempt.meta = {"retry-after": "99999"}
-        response = web.Response(status=429, text="rate limited")
-        attempt.response = response
-        return response, None
-
-    monkeypatch.setattr(proxy, "_try_forward", fake_try_forward)
-
-    class FakeRequest:
-        query_string = ""
-
-    resp = await proxy._retry_direct_once(
-        FakeRequest(),
-        {},
-        None,
-        "v1/messages",
-        "central",
-        "http://direct.example/v1/messages",
-        aiohttp.ClientTimeout(total=1),
-        RuntimeError("central down"),
-        proxy._Attempt(),
-        "stale-tab-bearer",
-    )
-
-    assert resp.status == 401
-    assert "authentication_error" in resp.text
 
 
 async def test_exhausted_retry_returns_502(env, monkeypatch) -> None:
