@@ -18,10 +18,10 @@ Live proxy state was healthy, not queue-jammed:
 `central_status=up`, and `upstream_egress_ok=true`. The live problem was
 account state:
 
-- current A credential hash (`~/.claude/.credentials.json`) was `ac454a4f`.
+- then-current A credential hash (`~/.claude/.credentials.json`) was `ac454a4f`.
   That bearer was exhausted and held behind a long `Retry-After` until the
   7-day reset at `26/06/2026 07:00 -03`.
-- current B credential hash (`~/.claude-b/.credentials.json`) was `324eadec`.
+- then-current B credential hash (`~/.claude-b/.credentials.json`) was `324eadec`.
   That bearer was usable but already in `allowed_warning` with
   `util_7d=0.91` and reset at `29/06/2026 05:00 -03`.
 - 39 `.claude-wrapped` processes were still running. Tabs still holding the A
@@ -67,6 +67,18 @@ activated. Final live readback still showed:
 - no `THROTTLE_ACTIVE_CRED_PATH` in the service environment
 - local health still showing A `ac454a4f` under `Retry-After` and B
   `324eadec` usable.
+
+Later readback on 24/06/2026 showed the on-disk credential files had rotated
+again while stale bearer IDs remained in the live proxy process:
+
+- `~/.claude/.credentials.json` hashed to `4400c70e`, expiring at
+  `24/06/2026 22:00 -03`.
+- `~/.claude-b/.credentials.json` hashed to `ae018561`, expiring at
+  `24/06/2026 22:00 -03`.
+- `/__throttle/health` still showed old bearer `ac454a4f` under the long
+  `Retry-After`, old bearer `324eadec` in `allowed_warning`, and current B
+  bearer `ae018561` serving requests.
+- systemd still reported the old store path and no `THROTTLE_ACTIVE_CRED_PATH`.
 
 Activation remains Pedro-gated per the PR body because this is the NixOS/niri
 host. Do not claim the running tabs are fixed until a host activation/restart
