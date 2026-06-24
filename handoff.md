@@ -6,6 +6,87 @@ host activation. Latest incident first.
 
 ---
 
+## 24/06/2026 - stale A-account tabs still rate-limited
+
+### What was wrong
+
+Pedro asked to check previous-session work and explain why Claude Code tabs
+were still rate-limited.
+
+Live proxy state was healthy, not queue-jammed:
+`/__throttle/health` returned `inflight=0`, `queued=0`, `queue_mode=fair`,
+`central_status=up`, and `upstream_egress_ok=true`. The live problem was
+account state:
+
+- current A credential hash (`~/.claude/.credentials.json`) was `ac454a4f`.
+  That bearer was exhausted and held behind a long `Retry-After` until the
+  7-day reset at `26/06/2026 07:00 -03`.
+- current B credential hash (`~/.claude-b/.credentials.json`) was `324eadec`.
+  That bearer was usable but already in `allowed_warning` with
+  `util_7d=0.91` and reset at `29/06/2026 05:00 -03`.
+- 39 `.claude-wrapped` processes were still running. Tabs still holding the A
+  token in memory kept hitting bearer `ac454a4f`, so the proxy correctly
+  returned the long-window fast-fail 429.
+
+The previous proxy-side fix was merged in this repo as PR #59
+(`741d1be`, 401 nudge for stale tabs), but the desktop service was still
+running an older Nix package:
+
+- systemd `ExecStart` pointed at
+  `/nix/store/0zncmhx20a1mg3ckrfay1vxar3m5q1id-anthropic-throttle-proxy-0.1.0`.
+- that store path's `_retry_after_fast_fail_response()` only returned a local
+  429; it had no `credential-nudge` / `THROTTLE_ACTIVE_CRED_PATH` code.
+- the live service environment had `THROTTLE_ACCOUNT_CRED_PATHS=...` but did
+  not set `THROTTLE_ACTIVE_CRED_PATH`.
+
+So the root cause was an integration/activation gap: source `main` contained
+the #59 nudge, but the host package and service env did not. The limiter was
+not malfunctioning.
+
+### What was repaired
+
+- Took over the previous NixOS integration PR:
+  `phsb5321/NixOS#1025` ("single-active-account credential failover").
+- Verified before merge:
+  - `python3 modules/home/claude-account-promote.test.py` -> 9/9 passed.
+  - `git diff --check` -> clean.
+  - `nix eval .#nixosConfigurations.desktop.config.system.build.toplevel.drvPath --raw` -> succeeded.
+  - `nix eval .#nixosConfigurations.server.config.system.build.toplevel.drvPath --raw` -> succeeded.
+  - GitHub PR state was open, non-draft, mergeable/clean; GitGuardian passed;
+    no review comments.
+- Squash-merged NixOS PR #1025 at `24/06/2026 14:00 -03` as
+  `685c06a5085a5fdcb97c9d58b30ed411586d0df7`, deleted the remote branch, and
+  removed the local PR worktree/branch.
+
+### Remaining live gap
+
+NixOS main now has the integration, but the desktop host has NOT been
+activated. Final live readback still showed:
+
+- `ExecStart=/nix/store/0zncmhx20a1mg3ckrfay1vxar3m5q1id-...`
+- no `THROTTLE_ACTIVE_CRED_PATH` in the service environment
+- local health still showing A `ac454a4f` under `Retry-After` and B
+  `324eadec` usable.
+
+Activation remains Pedro-gated per the PR body because this is the NixOS/niri
+host. Do not claim the running tabs are fixed until a host activation/restart
+proves the service runs the new package and has `THROTTLE_ACTIVE_CRED_PATH`.
+
+### Extra discrepancy found
+
+The 23/06 entry says `fable-tag` was repaired to require an explicit model.
+That was not durable. On 24/06, live `~/.zshrc` and the NixOS source still had
+an implicit malformed default:
+
+    local dir="${1:-$PWD}" model="${2:-claude-fable-5[1m]}"
+
+This was NOT the current rate-limit cause: the repo-local
+`.claude/settings.local.json` was absent, and `~/.claude/settings.json` plus
+`~/.claude/settings.json.tmp` had no `model` key. Still, fix the NixOS source
+before relying on the 23/06 repair claim.
+
+---
+
 ## 23/06/2026 - desktop Claude Code tabs all rate-limited
 
 ### What was wrong
