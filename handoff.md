@@ -6,6 +6,81 @@ host activation. Latest incident first.
 
 ---
 
+## 24/06/2026 - DeliCasa tabs hit credential-swap 401
+
+### What was wrong
+
+After the local proxy/Nix activation gap was closed, account A (`4400c70e`)
+remained under a long `Retry-After` until `26/06/2026 07:00 -03`. The active
+credential was promoted to bearer `ae018561`, which made stale long-lived
+Claude Code TUIs correctly receive:
+
+    Please run /login · API Error: 401 throttle-proxy: active account changed; re-read credentials
+
+The DeliCasa zellij session had been restored with 7 Claude panes, but those
+panes still held the old in-memory token. The existing `claude-tabs-cycle`
+automation did not recover them because:
+
+- its API-error regex only matched banners that started directly with
+  `API Error`, not the new `Please run /login · API Error` prefix.
+- its scan loop incremented before dumping panes, so `terminal_0` was skipped.
+
+Manual `/login` was the wrong recovery path: it opened the interactive account
+login menu. The safe path was to cleanly `/exit`, capture the printed resume
+token, relaunch via the wrapper with `claude --resume <uuid>`, and send
+`continue`.
+
+### What was repaired
+
+- Promoted the standby credential with `claude-account-promote --now` at
+  `24/06/2026 14:50 -03`. Active became `ae018561`; parked A stayed
+  `4400c70e`.
+- Recovered every DeliCasa Claude pane by clean exit/resume, preserving the
+  prior sessions:
+  - Root: `24ea66f0-dd3a-4ff4-b884-722041111fb7`
+  - NextClient: `4a48a827-75f3-489a-a850-d0d127fb2f57`
+  - BridgeServer: `9274bd67-3abf-4013-9d72-1d3e39096f80`
+  - Wire: `962ea2f7-e503-49a5-85eb-90881aece030`
+  - ESP32: `24877a0a-b38a-4e02-9b33-d7dbb834b0c5`
+  - PiOrch: `e2bfc40e-7775-4047-9cde-554407317192`
+  - PiDash: `0bbadd0e-d46a-4a90-8432-7c326d4ee8e8`
+- Merged `phsb5321/NixOS#1032` at `24/06/2026 16:38 -03`
+  (`ad4b5cbc45d3f911cb938120f7e27b1bdc2122df`):
+  - `claude-tabs-nudge` and `claude-tabs-cycle` now classify
+    `Please run /login · API Error ...` as a stuck credential-swap banner.
+  - `claude-tabs-cycle` starts scanning at `terminal_0`.
+  - regression coverage locks both cases.
+- Activated desktop at `24/06/2026 16:40 -03`:
+  `/nix/store/dl7h53pmfh5c2a51wzm0bv727wv7mjlk-nixos-system-desktop-26.11.20260616.3e41b24`.
+
+### Final verification
+
+- `python3 modules/home/claude-tabs-cycle.test.py` -> all cases pass.
+- `git diff --check` -> clean.
+- `nix eval .#nixosConfigurations.desktop.config.system.build.toplevel.drvPath --raw`
+  -> succeeded.
+- `nh os switch .` built and activated successfully; both
+  `claude-tabs-cycle` and `claude-tabs-nudge` built in the activation graph.
+- `CYCLE_SESSION=DeliCasa claude-tabs-cycle --dry-run` -> `scanned=6
+  stuck-cyclable=0`, with the only visible stuck-banner pane skipped because it
+  had active work. No keystrokes were sent.
+- DeliCasa pane readback showed all 7 project tabs running `claude --resume`
+  with the tokens listed above.
+- Local proxy readback:
+  - `anthropic-throttle-proxy.service`, `.socket`, and keepalive timer all
+    `active`.
+  - `/__throttle/health`: `queue=fair`, `central=up`, `inflight=0`, `queued=0`,
+    `upstream_retries=0`.
+  - active bearer `ae018561`: `served=504`, no `retry_after`, `util_5h=0.10`,
+    `util_7d=0.97`, limiter max `12`.
+  - parked bearer `4400c70e`: no served traffic, retry-after until
+    `26/06/2026 07:00 -03`.
+
+Rollback for the NixOS helper fix is a normal revert PR:
+`git revert ad4b5cbc45d3f911cb938120f7e27b1bdc2122df`.
+
+---
+
 ## 24/06/2026 - stale A-account tabs still rate-limited
 
 ### What was wrong
