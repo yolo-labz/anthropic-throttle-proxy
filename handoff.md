@@ -58,10 +58,10 @@ not malfunctioning.
   `685c06a5085a5fdcb97c9d58b30ed411586d0df7`, deleted the remote branch, and
   removed the local PR worktree/branch.
 
-### Remaining live gap
+### Final closure
 
-NixOS main now has the integration, but the desktop host has NOT been
-activated. Final live readback still showed:
+NixOS main first had only the integration, but the desktop host had not been
+activated. The first readback still showed:
 
 - `ExecStart=/nix/store/0zncmhx20a1mg3ckrfay1vxar3m5q1id-...`
 - no `THROTTLE_ACTIVE_CRED_PATH` in the service environment
@@ -80,9 +80,29 @@ again while stale bearer IDs remained in the live proxy process:
   bearer `ae018561` serving requests.
 - systemd still reported the old store path and no `THROTTLE_ACTIVE_CRED_PATH`.
 
-Activation remains Pedro-gated per the PR body because this is the NixOS/niri
-host. Do not claim the running tabs are fixed until a host activation/restart
-proves the service runs the new package and has `THROTTLE_ACTIVE_CRED_PATH`.
+Pedro then asked to solve everything. Follow-up work closed the activation and
+package-pin gap:
+
+- Merged `phsb5321/NixOS#1030` at `24/06/2026 14:19 -03`:
+  `fable-tag` now requires `fable-tag <dir> <model>` and no malformed default
+  remains in generated `~/.zshrc`.
+- Activated desktop once at `24/06/2026 14:34 -03`, which added
+  `THROTTLE_ACTIVE_CRED_PATH=/home/notroot/.claude/.credentials.json` but still
+  left the service on the old PR #55 proxy package.
+- Merged `phsb5321/NixOS#1031` at `24/06/2026 14:42 -03`: bumped
+  `pkgs/anthropic-throttle-proxy` from PR #55 (`2ad7fc8`) to PR #59
+  (`741d1be9d0baa54c536a16304e0eaaec50412d98`).
+- Activated desktop again at `24/06/2026 14:44 -03`.
+- Final systemd readback showed the live service restarted at
+  `24/06/2026 14:44:57 -03` with:
+  - `ExecStart=/nix/store/296fif3ij846sv741vf5h8ji0pgmxgkg-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy`
+  - `THROTTLE_ACTIVE_CRED_PATH=/home/notroot/.claude/.credentials.json`
+  - `ActiveState=active`, `SubState=running`
+- Final `/__throttle/health` showed `inflight=0`, `queued=0`,
+  `upstream_egress_ok=true`, `central_status=up`, and a clean in-memory
+  `bearers={}` state after the service restart.
+- Verified the live store path contains `_active_account_bearer`,
+  `ACTIVE_CRED_PATH`, and `credential-nudge`.
 
 ### Extra discrepancy found
 
@@ -94,8 +114,10 @@ an implicit malformed default:
 
 This was NOT the current rate-limit cause: the repo-local
 `.claude/settings.local.json` was absent, and `~/.claude/settings.json` plus
-`~/.claude/settings.json.tmp` had no `model` key. Still, fix the NixOS source
-before relying on the 23/06 repair claim.
+`~/.claude/settings.json.tmp` had no `model` key. This discrepancy is now
+closed by NixOS PR #1030 and the
+`24/06/2026 14:34 -03` desktop activation; generated `~/.zshrc` contains the
+`usage: fable-tag <dir> <model>` guard and no `claude-fable-5[1m` match.
 
 ---
 
