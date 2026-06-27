@@ -6,6 +6,94 @@ host activation. Latest incident first.
 
 ---
 
+## 27/06/2026 - Zellij fleet recovery and Pearson remote-token drift
+
+### What was wrong
+
+Pedro reported that some Pearson and DeliCasa zellij tabs still had problems
+after the server/gateway repair. The host-side zellij sessions were not live:
+`DeliCasa` and `Pearson` were saved as exited sessions, while `HOME` was the
+current session. Historical pane dumps showed the affected Pearson panes had
+the managed credential nudge:
+
+    Please run /login · API Error: 401 throttle-proxy: active account changed; re-read credentials
+
+The local proxy was healthy (`central=up`, `queued=0`, egress OK), so this was
+not a queue/concurrency incident. Pearson had an additional remote-token drift:
+the corp WSL box's `~/.claude/.credentials.json` hashed to bearer `a3ad80d7`,
+which matched neither the local active bearer (`3724b5ae`) nor the local
+standby bearer (`0e424d0a`) at the time. The recurring
+`pearson-claude-token-sync` helper was also unsafe for the new account model
+because it hardcoded `~/.claude-b/.credentials.json`, even though account B was
+then exhausted/rejected and account A was the usable active slot.
+
+### What was repaired
+
+- Backed up and synced the Pearson corp WSL credential to the current active
+  local account, then synced the non-secret `oauthAccount` metadata block.
+  Verification on the corp box showed bearer `3724b5ae` and a future
+  `expiresAt`.
+- Ran a Pearson-side Claude smoke test:
+
+      claude -p "Reply PEARSON_OK only." -> PEARSON_OK
+
+- Patched `/home/notroot/.local/bin/pearson-claude-token-sync` so future runs
+  default to the active desktop credential:
+
+      SRC="${PEARSON_CLAUDE_TOKEN_SRC:-$HOME/.claude/.credentials.json}"
+
+  `PEARSON_CLAUDE_TOKEN_SRC` remains an explicit override for intentional
+  one-off syncs.
+- Restarted the user timer. Final state:
+  `pearson-claude-token-sync.timer` was `active (waiting)` with the next trigger
+  scheduled for `27/06/2026 07:01 -03`.
+- Resurrected the saved `Pearson` and `DeliCasa` zellij sessions with
+  `zellij attach --force-run-commands`, then closed only the temporary attach
+  clients. No broad `pkill`, `killall`, proxy restart, or
+  `claude-account-promote --now` was used.
+- Sent targeted resume prompts only to the panes that needed work:
+  - Pearson `terminal_1` / `🛒 Ecom`: resume the failed 26/06/2026 ecommerce
+    meeting/vault update task.
+  - Pearson `terminal_2` / `🔷 Clever`: resume the failed 26/06/2026 Clever
+    meeting/vault update task.
+  - DeliCasa `terminal_0` / `🏠 Root`: resume fleet close-out coordination.
+  - DeliCasa `terminal_6` / `📊 PiDash`: resume the PiDashboard blocker with
+    evidence-first CI/local repro work.
+- Left the other visible panes alone because scanners reported no stuck API
+  banner:
+  - Pearson Root and Gauge.
+  - DeliCasa NextClient, BridgeServer, Wire, ESP32, and PiOrch.
+
+### Final verification
+
+- Host-side `zellij list-sessions` showed `HOME`, `DeliCasa`, and `Pearson`
+  live.
+- `NUDGE_SESSION=Pearson claude-tabs-nudge --all` ->
+  `scanned=3 claude=3 stuck=0`.
+- `NUDGE_SESSION=DeliCasa claude-tabs-nudge --all` ->
+  `scanned=6 claude=6 stuck=0`.
+- `CYCLE_SESSION=DeliCasa claude-tabs-cycle --dry-run` ->
+  `scanned=6 stuck-cyclable=0`.
+- Pane dumps after the targeted prompts showed no residual
+  `Please run /login` / `401 throttle-proxy` banner:
+  - Pearson Ecom returned to a live prompt after completing its check
+    (`Cooked for 41s`).
+  - Pearson Clever returned to a live prompt after its vault update/check
+    (`Worked for 1m 17s`).
+  - DeliCasa Root was actively working the PiDashboard fleet blocker.
+  - DeliCasa PiDash was actively running its CI/local repro shell.
+- Local proxy health after the prompts: `central=up`, egress OK,
+  `queued=0`, active bearer `3724b5ae` had no `retry_after`.
+
+Rollback for the live Pearson token-sync helper patch is:
+
+    sed -i 's#SRC="${PEARSON_CLAUDE_TOKEN_SRC:-$HOME/.claude/.credentials.json}"#SRC="$HOME/.claude-b/.credentials.json"#' ~/.local/bin/pearson-claude-token-sync
+
+Only use that rollback if account B is intentionally the desired Pearson
+source again; otherwise it reintroduces the stale-account failure mode.
+
+---
+
 ## 27/06/2026 - Pearson tabs had stale Claude credentials after account collapse
 
 ### What was wrong
