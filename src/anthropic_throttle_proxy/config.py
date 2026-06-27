@@ -367,7 +367,7 @@ def _set_advisor_enabled(v: bool) -> None:
 # EDITABLE_KNOBS is the single source of truth the UI consumes. Each entry:
 #   key:          identifier in URLs, form fields, state file
 #   label:        operator-facing name
-#   type:         "int" | "float" | "bool"  (parser + input type)
+#   `type`:       "int" | "float" | "bool"  (parser + input type)
 #   min/max:      validation bounds (None = unbounded)
 #   getter:       returns current effective value (env default OR runtime override)
 #   setter:       mutates the right module attr; called after override-store update
