@@ -6,6 +6,78 @@ host activation. Latest incident first.
 
 ---
 
+## 27/06/2026 - Pearson tabs had stale Claude credentials after account collapse
+
+### What was wrong
+
+Pedro reported that the Pearson zellij session still had Claude Code access
+errors after the tabs were restarted. The visible errors were:
+
+    API Error: Server is temporarily limiting requests (not your usage limit) · upstream retry-after window is active; failing fast instead of holding the local gateway request
+    Please run /login · API Error: 401 throttle-proxy: active account changed; re-read credentials
+
+The proxy was not wedged. The live issue was local account identity state:
+
+- `claude-account-pick status` reported both A and B as the same account
+  (`id=0`) even though B's profile metadata still said
+  `pedrobalbino@pm.me`.
+- The live B credentials file hashed to the same OAuth bearer as A, so account
+  switching was cosmetic and half of the fleet capacity was gone.
+- Historical B backups had dead refresh tokens (`invalid_grant`), so restoring
+  an old credentials file would only have recreated a broken login.
+- `claude-tabs-cycle` correctly refused to treat all Pearson panes as
+  cyclable; some were already at a shell or no longer showed a stuck banner in
+  the scanner.
+
+This was a credential-profile collapse, not a queue/concurrency bug in
+`anthropic-throttle-proxy`.
+
+### What was repaired
+
+- Backed up the current B credential/profile files before changing them.
+- Re-authenticated `~/.claude-b` as `pedrobalbino@pm.me` through a dedicated
+  browser profile, instead of using `/login` inside a running Claude TUI.
+- Verified `claude-account-pick status` returned distinct identities again:
+  A stayed `id=0`; B returned `id=1`.
+- Ran `pearson-claude-token-sync` and verified the remote Pearson WSL token
+  hash matched the repaired local B bearer (`a3ad80d7`).
+- Cleanly exited and resumed the affected Pearson project panes so they
+  re-read the repaired credentials:
+  - Ecom resumed `ac4ba3e7-fe6b-452b-9569-44d8b3a0f1f8`.
+  - Clever resumed `f9fedeea-bd8c-411e-98f1-41819c602d27`.
+- Left Root and Gauge untouched because they were not showing the old
+  credential failure during verification.
+
+### Systematic recovery path
+
+Use this order when a future zellij/DC/Pearson tab reports
+`active account changed`, `Please run /login`, or a long-window upstream
+retry-after:
+
+1. Read `/__throttle/health` first. If `inflight=0`, `queued=0`, and central is
+   up, do not tune queue knobs.
+2. Run `claude-account-pick status`. If A/B show the same identity id, do not
+   cycle tabs yet; account switching is cosmetic until the credential files are
+   repaired.
+3. Back up the affected `~/.claude*` credential/profile files.
+4. Reject dead backups by probing refresh-token validity before restore. An
+   `invalid_grant` backup is not a recovery source.
+5. Re-authenticate the collapsed profile in its own `CLAUDE_CONFIG_DIR` with a
+   dedicated browser profile. Do not run interactive `/login` inside each
+   project pane.
+6. Verify `claude-account-pick status` shows distinct identities.
+7. Run the project-specific token sync helper when the work happens in remote
+   WSL/tmux/zellij state (`pearson-claude-token-sync` for Pearson).
+8. For each affected Claude pane, prefer `/exit`, capture the resume id, launch
+   the wrapper with `claude --resume <id>`, and send `continue`.
+
+Falsifier for this diagnosis: if A/B identities are distinct and the active
+credential hash matches the pane's bearer, then the failure is not credential
+collapse; inspect upstream `Retry-After`, utilization windows, and the per-bearer
+limiter instead.
+
+---
+
 ## 24/06/2026 - DeliCasa tabs hit credential-swap 401
 
 ### What was wrong
