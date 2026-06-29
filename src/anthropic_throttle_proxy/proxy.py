@@ -683,6 +683,16 @@ def _disconnect_before_forward(
     return _record_disconnect(path, where, exc, attempt)
 
 
+def _log_request_start(
+    request: web.Request, path: str, bid: str, cid: str, via: str, model_label: str
+) -> None:
+    log(
+        f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
+        f"via={via} model={model_label} inflight={state['inflight']} "
+        f"queued={state['queued']}"
+    )
+
+
 async def _try_forward(
     request: web.Request,
     headers: Mapping[str, str],
@@ -1222,11 +1232,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             try:
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "post-queue", attempt)
-                log(
-                    f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
-                    f"via={via} model={model_label} inflight={state['inflight']} "
-                    f"queued={state['queued']}"
-                )
+                _log_request_start(request, path, bid, cid, via, model_label)
                 # Honor any outstanding upstream Retry-After for this bearer before
                 # we dispatch — don't spin a request against a known-closed window.
                 await limiter.wait_retry_after()
