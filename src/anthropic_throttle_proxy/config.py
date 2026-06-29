@@ -20,7 +20,7 @@ import sys
 UPSTREAM = os.environ.get("THROTTLE_UPSTREAM", "https://api.anthropic.com")
 LISTEN_HOST = os.environ.get("THROTTLE_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("THROTTLE_PORT", "8765"))
-MAX_CONCURRENT = int(os.environ.get("CLAUDE_API_THROTTLE_MAX", "32"))
+MAX_CONCURRENT = int(os.environ.get("CLAUDE_API_THROTTLE_MAX", "3"))
 QUEUE_MODE = os.environ.get("THROTTLE_QUEUE_MODE", "off").strip().lower()
 # PR #580: `observe` mode — no queue (request acquires a slot instantly,
 # no fair-RR dispatch), but the AIMD shrink/grow counters DO move on
@@ -137,11 +137,13 @@ THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
 # first transient 429/503/529 directly to Claude.
 RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIES", "1")))
 # Maximum Retry-After window we will keep an HTTP request open for. Anthropic can
-# return account-window Retry-After values measured in hours; honoring those
-# inside a live client request just creates local gateway timeouts and a queue
-# pile-up. Longer windows are still recorded on the bearer limiter, but current
-# and new requests fail fast with 429 instead of sleeping behind the proxy.
-MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "15")))
+# return short-lived 30s throttles for temporary capacity/acceleration pushback;
+# holding those hides a transient from Claude Code. Account-window Retry-After
+# values can be measured in hours, though; honoring those inside a live client
+# request just creates local gateway timeouts and a queue pile-up. Longer windows
+# are still recorded on the bearer limiter, but current and new requests fail
+# fast with 429 instead of sleeping behind the proxy.
+MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "60")))
 
 # Storm early-warning: when the process-global upstream-retry counter crosses
 # this threshold, the proxy emits ONE WARNING line (likely a stale-token / 429
@@ -387,7 +389,8 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "back direct. AIMD shrinks the live cap below this on 429/503 "
             "pushback. In queueMode='off' + central set, this is shadowed "
             "by 'central_local_max_concurrent' (which is the actual binding "
-            "cap). Suggested: 64 on Max-tier (bursts absorbed by 5h window)."
+            "cap). Suggested: 3 for Opus-heavy Claude Code traffic; raise "
+            "only after central logs stay clean above that."
         ),
     },
     "min_dispatch_gap_ms": {
@@ -419,8 +422,8 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "URL is set: same-host Claude Code bursts share this small fair "
             "queue before egress to central (or direct fallback). Doubles "
             "as the direct-fallback cap when central is down. Suggested: "
-            "24 (central has max=32; 4 bearers × 24 = 96 burst absorbed by "
-            "central's fair queue). Lower if Anthropic starts 429ing."
+            "3 for Opus-heavy Claude Code traffic; lower if Anthropic still "
+            "returns 429s."
         ),
     },
     "utilization_target": {
@@ -569,7 +572,9 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "client request open for before retrying. Longer windows are "
             "recorded for the bearer, then requests fail fast with 429 so "
             "Claude sees the real rate-limit state instead of timing out "
-            "behind the local gateway."
+            "behind the local gateway. Default 60s holds Anthropic's common "
+            "short 30s temporary throttles while still rejecting multi-hour "
+            "account-window waits."
         ),
     },
     "body_shrink_cap_bytes": {
