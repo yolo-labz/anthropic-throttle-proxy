@@ -657,6 +657,15 @@ def _attempt_for_request(
     return attempt
 
 
+def _record_closed_before_dispatch(path: str, where: str, attempt: _Attempt) -> web.Response:
+    return _record_disconnect(
+        path,
+        where,
+        ConnectionResetError("client transport closed before upstream dispatch"),
+        attempt,
+    )
+
+
 def _disconnect_before_forward(
     request: web.Request,
     path: str,
@@ -669,12 +678,9 @@ def _disconnect_before_forward(
 ) -> web.Response:
     """Record a client disconnect before any upstream/central capacity is spent."""
     attempt = _attempt_for_request(request, bid, cid, via, model_label)
-    return _record_disconnect(
-        path,
-        where,
-        exc or ConnectionResetError("client transport closed before upstream dispatch"),
-        attempt,
-    )
+    if exc is None:
+        return _record_closed_before_dispatch(path, where, attempt)
+    return _record_disconnect(path, where, exc, attempt)
 
 
 async def _try_forward(
@@ -1215,12 +1221,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             attempt.started_at = t0
             try:
                 if _request_disconnected(request):
-                    return _record_disconnect(
-                        path,
-                        "post-queue",
-                        ConnectionResetError("client transport closed before upstream dispatch"),
-                        attempt,
-                    )
+                    return _record_closed_before_dispatch(path, "post-queue", attempt)
                 log(
                     f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
                     f"via={via} model={model_label} inflight={state['inflight']} "
@@ -1230,12 +1231,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 # we dispatch — don't spin a request against a known-closed window.
                 await limiter.wait_retry_after()
                 if _request_disconnected(request):
-                    return _record_disconnect(
-                        path,
-                        "pre-dispatch",
-                        ConnectionResetError("client transport closed before upstream dispatch"),
-                        attempt,
-                    )
+                    return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
                 return await _forward_with_retry(
                     request,
                     headers,
