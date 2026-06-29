@@ -1037,3 +1037,71 @@ Codex must be asked to look specifically for:
 
 Do not merge or declare the incident solved until the adversarial findings are
 addressed or explicitly documented with evidence.
+
+---
+
+## 29/06/2026 — short Retry-After fast-fail incident
+
+### Symptom
+
+Claude tabs surfaced:
+
+```text
+API Error: Server is temporarily limiting requests (not your usage limit) · upstream retry-after window is active; failing fast instead of holding the local gateway request
+```
+
+### Verified cause
+
+Anthropic returned short `Retry-After: 30` throttles for the active OAuth
+bearer while the proxy default held only `15s`. The proxy therefore fast-failed
+requests that should have been held and retried. Official docs say earlier
+retries before `retry-after` expires will fail, and Claude Code's own error
+guide classifies "Server is temporarily limiting requests" as a short-lived
+throttle unrelated to plan quota.
+
+Live mitigation applied at 29/06/2026 17:32 -03:
+
+```bash
+POST /ui/config key=max_hold_retry_after_s value=60
+POST /ui/config key=max_concurrent value=5
+POST /ui/config key=central_local_max_concurrent value=5
+POST /ui/config key=aimd_initial_concurrent value=3
+POST /ui/config key=aimd_backoff_s value=30
+POST /ui/config key=aimd_ramp_after value=6
+```
+
+This fixed the visible fast-fail wording, but did not fully solve rate
+pushback. Central Dokku logs at `29/06/2026 17:37 -03` showed `cbabb12c`
+dispatching 4-5 concurrent Opus requests and receiving upstream `429` twice:
+
+```text
+rate-pushback-retry bid=cbabb12c status=429 retry=1/2 pause=30.0 retry_after=0.0
+aimd-shrink bid=cbabb12c status=429 max_concurrent=3 ...
+rate-pushback-retry bid=cbabb12c status=429 retry=1/2 pause=30.0 retry_after=0.0
+aimd-shrink bid=cbabb12c status=429 max_concurrent=1 ...
+```
+
+Second mitigation applied at `29/06/2026 17:40 -03`:
+
+```bash
+POST /ui/config key=max_concurrent value=3
+POST /ui/config key=central_local_max_concurrent value=3
+```
+
+Post-second-mitigation health: local `cbabb12c` `lim_live=3`, `lim_hard=3`;
+central `cbabb12c` `lim_live=2`, `lim_hard=3`; both status `allowed`, 5h
+utilization `33%`, 7d utilization `26%`. The falsifier is a fresh central
+`429` while central live concurrency is `<=3`.
+
+### Durable fix
+
+Keep `THROTTLE_MAX_HOLD_RETRY_AFTER_S` default at `60`, not `15`, so common
+short 30s upstream throttles are absorbed. Multi-hour account-window
+`Retry-After` values must still fast-fail or trigger the stale-credential 401
+nudge.
+
+Do not raise `CLAUDE_API_THROTTLE_MAX` above `3` for the active Claude Code
+Opus-heavy fleet unless fresh central evidence shows clean operation above
+that. The SOTA follow-up is not another static number: implement adaptive
+send-rate / weighted admission keyed by model and request size, using
+`Retry-After`, 429 density, queue delay, and client-disconnects as feedback.

@@ -49,9 +49,10 @@ ssh dokku@your.host
 dokku apps:create anthropic-throttle
 dokku ports:add anthropic-throttle http:80:8765
 dokku config:set anthropic-throttle \
-  CLAUDE_API_THROTTLE_MAX=8 \
+  CLAUDE_API_THROTTLE_MAX=3 \
   THROTTLE_QUEUE_MODE=fair \
   THROTTLE_MIN_DISPATCH_GAP_MS=50 \
+  THROTTLE_MAX_HOLD_RETRY_AFTER_S=60 \
   THROTTLE_HOST=0.0.0.0 \
   THROTTLE_PORT=8765
 git remote add dokku dokku@your.host:anthropic-throttle
@@ -64,7 +65,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 
 | Env | Default | Description |
 |---|---|---|
-| `CLAUDE_API_THROTTLE_MAX` | `32` | Per-bearer concurrent ceiling. AIMD adjusts the *live* value below this. |
+| `CLAUDE_API_THROTTLE_MAX` | `3` | Per-bearer concurrent ceiling. AIMD adjusts the *live* value below this. Current Opus-heavy Claude Code evidence says 4-5 can still 429. |
 | `THROTTLE_QUEUE_MODE` | `off` | `off` / `observe` / `fair` / `reactive`. Use `fair` on the central tier. |
 | `THROTTLE_MIN_DISPATCH_GAP_MS` | `0` | Minimum gap between upstream dispatches in ms. Smooths bursts without capping throughput. **The 20/05/2026 ask.** |
 | `THROTTLE_HOST` | `127.0.0.1` | Listen address. Use `0.0.0.0` inside containers. |
@@ -78,6 +79,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 2xx responses required to bump the live ceiling by one. |
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Multiplicative-decrease factor on rate pushback. `0.5` = TCP-Reno (deep cut), `0.7` = CUBIC (gentler, stays nearer the limit). |
 | `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` before the proxy returns the pushback response to the client. Uses `Retry-After` when present, otherwise `THROTTLE_AIMD_BACKOFF_S`. |
+| `THROTTLE_MAX_HOLD_RETRY_AFTER_S` | `60` | Largest upstream `Retry-After` window held inside the local request before retrying. Keeps short temporary throttles hidden from Claude Code while still fast-failing multi-hour account windows. |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | OAuth only. When `>0` (e.g. `0.9`), proactively shrinks the ceiling once the binding 5h/7d window utilization crosses this — eases off *before* hitting "rejected". `0` = surface utilization only. |
 | `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
 | `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |

@@ -23,9 +23,10 @@ ssh dokku@your.host
 dokku apps:create anthropic-throttle
 dokku ports:add anthropic-throttle http:80:8765
 dokku config:set anthropic-throttle \
-  CLAUDE_API_THROTTLE_MAX=8 \
+  CLAUDE_API_THROTTLE_MAX=3 \
   THROTTLE_QUEUE_MODE=fair \
   THROTTLE_MIN_DISPATCH_GAP_MS=50 \
+  THROTTLE_MAX_HOLD_RETRY_AFTER_S=60 \
   THROTTLE_HOST=0.0.0.0 \
   THROTTLE_PORT=8765
 dokku checks:enable anthropic-throttle
@@ -75,7 +76,7 @@ That single line turns the proxy on for `claude-code`, `opencode`, `codex`, the 
 |---|---|
 | Tail logs | `dokku logs anthropic-throttle --tail` |
 | Restart | `dokku ps:restart anthropic-throttle` |
-| Bump knob | `dokku config:set anthropic-throttle CLAUDE_API_THROTTLE_MAX=5` (auto-restarts) |
+| Bump knob | `dokku config:set anthropic-throttle CLAUDE_API_THROTTLE_MAX=3` (auto-restarts) |
 | Stop (clients fall back to direct upstream via the local proxy's circuit-breaker) | `dokku ps:scale anthropic-throttle web=0` |
 | Resume | `dokku ps:scale anthropic-throttle web=1` |
 | Inspect health | `curl https://anthropic-throttle.<host>/__throttle/health \| jq` |
@@ -86,7 +87,7 @@ That single line turns the proxy on for `claude-code`, `opencode`, `codex`, the 
 
 - **`Multiple versions of pnpm specified`** — wrong app, this is the Python project. You're running the wrong git remote.
 - **`curl: (7) Failed to connect to localhost port 8765`** during startup healthcheck — the container isn't listening on 8765 inside the container. Confirm `THROTTLE_HOST=0.0.0.0` and `THROTTLE_PORT=8765` are set via `dokku config`.
-- **High `retries=` in `/__throttle/health`** — your per-bearer concurrent ceiling is too high for the Anthropic tier you're on. Lower `CLAUDE_API_THROTTLE_MAX`. Max tier reality is ~5.
+- **High `retries=` in `/__throttle/health`** — your per-bearer concurrent ceiling is too high for the Anthropic tier you're on. Lower `CLAUDE_API_THROTTLE_MAX`. On 29/06/2026, Opus-heavy Claude Code traffic still hit upstream 429 at 4-5 concurrent requests; use 3 unless fresh evidence says otherwise.
 - **`disconnects=` climbing** — clients are giving up before upstream answers. Increase the proxy's keep-alive window or check that your reverse-proxy timeout isn't shorter than long-running streaming responses.
 
 ## Rollback

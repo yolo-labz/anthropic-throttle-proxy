@@ -41,6 +41,11 @@ def test_capture_env_defaults_populates_every_knob():
     assert isinstance(config.ENV_DEFAULTS["advisor_enabled"], bool)
 
 
+def test_defaults_are_conservative_for_claude_code_bursts():
+    assert config.MAX_CONCURRENT == 3
+    assert config.MAX_HOLD_RETRY_AFTER_S >= 60.0
+
+
 def test_load_overrides_with_no_file_is_noop():
     # Sanity: file doesn't exist yet.
     assert not config.OVERRIDES_FILE.is_file()
