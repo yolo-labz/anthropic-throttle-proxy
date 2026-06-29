@@ -647,13 +647,7 @@ def _attempt_for_request(
 ) -> _Attempt:
     attempt = _Attempt()
     attempt.started_at = time.time()
-    attempt.context = {
-        "method": request.method,
-        "bid": bid,
-        "cid": cid,
-        "via": via,
-        "model": model_label,
-    }
+    attempt.context = dict(method=request.method, bid=bid, cid=cid, via=via, model=model_label)
     return attempt
 
 
