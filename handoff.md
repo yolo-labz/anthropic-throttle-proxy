@@ -6,6 +6,95 @@ host activation. Latest incident first.
 
 ---
 
+## 29/06/2026 - Fleet Claude credential sync to active usable account
+
+### What was wrong
+
+Pedro asked to update Claude credentials across the other hosts, ProxMox, and
+WSL surfaces. The local account picker showed the active usable account was
+account A:
+
+    A(fd332a33): 5h=31% 7d=7% pace=1.75x | B(a8060655,use=1): 5h=31% 7d=7% pace=1.75x | pick=a
+
+The active credential file was `~/.claude/.credentials.json`, bearer
+`fd332a33`, expiring `29/06/2026 18:08 -03`. Pre-sync probes found drift on
+several reachable hosts:
+
+- `DT-SCI018` / Pearson WSL was already current: `fd332a33`.
+- `ProxMox` had stale bearer `cd8d8f33`.
+- `ProxMox.Dokku` had stale bearer `c3e6a625`.
+- `Nix.Server` and the alternate `ProxMox.NixOS` route had stale bearer
+  `9a3192ff`.
+- `ProxMox.Runner` had stale bearer `db5a325b`.
+- `Mac.Pro` had Claude installed but no `~/.claude/.credentials.json`.
+
+Unreachable or intentionally skipped during this pass:
+
+- `Mac.Air`: SSH failed with `Permission denied (publickey,password)`.
+- `LAN.ProxMox` root alias: local `/home/notroot/.ssh/id_rsa` was missing and
+  root SSH failed public-key auth.
+- `Pi`: no Claude binary and no credential file.
+- Several LAN-only ProxMox VM aliases were unreachable from the current network
+  (`No route to host`) or denied the configured key.
+
+### What was repaired
+
+- Synced the active A credential (`fd332a33`) to:
+  - `ProxMox`
+  - `ProxMox.Dokku`
+  - `Nix.Server`
+  - `ProxMox.Runner`
+  - `Mac.Pro`
+- Preserved each target's existing credential/config as timestamped backups
+  before writing:
+  - `~/.claude/.credentials.json.bak-<timestamp>`
+  - `~/.claude.json.bak-<timestamp>`
+- Updated each target's `~/.claude.json` `oauthAccount` metadata to match the
+  active account (`pedrobalbino@proton.me`) while preserving the rest of the
+  target config.
+- Re-ran `pearson-claude-token-sync`; the Pearson WSL credential stayed on
+  `fd332a33`.
+- `ProxMox.Runner` initially could not accept the upload because `/` was at
+  `100%` with `0` available blocks. Before syncing it, freed only unopened
+  runner temp/cache artifacts:
+
+      /tmp/.claude-active-cred.json
+      /tmp/gitleaks.tar.gz
+      /home/notroot/actions-runner-pidashboard-vm103/_work/_temp/79c4df5d-6be0-44f7-8bed-bdee77afda9a/cache.tzst
+      /home/notroot/actions-runner-piorchestrator-vm103/_work/_temp/fd88bff9-b579-4cc3-a6c5-cacaf2ca6c0e/cache.tzst
+
+  There was no active `Runner.Worker`, and `fuser` reported no users for the
+  two `cache.tzst` files. Free space moved from `0` to `3.1G`; after sync the
+  runner still had `2.3G` free.
+
+### Final verification
+
+- `claude-account-pick status` still selected A (`fd332a33`), with 5h `31%`
+  and 7d `7%`.
+- Local proxy health after the sync:
+
+      central=up queued=0 active=fd332a33 status=allowed status_7d=allowed util5=0.33 util7=0.07 retry_after=null
+
+- Post-sync probes showed all reachable targets on bearer `fd332a33`:
+  - `DT-SCI018`
+  - `ProxMox`
+  - `ProxMox.Dokku`
+  - `Nix.Server`
+  - `ProxMox.NixOS`
+  - `ProxMox.Runner`
+  - `Mac.Pro`
+- Claude smoke tests passed on hosts where Claude is installed:
+
+      DT-SCI018 smoke=ok output=CRED_OK
+      Nix.Server smoke=ok output=CRED_OK
+      Mac.Pro smoke=ok output=CRED_OK
+
+Rollback for any synced host is to restore the host-local timestamped backup
+created during this pass, then rerun the credential probe and a Claude smoke
+test if that host has Claude installed.
+
+---
+
 ## 27/06/2026 - Zellij fleet recovery and Pearson remote-token drift
 
 ### What was wrong
