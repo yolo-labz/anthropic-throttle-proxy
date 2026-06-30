@@ -387,6 +387,19 @@ async def test_unified_utilization_surfaced(client: TestClient) -> None:
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.42
 
 
+async def _post_unified_high(
+    client: TestClient, bearer: str
+) -> tuple[str, limiter.FairBearerLimiter]:
+    status, _ = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-opus-4-7"}',
+        headers={"Authorization": f"Bearer {bearer}", "X-Stub-Mode": "unified-high"},
+    )
+    assert status == 200
+    bid = next(iter(config.bearer_state))
+    return bid, config.bearer_limiters[bid]
+
+
 async def test_unified_proactive_shrink_fires_via_http(client: TestClient, monkeypatch) -> None:
     """FR-008 (Codex PARTIAL #3, PR #30): proactive util-shrink was only covered
     at the _apply_unified unit level. Drive it through the real HTTP path: a
@@ -395,14 +408,7 @@ async def test_unified_proactive_shrink_fires_via_http(client: TestClient, monke
     # observe/fair so the AIMD ceiling can move (shrink is a no-op in off mode).
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.85)
-    status, _ = await _post_and_settle(
-        client,
-        data=b'{"model":"claude-opus-4-7"}',
-        headers={"Authorization": "Bearer oauth-util-high", "X-Stub-Mode": "unified-high"},
-    )
-    assert status == 200
-    bid = next(iter(config.bearer_state))
-    lim = config.bearer_limiters[bid]
+    bid, lim = await _post_unified_high(client, "oauth-util-high")
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
     assert lim.max_concurrent < lim.hard_max
 
@@ -413,14 +419,7 @@ async def test_unified_no_shrink_when_target_off_via_http(client: TestClient, mo
     Same observe mode as the positive case, so the only variable is the target."""
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     assert proxy.UTILIZATION_TARGET == 0
-    status, _ = await _post_and_settle(
-        client,
-        data=b'{"model":"claude-opus-4-7"}',
-        headers={"Authorization": "Bearer oauth-util-off", "X-Stub-Mode": "unified-high"},
-    )
-    assert status == 200
-    bid = next(iter(config.bearer_state))
-    lim = config.bearer_limiters[bid]
+    bid, lim = await _post_unified_high(client, "oauth-util-off")
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
     assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
     assert lim.hard_max == config.MAX_CONCURRENT
