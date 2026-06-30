@@ -6,6 +6,42 @@ host activation. Latest incident first.
 
 ---
 
+## 30/06/2026 - OpenCode z.ai Coding Plan throttle split
+
+### What changed
+
+OpenCode desktop tabs now share one z.ai Coding Plan bearer via the throttle
+proxy. z.ai sends at least two distinct 429 classes:
+
+- `1302`: concurrent-request pushback. This remains an AIMD signal and shrinks
+  the live per-bearer ceiling.
+- `1308` / `1316` / `1317`: plan quota windows. These are quota gates, not
+  evidence that concurrency is too high. z.ai puts reset data in the JSON body
+  rather than a `Retry-After` header, so the proxy parses `reset_time` /
+  `resetAt` variants and the older `message` text into a local retry-after
+  window.
+
+Default resume jitter is `THROTTLE_ZAI_QUOTA_RESET_JITTER_S=15` seconds so all
+tabs sharing one key do not resume at the exact reset second.
+
+### Local endpoint contract
+
+For the desktop OpenCode client, run a dedicated local instance with:
+
+```sh
+THROTTLE_UPSTREAM=https://api.z.ai/api/coding/paas/v4
+CLAUDE_API_THROTTLE_MAX=2
+THROTTLE_AIMD_INITIAL_CONCURRENT=2
+THROTTLE_QUEUE_MODE=fair
+THROTTLE_HOST=127.0.0.1
+THROTTLE_PORT=8766
+```
+
+Then set OpenCode `provider.zai-coding-plan.options.baseURL` to
+`http://127.0.0.1:8766`.
+
+---
+
 ## 29/06/2026 - Fleet Claude credential sync to active usable account
 
 ### What was wrong

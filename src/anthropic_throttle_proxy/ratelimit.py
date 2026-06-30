@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+import math
 import re
+import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .metrics import M_RATELIMIT_REQUESTS_REMAINING, M_RATELIMIT_TOKENS_REMAINING
@@ -97,6 +100,8 @@ _RATELIMIT_HEADER_KEYS = (
     "anthropic-ratelimit-unified-7d-reset",
 )
 
+_ZAI_QUOTA_CODES = {"1308", "1316", "1317"}
+
 
 def _extract_ratelimit(headers: Mapping[str, str]) -> dict[str, str]:
     """Pull the subset of rate-limit headers we care about into a plain dict.
@@ -126,6 +131,113 @@ def _parse_retry_after(meta: Mapping[str, str] | None) -> float:
         return max(0.0, float(raw))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _first_json_key(value: object, keys: set[str]) -> object | None:
+    """Return the first value matching any key in a nested JSON object."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in keys:
+                return child
+            found = _first_json_key(child, keys)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _first_json_key(child, keys)
+            if found is not None:
+                return found
+    return None
+
+
+def _parse_zai_reset_epoch(raw: object) -> float | None:
+    """Parse z.ai reset_time/resetAt values into epoch seconds.
+
+    Numeric values are seconds or milliseconds since epoch. Naive datetime
+    strings are treated as Beijing wall clock because z.ai's Coding Plan error
+    bodies omit a timezone while the associated log IDs use UTC+08.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, int | float):
+        value = float(raw)
+        return value / 1000.0 if value > 1_000_000_000_000 else value
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        value = None
+    if value is not None:
+        return value / 1000.0 if value > 1_000_000_000_000 else value
+    normalized = text.replace(" ", "T")
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    if not re.search(r"(?:[+-]\d{2}:?\d{2})$", normalized):
+        normalized += "+08:00"
+    try:
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return None
+
+
+def _extract_zai_ratelimit_from_body(
+    body: bytes | None,
+    *,
+    now: float | None = None,
+    quota_jitter_s: float = 0.0,
+) -> dict[str, str]:
+    """Extract z.ai Coding Plan 429 details from a JSON response body.
+
+    z.ai emits no Retry-After header for plan quota exhaustion. The reset is in
+    the JSON body (`reset_time`, variants, or the older message text). We map
+    that to the same metadata key the rest of the proxy already honors.
+    """
+    if not body:
+        return {}
+    try:
+        payload = _json.loads(body)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    code_raw = _first_json_key(payload, {"code"})
+    code = str(code_raw) if code_raw is not None else ""
+    out: dict[str, str] = {}
+    if code:
+        out["zai-error-code"] = code
+
+    reset_raw = _first_json_key(
+        payload,
+        {"reset_time", "resetTime", "reset_at", "resetAt", "resume_at", "resumeAt"},
+    )
+    reset_epoch = _parse_zai_reset_epoch(reset_raw)
+    if reset_epoch is None:
+        message = str(_first_json_key(payload, {"message"}) or "")
+        match = re.search(r"reset at (\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})", message, re.I)
+        if match:
+            reset_epoch = _parse_zai_reset_epoch(match.group(1))
+
+    if code in _ZAI_QUOTA_CODES:
+        out["zai-quota-gate"] = "true"
+    if reset_epoch is None:
+        return out
+
+    base_now = time.time() if now is None else now
+    resume_epoch = max(reset_epoch, base_now) + max(0.0, quota_jitter_s)
+    out["zai-reset-epoch"] = str(int(reset_epoch))
+    out["zai-resume-epoch"] = str(int(resume_epoch))
+    out["retry-after"] = str(max(0, int(math.ceil(resume_epoch - base_now))))
+    return out
+
+
+def _is_zai_quota_gate(meta: Mapping[str, str] | None) -> bool:
+    """True when a z.ai response represents plan quota exhaustion."""
+    if not meta:
+        return False
+    return meta.get("zai-quota-gate") == "true" or meta.get("zai-error-code") in _ZAI_QUOTA_CODES
 
 
 def _publish_ratelimit_gauges(bid: str, meta: Mapping[str, str]) -> None:

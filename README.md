@@ -15,6 +15,7 @@ Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-
 - **Fair per-bearer concurrency** — round-robin across distinct client TCPs so no Claude TUI starves the others.
 - **AIMD live ceiling** — shrinks the per-bearer cap on rate pushback (`429/503`, CUBIC-style ×0.7), ramps back on consecutive 2xx successes. `529` (upstream overloaded) is counted separately and does **not** shrink the cap — it's Anthropic's capacity, not your usage.
 - **Header-aware pacing** — captures `anthropic-ratelimit-*` headroom + honors `Retry-After` (uncapped) per bearer, surfaced on `/__throttle/health`, `/metrics`, and the dashboard.
+- **Z.ai Coding Plan quota gates** — parses z.ai JSON error bodies (`1308`/`1316`/`1317`) into local Retry-After windows because z.ai does not send a `Retry-After` header for plan exhaustion. Concurrency pushback (`1302`) still drives AIMD shrink.
 - **OAuth utilization awareness** — Claude Code Max/Pro tokens are gated by 5h-rolling + 7d-weekly windows, reported as `anthropic-ratelimit-unified-*` *utilization* (not remaining counts). The proxy surfaces utilization, **auto-pauses a bearer until reset when a window is already `rejected`** (preempting the 429 + connection-reset storm), and — opt-in via `THROTTLE_UTILIZATION_TARGET` — proactively eases off as you approach the cap.
 - **Burst pacing** — optional minimum gap between dispatches to upstream so 15 simultaneous requests get spaced over the millisecond budget instead of hitting Anthropic at the same instant.
 - **HTMX live dashboard** — small dashboard at `/ui` showing in-flight/queued/served/AIMD state, refreshed by HTMX polling every 2s (server-rendered, no JS modules, no SSE).
@@ -80,6 +81,7 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Multiplicative-decrease factor on rate pushback. `0.5` = TCP-Reno (deep cut), `0.7` = CUBIC (gentler, stays nearer the limit). |
 | `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` before the proxy returns the pushback response to the client. Uses `Retry-After` when present, otherwise `THROTTLE_AIMD_BACKOFF_S`. |
 | `THROTTLE_MAX_HOLD_RETRY_AFTER_S` | `60` | Largest upstream `Retry-After` window held inside the local request before retrying. Keeps short temporary throttles hidden from Claude Code while still fast-failing multi-hour account windows. |
+| `THROTTLE_ZAI_QUOTA_RESET_JITTER_S` | `15` | Extra seconds added to z.ai body reset times before reopening a quota-gated bearer. Avoids all clients sharing one key resuming at the exact reset second. |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | OAuth only. When `>0` (e.g. `0.9`), proactively shrinks the ceiling once the binding 5h/7d window utilization crosses this — eases off *before* hitting "rejected". `0` = surface utilization only. |
 | `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
 | `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |

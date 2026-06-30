@@ -17,7 +17,7 @@ from aiohttp import web
 from . import config
 from .config import log
 from .pacing import _pace_dispatch
-from .ratelimit import _extract_ratelimit
+from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -138,6 +138,12 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     meta = _extract_ratelimit(upstream.headers)
     if upstream.status in config.THROTTLE_STATUSES:
         body = await upstream.read()
+        meta.update(
+            _extract_zai_ratelimit_from_body(
+                body,
+                quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
+            )
+        )
         captured = bytearray(body[: 1024 * 1024])
         return (
             web.Response(status=upstream.status, headers=resp_headers, body=body),
