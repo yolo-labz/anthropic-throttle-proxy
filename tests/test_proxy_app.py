@@ -623,6 +623,16 @@ def test_storm_warn_disabled_when_threshold_non_positive(storm_log: list[str], m
     assert [m for m in storm_log if "STORM WARNING" in m] == []
 
 
+def _disconnect_request_count(model: str) -> float:
+    return (
+        proxy.REGISTRY.get_sample_value(
+            "anthropic_requests_total",
+            {"method": "POST", "status": "499", "model": model},
+        )
+        or 0.0
+    )
+
+
 async def test_handler_drops_client_disconnects_before_upstream(
     client: TestClient, monkeypatch
 ) -> None:
@@ -650,6 +660,8 @@ async def test_handler_drops_client_disconnects_before_upstream(
         ("upload-reset", upload_reset),
         ("closed-before-forward", closed_before_forward),
     ):
+        metric_model = "unknown" if bearer == "upload-reset" else "claude-opus-4-8"
+        previous_total = _disconnect_request_count(metric_model)
         keys = "client_disconnects upstream_retries served inflight queued".split()
         _reset_proxy_state()
         with monkeypatch.context() as patch:
@@ -658,3 +670,4 @@ async def test_handler_drops_client_disconnects_before_upstream(
             response = await client.post("/v1/messages", data=payload, headers=auth)
             assert response.status == 499
         assert [config.state[key] for key in keys] == [1, 0, 0, 0, 0]
+        assert _disconnect_request_count(metric_model) == previous_total + 1

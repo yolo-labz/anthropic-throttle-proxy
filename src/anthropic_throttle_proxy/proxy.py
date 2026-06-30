@@ -660,6 +660,14 @@ def _record_closed_before_dispatch(path: str, where: str, attempt: _Attempt) -> 
     )
 
 
+def _record_early_disconnect_metrics(
+    request: web.Request, model_label: str, attempt: _Attempt
+) -> None:
+    M_REQUESTS.labels(method=request.method, status="499", model=model_label).inc()
+    if attempt.started_at is not None:
+        M_DURATION.labels(model_label).observe(time.time() - attempt.started_at)
+
+
 def _disconnect_before_forward(
     request: web.Request,
     path: str,
@@ -673,8 +681,11 @@ def _disconnect_before_forward(
     """Record a client disconnect before any upstream/central capacity is spent."""
     attempt = _attempt_for_request(request, bid, cid, via, model_label)
     if exc is None:
-        return _record_closed_before_dispatch(path, where, attempt)
-    return _record_disconnect(path, where, exc, attempt)
+        response = _record_closed_before_dispatch(path, where, attempt)
+    else:
+        response = _record_disconnect(path, where, exc, attempt)
+    _record_early_disconnect_metrics(request, model_label, attempt)
+    return response
 
 
 def _log_request_start(
