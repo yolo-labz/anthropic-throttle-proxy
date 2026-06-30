@@ -589,59 +589,6 @@ def test_record_disconnect_logs_request_context(monkeypatch) -> None:
     assert "no_upstream_retry=true" in line
 
 
-def _assert_single_disconnect_without_upstream() -> None:
-    assert config.state["client_disconnects"] == 1
-    assert config.state["upstream_retries"] == 0
-    assert config.state["served"] == 0
-
-
-async def test_handler_drops_client_disconnects_before_upstream(
-    client: TestClient, monkeypatch
-) -> None:
-    payload = b'{"model":"claude-opus-4-8"}'
-
-    with monkeypatch.context() as patch:
-
-        async def raise_reset(_request: web.Request) -> bytes:
-            raise ConnectionResetError("reset during upload")
-
-        patch.setattr(web.Request, "read", raise_reset)
-        status, _ = await _post_and_settle(
-            client,
-            data=payload,
-            headers={"Authorization": "Bearer upload-reset"},
-        )
-        assert status == 499
-        _assert_single_disconnect_without_upstream()
-
-    _reset_proxy_state()
-    with monkeypatch.context() as patch:
-        checks = iter([False, True])
-
-        def fake_disconnected(_request: web.Request) -> bool:
-            return next(checks, True)
-
-        async def fail_forward(*_args, **_kwargs):  # pragma: no cover - should not run
-            raise AssertionError("disconnected request reached upstream forwarding")
-
-        patch.setattr(proxy, "_request_disconnected", fake_disconnected)
-        patch.setattr(proxy, "_forward_with_retry", fail_forward)
-        status, _ = await _post_and_settle(
-            client,
-            data=payload,
-            headers={"Authorization": "Bearer closed-before-forward"},
-        )
-        assert status == 499
-        _assert_single_disconnect_without_upstream()
-        assert config.state["inflight"] == 0
-        assert config.state["queued"] == 0
-
-
-# ---------------------------------------------------------------------------
-# PR #037: storm early-warning latch (proxy._maybe_warn_storm)
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def storm_log(monkeypatch) -> list[str]:
     """Capture proxy.log lines and reset the storm latch around each test."""
@@ -675,3 +622,40 @@ def test_storm_warn_disabled_when_threshold_non_positive(storm_log: list[str], m
     monkeypatch.setattr(config, "STORM_WARN_RETRIES", 0)
     proxy._maybe_warn_storm(1000)
     assert [m for m in storm_log if "STORM WARNING" in m] == []
+
+
+async def test_handler_drops_client_disconnects_before_upstream(
+    client: TestClient, monkeypatch
+) -> None:
+    payload = b'{"model":"claude-opus-4-8"}'
+
+    async def raise_reset(_request: web.Request) -> bytes:
+        raise ConnectionResetError("reset during upload")
+
+    def upload_reset(patch: pytest.MonkeyPatch) -> None:
+        patch.setattr(web.Request, "read", raise_reset)
+
+    def closed_before_forward(patch: pytest.MonkeyPatch) -> None:
+        checks = iter([False, True])
+
+        def fake_disconnected(_request: web.Request) -> bool:
+            return next(checks, True)
+
+        async def fail_forward(*_args, **_kwargs):  # pragma: no cover - should not run
+            raise AssertionError("disconnected request reached upstream forwarding")
+
+        patch.setattr(proxy, "_request_disconnected", fake_disconnected)
+        patch.setattr(proxy, "_forward_with_retry", fail_forward)
+
+    for bearer, configure in (
+        ("upload-reset", upload_reset),
+        ("closed-before-forward", closed_before_forward),
+    ):
+        keys = "client_disconnects upstream_retries served inflight queued".split()
+        _reset_proxy_state()
+        with monkeypatch.context() as patch:
+            configure(patch)
+            auth = {"Authorization": f"Bearer {bearer}"}
+            response = await client.post("/v1/messages", data=payload, headers=auth)
+            assert response.status == 499
+        assert [config.state[key] for key in keys] == [1, 0, 0, 0, 0]
