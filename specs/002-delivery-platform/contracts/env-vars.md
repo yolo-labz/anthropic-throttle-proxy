@@ -45,6 +45,7 @@ would corrupt in-flight requests; the dashboard shows them as
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Shrink factor on `429`/`503`. `0.5` = TCP Reno (deep teeth); `0.7` = CUBIC-style (default, higher avg utilization). |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | When > 0, proactively shrink the AIMD ceiling once the binding 5h/7d unified-window utilization crosses this fraction. `0` = disabled. |
 | `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` responses. The proxy waits the upstream `Retry-After` value when present, otherwise `THROTTLE_AIMD_BACKOFF_S`, before retrying. |
+| `THROTTLE_ZAI_QUOTA_RESET_JITTER_S` | `15` | Extra seconds added to z.ai Coding Plan body reset times before reopening a quota-gated bearer. z.ai plan exhaustion codes (`1308`/`1316`/`1317`) pause admission without AIMD shrink; concurrency code `1302` still shrinks. |
 
 ## Body shrink (runtime-mutable, client-side guard)
 

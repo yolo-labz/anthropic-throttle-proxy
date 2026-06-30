@@ -145,6 +145,13 @@ RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIE
 # fast with 429 instead of sleeping behind the proxy.
 MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "60")))
 
+# Z.ai Coding Plan sends quota-window resets in the JSON error body, not a
+# Retry-After header. Add a small jitter so a fleet sharing one key does not all
+# resume on the same reset second.
+ZAI_QUOTA_RESET_JITTER_S = max(
+    0.0, float(os.environ.get("THROTTLE_ZAI_QUOTA_RESET_JITTER_S", "15"))
+)
+
 # Storm early-warning: when the process-global upstream-retry counter crosses
 # this threshold, the proxy emits ONE WARNING line (likely a stale-token / 429
 # storm). It does not change throttle behaviour — purely an observability hint

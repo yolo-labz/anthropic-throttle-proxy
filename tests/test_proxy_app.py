@@ -59,6 +59,22 @@ def _make_upstream() -> web.Application:
                 headers={"retry-after": "3600", **_RATELIMIT_HEADERS},
                 text="rate limited",
             )
+        if mode == "zai-quota-1316":
+            return web.json_response(
+                {
+                    "error": {
+                        "code": "1316",
+                        "message": "5h plan quota exhausted",
+                        "reset_time": int(time.time() + 3600),
+                    }
+                },
+                status=429,
+            )
+        if mode == "zai-concurrency-1302":
+            return web.json_response(
+                {"error": {"code": "1302", "message": "too many concurrent requests"}},
+                status=429,
+            )
         if mode == "429-once":
             seen_429_once += 1
             if seen_429_once == 1:
@@ -336,6 +352,59 @@ async def test_long_retry_after_fails_fast_without_sleeping(
     bid = next(iter(config.bearer_state))
     lim = config.bearer_limiters[bid]
     assert lim.retry_after_remaining() > 3500
+
+
+async def test_zai_quota_gate_pauses_without_aimd_shrink(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    monkeypatch.setattr(config, "ZAI_QUOTA_RESET_JITTER_S", 0.0)
+
+    t0 = time.monotonic()
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"glm-5.2"}',
+        headers={
+            "Authorization": "Bearer zai-quota",
+            "X-Stub-Mode": "zai-quota-1316",
+        },
+    )
+
+    assert status == 429
+    assert time.monotonic() - t0 < 1.0
+    assert b"holding the local gateway request" in streamed
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    assert lim.max_concurrent == 3
+    assert lim.retry_after_remaining() > 3500
+    meta = config.bearer_state[bid]["last_ratelimit"]
+    assert meta["zai-error-code"] == "1316"
+    assert meta["zai-quota-gate"] == "true"
+
+
+async def test_zai_concurrency_1302_still_triggers_aimd_shrink(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 5)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+
+    status, _ = await _post_and_settle(
+        client,
+        data=b'{"model":"glm-5.2"}',
+        headers={
+            "Authorization": "Bearer zai-concurrency",
+            "X-Stub-Mode": "zai-concurrency-1302",
+        },
+    )
+
+    assert status == 429
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    assert lim.max_concurrent < 3
+    assert config.bearer_state[bid]["last_ratelimit"]["zai-error-code"] == "1302"
 
 
 async def test_active_long_retry_after_window_fails_fast_before_queue(

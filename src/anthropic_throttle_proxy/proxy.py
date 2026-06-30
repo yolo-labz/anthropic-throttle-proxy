@@ -126,6 +126,8 @@ from .ratelimit import (
     _client_id,
     _extract_model_from_body,
     _extract_ratelimit,
+    _extract_zai_ratelimit_from_body,
+    _is_zai_quota_gate,
     _parse_retry_after,
     _parse_sse_usage,
     _parse_unified,
@@ -179,6 +181,8 @@ __all__ = [
     "_client_id",
     "_extract_model_from_body",
     "_extract_ratelimit",
+    "_extract_zai_ratelimit_from_body",
+    "_is_zai_quota_gate",
     "_parse_retry_after",
     "_parse_sse_usage",
     "_parse_unified",
@@ -984,6 +988,21 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
     """Apply AIMD shrink/overload/grow + Retry-After feedback for one request."""
     final_status = attempt.final_status
     retry_after = _parse_retry_after(attempt.meta)
+    if final_status in AIMD_STATUSES and _is_zai_quota_gate(attempt.meta):
+        # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
+        # quota gate, not evidence that the current concurrency ceiling is too
+        # high, so hold admission until the body reset instead of AIMD shrinking.
+        pause, synthetic_pause = _pushback_pause(attempt.meta)
+        if pause > 0:
+            limiter.note_retry_after(pause)
+        code = (attempt.meta or {}).get("zai-error-code", "unknown")
+        reset = (attempt.meta or {}).get("zai-reset-epoch", "unknown")
+        log(
+            f"quota-gate bid={bid} provider=zai status={final_status} code={code} "
+            f"retry_after={retry_after} pause={pause} reset_epoch={reset} "
+            f"synthetic_pause={synthetic_pause} (no aimd shrink)"
+        )
+        return
     if final_status in AIMD_STATUSES:
         # Rate pushback (429/503) → multiplicative-decrease so future requests
         # queue here instead of being slammed against Anthropic's counter.

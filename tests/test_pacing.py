@@ -38,6 +38,38 @@ def test_parse_retry_after():
     assert proxy._parse_retry_after({"retry-after": "not-a-number"}) == 0.0
 
 
+def test_extract_zai_quota_body_generates_retry_after():
+    body = b'{"error":{"code":"1316","message":"quota exceeded","reset_time":1700000100}}'
+    meta = proxy._extract_zai_ratelimit_from_body(body, now=1700000000, quota_jitter_s=7)
+
+    assert meta["zai-error-code"] == "1316"
+    assert meta["zai-quota-gate"] == "true"
+    assert meta["zai-reset-epoch"] == "1700000100"
+    assert meta["zai-resume-epoch"] == "1700000107"
+    assert meta["retry-after"] == "107"
+    assert proxy._is_zai_quota_gate(meta) is True
+
+
+def test_extract_zai_message_reset_assumes_beijing_time():
+    body = (
+        b'{"error":{"code":"1308","message":'
+        b'"Usage limit reached for 5 hour. Your limit will reset at 2026-06-30 12:40:46"}}'
+    )
+    meta = proxy._extract_zai_ratelimit_from_body(body, now=0, quota_jitter_s=0)
+
+    assert meta["zai-quota-gate"] == "true"
+    assert meta["zai-reset-epoch"] == "1782794446"
+    assert meta["retry-after"] == "1782794446"
+
+
+def test_extract_zai_concurrency_body_is_not_quota_gate():
+    body = b'{"error":{"code":"1302","message":"too many concurrent requests"}}'
+    meta = proxy._extract_zai_ratelimit_from_body(body, now=1700000000, quota_jitter_s=7)
+
+    assert meta == {"zai-error-code": "1302"}
+    assert proxy._is_zai_quota_gate(meta) is False
+
+
 def test_529_is_split_from_rate_statuses():
     assert 529 not in proxy.AIMD_STATUSES
     assert 529 in proxy.OVERLOAD_STATUSES
