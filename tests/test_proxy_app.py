@@ -387,6 +387,19 @@ async def test_unified_utilization_surfaced(client: TestClient) -> None:
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.42
 
 
+async def _post_unified_high(
+    client: TestClient, bearer: str
+) -> tuple[str, limiter.FairBearerLimiter]:
+    status, _ = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-opus-4-7"}',
+        headers={"Authorization": f"Bearer {bearer}", "X-Stub-Mode": "unified-high"},
+    )
+    assert status == 200
+    bid = next(iter(config.bearer_state))
+    return bid, config.bearer_limiters[bid]
+
+
 async def test_unified_proactive_shrink_fires_via_http(client: TestClient, monkeypatch) -> None:
     """FR-008 (Codex PARTIAL #3, PR #30): proactive util-shrink was only covered
     at the _apply_unified unit level. Drive it through the real HTTP path: a
@@ -395,14 +408,7 @@ async def test_unified_proactive_shrink_fires_via_http(client: TestClient, monke
     # observe/fair so the AIMD ceiling can move (shrink is a no-op in off mode).
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.85)
-    status, _ = await _post_and_settle(
-        client,
-        data=b'{"model":"claude-opus-4-7"}',
-        headers={"Authorization": "Bearer oauth-util-high", "X-Stub-Mode": "unified-high"},
-    )
-    assert status == 200
-    bid = next(iter(config.bearer_state))
-    lim = config.bearer_limiters[bid]
+    bid, lim = await _post_unified_high(client, "oauth-util-high")
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
     assert lim.max_concurrent < lim.hard_max
 
@@ -413,14 +419,7 @@ async def test_unified_no_shrink_when_target_off_via_http(client: TestClient, mo
     Same observe mode as the positive case, so the only variable is the target."""
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     assert proxy.UTILIZATION_TARGET == 0
-    status, _ = await _post_and_settle(
-        client,
-        data=b'{"model":"claude-opus-4-7"}',
-        headers={"Authorization": "Bearer oauth-util-off", "X-Stub-Mode": "unified-high"},
-    )
-    assert status == 200
-    bid = next(iter(config.bearer_state))
-    lim = config.bearer_limiters[bid]
+    bid, lim = await _post_unified_high(client, "oauth-util-off")
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
     assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
     assert lim.hard_max == config.MAX_CONCURRENT
@@ -589,11 +588,6 @@ def test_record_disconnect_logs_request_context(monkeypatch) -> None:
     assert "no_upstream_retry=true" in line
 
 
-# ---------------------------------------------------------------------------
-# PR #037: storm early-warning latch (proxy._maybe_warn_storm)
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture
 def storm_log(monkeypatch) -> list[str]:
     """Capture proxy.log lines and reset the storm latch around each test."""
@@ -627,3 +621,53 @@ def test_storm_warn_disabled_when_threshold_non_positive(storm_log: list[str], m
     monkeypatch.setattr(config, "STORM_WARN_RETRIES", 0)
     proxy._maybe_warn_storm(1000)
     assert [m for m in storm_log if "STORM WARNING" in m] == []
+
+
+def _disconnect_request_count(model: str) -> float:
+    return (
+        proxy.REGISTRY.get_sample_value(
+            "anthropic_requests_total",
+            {"method": "POST", "status": "499", "model": model},
+        )
+        or 0.0
+    )
+
+
+async def test_handler_drops_client_disconnects_before_upstream(
+    client: TestClient, monkeypatch
+) -> None:
+    payload = b'{"model":"claude-opus-4-8"}'
+
+    async def raise_reset(_request: web.Request) -> bytes:
+        raise ConnectionResetError("reset during upload")
+
+    def upload_reset(patch: pytest.MonkeyPatch) -> None:
+        patch.setattr(web.Request, "read", raise_reset)
+
+    def closed_before_forward(patch: pytest.MonkeyPatch) -> None:
+        checks = iter([False, True])
+
+        def fake_disconnected(_request: web.Request) -> bool:
+            return next(checks, True)
+
+        async def fail_forward(*_args, **_kwargs):  # pragma: no cover - should not run
+            raise AssertionError("disconnected request reached upstream forwarding")
+
+        patch.setattr(proxy, "_request_disconnected", fake_disconnected)
+        patch.setattr(proxy, "_forward_with_retry", fail_forward)
+
+    for bearer, configure in (
+        ("upload-reset", upload_reset),
+        ("closed-before-forward", closed_before_forward),
+    ):
+        metric_model = "unknown" if bearer == "upload-reset" else "claude-opus-4-8"
+        previous_total = _disconnect_request_count(metric_model)
+        keys = "client_disconnects upstream_retries served inflight queued".split()
+        _reset_proxy_state()
+        with monkeypatch.context() as patch:
+            configure(patch)
+            auth = {"Authorization": f"Bearer {bearer}"}
+            response = await client.post("/v1/messages", data=payload, headers=auth)
+            assert response.status == 499
+        assert [config.state[key] for key in keys] == [1, 0, 0, 0, 0]
+        assert _disconnect_request_count(metric_model) == previous_total + 1

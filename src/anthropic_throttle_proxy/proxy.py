@@ -636,6 +636,68 @@ def _record_disconnect(
     return web.Response(status=499)
 
 
+def _request_disconnected(request: web.Request) -> bool:
+    """True when aiohttp no longer has an open client transport."""
+    transport = request.transport
+    return transport is None or transport.is_closing()
+
+
+def _attempt_for_request(
+    request: web.Request, bid: str, cid: str, via: str, model_label: str
+) -> _Attempt:
+    attempt = _Attempt()
+    attempt.started_at = time.time()
+    attempt.context = dict(method=request.method, bid=bid, cid=cid, via=via, model=model_label)
+    return attempt
+
+
+def _record_closed_before_dispatch(path: str, where: str, attempt: _Attempt) -> web.Response:
+    return _record_disconnect(
+        path,
+        where,
+        ConnectionResetError("client transport closed before upstream dispatch"),
+        attempt,
+    )
+
+
+def _record_early_disconnect_metrics(
+    request: web.Request, model_label: str, attempt: _Attempt
+) -> None:
+    M_REQUESTS.labels(method=request.method, status="499", model=model_label).inc()
+    if attempt.started_at is not None:
+        M_DURATION.labels(model_label).observe(time.time() - attempt.started_at)
+
+
+def _disconnect_before_forward(
+    request: web.Request,
+    path: str,
+    where: str,
+    bid: str,
+    cid: str,
+    via: str,
+    model_label: str,
+    exc: BaseException | None = None,
+) -> web.Response:
+    """Record a client disconnect before any upstream/central capacity is spent."""
+    attempt = _attempt_for_request(request, bid, cid, via, model_label)
+    if exc is None:
+        response = _record_closed_before_dispatch(path, where, attempt)
+    else:
+        response = _record_disconnect(path, where, exc, attempt)
+    _record_early_disconnect_metrics(request, model_label, attempt)
+    return response
+
+
+def _log_request_start(
+    request: web.Request, path: str, bid: str, cid: str, via: str, model_label: str
+) -> None:
+    log(
+        f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
+        f"via={via} model={model_label} inflight={state['inflight']} "
+        f"queued={state['queued']}"
+    )
+
+
 async def _try_forward(
     request: web.Request,
     headers: Mapping[str, str],
@@ -1120,11 +1182,20 @@ async def handler(request: web.Request) -> web.StreamResponse:
     """
     path = request.match_info.get("path", "")
     headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS}
-    body = await request.read() if request.body_exists else None
+    bid = _bearer_id(request.headers)
+    cid = _client_id(request)
+    url, client_timeout, via = pick_target(path, request.query_string)
+    try:
+        body = await request.read() if request.body_exists else None
+    except _CLIENT_DISCONNECT_EXC as exc:
+        return _disconnect_before_forward(request, path, "read-body", bid, cid, via, "unknown", exc)
 
     # PR #557: extract model from POST /v1/messages body for metrics labels.
     model = _extract_model_from_body(body) if body else ""
     model_label = model or "unknown"
+
+    if _request_disconnected(request):
+        return _disconnect_before_forward(request, path, "pre-queue", bid, cid, via, model_label)
 
     # PR #15: trim oversize POST /v1/messages bodies before forwarding so we
     # do not hand Anthropic a payload they will reject with the 32MB cap.
@@ -1133,9 +1204,6 @@ async def handler(request: web.Request) -> web.StreamResponse:
     if body is not None and request.method == "POST":
         body = _apply_body_shrink(request, body, path, model_label, headers)
 
-    bid = _bearer_id(request.headers)
-    cid = _client_id(request)
-    url, client_timeout, via = pick_target(path, request.query_string)
     queue_mode, hard_max = _effective_admission()
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
@@ -1163,25 +1231,18 @@ async def handler(request: web.Request) -> web.StreamResponse:
         async with limiter.slot(cid):
             counters.dequeue()
             counters.enter_inflight()
-            log(
-                f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
-                f"via={via} model={model_label} inflight={state['inflight']} "
-                f"queued={state['queued']}"
-            )
-            # Honor any outstanding upstream Retry-After for this bearer before
-            # we dispatch — don't spin a request against a known-closed window.
-            await limiter.wait_retry_after()
             t0 = time.time()
-            attempt = _Attempt()
+            attempt = _attempt_for_request(request, bid, cid, via, model_label)
             attempt.started_at = t0
-            attempt.context = {
-                "method": request.method,
-                "bid": bid,
-                "cid": cid,
-                "via": via,
-                "model": model_label,
-            }
             try:
+                if _request_disconnected(request):
+                    return _record_closed_before_dispatch(path, "post-queue", attempt)
+                _log_request_start(request, path, bid, cid, via, model_label)
+                # Honor any outstanding upstream Retry-After for this bearer before
+                # we dispatch — don't spin a request against a known-closed window.
+                await limiter.wait_retry_after()
+                if _request_disconnected(request):
+                    return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
                 return await _forward_with_retry(
                     request,
                     headers,

@@ -1105,3 +1105,24 @@ Opus-heavy fleet unless fresh central evidence shows clean operation above
 that. The SOTA follow-up is not another static number: implement adaptive
 send-rate / weighted admission keyed by model and request size, using
 `Retry-After`, 429 density, queue delay, and client-disconnects as feedback.
+
+### Follow-up: disconnected queued clients
+
+At `29/06/2026 18:27:59 -03`, desktop restarted the local proxy into the
+new package (`served` reset, pid changed from `573099` to `2633722`). Socket
+activation kept the port mostly available, but several in-flight upload bodies
+reset during `request.read()`, then the restarted tabs created an Opus-heavy
+burst. Local health showed `max=3`, active bearer `cbabb12c` `status=allowed`,
+and no fresh upstream retries; central health also had `upstream_retries=0`.
+The visible API errors were therefore not new Anthropic 429s. They were client
+disconnects while queued/streaming:
+
+```text
+client-disconnect ... bid=cbabb12c ... model=claude-opus-4-8 ... no_upstream_retry=true
+ConnectionResetError: [Errno 104] Connection reset by peer
+```
+
+Durable fix in PR #68: treat body-read resets as 499 client disconnects, and
+check the aiohttp client transport after fair-queue admission and again after
+any Retry-After wait. If the Claude tab has already gone away, release the
+slot and do not forward to central/upstream.
