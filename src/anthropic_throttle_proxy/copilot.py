@@ -20,7 +20,6 @@ imported by the hot path, never breaks the dashboard render.
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
 import aiohttp
@@ -34,6 +33,12 @@ _BILLING = "/orgs/{org}/copilot/billing"
 # GitHub API load at ≤1 call per org per 5 min regardless of dashboard poll
 # rate (the partial re-renders every 2 s).
 TTL_S = 300.0
+# Failures (403/404/timeout) re-fetch on a shorter window: GitHub 403 covers
+# BOTH "token lacks read:org" AND "secondary rate limit" (transient). Serving
+# the misleading "lacks read:org" for 300 s after a transient blip would push
+# an operator to rotate a perfectly good PAT. 30 s is short enough to recover
+# fast, long enough to not hammer during an outage.
+FAILURE_TTL_S = 30.0
 _FETCH_TIMEOUT_S = 6.0
 
 _cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -53,17 +58,28 @@ def parse_orgs(raw: str) -> list[str]:
 
 
 def _parse_billing(body: Any) -> dict[str, Any]:
-    """Billing JSON → display dict. Tolerates schema drift (nullable buckets)."""
+    """Billing JSON → display dict. Type-tolerant: a non-dict seat_breakdown
+    (schema drift / proxy mangling) coerces to empty, not AttributeError.
+    """
     if not isinstance(body, dict):
         return {"ok": False, "err": "non-json billing body"}
-    seats = body.get("seat_breakdown") or {}
+    seats = body.get("seat_breakdown")
+    if not isinstance(seats, dict):
+        seats = {}
+
+    def _int(key: str) -> int:
+        try:
+            return int(seats.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
     return {
         "ok": True,
         "plan_type": str(body.get("plan_type") or "—"),
-        "seats_total": int(seats.get("total") or 0),
-        "seats_active": int(seats.get("active_this_cycle") or 0),
-        "seats_inactive": int(seats.get("inactive_this_cycle") or 0),
-        "seats_pending": int(seats.get("pending_invitation") or 0),
+        "seats_total": _int("total"),
+        "seats_active": _int("active_this_cycle"),
+        "seats_inactive": _int("inactive_this_cycle"),
+        "seats_pending": _int("pending_invitation"),
         "seat_management": str(body.get("seat_management_setting") or "—"),
         "ide_chat": str(body.get("ide_chat") or "—"),
         "cli": str(body.get("cli") or "—"),
@@ -72,7 +88,11 @@ def _parse_billing(body: Any) -> dict[str, Any]:
 
 
 async def _fetch_billing(org: str, token: str) -> tuple[int, Any]:
-    """One authenticated GET. Returns (status, body|None); 0 = transport error."""
+    """One authenticated GET. Returns (status, body|None); 0 = transport error.
+
+    body is None on any parse failure (a 200 with non-JSON body does not
+    raise) so the caller never sees a raw exception from a malformed response.
+    """
     timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
     headers = {
         "Authorization": f"Bearer {token}",
@@ -88,26 +108,43 @@ async def _fetch_billing(org: str, token: str) -> tuple[int, Any]:
         ):
             if resp.status != 200:
                 return resp.status, None
-            return 200, await resp.json(content_type=None)
+            try:
+                return 200, await resp.json(content_type=None)
+            except (ValueError, aiohttp.ContentTypeError):
+                return 200, None
     except (TimeoutError, aiohttp.ClientError):
         return 0, None
 
 
+def _cache_hit(key: str, now: float) -> dict[str, Any] | None:
+    """Return a fresh-enough cached view, or None. Encodes the failure-TTL:
+    a cached failure re-fetches on the shorter window so a transient 403
+    doesn't mislead for the full 300 s success TTL.
+    """
+    cached = _cache.get(key)
+    if cached is None:
+        return None
+    ttl = FAILURE_TTL_S if not cached[1].get("ok") else TTL_S
+    return cached[1] if now - cached[0] < ttl else None
+
+
 async def _refresh_one(org: str, token: str, now: float) -> dict[str, Any]:
     """TTL-gated, single-flight refresh of one org's billing → display row."""
-    cached = _cache.get(org)
-    if cached is not None and now - cached[0] < TTL_S:
-        return {"org": org, **cached[1]}
+    hit = _cache_hit(org, now)
+    if hit is not None:
+        return {"org": org, **hit}
     lock = _locks.setdefault(org, asyncio.Lock())
     async with lock:
-        cached = _cache.get(org)
-        if cached is not None and now - cached[0] < TTL_S:
-            return {"org": org, **cached[1]}
+        hit = _cache_hit(org, now)
+        if hit is not None:
+            return {"org": org, **hit}
         status, body = await _fetch_billing(org, token)
-        if status == 200 and body is not None:
+        if status == 200 and isinstance(body, dict):
             view = _parse_billing(body)
+        elif status == 200:
+            view = {"ok": False, "status": 200, "err": "non-json billing body"}
         elif status in (401, 403):
-            view = {"ok": False, "status": status, "err": "token lacks read:org"}
+            view = {"ok": False, "status": status, "err": "token lacks read:org (or rate-limited)"}
         elif status == 404:
             view = {"ok": False, "status": 404, "err": "no Copilot for this org"}
         else:
@@ -127,8 +164,7 @@ async def refresh(now: float) -> list[dict[str, Any]]:
     absent — the panel stays hidden, matching how an unset account panel hides.
     """
     orgs = parse_orgs(config.COPILOT_ORGS)
-    token = os.environ.get("THROTTLE_COPILOT_TOKEN", "") or config.COPILOT_TOKEN
-    if not orgs or not token:
+    if not orgs or not config.COPILOT_TOKEN:
         return []
-    rows = await asyncio.gather(*(_refresh_one(o, token, now) for o in orgs))
+    rows = await asyncio.gather(*(_refresh_one(o, config.COPILOT_TOKEN, now) for o in orgs))
     return list(rows)

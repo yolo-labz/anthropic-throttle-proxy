@@ -46,10 +46,6 @@ def parse_spec(raw: str) -> list[tuple[str, str]]:
     for entry in raw.split(","):
         label, sep, url = entry.strip().partition(":")
         label, url = label.strip(), url.strip()
-        # Restore the scheme the partition consumed (label is the bare prefix
-        # before the first colon; the URL keeps its own http:// colon). parse
-        # as "name|url" would be cleaner, but accounts.py uses the same
-        # colon-first shape, so stay consistent.
         if not sep or not label or not url:
             continue
         if label in seen:
@@ -59,34 +55,45 @@ def parse_spec(raw: str) -> list[tuple[str, str]]:
     return out
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    """Coerce anything to an int; bad/missing → default. Schema-drift guard."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
 def _parse_health(body: Any) -> dict[str, Any]:
     """Flatten the sibling's ``/__throttle/health`` JSON to display fields.
 
     Only the stable, fleet-relevant fields are kept — the dashboard does not
     need the full per-bearer tree (that lives on the sibling's own /ui).
+    Type-tolerant: a sibling returning ``{"inflight": null}`` or a string
+    coerces to 0 rather than raising into the render path.
     """
     if not isinstance(body, dict):
         return {"ok": False, "status": 200, "err": "non-json health body"}
     return {
         "ok": True,
         "status": 200,
-        "inflight": int(body.get("inflight", 0)),
-        "queued": int(body.get("queued", 0)),
-        "served": int(body.get("served", 0)),
-        "max_concurrent": int(body.get("max_concurrent", 0)),
-        "queue_mode": str(body.get("queue_mode", "")),
-        "upstream": str(body.get("upstream", "")),
+        "inflight": _safe_int(body.get("inflight")),
+        "queued": _safe_int(body.get("queued")),
+        "served": _safe_int(body.get("served")),
+        "max_concurrent": _safe_int(body.get("max_concurrent")),
+        "queue_mode": str(body.get("queue_mode") or ""),
+        "upstream": str(body.get("upstream") or ""),
         "upstream_egress_ok": bool(body.get("upstream_egress_ok", False)),
-        "client_disconnects": int(body.get("client_disconnects", 0)),
-        "upstream_retries": int(body.get("upstream_retries", 0)),
+        "client_disconnects": _safe_int(body.get("client_disconnects")),
+        "upstream_retries": _safe_int(body.get("upstream_retries")),
     }
 
 
 async def _fetch_json(url: str) -> tuple[int, Any]:
     """One GET against a sibling health endpoint. Returns (status, body|None).
 
-    0 status = transport error / timeout. The token-less health endpoint is
-    public loopback, so no Authorization header is needed.
+    0 status = transport error / timeout. ``body`` is None on any parse
+    failure (a 200 with a non-JSON body — e.g. an HTML error page — does NOT
+    raise; the caller treats ``status==200 + body is None`` as a bad body).
     """
     timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
     try:
@@ -96,24 +103,37 @@ async def _fetch_json(url: str) -> tuple[int, Any]:
         ):
             if resp.status != 200:
                 return resp.status, None
-            return 200, await resp.json(content_type=None)
+            try:
+                return 200, await resp.json(content_type=None)
+            except (ValueError, aiohttp.ContentTypeError):
+                return 200, None
     except (TimeoutError, aiohttp.ClientError):
         return 0, None
 
 
-async def _refresh_one(name: str, url: str, now: float) -> dict[str, Any]:
-    """TTL-gated, single-flight refresh of one sibling's health → display row."""
+def _cache_hit(url: str, now: float) -> dict[str, Any] | None:
+    """Return a fresh-enough cached view, or None."""
     cached = _cache.get(url)
     if cached is not None and now - cached[0] < TTL_S:
-        return {"name": name, "url": url, **cached[1]}
+        return cached[1]
+    return None
+
+
+async def _refresh_one(name: str, url: str, now: float) -> dict[str, Any]:
+    """TTL-gated, single-flight refresh of one sibling's health → display row."""
+    hit = _cache_hit(url, now)
+    if hit is not None:
+        return {"name": name, "url": url, **hit}
     lock = _locks.setdefault(url, asyncio.Lock())
     async with lock:
-        cached = _cache.get(url)
-        if cached is not None and now - cached[0] < TTL_S:
-            return {"name": name, "url": url, **cached[1]}
+        hit = _cache_hit(url, now)
+        if hit is not None:
+            return {"name": name, "url": url, **hit}
         status, body = await _fetch_json(url)
-        if status == 200 and body is not None:
+        if status == 200 and isinstance(body, dict):
             view = _parse_health(body)
+        elif status == 200:
+            view = {"ok": False, "status": 200, "err": "non-json health body"}
         else:
             view = {
                 "ok": False,

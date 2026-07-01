@@ -139,8 +139,9 @@
       {% if c.ok %}
         <td><span class="plan">{{ c.plan_type }}</span></td>
         <td>
+          {% set pct = 100 if c.seats_total == 0 else (c.seats_active * 100 / c.seats_total) | round %}
           <span class="seat-bar" title="{{ c.seats_active }} active / {{ c.seats_total }} total">
-            <span class="seat-track"><i style="width: {{ 100 if c.seats_total == 0 else (c.seats_active * 100 / c.seats_total) | round }}%"></i></span>
+            <span class="seat-track"><i style="width: {{ [pct, 100] | min }}%"></i></span>
             {{ c.seats_active }}/{{ c.seats_total }}
           </span>
         </td>

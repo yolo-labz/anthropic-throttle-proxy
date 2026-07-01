@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from anthropic_throttle_proxy import config, copilot
@@ -113,3 +115,64 @@ async def test_refresh_env_order_and_ttl_cache(monkeypatch):
     # past TTL → re-fetch
     await copilot.refresh(copilot.TTL_S + 1)
     assert calls == ["yolo-labz", "DeliCasa", "yolo-labz", "DeliCasa"]
+
+
+async def test_refresh_200_non_json_is_not_ok(monkeypatch):
+    """A 200 with a non-dict body must not raise into the render path."""
+    monkeypatch.setattr(config, "COPILOT_ORGS", "x")
+
+    async def _garbage(org, tok):
+        return (200, "<html>")
+
+    monkeypatch.setattr(copilot, "_fetch_billing", _garbage)
+    rows = await copilot.refresh(0.0)
+    assert rows[0]["ok"] is False
+    assert "non-json" in rows[0]["err"]
+
+
+def test_parse_billing_coerces_type_drift():
+    """A non-dict seat_breakdown (schema drift) coerces to empty, not AttributeError."""
+    view = copilot._parse_billing({"plan_type": "business", "seat_breakdown": ["nope"]})
+    assert view["ok"] is True
+    assert view["seats_total"] == 0
+
+
+async def test_concurrent_refresh_single_flights(monkeypatch):
+    monkeypatch.setattr(config, "COPILOT_ORGS", "x")
+    calls = 0
+
+    async def slow(org, tok):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return 200, {"plan_type": "business"}
+
+    monkeypatch.setattr(copilot, "_fetch_billing", slow)
+    await asyncio.gather(copilot.refresh(0.0), copilot.refresh(0.0))
+    assert calls == 1
+
+
+async def test_failure_recovers_before_success_ttl(monkeypatch):
+    """A transient 403 re-fetches on the FAILURE_TTL window (not the full 300s)
+    so a secondary-rate-limit blip doesn't mislead for 5 minutes.
+    """
+    monkeypatch.setattr(config, "COPILOT_ORGS", "x")
+    responses: list[tuple[int, dict | None]] = [(403, None), (200, {"plan_type": "business"})]
+    idx = 0
+
+    async def fake(org, tok):
+        nonlocal idx
+        r = responses[idx] if idx < len(responses) else (200, {"plan_type": "business"})
+        idx += 1
+        return r
+
+    monkeypatch.setattr(copilot, "_fetch_billing", fake)
+    first = await copilot.refresh(0.0)
+    assert first[0]["ok"] is False  # transient 403 cached
+    # before FAILURE_TTL_S → still cached failure, no new fetch
+    await copilot.refresh(copilot.FAILURE_TTL_S - 1)
+    assert idx == 1
+    # past FAILURE_TTL_S → re-fetch, succeeds
+    recovered = await copilot.refresh(copilot.FAILURE_TTL_S + 1)
+    assert recovered[0]["ok"] is True
+    assert recovered[0]["plan_type"] == "business"

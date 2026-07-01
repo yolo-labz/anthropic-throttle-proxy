@@ -109,3 +109,37 @@ async def test_refresh_http_non_200_is_not_ok(monkeypatch):
     rows = await fleet.refresh(0.0)
     assert rows[0]["ok"] is False
     assert rows[0]["status"] == 503
+
+
+async def test_refresh_200_non_json_is_not_ok(monkeypatch):
+    """A 200 with a non-dict body (HTML error page, empty body) must not raise
+    into the render path — the whole dashboard must not blank on one bad sibling.
+    """
+    monkeypatch.setattr(config, "FLEET_HEALTH_URLS", "z:http://h/__throttle/health")
+    monkeypatch.setattr(fleet, "_fetch_json", lambda url: asyncio.sleep(0, result=(200, "<html>")))
+    rows = await fleet.refresh(0.0)
+    assert rows[0]["ok"] is False
+    assert "non-json" in rows[0]["err"]
+
+
+def test_parse_health_coerces_type_drift():
+    """A sibling returning null/string values coerces to 0, never raises."""
+    view = fleet._parse_health({"inflight": None, "queued": "4", "served": None})
+    assert view["ok"] is True
+    assert view["inflight"] == 0 and view["queued"] == 4
+
+
+async def test_concurrent_refresh_single_flights(monkeypatch):
+    """Two concurrent refresh() calls collapse to one _fetch_json (single-flight)."""
+    monkeypatch.setattr(config, "FLEET_HEALTH_URLS", "z:http://h/__throttle/health")
+    calls = 0
+
+    async def slow(url):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return 200, {"inflight": 0}
+
+    monkeypatch.setattr(fleet, "_fetch_json", slow)
+    await asyncio.gather(fleet.refresh(0.0), fleet.refresh(0.0))
+    assert calls == 1
