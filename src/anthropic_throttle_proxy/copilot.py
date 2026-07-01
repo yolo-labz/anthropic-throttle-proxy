@@ -128,8 +128,10 @@ async def _refresh_one(org: str, token: str, now: float) -> dict[str, Any]:
             view = _parse_billing(body)
         elif status == 200:
             view = {"ok": False, "status": 200, "err": "non-json billing body"}
-        elif status in (401, 403):
-            view = {"ok": False, "status": status, "err": "token lacks read:org (or rate-limited)"}
+        elif status == 401:
+            view = {"ok": False, "status": 401, "err": "bad/expired token — refresh the PAT"}
+        elif status == 403:
+            view = {"ok": False, "status": 403, "err": "lacks read:org (or secondary rate limit)"}
         elif status == 404:
             view = {"ok": False, "status": 404, "err": "no Copilot for this org"}
         else:

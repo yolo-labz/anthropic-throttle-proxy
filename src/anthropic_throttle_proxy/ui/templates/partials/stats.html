@@ -7,7 +7,7 @@
 {% endif %}
 
 {% if fleet %}
-<h2>Fleet · <span class="count">{{ fleet | length }} proxy{{ '' if fleet | length == 1 else 'ies' }}</span></h2>
+<h2>Fleet · <span class="count">{{ fleet | length }} {{ 'proxy' if fleet | length == 1 else 'proxies' }}</span></h2>
 <section class="fleet" aria-label="Sibling proxy fleet health">
   {% for f in fleet %}
   <div class="fleet-tile {{ 'up' if f.ok else 'down' }}">
@@ -46,7 +46,7 @@
   <span class="detail">every configured credential file belongs to {{ identity.email }} — switching accounts is cosmetic and half the fleet capacity is gone (a hand-/login likely wrote the browser's active account into the wrong dir).</span>
 </div>
 {% endif %}
-<section class="bearers-wrap" aria-label="Per-account usage table">
+<section class="bearers-wrap" tabindex="0" aria-label="Per-account usage table">
 <table class="bearers accounts">
   <thead>
     <tr>
@@ -121,7 +121,7 @@
 
 {% if copilot %}
 <h2>Copilot · <span class="count">{{ copilot | length }} org{{ '' if copilot | length == 1 else 's' }}</span></h2>
-<section class="bearers-wrap" aria-label="GitHub Copilot billing per org">
+<section class="bearers-wrap" tabindex="0" aria-label="GitHub Copilot billing per org">
 <table class="bearers copilot">
   <thead>
     <tr>
@@ -163,7 +163,7 @@
 
 {% if bearers %}
 <h2>Bearers · <span class="count">{{ bearers | length }}</span></h2>
-<section class="bearers-wrap" aria-label="Bearer state table">
+<section class="bearers-wrap" tabindex="0" aria-label="Bearer state table">
 <table class="bearers">
   <colgroup>
     <col class="col-bearer"><col class="col-acct"><col class="col-num"><col class="col-num"><col class="col-num"><col class="col-aimd"><col class="col-window"><col class="col-num"><col class="col-num"><col class="col-num">
