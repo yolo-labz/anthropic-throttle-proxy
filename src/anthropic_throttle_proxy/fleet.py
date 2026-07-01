@@ -18,9 +18,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import aiohttp
-
-from . import config
+from . import config, ui_http
 
 # Cross-fetch TTL. The dashboard partial re-renders every 2 s; without a cache
 # that would be one sibling hit per render per sibling. 5 s halves the load on
@@ -89,26 +87,11 @@ def _parse_health(body: Any) -> dict[str, Any]:
 
 
 async def _fetch_json(url: str) -> tuple[int, Any]:
-    """One GET against a sibling health endpoint. Returns (status, body|None).
-
-    0 status = transport error / timeout. ``body`` is None on any parse
-    failure (a 200 with a non-JSON body — e.g. an HTML error page — does NOT
-    raise; the caller treats ``status==200 + body is None`` as a bad body).
+    """One GET against a sibling health endpoint. Thin wrapper over
+    :func:`ui_http.get_json` so tests monkeypatch this seam. The token-less
+    health endpoint is public loopback, so no Authorization header is needed.
     """
-    timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
-    try:
-        async with (
-            aiohttp.ClientSession(timeout=timeout) as session,
-            session.get(url) as resp,
-        ):
-            if resp.status != 200:
-                return resp.status, None
-            try:
-                return 200, await resp.json(content_type=None)
-            except (ValueError, aiohttp.ContentTypeError):
-                return 200, None
-    except (TimeoutError, aiohttp.ClientError):
-        return 0, None
+    return await ui_http.get_json(url, timeout_s=_FETCH_TIMEOUT_S)
 
 
 def _cache_hit(url: str, now: float) -> dict[str, Any] | None:

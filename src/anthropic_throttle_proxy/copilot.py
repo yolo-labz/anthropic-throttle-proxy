@@ -22,9 +22,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import aiohttp
-
-from . import config
+from . import config, ui_http
 
 API = "https://api.github.com"
 _BILLING = "/orgs/{org}/copilot/billing"
@@ -88,32 +86,19 @@ def _parse_billing(body: Any) -> dict[str, Any]:
 
 
 async def _fetch_billing(org: str, token: str) -> tuple[int, Any]:
-    """One authenticated GET. Returns (status, body|None); 0 = transport error.
-
-    body is None on any parse failure (a 200 with non-JSON body does not
-    raise) so the caller never sees a raw exception from a malformed response.
+    """One authenticated GET. Thin wrapper over :func:`ui_http.get_json` so
+    tests monkeypatch this seam. ``body`` is None on any parse failure so the
+    caller never sees a raw exception from a malformed response.
     """
-    timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
         "User-Agent": "anthropic-throttle-proxy/ui",
     }
-    url = API + _BILLING.format(org=org)
-    try:
-        async with (
-            aiohttp.ClientSession(timeout=timeout) as session,
-            session.get(url, headers=headers) as resp,
-        ):
-            if resp.status != 200:
-                return resp.status, None
-            try:
-                return 200, await resp.json(content_type=None)
-            except (ValueError, aiohttp.ContentTypeError):
-                return 200, None
-    except (TimeoutError, aiohttp.ClientError):
-        return 0, None
+    return await ui_http.get_json(
+        API + _BILLING.format(org=org), headers=headers, timeout_s=_FETCH_TIMEOUT_S
+    )
 
 
 def _cache_hit(key: str, now: float) -> dict[str, Any] | None:
