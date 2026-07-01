@@ -177,6 +177,21 @@ ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
 # bearer_id, and dropped — never logged (invariant #2).
 ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 
+# Optional fleet view: sibling proxies to cross-fetch on the dashboard so the
+# whole fleet (e.g. the z.ai coding-plan proxy on :8766) shows in one pane.
+# Format: "LABEL:http://host:port/__throttle/health,..." Parsed lazily by
+# fleet.py — never touched on the hot path. Empty (default) hides the strip.
+FLEET_HEALTH_URLS = os.environ.get("THROTTLE_FLEET_HEALTH", "")
+
+# Optional GitHub Copilot panel: orgs + a classic PAT with read:org to read
+# /orgs/{org}/copilot/billing. UI-only, TTL-cached, failure-tolerant. Empty
+# (default) hides the panel. THROTTLE_COPILOT_TOKEN falls back to GITHUB_TOKEN
+# so a shared gh-actions-style token works without duplication.
+COPILOT_ORGS = os.environ.get("THROTTLE_COPILOT_ORGS", "")
+COPILOT_TOKEN = (
+    os.environ.get("THROTTLE_COPILOT_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
+).strip()
+
 HOP_HEADERS = {
     "connection",
     "keep-alive",

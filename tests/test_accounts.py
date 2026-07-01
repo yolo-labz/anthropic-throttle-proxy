@@ -331,7 +331,8 @@ async def test_ui_stats_renders_accounts_panel(tmp_path, monkeypatch):
     finally:
         proxy.bearer_state.pop(bid, None)
 
-    assert "Accounts · 1" in html
+    assert "Accounts ·" in html
+    assert '<span class="count">1</span>' in html  # count rendered in the styled span
     assert html.count(bid) >= 2  # accounts row + labelled bearer row
     assert ">A</span>" in html  # account label chip in both tables
     assert "62%" in html

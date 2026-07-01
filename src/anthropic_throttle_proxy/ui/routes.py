@@ -28,6 +28,8 @@ from aiohttp import web
 
 from .. import accounts as _accounts
 from .. import config as _config
+from .. import copilot as _copilot
+from .. import fleet as _fleet
 from .. import metrics as _metrics
 
 # Lazy import: keep the proxy hot path free of UI deps.
@@ -161,9 +163,14 @@ async def _collect_view() -> dict[str, object]:
     accounts_view = _accounts.account_view(bearers, now, endpoint)
     identity = _accounts.identity_state(accounts_view)
     _publish_account_gauges(endpoint, identity)
+    # Fleet + Copilot are concurrent with the account refresh — both are
+    # failure-tolerant (a down sibling / 403 org renders as such, never raises).
+    fleet_view, copilot_view = await asyncio.gather(_fleet.refresh(now), _copilot.refresh(now))
     return {
         "accounts": accounts_view,
         "identity": identity,
+        "fleet": fleet_view,
+        "copilot": copilot_view,
         "status": _compute_status(bearers, _proxy.QUEUE_MODE),
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
