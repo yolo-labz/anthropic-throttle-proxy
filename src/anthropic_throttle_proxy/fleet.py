@@ -54,11 +54,20 @@ def parse_spec(raw: str) -> list[tuple[str, str]]:
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
-    """Coerce anything to an int; bad/missing → default. Schema-drift guard."""
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
+    """Coerce a JSON scalar to int; bad/missing → default. Schema-drift guard.
+
+    Type-narrowed via isinstance so no lint suppression is needed (the
+    dashboard must never raise on a sibling returning ``{"inflight": null}``
+    or a string).
+    """
+    if isinstance(value, bool):  # bool is an int subclass — keep explicit
+        return int(value)
+    if isinstance(value, (int, float, str, bytes)):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 def _parse_health(body: Any) -> dict[str, Any]:
