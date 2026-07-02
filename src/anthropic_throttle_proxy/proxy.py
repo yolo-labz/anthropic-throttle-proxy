@@ -657,7 +657,7 @@ def _attempt_for_request(
         "cid": cid,
         "via": via,
         "model": model_label,
-    }  # noqa: E501
+    }
     return attempt
 
 
