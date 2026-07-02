@@ -1374,7 +1374,7 @@ async def health(_request: web.Request) -> web.Response:
 
 async def metrics(
     _request: web.Request,
-) -> web.Response:  # NOSONAR(python:S7503) — aiohttp handler must be async  # noqa: E501
+) -> web.Response:
     """GET /metrics — Prometheus scrape endpoint."""
     M_INFLIGHT.set(state["inflight"])
     M_QUEUED.set(state["queued"])
@@ -1389,7 +1389,7 @@ async def metrics(
 
 async def root_probe(
     request: web.Request,
-) -> web.Response:  # NOSONAR(python:S7503) — aiohttp handler must be async  # noqa: E501
+) -> web.Response:
     """GET/HEAD / — local connectivity probe, never forwarded upstream."""
     if request.method == "HEAD":
         return web.Response(status=200)

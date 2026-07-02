@@ -198,14 +198,14 @@ async def _collect_view() -> dict[str, object]:
 
 async def index(
     request: web.Request,
-) -> web.Response:  # NOSONAR(python:S7503) — aiohttp handler must be async  # noqa: E501
+) -> web.Response:
     """GET /ui — render the full HTMX dashboard page."""
     return aiohttp_jinja2.render_template("dashboard.html", request, await _collect_view())
 
 
 async def stats_partial(
     request: web.Request,
-) -> web.Response:  # NOSONAR(python:S7503) — aiohttp handler must be async  # noqa: E501
+) -> web.Response:
     """GET /ui/stats — render the live stats ``<table>`` partial (hx-polled)."""
     return aiohttp_jinja2.render_template("partials/stats.html", request, await _collect_view())
 
@@ -259,7 +259,7 @@ async def advisor(request: web.Request) -> web.Response:
 
 async def config_form(
     request: web.Request,
-) -> web.Response:  # NOSONAR(python:S7503) — aiohttp handler must be async  # noqa: E501
+) -> web.Response:
     """GET /ui/config — render the editable-knobs form partial."""
     return aiohttp_jinja2.render_template(
         _TPL_CONFIG,
@@ -341,7 +341,7 @@ async def _account_refresh_loop() -> None:
 
 async def _start_account_refresher(
     app: web.Application,
-) -> None:  # NOSONAR(python:S7503) — aiohttp lifecycle hook must be async  # noqa: E501
+) -> None:
     if _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
         app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
 
