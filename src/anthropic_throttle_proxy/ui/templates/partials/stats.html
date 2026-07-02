@@ -6,6 +6,29 @@
 </div>
 {% endif %}
 
+{% if fleet %}
+<h2>Fleet · <span class="count">{{ fleet | length }} {{ 'proxy' if fleet | length == 1 else 'proxies' }}</span></h2>
+<section class="fleet" aria-label="Sibling proxy fleet health">
+  {% for f in fleet %}
+  <div class="fleet-tile {{ 'up' if f.ok else 'down' }}">
+    <span class="fname"><span class="fdot"></span>{{ f.name }}</span>
+    {% if f.ok %}
+      <div class="fserved"><span class="served-label">served</span>{{ "{:,}".format(f.served) }}</div>
+      <div class="fegress">egress <b>{{ 'ok' if f.upstream_egress_ok else 'down' }}</b></div>
+      <div class="fmeta">
+        <span>inflight <b>{{ f.inflight }}</b></span>
+        <span>queued <b>{{ f.queued }}</b></span>
+        <span>cap <b>{{ f.max_concurrent }}</b></span>
+        <span class="fupstream" title="{{ f.upstream }}">{{ f.upstream }}</span>
+      </div>
+    {% else %}
+      <div class="ferr">{{ f.err }}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
 <div class="cards">
   <div class="card"><div class="label">in-flight</div><div class="value">{{ inflight }}</div></div>
   <div class="card"><div class="label">queued</div><div class="value">{{ queued }}</div></div>
@@ -15,7 +38,7 @@
 </div>
 
 {% if accounts %}
-<h2>Accounts · {{ accounts | length }}</h2>
+<h2>Accounts · <span class="count">{{ accounts | length }}</span></h2>
 {% if identity and identity.collapsed %}
 <div class="status crit identity-banner" role="alert">
   <span class="dot"></span>
@@ -23,20 +46,20 @@
   <span class="detail">every configured credential file belongs to {{ identity.email }} — switching accounts is cosmetic and half the fleet capacity is gone (a hand-/login likely wrote the browser's active account into the wrong dir).</span>
 </div>
 {% endif %}
-<section class="bearers-wrap" aria-label="Per-account usage table">
+<section class="bearers-wrap" tabindex="0" aria-label="Per-account usage table">
 <table class="bearers accounts">
   <thead>
     <tr>
       <th scope="col" title="Label from THROTTLE_ACCOUNT_CRED_PATHS + the account email from /api/oauth/profile">account</th>
       <th scope="col" title="Current bearer hash derived from the account's credentials file (rotates with the access token, ~8h)">bearer</th>
-      <th scope="col" title="Where the usage reading comes from: endpoint = /api/oauth/usage (account-scoped server truth) · proxy = this proxy's last-seen unified headers · none = no reading">src</th>
-      <th scope="col" title="Access-token freshness from the credentials file. Expired beyond 90 min = the refresh pipeline (token broker) is failing.">token</th>
-      <th scope="col" title="5h unified-window utilisation. 'reset' = the window rolled over since the reading.">5h window</th>
-      <th scope="col" title="7d unified-window utilisation (all models)">7d window</th>
-      <th scope="col" title="Model-metered 7d windows (Sonnet / Opus) when the plan reports them">7d sonnet·opus</th>
+      <th scope="col" title="Where the usage reading comes from: endpoint = /api/oauth/usage · proxy = last-seen unified headers · none = no reading">src</th>
+      <th scope="col" title="Access-token freshness. Expired beyond 90 min = the refresh pipeline (token broker) is failing.">token</th>
+      <th scope="col" title="5h unified-window utilisation. 'reset' = the window rolled over since the reading.">5h</th>
+      <th scope="col" title="7d unified-window utilisation (all models)">7d</th>
+      <th scope="col" title="Model-metered 7d windows (Sonnet / Opus) when the plan reports them">7d S·O</th>
       <th scope="col" title="Usage credits spent this month (extra usage beyond plan windows)">credits</th>
-      <th scope="col" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = exactly on budget; ≥1.15× = the fleet-pace alert threshold.">pace</th>
-      <th scope="col" title="Projected time until the 7d window exhausts at the current pace. Shown only when it lands before the cycle resets.">7d ETA</th>
+      <th scope="col" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = on budget; ≥1.15× = fleet-pace alert.">pace</th>
+      <th scope="col" title="Projected time until 7d exhausts at current pace. Only when it lands before reset.">7d ETA</th>
     </tr>
   </thead>
   <tbody>
@@ -44,7 +67,7 @@
     <tr>
       <td>
         <span class="acct">{{ a.label }}</span>
-        {% if a.email %}<div class="muted email">{{ a.email }}</div>{% endif %}
+        {% if a.email %}<div class="email">{{ a.email }}</div>{% endif %}
       </td>
       <td>
         {% if a.bearer_id %}
@@ -59,44 +82,33 @@
         {% if a.endpoint_err %}<div class="warn-text endpoint-err" title="{{ a.endpoint_err }}">⚠</div>{% endif %}
       </td>
       <td>
-        {% if a.token %}
-          <span class="tok tok-{{ a.token.state }}">{{ a.token.detail }}</span>
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
+        {% if a.token %}<span class="tok tok-{{ a.token.state }}">{{ a.token.detail }}</span>
+        {% else %}<span class="muted">—</span>{% endif %}
       </td>
       {% for w in [a.win5, a.win7] %}
       <td>
         {% if w %}
-          {% if w.stale %}
-            <span class="muted" title="Last reading predates this window's reset — effectively 0%">0% · reset</span>
+          {% if w.stale %}<span class="muted" title="Last reading predates this window's reset — effectively 0%">0% · reset</span>
           {% else %}
             <span class="util">
               <span class="bar"><i class="{% if w.rejected or w.pct >= 90 %}crit{% elif w.pct >= 75 %}warn{% endif %}" style="width: {{ w.pct }}%"></i></span>
               <span class="pct">{{ w.pct }}%</span>
               {% if w.rejected %}<span class="tag-rejected">rejected</span>{% endif %}
             </span>
-            {% if w.reset_in %}<span class="muted reset-in">resets {{ w.reset_in }}</span>{% endif %}
+            {% if w.reset_in %}<span class="reset-in">resets {{ w.reset_in }}</span>{% endif %}
           {% endif %}
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
+        {% else %}<span class="muted">—</span>{% endif %}
       </td>
       {% endfor %}
       <td>
         {% if a.sonnet or a.opus %}
           {% if a.sonnet %}<span class="muted">S</span> <span class="pct">{{ a.sonnet.pct }}%</span>{% endif %}
           {% if a.opus %}<span class="muted">O</span> <span class="pct{% if a.opus.pct >= 90 %} warn-text{% endif %}">{{ a.opus.pct }}%</span>{% endif %}
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
+        {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="num">
-        {% if a.extra and a.extra.used is not none %}
-          {{ "%.2f" | format(a.extra.used) }} {{ a.extra.currency }}
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
+        {% if a.extra and a.extra.used is not none %}{{ "%.2f" | format(a.extra.used) }} {{ a.extra.currency }}
+        {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="num{% if a.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(a.pace) if a.pace is not none else "—" }}</td>
       <td class="num">{{ "in " + a.eta if a.eta else "—" }}</td>
@@ -107,45 +119,78 @@
 </section>
 {% endif %}
 
+{% if copilot %}
+<h2>Copilot · <span class="count">{{ copilot | length }} org{{ '' if copilot | length == 1 else 's' }}</span></h2>
+<section class="bearers-wrap" tabindex="0" aria-label="GitHub Copilot billing per org">
+<table class="bearers copilot">
+  <thead>
+    <tr>
+      <th scope="col" title="GitHub organization slug (THROTTLE_COPILOT_ORGS)">org</th>
+      <th scope="col" title="Copilot plan type from /orgs/{org}/copilot/billing">plan</th>
+      <th scope="col" title="Assigned seats: active this cycle / total">seats</th>
+      <th scope="col" title="IDE chat / CLI / platform chat feature flags">features</th>
+      <th scope="col" title="Seat-management setting">seat mgmt</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for c in copilot %}
+    <tr>
+      <td><span class="org">{{ c.org }}</span></td>
+      {% if c.ok %}
+        <td><span class="plan">{{ c.plan_type }}</span></td>
+        <td>
+          {% set pct = 100 if c.seats_total == 0 else (c.seats_active * 100 / c.seats_total) | round %}
+          <span class="seat-bar" title="{{ c.seats_active }} active / {{ c.seats_total }} total">
+            <span class="seat-track"><i style="width: {{ [pct, 100] | min }}%"></i></span>
+            {{ c.seats_active }}/{{ c.seats_total }}
+          </span>
+        </td>
+        <td>
+          <span class="feat {{ 'on' if c.ide_chat == 'enabled' else 'off' }}">ide</span>
+          <span class="feat {{ 'on' if c.cli == 'enabled' else 'off' }}">cli</span>
+          <span class="feat {{ 'on' if c.platform_chat == 'enabled' else 'off' }}">web</span>
+        </td>
+        <td><span class="muted">{{ c.seat_management }}</span></td>
+      {% else %}
+        <td class="err-cell" colspan="4">{{ c.err }}</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
 {% if bearers %}
-<h2>Bearers · {{ bearers | length }}</h2>
-<section class="bearers-wrap" aria-label="Bearer state table">
+<h2>Bearers · <span class="count">{{ bearers | length }}</span></h2>
+<section class="bearers-wrap" tabindex="0" aria-label="Bearer state table">
 <table class="bearers">
   <colgroup>
-    <col class="col-bearer">
-    <col class="col-acct">
-    <col class="col-num">
-    <col class="col-num">
-    <col class="col-num">
-    <col class="col-aimd">
-    <col class="col-window">
-    <col class="col-num">
-    <col class="col-num">
-    <col class="col-num">
+    <col class="col-bearer"><col class="col-acct"><col class="col-num"><col class="col-num"><col class="col-num"><col class="col-aimd"><col class="col-window"><col class="col-num"><col class="col-num"><col class="col-num">
   </colgroup>
   <thead>
     <tr>
       <th scope="col" title="8-char sha256 prefix of the Authorization bearer (raw token never logged)">bearer</th>
-      <th scope="col" title="Account label when the hash matches a configured credentials file (THROTTLE_ACCOUNT_CRED_PATHS)">acct</th>
+      <th scope="col" title="Account label when the hash matches a configured credentials file">acct</th>
       <th scope="col" title="in-flight requests through this bearer right now">inflight</th>
       <th scope="col" title="requests queued waiting for a free slot">queued</th>
       <th scope="col" title="lifetime served counter since this proxy instance started">served</th>
-      <th scope="col" class="th-center" title="AIMD: live cap / hard ceiling. Live shrinks below hard on 429/503 pushback.">aimd</th>
-      <th scope="col" title="5h unified-window utilisation (OAuth/Max only). Proactive shrink fires at utilization_target.">5h window</th>
-      <th scope="col" aria-describedby="hdr-reqleft" title="anthropic-ratelimit-requests-remaining (API-key tiers only)">req left</th>
-      <th scope="col" aria-describedby="hdr-retryafter" title="seconds the proxy is honouring from the upstream Retry-After header">retry-after</th>
-      <th scope="col" aria-describedby="hdr-clients" title="distinct client_id values currently sharing this bearer's queue">clients</th>
+      <th scope="col" class="th-center" title="AIMD: live cap / hard ceiling. Live shrinks below hard on 429/503.">aimd</th>
+      <th scope="col" title="5h unified-window utilisation (OAuth/Max only).">5h window</th>
+      <th scope="col" title="anthropic-ratelimit-requests-remaining (API-key tiers only)">req left</th>
+      <th scope="col" title="seconds the proxy is honouring from the upstream Retry-After header">retry-after</th>
+      <th scope="col" title="distinct client_id values currently sharing this bearer's queue">clients</th>
     </tr>
   </thead>
   <tbody>
     {% for b in bearers %}
     <tr>
-      <td><code title="copy via row select; bearer hash is sha256-truncated">{{ b.bearer_id }}</code></td>
+      <td><code title="sha256-truncated bearer hash">{{ b.bearer_id }}</code></td>
       <td>{% if b.account %}<span class="acct">{{ b.account }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="num">
         {% set lcap = (b.limiter.max_concurrent if b.limiter else 0) %}
         {% set sat = ((b.inflight / lcap) * 100) | round(0) | int if lcap > 0 else 0 %}
-        <span class="util compact" title="{{ b.inflight }} of {{ lcap }} slots in use ({{ sat }}%)">
+        <span class="util compact" title="{{ b.inflight }} of {{ lcap }} slots ({{ sat }}%)">
           <span class="bar"><i class="{% if sat >= 100 %}crit{% elif sat >= 75 %}warn{% endif %}" style="width: {{ [sat, 100] | min }}%"></i></span>
           <span class="pct">{{ b.inflight }}</span>
         </span>
@@ -154,44 +199,32 @@
       <td class="num">{{ "{:,}".format(b.served) }}</td>
       <td class="td-center">
         {% if b.limiter %}
-          {% set live = b.limiter.max_concurrent %}
-          {% set hard = b.limiter.hard_max %}
-          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}" title="live cap {{ live }} / hard ceiling {{ hard }} (shrinks under 429/503)">{{ live }}/{{ hard }}</span>
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
+          {% set live = b.limiter.max_concurrent %}{% set hard = b.limiter.hard_max %}
+          <span class="aimd{% if live <= 1 and hard > 1 %} floor{% elif live < hard %} shrunk{% endif %}" title="live cap {{ live }} / hard {{ hard }}">{{ live }}/{{ hard }}</span>
+        {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td>
         {% if b.unified and b.unified.util_5h is not none %}
-          {% set pct = (b.unified.util_5h * 100) | round(0) | int %}
-          {% set rejected = b.unified.status == "rejected" %}
-          <span class="util" title="5h unified-window utilisation (OAuth/Max only)">
+          {% set pct = (b.unified.util_5h * 100) | round(0) | int %}{% set rejected = b.unified.status == "rejected" %}
+          <span class="util" title="5h unified-window utilisation">
             <span class="bar"><i class="{% if rejected or pct >= 90 %}crit{% elif pct >= 75 %}warn{% endif %}" style="width: {{ [pct, 100] | min }}%"></i></span>
             <span class="pct">{{ pct }}%</span>
             {% if rejected %}<span class="tag-rejected">rejected</span>{% endif %}
           </span>
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
+        {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="num">{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
       <td class="num">{{ (b.last_ratelimit or {}).get("retry-after", "—") }}</td>
-      <td class="num">
-        {% if b.limiter %}
-          {{ (b.limiter.queued_per_client or {}) | length }}
-        {% else %}
-          —
-        {% endif %}
-      </td>
+      <td class="num">{% if b.limiter %}{{ (b.limiter.queued_per_client or {}) | length }}{% else %}—{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </section>
 <div class="sr-only">
-  <span id="hdr-reqleft">Anthropic ratelimit requests-remaining count, populated for API-key bearers only.</span>
-  <span id="hdr-retryafter">Seconds the proxy is currently honouring from the upstream Retry-After header.</span>
-  <span id="hdr-clients">Distinct client_id values currently sharing this bearer's fair queue.</span>
+  <span id="hdr-reqleft">Anthropic ratelimit requests-remaining count, API-key bearers only.</span>
+  <span id="hdr-retryafter">Seconds honoured from the upstream Retry-After header.</span>
+  <span id="hdr-clients">Distinct client_id values sharing this bearer's fair queue.</span>
 </div>
 {% else %}
   <p class="muted">no bearers yet — point a client at this proxy to start.</p>
