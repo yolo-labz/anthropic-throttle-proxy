@@ -651,7 +651,13 @@ def _attempt_for_request(
 ) -> _Attempt:
     attempt = _Attempt()
     attempt.started_at = time.time()
-    attempt.context = dict(method=request.method, bid=bid, cid=cid, via=via, model=model_label)
+    attempt.context = {
+        "method": request.method,
+        "bid": bid,
+        "cid": cid,
+        "via": via,
+        "model": model_label,
+    }
     return attempt
 
 
@@ -732,6 +738,20 @@ async def _try_forward(
     return None, exc
 
 
+def _maybe_fast_fail_throttle_direct(
+    bid: str,
+    path: str,
+    response: web.StreamResponse,
+    attempt: _Attempt,
+) -> web.Response | None:
+    """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
+    if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
+        return None
+    pause = _parse_retry_after(attempt.meta)
+    pause = pause if pause > 0 else config.AIMD_BACKOFF_S
+    return _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
+
+
 async def _retry_direct_once(
     request: web.Request,
     headers: Mapping[str, str],
@@ -793,13 +813,8 @@ async def _retry_direct_once(
         # Retry-After 429 instead of the 401 credential re-read nudge. Short
         # retry-afters fall through (fast-fail returns None) unchanged. ``bid``
         # is empty only in unit tests that bypass the nudge wiring.
-        if bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES:
-            pause = _parse_retry_after(attempt.meta)
-            pause = pause if pause > 0 else config.AIMD_BACKOFF_S
-            if (
-                ff := _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
-            ) is not None:
-                return ff
+        if (ff := _maybe_fast_fail_throttle_direct(bid, path, response, attempt)) is not None:
+            return ff
         return response
     log(f"upstream-error final path=/{path}: {exc2!r}")
     attempt.final_status = 502
@@ -880,6 +895,16 @@ def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:
     if retry_after > 0:
         return retry_after, False
     return max(0.0, config.AIMD_BACKOFF_S), True
+
+
+def _note_retry_after_if_set(
+    limiter: FairBearerLimiter, meta: Mapping[str, str] | None
+) -> tuple[float, bool]:
+    """Apply pushback pause to limiter when one is set; return (pause, synthetic_pause)."""
+    pause, synthetic_pause = _pushback_pause(meta)
+    if pause > 0:
+        limiter.note_retry_after(pause)
+    return pause, synthetic_pause
 
 
 # Cache of the active-account credential's bearer id, keyed by (mtime_ns, size)
@@ -992,9 +1017,7 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
         # quota gate, not evidence that the current concurrency ceiling is too
         # high, so hold admission until the body reset instead of AIMD shrinking.
-        pause, synthetic_pause = _pushback_pause(attempt.meta)
-        if pause > 0:
-            limiter.note_retry_after(pause)
+        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta)
         code = (attempt.meta or {}).get("zai-error-code", "unknown")
         reset = (attempt.meta or {}).get("zai-reset-epoch", "unknown")
         log(
@@ -1010,9 +1033,7 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
         if new_max is not None:
             M_AIMD_MAX.labels(bearer=bid).set(new_max)
-        pause, synthetic_pause = _pushback_pause(attempt.meta)
-        if pause > 0:
-            limiter.note_retry_after(pause)
+        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta)
         log(
             f"aimd-shrink bid={bid} status={final_status} "
             f"max_concurrent={new_max} retry_after={retry_after} "
@@ -1022,9 +1043,7 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         # 529 = upstream overloaded (not our usage): honor any retry-after but
         # do NOT shrink the ceiling.
         M_AIMD_OVERLOAD.labels(bearer=bid).inc()
-        pause, synthetic_pause = _pushback_pause(attempt.meta)
-        if pause > 0:
-            limiter.note_retry_after(pause)
+        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta)
         log(
             f"overload bid={bid} status={final_status} retry_after={retry_after} "
             f"pause={pause} synthetic_pause={synthetic_pause} (no shrink)"
@@ -1353,7 +1372,9 @@ async def health(_request: web.Request) -> web.Response:
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
 
-async def metrics(_request: web.Request) -> web.Response:  # NOSONAR: aiohttp handler
+async def metrics(
+    _request: web.Request,
+) -> web.Response:
     """GET /metrics — Prometheus scrape endpoint."""
     M_INFLIGHT.set(state["inflight"])
     M_QUEUED.set(state["queued"])
@@ -1366,7 +1387,9 @@ async def metrics(_request: web.Request) -> web.Response:  # NOSONAR: aiohttp ha
     )
 
 
-async def root_probe(request: web.Request) -> web.Response:  # NOSONAR: aiohttp handler
+async def root_probe(
+    request: web.Request,
+) -> web.Response:
     """GET/HEAD / — local connectivity probe, never forwarded upstream."""
     if request.method == "HEAD":
         return web.Response(status=200)

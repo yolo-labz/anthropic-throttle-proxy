@@ -174,7 +174,7 @@ def _parse_zai_reset_epoch(raw: object) -> float | None:
     normalized = text.replace(" ", "T")
     if normalized.endswith("Z"):
         normalized = normalized[:-1] + "+00:00"
-    if not re.search(r"(?:[+-]\d{2}:?\d{2})$", normalized):
+    if not re.search(r"[+-]\d{2}:?\d{2}$", normalized):
         normalized += "+08:00"
     try:
         return datetime.fromisoformat(normalized).timestamp()

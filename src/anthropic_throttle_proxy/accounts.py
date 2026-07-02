@@ -216,6 +216,50 @@ def _endpoint_usage(
     return None, entry.get("err")
 
 
+def _fields_from_endpoint_usage(usage: dict[str, Any], now: float) -> dict[str, Any]:
+    """Build display fields from a fresh /api/oauth/usage reading."""
+    # The endpoint has no status field; at/over 100% the window IS rejecting — style it so.
+    status_5h = "rejected" if (usage["util_5h"] or 0) >= 1.0 else None
+    status_7d = "rejected" if (usage["util_7d"] or 0) >= 1.0 else None
+    pace, eta = _pace_eta(usage["util_7d"], usage["reset_7d"], now)
+    sonnet_raw, opus_raw = usage["sonnet"], usage["opus"]
+    return {
+        "src": "endpoint",
+        "win5": _window_view(usage["util_5h"], usage["reset_5h"], status_5h, now),
+        "win7": _window_view(usage["util_7d"], usage["reset_7d"], status_7d, now),
+        "pace": pace,
+        "eta": eta,
+        "sonnet": _window_view(sonnet_raw["util"], sonnet_raw["reset"], None, now)
+        if sonnet_raw
+        else None,
+        "opus": _window_view(opus_raw["util"], opus_raw["reset"], None, now) if opus_raw else None,
+        "extra": usage["extra"],
+    }
+
+
+def _fields_from_proxy_headers(bearer: dict[str, Any] | None, now: float) -> dict[str, Any]:
+    """Build display fields from this proxy's last-seen unified headers."""
+    unified = (bearer or {}).get("unified") or {}
+    pace, eta = _pace_eta(unified.get("util_7d"), unified.get("reset_7d"), now)
+    return {
+        "src": "proxy" if unified else "none",
+        "win5": _window_view(
+            unified.get("util_5h"),
+            unified.get("reset_5h"),
+            unified.get("status_5h") or unified.get("status"),
+            now,
+        ),
+        "win7": _window_view(
+            unified.get("util_7d"), unified.get("reset_7d"), unified.get("status_7d"), now
+        ),
+        "pace": pace,
+        "eta": eta,
+        "sonnet": None,
+        "opus": None,
+        "extra": None,
+    }
+
+
 def account_view(
     bearers: list[dict[str, Any]],
     now: float,
@@ -235,30 +279,11 @@ def account_view(
     for acct in account_snapshot():
         bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
         usage, endpoint_err = _endpoint_usage(endpoint, acct["path"], now)
-        if usage is not None:
-            src = "endpoint"
-            # The endpoint has no status field; at/over 100% the window IS
-            # rejecting — style it so.
-            status_5h = "rejected" if (usage["util_5h"] or 0) >= 1.0 else None
-            status_7d = "rejected" if (usage["util_7d"] or 0) >= 1.0 else None
-            win5 = _window_view(usage["util_5h"], usage["reset_5h"], status_5h, now)
-            win7 = _window_view(usage["util_7d"], usage["reset_7d"], status_7d, now)
-            pace, eta = _pace_eta(usage["util_7d"], usage["reset_7d"], now)
-            sonnet, opus, extra = usage["sonnet"], usage["opus"], usage["extra"]
-        else:
-            unified = (bearer or {}).get("unified") or {}
-            src = "proxy" if unified else "none"
-            win5 = _window_view(
-                unified.get("util_5h"),
-                unified.get("reset_5h"),
-                unified.get("status_5h") or unified.get("status"),
-                now,
-            )
-            win7 = _window_view(
-                unified.get("util_7d"), unified.get("reset_7d"), unified.get("status_7d"), now
-            )
-            pace, eta = _pace_eta(unified.get("util_7d"), unified.get("reset_7d"), now)
-            sonnet = opus = extra = None
+        fields = (
+            _fields_from_endpoint_usage(usage, now)
+            if usage is not None
+            else _fields_from_proxy_headers(bearer, now)
+        )
         out.append(
             {
                 "label": acct["label"],
@@ -266,19 +291,10 @@ def account_view(
                 "error": acct["error"],
                 "seen": bearer is not None,
                 "email": account_email(acct["path"]),
-                "src": src,
                 "endpoint_err": endpoint_err,
                 "token": _token_view(acct["expires_at"], now),
-                "win5": win5,
-                "win7": win7,
-                "sonnet": _window_view(sonnet["util"], sonnet["reset"], None, now)
-                if sonnet
-                else None,
-                "opus": _window_view(opus["util"], opus["reset"], None, now) if opus else None,
-                "extra": extra,
-                "pace": pace,
-                "pace_warn": pace is not None and pace >= PACE_WARN,
-                "eta": eta,
+                "pace_warn": fields["pace"] is not None and fields["pace"] >= PACE_WARN,
+                **fields,
             }
         )
     return out
