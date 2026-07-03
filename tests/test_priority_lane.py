@@ -184,6 +184,49 @@ async def test_reserve_zero_demotes_priority_to_normal(monkeypatch) -> None:
     await lim.release()
 
 
+async def test_reserve_lowered_to_zero_migrates_parked_lane_waiters(monkeypatch) -> None:
+    """Codex round-2 MAJOR: reserve hot-tuned to 0 with lane waiters already
+    parked must not strand them — the next dispatch event migrates them into
+    the normal queue, and they complete DEMOTED (result False) so release
+    accounting matches the pool that actually granted the slot."""
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 1)
+    lim = limiter.FairBearerLimiter(1, "fair")
+    await lim.acquire("p1", priority=True)  # lane (1) full
+    queued = asyncio.create_task(lim.acquire("p2", priority=True))
+    await _yield_loop()
+    assert lim.snapshot()["priority_queued"] == 1
+
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 0)  # lane disabled
+    await lim.release(priority=True)  # frees main capacity + triggers dispatch
+    await _yield_loop()
+    assert queued.done()
+    assert queued.result() is False  # dispatched via the NORMAL pool
+    assert lim.snapshot()["priority_queued"] == 0
+    assert lim.priority_inflight == 0
+    await lim.release()  # demoted slot releases as normal — no counter drift
+    assert lim.inflight == 0
+
+
+async def test_reserve_raised_kick_wakes_parked_lane_waiters(monkeypatch) -> None:
+    """Codex round-2 MAJOR (raise direction): raising the reserve must wake
+    already-parked lane waiters via kick_existing_limiters — without waiting
+    for unrelated traffic to trigger a dispatch event."""
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 1)
+    lim = limiter.FairBearerLimiter(1, "fair")
+    monkeypatch.setitem(config.bearer_limiters, "testbearer", lim)
+    await lim.acquire("p1", priority=True)  # lane (1) full
+    queued = asyncio.create_task(lim.acquire("p2", priority=True))
+    await _yield_loop()
+    assert not queued.done()
+
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 2)
+    await limiter.kick_existing_limiters()  # what _set_priority_reserve_slots schedules
+    await _yield_loop()
+    assert queued.done()
+    assert queued.result() is True  # dispatched via the (now larger) lane
+    assert lim.priority_inflight == 2
+
+
 async def test_priority_cancel_cleans_priority_queue(monkeypatch) -> None:
     """A cancelled priority waiter is pruned from the lane queue (no leak)."""
     monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 1)

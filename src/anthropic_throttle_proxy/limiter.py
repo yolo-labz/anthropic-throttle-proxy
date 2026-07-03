@@ -68,6 +68,27 @@ async def retune_existing_limiters(hard_max: int, *, live_floor: int | None = No
         await _retune_limiter_hard_max(bid, lim, hard_max, live_floor=live_floor)
 
 
+async def kick_existing_limiters() -> None:
+    """Re-run dispatch on every allocated limiter after a knob retune.
+
+    Queued waiters only wake on acquire/release events; a hot-tune that
+    changes dispatch math (e.g. PRIORITY_RESERVE_SLOTS raised, or lowered to
+    0 which migrates queued lane waiters to the normal queue) must kick the
+    loop itself or already-parked futures sit stranded until unrelated
+    traffic arrives (Codex round-2 MAJOR on PR #73).
+    """
+    if bearer_limiter_lock is not None:
+        async with bearer_limiter_lock:
+            limiters = list(config.bearer_limiters.values())
+    else:
+        # Lock is wired in proxy.main(); before that (unit tests) the registry
+        # is only touched from one task, so a bare snapshot is safe.
+        limiters = list(config.bearer_limiters.values())
+    for lim in limiters:
+        async with lim._lock:
+            lim._try_dispatch()
+
+
 class FairBearerLimiter:
     """Per-bearer concurrency limiter with weighted-fair-queueing across clients.
 
@@ -336,26 +357,32 @@ class FairBearerLimiter:
                     self._rr_order.append(client_id)
             self._try_dispatch()
         try:
-            await fut
+            # The dispatcher stamps the future's result with the lane that
+            # actually granted the slot (True = priority pool). This survives
+            # a mid-wait retune: reserve dropping to 0 migrates queued lane
+            # waiters into the normal queue, and whichever loop dispatches is
+            # the one whose accounting the caller must undo on release.
+            effective: bool = await fut
         except asyncio.CancelledError:
-            await self._cancel_cleanup(client_id, fut, priority=priority)
+            await self._cancel_cleanup(client_id, fut)
             raise
-        return priority
+        return effective
 
-    async def _cancel_cleanup(
-        self, client_id: str, fut: asyncio.Future, *, priority: bool = False
-    ) -> None:
+    async def _cancel_cleanup(self, client_id: str, fut: asyncio.Future) -> None:
         """Undo a queued/dispatched slot when the caller is cancelled.
 
         Either removes the still-pending future from the client deque, or — if
         the slot was dispatched between ``set_result`` and the cancellation
-        reaching us — releases the slot so it isn't leaked.
+        reaching us — releases the slot so it isn't leaked. The future's
+        result carries the lane that dispatched it (True = priority pool), so
+        the undo hits the same counter the dispatcher bumped even when a
+        retune migrated the waiter between lanes while it was parked.
         """
         async with self._lock:
             removed = self._remove_pending(client_id, fut)
             if not removed and fut.done() and not fut.cancelled() and fut.exception() is None:
                 self.inflight -= 1
-                if priority:
+                if fut.result():
                     self.priority_inflight -= 1
                 self._try_dispatch()
 
@@ -411,7 +438,18 @@ class FairBearerLimiter:
         starve it and the main pool cannot overrun the AIMD ceiling.
         Total upstream concurrency is bounded by
         ``max_concurrent + PRIORITY_RESERVE_SLOTS``.
+
+        Dispatched futures are stamped with the lane that granted the slot
+        (``set_result(True)`` = priority pool) so the awaiting ``acquire``
+        returns the effective lane even if a retune moved the waiter while
+        parked.
         """
+        if config.PRIORITY_RESERVE_SLOTS <= 0 and self._priority_rr:
+            # Reserve hot-tuned to 0 with lane waiters already parked: with the
+            # lane closed nothing would ever dispatch them (Codex round-2 MAJOR
+            # on PR #73) — migrate them into the normal RR structures. They
+            # dispatch via the normal loop below, which stamps them demoted.
+            self._migrate_priority_to_normal()
         while self.priority_inflight < config.PRIORITY_RESERVE_SLOTS and self._priority_rr:
             client_id = self._priority_rr.popleft()
             q = self._priority_queues.get(client_id)
@@ -427,7 +465,7 @@ class FairBearerLimiter:
                 continue
             self.inflight += 1
             self.priority_inflight += 1
-            fut.set_result(None)
+            fut.set_result(True)
         while (self.inflight - self.priority_inflight) < self.max_concurrent and self._rr_order:
             client_id = self._rr_order.popleft()
             q = self._queues.get(client_id)
@@ -442,7 +480,24 @@ class FairBearerLimiter:
             if fut.cancelled():
                 continue
             self.inflight += 1
-            fut.set_result(None)
+            fut.set_result(False)
+
+    def _migrate_priority_to_normal(self) -> None:
+        """Move all parked lane waiters into the normal queues. Holds ``_lock``.
+
+        Preserves per-client grouping: each client's lane deque is appended to
+        its normal deque (arrival order within the client kept) and the client
+        joins the normal rotation if not already in it.
+        """
+        for client_id in list(self._priority_rr):
+            q = self._priority_queues.pop(client_id, None)
+            if not q:
+                continue
+            self._queues.setdefault(client_id, collections.deque()).extend(q)
+            if client_id not in self._rr_order:
+                self._rr_order.append(client_id)
+        self._priority_rr.clear()
+        self._priority_queues.clear()
 
     def snapshot(self) -> dict[str, object]:
         """Cheap dict snapshot for /__throttle/health."""

@@ -1299,7 +1299,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        async with limiter.slot(cid, priority=is_priority):
+        async with limiter.slot(cid, priority=is_priority) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -1308,8 +1308,10 @@ async def handler(request: web.Request) -> web.StreamResponse:
             try:
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "post-queue", attempt)
+                # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
+                # retune can demote) — log that, not the requested one.
                 _log_request_start(
-                    request, path, bid, cid, via, model_label, req_max_tokens, is_priority
+                    request, path, bid, cid, via, model_label, req_max_tokens, held.priority
                 )
                 # Honor any outstanding upstream Retry-After for this bearer before
                 # we dispatch — don't spin a request against a known-closed window.

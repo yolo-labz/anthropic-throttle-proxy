@@ -355,9 +355,32 @@ def _set_aimd_min(v: int) -> None:
     _schedule_existing_limiter_retune(live_floor=v)
 
 
+def _schedule_limiter_kick() -> None:
+    """Best-effort dispatch kick for already-allocated bearer limiters.
+
+    Queued waiters only wake on acquire/release events; a retune that changes
+    dispatch math (reserve raised, or lowered to 0 which migrates parked lane
+    waiters to the normal queue) must kick the loop itself or those futures
+    sit stranded until unrelated traffic arrives.
+    """
+    try:
+        import asyncio
+        import importlib
+
+        loop = asyncio.get_running_loop()
+        limiter_mod = importlib.import_module("anthropic_throttle_proxy.limiter")
+        loop.create_task(limiter_mod.kick_existing_limiters())
+    except RuntimeError:
+        # No running event loop during import/tests; the next request will
+        # re-enter _try_dispatch anyway.
+        return
+
+
 def _set_priority_reserve_slots(v: int) -> None:
-    # Read live by FairBearerLimiter._try_dispatch / slot() — no retune needed.
+    # Dispatch math reads this live; kick so already-parked waiters re-evaluate
+    # (raise → lane dispatches now; 0 → parked lane waiters migrate to normal).
     _set_module_attr(_MOD_CONFIG, "PRIORITY_RESERVE_SLOTS", v)
+    _schedule_limiter_kick()
 
 
 def _set_priority_max_tokens(v: int) -> None:
