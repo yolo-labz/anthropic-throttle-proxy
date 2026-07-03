@@ -931,7 +931,9 @@ def _budget_under_pressure(meta: Mapping[str, str] | None) -> bool:
     if any(s in ("allowed_warning", "rejected") for s in statuses):
         return True
     binding = _binding_utilization(unified)
-    return binding is not None and binding >= UTILIZATION_WARN
+    if binding is None:
+        return True
+    return binding >= UTILIZATION_WARN
 
 
 def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:

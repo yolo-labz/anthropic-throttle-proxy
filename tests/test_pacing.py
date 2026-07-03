@@ -70,6 +70,8 @@ def test_budget_under_pressure_classifies_unified_headers():
     # Utilization at/over the warn line → budget even while status still "allowed".
     hot = {**_ALLOWED_LOW, "anthropic-ratelimit-unified-5h-utilization": "0.95"}
     assert proxy._budget_under_pressure(hot) is True
+    # Partial/malformed unified headers cannot prove a concurrency-only 429.
+    assert proxy._budget_under_pressure({"anthropic-ratelimit-unified-status": "allowed"}) is True
     # No unified headers (API-key traffic) → conservative: assume budget.
     assert proxy._budget_under_pressure({}) is True
     assert proxy._budget_under_pressure(None) is True
