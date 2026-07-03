@@ -101,11 +101,19 @@ class FairBearerLimiter:
         self._rr_order: collections.deque[str] = collections.deque()
         # Priority lane: short/latency-sensitive calls (the /goal Stop-hook
         # evaluator — small max_tokens, no tools) park HERE, not the RR queue,
-        # and dispatch against RESERVED headroom above max_concurrent so they
-        # never starve behind long generations holding every main slot (verified
-        # 03/07: a 24s evaluator waited 46s in the FIFO past its 30s client
-        # timeout → disconnected → CC "sonnet" error → /goal halts).
-        self._priority_queue: collections.deque[asyncio.Future] = collections.deque()
+        # and dispatch against a DEDICATED pool of PRIORITY_RESERVE_SLOTS that
+        # is independent of the main pool, so they never starve behind long
+        # generations holding every main slot (verified 03/07: a 24s evaluator
+        # waited 46s in the FIFO past its 30s client timeout → disconnected →
+        # CC "sonnet" error → /goal halts). Independence matters both ways:
+        # a post-shrink main pool with stale inflight above the new ceiling
+        # cannot pinch the lane shut, and sustained priority load cannot eat
+        # main-pool slots (Codex review of PR #73, BLOCKER + starvation MAJOR).
+        # Same per-client round-robin structure as the main queue so one chatty
+        # client cannot starve a sibling's evaluator inside the lane either.
+        self._priority_queues: dict[str, collections.deque[asyncio.Future]] = {}
+        self._priority_rr: collections.deque[str] = collections.deque()
+        self.priority_inflight = 0
         self._lock = asyncio.Lock()
         # _last_throttle_at: monotonic-ish wall clock of the last shrink.
         # _successes_since_throttle: consecutive 2xx since that shrink.
@@ -141,6 +149,10 @@ class FairBearerLimiter:
 
         ``priority=True`` routes a short/latency-sensitive call through the
         reserved latency-lane so it does not starve behind long generations.
+        The effective lane is decided once inside :meth:`acquire` (a reserve
+        of 0 demotes the call to normal traffic) and echoed back so
+        acquire/release accounting stays symmetric for the call's lifetime
+        even if the knob is retuned mid-flight.
         """
         return _FairSlotContext(self, client_id, priority)
 
@@ -286,26 +298,37 @@ class FairBearerLimiter:
         if wait > 0:
             await asyncio.sleep(wait)
 
-    async def acquire(self, client_id: str, *, priority: bool = False) -> None:
+    async def acquire(self, client_id: str, *, priority: bool = False) -> bool:
         """Acquire one slot for ``client_id``, queueing fairly if necessary.
 
         In non-queue modes this just bumps ``inflight`` and returns. In queue
         mode it parks a future and awaits dispatch, cleaning up correctly if the
         caller is cancelled mid-wait. ``priority`` parks the future in the
-        latency-lane (dispatched first, against reserved headroom above
-        ``max_concurrent``) so a short evaluator call never waits behind long
-        generations holding every main slot.
+        latency-lane (its own per-client RR queue, dispatched against the
+        dedicated ``PRIORITY_RESERVE_SLOTS`` pool) so a short evaluator call
+        never waits behind long generations holding every main slot.
+
+        Returns the EFFECTIVE lane (a reserve of 0 disables the lane and
+        demotes the call to normal traffic). Callers that later invoke
+        :meth:`release` directly must pass this value back as ``priority`` so
+        the lane accounting stays symmetric.
         """
+        priority = priority and config.PRIORITY_RESERVE_SLOTS > 0
         if not self.queue_enabled:
             async with self._lock:
                 self.inflight += 1
-            return
+                if priority:
+                    self.priority_inflight += 1
+            return priority
 
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         async with self._lock:
             if priority:
-                self._priority_queue.append(fut)
+                q = self._priority_queues.setdefault(client_id, collections.deque())
+                q.append(fut)
+                if client_id not in self._priority_rr:
+                    self._priority_rr.append(client_id)
             else:
                 q = self._queues.setdefault(client_id, collections.deque())
                 q.append(fut)
@@ -315,10 +338,13 @@ class FairBearerLimiter:
         try:
             await fut
         except asyncio.CancelledError:
-            await self._cancel_cleanup(client_id, fut)
+            await self._cancel_cleanup(client_id, fut, priority=priority)
             raise
+        return priority
 
-    async def _cancel_cleanup(self, client_id: str, fut: asyncio.Future) -> None:
+    async def _cancel_cleanup(
+        self, client_id: str, fut: asyncio.Future, *, priority: bool = False
+    ) -> None:
         """Undo a queued/dispatched slot when the caller is cancelled.
 
         Either removes the still-pending future from the client deque, or — if
@@ -329,6 +355,8 @@ class FairBearerLimiter:
             removed = self._remove_pending(client_id, fut)
             if not removed and fut.done() and not fut.cancelled() and fut.exception() is None:
                 self.inflight -= 1
+                if priority:
+                    self.priority_inflight -= 1
                 self._try_dispatch()
 
     def _remove_pending(self, client_id: str, fut: asyncio.Future) -> bool:
@@ -337,47 +365,70 @@ class FairBearerLimiter:
         Returns True if the future was found and removed (i.e. it had not been
         dispatched yet). Prunes empty deques + the round-robin entry.
         """
-        # Priority-lane futures live in the single _priority_queue, not a
-        # per-client deque.
-        if fut in self._priority_queue:
-            self._priority_queue.remove(fut)
+        if self._remove_from(self._priority_queues, self._priority_rr, client_id, fut):
             return True
-        q = self._queues.get(client_id)
+        return self._remove_from(self._queues, self._rr_order, client_id, fut)
+
+    @staticmethod
+    def _remove_from(
+        queues: dict[str, collections.deque[asyncio.Future]],
+        order: collections.deque[str],
+        client_id: str,
+        fut: asyncio.Future,
+    ) -> bool:
+        """Remove ``fut`` from one queue family (main or priority) if pending."""
+        q = queues.get(client_id)
         if q is None:
             return False
         removed = fut in q
         if removed:
             q.remove(fut)
         if not q:
-            self._queues.pop(client_id, None)
-            if client_id in self._rr_order:
-                self._rr_order.remove(client_id)
+            queues.pop(client_id, None)
+            if client_id in order:
+                order.remove(client_id)
         return removed
 
-    async def release(self) -> None:
+    async def release(self, *, priority: bool = False) -> None:
         """Release one in-flight slot and dispatch the next queued request."""
         async with self._lock:
             self.inflight -= 1
+            if priority:
+                self.priority_inflight -= 1
             self._try_dispatch()
 
     def _try_dispatch(self) -> None:
         """Wake queued futures. Caller must hold ``_lock``.
 
-        Priority (short/latency-sensitive) futures dispatch FIRST, against a
-        reserved band of ``PRIORITY_RESERVE_SLOTS`` above ``max_concurrent`` — so
-        an evaluator call gets a slot even when every main slot is held by a long
-        generation. Normal round-robin traffic is then capped at ``max_concurrent``
-        (the reserve is priority-only headroom, so it cannot let the main pool
-        overrun the AIMD ceiling).
+        The priority lane owns a DEDICATED pool: it dispatches while
+        ``priority_inflight < PRIORITY_RESERVE_SLOTS``, regardless of the main
+        pool. This survives the storm case that a shared ceiling does not:
+        after an AIMD shrink, stale main inflight above the new ceiling would
+        satisfy ``inflight >= max_concurrent + reserve`` and pinch a shared
+        lane shut exactly when the evaluator needs it. Normal round-robin
+        traffic is capped at ``max_concurrent`` main-pool slots
+        (``inflight - priority_inflight``), so sustained priority load cannot
+        starve it and the main pool cannot overrun the AIMD ceiling.
+        Total upstream concurrency is bounded by
+        ``max_concurrent + PRIORITY_RESERVE_SLOTS``.
         """
-        priority_ceiling = self.max_concurrent + config.PRIORITY_RESERVE_SLOTS
-        while self.inflight < priority_ceiling and self._priority_queue:
-            fut = self._priority_queue.popleft()
+        while self.priority_inflight < config.PRIORITY_RESERVE_SLOTS and self._priority_rr:
+            client_id = self._priority_rr.popleft()
+            q = self._priority_queues.get(client_id)
+            if not q:
+                continue
+            fut = q.popleft()
+            if q:
+                # Client has more queued — re-append at tail to keep rotation honest.
+                self._priority_rr.append(client_id)
+            else:
+                self._priority_queues.pop(client_id, None)
             if fut.cancelled():
                 continue
             self.inflight += 1
+            self.priority_inflight += 1
             fut.set_result(None)
-        while self.inflight < self.max_concurrent and self._rr_order:
+        while (self.inflight - self.priority_inflight) < self.max_concurrent and self._rr_order:
             client_id = self._rr_order.popleft()
             q = self._queues.get(client_id)
             if not q:
@@ -409,7 +460,8 @@ class FairBearerLimiter:
             "successes_since_throttle": self._successes_since_throttle,
             "retry_after_until": self._retry_after_until,
             "queued_total": sum(len(q) for q in self._queues.values()),
-            "priority_queued": len(self._priority_queue),
+            "priority_inflight": self.priority_inflight,
+            "priority_queued": sum(len(q) for q in self._priority_queues.values()),
             "queued_per_client": {cid: len(q) for cid, q in self._queues.items()},
             "rr_order": list(self._rr_order),
             # PR #53 adaptive ramp visibility — operator can read whether this
@@ -433,11 +485,14 @@ class _FairSlotContext:
         self.priority = priority
 
     async def __aenter__(self) -> _FairSlotContext:
-        await self.limiter.acquire(self.client_id, priority=self.priority)
+        # acquire() echoes the EFFECTIVE lane (reserve 0 demotes to normal);
+        # remember it so __aexit__ releases the same pool it acquired from,
+        # even if the knob is retuned mid-flight.
+        self.priority = await self.limiter.acquire(self.client_id, priority=self.priority)
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        await self.limiter.release()
+        await self.limiter.release(priority=self.priority)
         return False
 
 

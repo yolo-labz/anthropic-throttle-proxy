@@ -83,6 +83,9 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_MAX_HOLD_RETRY_AFTER_S` | `60` | Largest upstream `Retry-After` window held inside the local request before retrying. Keeps short temporary throttles hidden from Claude Code while still fast-failing multi-hour account windows. |
 | `THROTTLE_ZAI_QUOTA_RESET_JITTER_S` | `15` | Extra seconds added to z.ai body reset times before reopening a quota-gated bearer. Avoids all clients sharing one key resuming at the exact reset second. |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | OAuth only. When `>0` (e.g. `0.9`), proactively shrinks the ceiling once the binding 5h/7d window utilization crosses this — eases off *before* hitting "rejected". `0` = surface utilization only. |
+| `THROTTLE_PRIORITY_RESERVE_SLOTS` | `2` | Dedicated dispatch pool for short/latency-sensitive calls (Stop-hook evaluators: small `max_tokens`, no tools, small body), independent of the main AIMD pool so they never queue-starve behind long generations. Total upstream concurrency ≤ live cap + this. `0` disables the lane (priority calls demote to normal round-robin). |
+| `THROTTLE_PRIORITY_MAX_TOKENS` | `8192` | A request classifies as priority only when its body parses with `0 < max_tokens ≤` this and no `tools`. |
+| `THROTTLE_PRIORITY_MAX_BODY_BYTES` | `262144` | Priority also requires the request body ≤ this (256 KiB default) — `max_tokens` caps only the output, so a giant no-tools prompt must not jump the queue. |
 | `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
 | `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |
 | `ADVISOR_MODEL` | `llama-3.1-8b-instant` | GROQ model for the advisor diagnosis. |
