@@ -771,8 +771,7 @@ def _maybe_fast_fail_throttle_direct(
     """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
     if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
         return None
-    pause = _parse_retry_after(attempt.meta)
-    pause = pause if pause > 0 else config.AIMD_BACKOFF_S
+    pause, _ = _pushback_pause(attempt.meta)
     return _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
 
 
@@ -896,11 +895,11 @@ async def _forward_with_retry(
         if _should_retry_pushback(response, attempt, pushback_retries):
             pushback_retries += 1
             retry_after = _parse_retry_after(attempt.meta)
-            pause = retry_after if retry_after > 0 else config.AIMD_BACKOFF_S
+            pause, synthetic_pause = _pushback_pause(attempt.meta)
             log(
                 f"rate-pushback-retry bid={bid} status={attempt.final_status} "
                 f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
-                f"pause={pause} retry_after={retry_after}"
+                f"pause={pause} retry_after={retry_after} synthetic_pause={synthetic_pause}"
             )
             if (
                 fast_fail := _retry_after_fast_fail_response(bid, path, pause, source="pushback")
