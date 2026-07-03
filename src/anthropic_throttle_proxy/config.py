@@ -113,6 +113,18 @@ AIMD_INITIAL_CONCURRENT = max(
     AIMD_MIN, int(os.environ.get("THROTTLE_AIMD_INITIAL_CONCURRENT", str(AIMD_MIN)))
 )
 AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
+# Short cooldown for a 429/503 that is CONCURRENCY/rate pushback, not budget
+# exhaustion. Anthropic returns 429-with-no-Retry-After for BOTH: a 5h/7d
+# budget soft-throttle AND a per-account concurrency/requests-per-minute cap.
+# Only the first warrants the full AIMD_BACKOFF_S pause (hold until the window
+# eases); a concurrency 429 clears the instant inflight drops below the cap, so
+# AIMD shrink alone sheds the load and a full 30s pause just collapses the
+# active account to cap=1 and holds it there under fleet load (03/07/2026
+# single-active concentration incident: 52 tabs → one account → concurrency
+# 429s misread as budget → sustained stall while Anthropic reported
+# unified-status=allowed at 19%/23%). The two are told apart by the unified
+# budget headers on the SAME response (see `_pushback_pause`). Hot-tunable.
+CONCURRENCY_COOLDOWN_S = max(0.0, float(os.environ.get("THROTTLE_CONCURRENCY_COOLDOWN_S", "2")))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # Adaptive ramp (PR #53, 06/06/2026 stall incident): the live cap recovers via
 # additive-increase every ``AIMD_RAMP_AFTER`` consecutive 200s, but a fixed
@@ -400,6 +412,10 @@ def _set_aimd_backoff_s(v: float) -> None:
     _set_module_attr(_MOD_CONFIG, "AIMD_BACKOFF_S", v)
 
 
+def _set_concurrency_cooldown_s(v: float) -> None:
+    _set_module_attr(_MOD_CONFIG, "CONCURRENCY_COOLDOWN_S", v)
+
+
 def _set_aimd_ramp_after(v: int) -> None:
     _set_module_attr(_MOD_CONFIG, "AIMD_RAMP_AFTER", v)
 
@@ -609,6 +625,22 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "recovery, Anthropic's pushback windows are short). 30s is "
             "the conservative default for API-key tiers with stricter "
             "per-key rate limits."
+        ),
+    },
+    "concurrency_cooldown_s": {
+        "label": "Concurrency 429 cooldown",
+        "type": "float",
+        "min": 0.0,
+        "max": 60.0,
+        "getter": lambda: CONCURRENCY_COOLDOWN_S,
+        "setter": _set_concurrency_cooldown_s,
+        "units": "s",
+        "help": (
+            "Pause applied to a 429/503 that carries no Retry-After AND whose "
+            "unified budget windows are still 'allowed' below the warn line — "
+            "i.e. concurrency/rate pushback, not budget exhaustion. AIMD shrink "
+            "already sheds the load; this only lets inflight drain. Keep it "
+            "small (2s). Budget soft-throttles still get the full AIMD cooldown."
         ),
     },
     "aimd_ramp_after": {
