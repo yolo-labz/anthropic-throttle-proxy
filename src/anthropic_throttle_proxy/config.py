@@ -57,6 +57,19 @@ SHUTDOWN_TIMEOUT_S = float(os.environ.get("THROTTLE_SHUTDOWN_TIMEOUT_S", "85"))
 # (= 20 req/s peak burst to upstream); 100 = gentler 10 req/s peak.
 MIN_DISPATCH_GAP_S = float(os.environ.get("THROTTLE_MIN_DISPATCH_GAP_MS", "0")) / 1000.0
 
+# Priority lane (03/07/2026 fix): short/latency-sensitive calls — the /goal
+# Stop-hook evaluator (small max_tokens, no tools) — dispatch through a reserved
+# band of PRIORITY_RESERVE_SLOTS ABOVE the live AIMD ceiling, so they never
+# starve behind long generations holding every main slot (verified: a 24s
+# evaluator waited 46s in the FIFO past its 30s client timeout → disconnected →
+# Claude Code shows the misleading "model (sonnet)" error → /goal halts). The
+# reserve is a deliberate, bounded overshoot of ``max_concurrent`` for these
+# few, fast calls; they still honour Retry-After before dispatch. A request is
+# "short" iff it parses as 0 < max_tokens <= PRIORITY_MAX_TOKENS AND carries no
+# tools. Reserve 0 keeps queue-order priority but grants no extra headroom.
+PRIORITY_RESERVE_SLOTS = int(os.environ.get("THROTTLE_PRIORITY_RESERVE_SLOTS", "2"))
+PRIORITY_MAX_TOKENS = int(os.environ.get("THROTTLE_PRIORITY_MAX_TOKENS", "8192"))
+
 # Central-tier opt-in: when set, the local proxy forwards each request to
 # this URL instead of straight to upstream. Empty = direct upstream.
 CENTRAL_URL = os.environ.get("THROTTLE_CENTRAL_URL", "").rstrip("/")

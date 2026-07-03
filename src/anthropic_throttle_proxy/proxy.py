@@ -132,6 +132,7 @@ from .ratelimit import (
     _parse_sse_usage,
     _parse_unified,
     _publish_ratelimit_gauges,
+    _short_request_hint,
 )
 
 if TYPE_CHECKING:
@@ -699,12 +700,20 @@ def _disconnect_before_forward(
 
 
 def _log_request_start(
-    request: web.Request, path: str, bid: str, cid: str, via: str, model_label: str
+    request: web.Request,
+    path: str,
+    bid: str,
+    cid: str,
+    via: str,
+    model_label: str,
+    max_tokens: int | None = None,
+    priority: bool = False,
 ) -> None:
     log(
         f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
-        f"via={via} model={model_label} inflight={state['inflight']} "
-        f"queued={state['queued']}"
+        f"via={via} model={model_label} max_tokens={max_tokens} "
+        f"lane={'priority' if priority else 'normal'} "
+        f"inflight={state['inflight']} queued={state['queued']}"
     )
 
 
@@ -1232,6 +1241,17 @@ async def handler(request: web.Request) -> web.StreamResponse:
     model = _extract_model_from_body(body) if body else ""
     model_label = model or "unknown"
 
+    # Priority lane: a short/latency-sensitive call (the /goal Stop-hook
+    # evaluator — small max_tokens, no tools) jumps the FIFO via reserved
+    # headroom so it never starves behind long generations. Fail-safe: an
+    # unparseable/absent max_tokens stays in the normal lane.
+    req_max_tokens, req_has_tools = _short_request_hint(body)
+    is_priority = (
+        req_max_tokens is not None
+        and 0 < req_max_tokens <= config.PRIORITY_MAX_TOKENS
+        and not req_has_tools
+    )
+
     if _request_disconnected(request):
         return _disconnect_before_forward(request, path, "pre-queue", bid, cid, via, model_label)
 
@@ -1266,7 +1286,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        async with limiter.slot(cid):
+        async with limiter.slot(cid, priority=is_priority):
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -1275,7 +1295,9 @@ async def handler(request: web.Request) -> web.StreamResponse:
             try:
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "post-queue", attempt)
-                _log_request_start(request, path, bid, cid, via, model_label)
+                _log_request_start(
+                    request, path, bid, cid, via, model_label, req_max_tokens, is_priority
+                )
                 # Honor any outstanding upstream Retry-After for this bearer before
                 # we dispatch — don't spin a request against a known-closed window.
                 await limiter.wait_retry_after()

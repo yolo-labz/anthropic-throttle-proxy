@@ -99,6 +99,13 @@ class FairBearerLimiter:
         # client_id → deque of waiting futures; _rr_order = client_ids w/ pending work.
         self._queues: dict[str, collections.deque[asyncio.Future]] = {}
         self._rr_order: collections.deque[str] = collections.deque()
+        # Priority lane: short/latency-sensitive calls (the /goal Stop-hook
+        # evaluator — small max_tokens, no tools) park HERE, not the RR queue,
+        # and dispatch against RESERVED headroom above max_concurrent so they
+        # never starve behind long generations holding every main slot (verified
+        # 03/07: a 24s evaluator waited 46s in the FIFO past its 30s client
+        # timeout → disconnected → CC "sonnet" error → /goal halts).
+        self._priority_queue: collections.deque[asyncio.Future] = collections.deque()
         self._lock = asyncio.Lock()
         # _last_throttle_at: monotonic-ish wall clock of the last shrink.
         # _successes_since_throttle: consecutive 2xx since that shrink.
@@ -129,9 +136,13 @@ class FairBearerLimiter:
         self.queue_enabled = queue_mode in {"fair", "reactive"}
         self.observe_enabled = queue_mode != "off"
 
-    def slot(self, client_id: str) -> _FairSlotContext:
-        """Return an async context manager that holds one slot for ``client_id``."""
-        return _FairSlotContext(self, client_id)
+    def slot(self, client_id: str, *, priority: bool = False) -> _FairSlotContext:
+        """Return an async context manager that holds one slot for ``client_id``.
+
+        ``priority=True`` routes a short/latency-sensitive call through the
+        reserved latency-lane so it does not starve behind long generations.
+        """
+        return _FairSlotContext(self, client_id, priority)
 
     async def shrink(self) -> int | None:
         """AIMD multiplicative-decrease. Called on upstream rate pushback (429/503).
@@ -275,12 +286,15 @@ class FairBearerLimiter:
         if wait > 0:
             await asyncio.sleep(wait)
 
-    async def acquire(self, client_id: str) -> None:
+    async def acquire(self, client_id: str, *, priority: bool = False) -> None:
         """Acquire one slot for ``client_id``, queueing fairly if necessary.
 
         In non-queue modes this just bumps ``inflight`` and returns. In queue
-        mode it parks a future in the client's deque and awaits dispatch,
-        cleaning up correctly if the caller is cancelled mid-wait.
+        mode it parks a future and awaits dispatch, cleaning up correctly if the
+        caller is cancelled mid-wait. ``priority`` parks the future in the
+        latency-lane (dispatched first, against reserved headroom above
+        ``max_concurrent``) so a short evaluator call never waits behind long
+        generations holding every main slot.
         """
         if not self.queue_enabled:
             async with self._lock:
@@ -290,10 +304,13 @@ class FairBearerLimiter:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         async with self._lock:
-            q = self._queues.setdefault(client_id, collections.deque())
-            q.append(fut)
-            if client_id not in self._rr_order:
-                self._rr_order.append(client_id)
+            if priority:
+                self._priority_queue.append(fut)
+            else:
+                q = self._queues.setdefault(client_id, collections.deque())
+                q.append(fut)
+                if client_id not in self._rr_order:
+                    self._rr_order.append(client_id)
             self._try_dispatch()
         try:
             await fut
@@ -315,26 +332,26 @@ class FairBearerLimiter:
                 self._try_dispatch()
 
     def _remove_pending(self, client_id: str, fut: asyncio.Future) -> bool:
-        """Remove ``fut`` from the client deque if still queued. Holds ``_lock``.
+        """Remove ``fut`` from whichever queue holds it if still pending. Holds ``_lock``.
 
         Returns True if the future was found and removed (i.e. it had not been
         dispatched yet). Prunes empty deques + the round-robin entry.
         """
+        # Priority-lane futures live in the single _priority_queue, not a
+        # per-client deque.
+        if fut in self._priority_queue:
+            self._priority_queue.remove(fut)
+            return True
         q = self._queues.get(client_id)
         if q is None:
             return False
-        removed = False
-        try:
+        removed = fut in q
+        if removed:
             q.remove(fut)
-            removed = True
-        except ValueError:
-            pass
         if not q:
             self._queues.pop(client_id, None)
-            try:
+            if client_id in self._rr_order:
                 self._rr_order.remove(client_id)
-            except ValueError:
-                pass
         return removed
 
     async def release(self) -> None:
@@ -344,7 +361,22 @@ class FairBearerLimiter:
             self._try_dispatch()
 
     def _try_dispatch(self) -> None:
-        """Wake queued futures up to the live ceiling. Caller must hold ``_lock``."""
+        """Wake queued futures. Caller must hold ``_lock``.
+
+        Priority (short/latency-sensitive) futures dispatch FIRST, against a
+        reserved band of ``PRIORITY_RESERVE_SLOTS`` above ``max_concurrent`` — so
+        an evaluator call gets a slot even when every main slot is held by a long
+        generation. Normal round-robin traffic is then capped at ``max_concurrent``
+        (the reserve is priority-only headroom, so it cannot let the main pool
+        overrun the AIMD ceiling).
+        """
+        priority_ceiling = self.max_concurrent + config.PRIORITY_RESERVE_SLOTS
+        while self.inflight < priority_ceiling and self._priority_queue:
+            fut = self._priority_queue.popleft()
+            if fut.cancelled():
+                continue
+            self.inflight += 1
+            fut.set_result(None)
         while self.inflight < self.max_concurrent and self._rr_order:
             client_id = self._rr_order.popleft()
             q = self._queues.get(client_id)
@@ -377,6 +409,7 @@ class FairBearerLimiter:
             "successes_since_throttle": self._successes_since_throttle,
             "retry_after_until": self._retry_after_until,
             "queued_total": sum(len(q) for q in self._queues.values()),
+            "priority_queued": len(self._priority_queue),
             "queued_per_client": {cid: len(q) for cid, q in self._queues.items()},
             "rr_order": list(self._rr_order),
             # PR #53 adaptive ramp visibility — operator can read whether this
@@ -394,12 +427,13 @@ class FairBearerLimiter:
 class _FairSlotContext:
     """Async context manager returned by ``FairBearerLimiter.slot()``."""
 
-    def __init__(self, limiter: FairBearerLimiter, client_id: str) -> None:
+    def __init__(self, limiter: FairBearerLimiter, client_id: str, priority: bool = False) -> None:
         self.limiter = limiter
         self.client_id = client_id
+        self.priority = priority
 
     async def __aenter__(self) -> _FairSlotContext:
-        await self.limiter.acquire(self.client_id)
+        await self.limiter.acquire(self.client_id, priority=self.priority)
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
