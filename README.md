@@ -76,10 +76,11 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT` | `2` | Local safety cap used only when `THROTTLE_CENTRAL_URL` is set and `THROTTLE_QUEUE_MODE=off`; prevents same-host Claude Code bursts from bypassing local admission before central/AIMD feedback arrives. |
 | `THROTTLE_AIMD_MIN` | `1` | Floor of the AIMD live ceiling. Must stay ≥ 1 so traffic never fully blocks. |
 | `THROTTLE_AIMD_INITIAL_CONCURRENT` | `1` | Live cap assigned to a new bearer before the proxy has evidence. AIMD grows from here after successful traffic and shrinks on pushback. |
-| `THROTTLE_AIMD_BACKOFF_S` | `30` | Cooldown after a shrink before ramping back up. |
+| `THROTTLE_AIMD_BACKOFF_S` | `30` | Cooldown after a shrink before ramping back up. Applied as the pause only for a **budget** soft-throttle 429 (unified windows `allowed_warning`/`rejected` or past the warn line). |
+| `THROTTLE_CONCURRENCY_COOLDOWN_S` | `2` | Pause for a **concurrency/rate** 429/503 — one with no `Retry-After` whose unified budget windows are still `allowed` below the warn line. AIMD shrink already sheds the load; a short cooldown just lets inflight drain instead of collapsing the account to cap=1 for 30 s. |
 | `THROTTLE_AIMD_RAMP_AFTER` | `10` | Consecutive 2xx responses required to bump the live ceiling by one. |
 | `THROTTLE_AIMD_DECREASE` | `0.7` | Multiplicative-decrease factor on rate pushback. `0.5` = TCP-Reno (deep cut), `0.7` = CUBIC (gentler, stays nearer the limit). |
-| `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` before the proxy returns the pushback response to the client. Uses `Retry-After` when present, otherwise `THROTTLE_AIMD_BACKOFF_S`. |
+| `THROTTLE_RATE_PUSHBACK_RETRIES` | `1` | Buffered retry count for upstream `429`/`503`/`529` before the proxy returns the pushback response to the client. Uses `Retry-After` when present; otherwise budget pushback uses `THROTTLE_AIMD_BACKOFF_S` and concurrency/rate pushback uses `THROTTLE_CONCURRENCY_COOLDOWN_S`. |
 | `THROTTLE_MAX_HOLD_RETRY_AFTER_S` | `60` | Largest upstream `Retry-After` window held inside the local request before retrying. Keeps short temporary throttles hidden from Claude Code while still fast-failing multi-hour account windows. |
 | `THROTTLE_ZAI_QUOTA_RESET_JITTER_S` | `15` | Extra seconds added to z.ai body reset times before reopening a quota-gated bearer. Avoids all clients sharing one key resuming at the exact reset second. |
 | `THROTTLE_UTILIZATION_TARGET` | `0` | OAuth only. When `>0` (e.g. `0.9`), proactively shrinks the ceiling once the binding 5h/7d window utilization crosses this — eases off *before* hitting "rejected". `0` = surface utilization only. |

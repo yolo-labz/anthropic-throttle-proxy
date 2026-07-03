@@ -38,6 +38,62 @@ def test_parse_retry_after():
     assert proxy._parse_retry_after({"retry-after": "not-a-number"}) == 0.0
 
 
+# The exact unified headers Anthropic returned for account A during the
+# 03/07/2026 concurrency-concentration incident: budget fully `allowed` at
+# 19%/23% while the account was 429ing purely on per-account concurrency.
+_ALLOWED_LOW = {
+    "anthropic-ratelimit-unified-status": "allowed",
+    "anthropic-ratelimit-unified-representative-claim": "five_hour",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-5h-utilization": "0.19",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-7d-utilization": "0.23",
+}
+
+
+def test_budget_under_pressure_classifies_unified_headers():
+    # Concurrency 429: every window allowed + low util → NOT budget.
+    assert proxy._budget_under_pressure(_ALLOWED_LOW) is False
+    # Budget soft-throttle: a warning/rejected status on any window → budget.
+    assert (
+        proxy._budget_under_pressure(
+            {**_ALLOWED_LOW, "anthropic-ratelimit-unified-status": "rejected"}
+        )
+        is True
+    )
+    assert (
+        proxy._budget_under_pressure(
+            {**_ALLOWED_LOW, "anthropic-ratelimit-unified-5h-status": "allowed_warning"}
+        )
+        is True
+    )
+    # Utilization at/over the warn line → budget even while status still "allowed".
+    hot = {**_ALLOWED_LOW, "anthropic-ratelimit-unified-5h-utilization": "0.95"}
+    assert proxy._budget_under_pressure(hot) is True
+    # Partial/malformed unified headers cannot prove a concurrency-only 429.
+    assert proxy._budget_under_pressure({"anthropic-ratelimit-unified-status": "allowed"}) is True
+    # No unified headers (API-key traffic) → conservative: assume budget.
+    assert proxy._budget_under_pressure({}) is True
+    assert proxy._budget_under_pressure(None) is True
+
+
+def test_pushback_pause_short_cooldown_for_concurrency_429():
+    from anthropic_throttle_proxy import config
+
+    # Real Retry-After always wins, verbatim, never synthetic.
+    assert proxy._pushback_pause({"retry-after": "171"}) == (171.0, False)
+    # Concurrency 429 (budget allowed, low util) → short cooldown, not 30s.
+    pause, synthetic = proxy._pushback_pause(_ALLOWED_LOW)
+    assert pause == config.CONCURRENCY_COOLDOWN_S
+    assert synthetic is True
+    assert pause < config.AIMD_BACKOFF_S  # the whole point: NOT the budget backoff
+    # Budget soft-throttle (rejected) → full AIMD cooldown.
+    rejected = {**_ALLOWED_LOW, "anthropic-ratelimit-unified-status": "rejected"}
+    assert proxy._pushback_pause(rejected) == (config.AIMD_BACKOFF_S, True)
+    # No headers at all → conservative full backoff (unchanged legacy behavior).
+    assert proxy._pushback_pause({}) == (config.AIMD_BACKOFF_S, True)
+
+
 def test_extract_zai_quota_body_generates_retry_after():
     body = b'{"error":{"code":"1316","message":"quota exceeded","reset_time":1700000100}}'
     meta = proxy._extract_zai_ratelimit_from_body(body, now=1700000000, quota_jitter_s=7)

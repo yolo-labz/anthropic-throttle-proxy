@@ -771,8 +771,7 @@ def _maybe_fast_fail_throttle_direct(
     """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
     if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
         return None
-    pause = _parse_retry_after(attempt.meta)
-    pause = pause if pause > 0 else config.AIMD_BACKOFF_S
+    pause, _ = _pushback_pause(attempt.meta)
     return _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
 
 
@@ -896,11 +895,11 @@ async def _forward_with_retry(
         if _should_retry_pushback(response, attempt, pushback_retries):
             pushback_retries += 1
             retry_after = _parse_retry_after(attempt.meta)
-            pause = retry_after if retry_after > 0 else config.AIMD_BACKOFF_S
+            pause, synthetic_pause = _pushback_pause(attempt.meta)
             log(
                 f"rate-pushback-retry bid={bid} status={attempt.final_status} "
                 f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
-                f"pause={pause} retry_after={retry_after}"
+                f"pause={pause} retry_after={retry_after} synthetic_pause={synthetic_pause}"
             )
             if (
                 fast_fail := _retry_after_fast_fail_response(bid, path, pause, source="pushback")
@@ -913,12 +912,46 @@ async def _forward_with_retry(
         return response
 
 
+def _budget_under_pressure(meta: Mapping[str, str] | None) -> bool:
+    """True when the OAuth unified windows say a 429 is BUDGET, not concurrency.
+
+    Anthropic returns 429-without-Retry-After for two very different reasons:
+    a 5h/7d budget soft-throttle, and a per-account concurrency / rate cap.
+    They are told apart by the ``anthropic-ratelimit-unified-*`` headers on the
+    same response — a budget throttle shows ``allowed_warning``/``rejected`` (or
+    the binding window's utilization at/over the warn line), while a pure
+    concurrency 429 arrives while every window is still ``allowed`` with low
+    utilization. Absent unified headers (API-key traffic) → assume budget so the
+    historical conservative backoff is preserved.
+    """
+    unified = _parse_unified(meta)
+    if not unified:
+        return True
+    statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
+    if any(s in ("allowed_warning", "rejected") for s in statuses):
+        return True
+    binding = _binding_utilization(unified)
+    if binding is None:
+        return True
+    return binding >= UTILIZATION_WARN
+
+
 def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:
-    """Return the pause seconds and whether it was synthesized locally."""
+    """Return the pause seconds and whether it was synthesized locally.
+
+    A real ``Retry-After`` always wins. Without one, classify by the unified
+    budget headers: a genuine budget soft-throttle gets the full AIMD cooldown
+    (hold until the window eases), but a concurrency/rate 429 gets only a short
+    ``CONCURRENCY_COOLDOWN_S`` — the AIMD shrink already sheds the load and the
+    429 clears the instant inflight drops, so a 30s pause would needlessly
+    collapse the active account to cap=1 and hold it there under fleet load.
+    """
     retry_after = _parse_retry_after(meta)
     if retry_after > 0:
         return retry_after, False
-    return max(0.0, config.AIMD_BACKOFF_S), True
+    if _budget_under_pressure(meta):
+        return max(0.0, config.AIMD_BACKOFF_S), True
+    return max(0.0, config.CONCURRENCY_COOLDOWN_S), True
 
 
 def _note_retry_after_if_set(

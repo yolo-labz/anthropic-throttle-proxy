@@ -39,6 +39,14 @@ _RATELIMIT_HEADERS = {
     "anthropic-ratelimit-tokens-remaining": "55000",
     "content-type": "text/event-stream",
 }
+_UNIFIED_ALLOWED_LOW_HEADERS = {
+    "anthropic-ratelimit-unified-status": "allowed",
+    "anthropic-ratelimit-unified-representative-claim": "five_hour",
+    "anthropic-ratelimit-unified-5h-status": "allowed",
+    "anthropic-ratelimit-unified-5h-utilization": "0.19",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-7d-utilization": "0.23",
+}
 
 
 def _make_upstream() -> web.Application:
@@ -79,6 +87,10 @@ def _make_upstream() -> web.Application:
             seen_429_once += 1
             if seen_429_once == 1:
                 return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
+        if mode == "429-unified-low-once":
+            seen_429_once += 1
+            if seen_429_once == 1:
+                return web.Response(status=429, headers=_UNIFIED_ALLOWED_LOW_HEADERS)
         if mode == "529":
             return web.Response(status=529, headers={"retry-after": "0"})
         if mode in ("unified", "unified-high"):
@@ -326,6 +338,29 @@ async def test_429_without_retry_after_is_held_and_retried(client: TestClient, m
     bid = next(iter(config.bearer_state))
     lim = config.bearer_limiters[bid]
     assert lim.max_concurrent < lim.hard_max
+    assert config.state["served"] == 2
+
+
+async def test_concurrency_429_retry_uses_classified_cooldown(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 5.0)
+    monkeypatch.setattr(config, "CONCURRENCY_COOLDOWN_S", 0.01)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={
+            "Authorization": "Bearer concurrency-retry",
+            "X-Stub-Mode": "429-unified-low-once",
+        },
+    )
+
+    assert status == 200
+    assert b"message_stop" in streamed
     assert config.state["served"] == 2
 
 
