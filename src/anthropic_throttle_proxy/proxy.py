@@ -132,6 +132,7 @@ from .ratelimit import (
     _parse_sse_usage,
     _parse_unified,
     _publish_ratelimit_gauges,
+    _short_request_hint,
 )
 
 if TYPE_CHECKING:
@@ -646,6 +647,21 @@ def _request_disconnected(request: web.Request) -> bool:
     return transport is None or transport.is_closing()
 
 
+def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int) -> bool:
+    """Classify a request for the limiter priority lane.
+
+    Priority = provably short: a parsed 0 < max_tokens ≤ PRIORITY_MAX_TOKENS,
+    no tools, and a body ≤ PRIORITY_MAX_BODY_BYTES. Every gate fails safe
+    toward the normal lane.
+    """
+    return (
+        max_tokens is not None
+        and 0 < max_tokens <= config.PRIORITY_MAX_TOKENS
+        and not has_tools
+        and body_len <= config.PRIORITY_MAX_BODY_BYTES
+    )
+
+
 def _attempt_for_request(
     request: web.Request, bid: str, cid: str, via: str, model_label: str
 ) -> _Attempt:
@@ -699,12 +715,20 @@ def _disconnect_before_forward(
 
 
 def _log_request_start(
-    request: web.Request, path: str, bid: str, cid: str, via: str, model_label: str
+    request: web.Request,
+    path: str,
+    bid: str,
+    cid: str,
+    via: str,
+    model_label: str,
+    max_tokens: int | None = None,
+    priority: bool = False,
 ) -> None:
     log(
         f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
-        f"via={via} model={model_label} inflight={state['inflight']} "
-        f"queued={state['queued']}"
+        f"via={via} model={model_label} max_tokens={max_tokens} "
+        f"lane={'priority' if priority else 'normal'} "
+        f"inflight={state['inflight']} queued={state['queued']}"
     )
 
 
@@ -1232,6 +1256,15 @@ async def handler(request: web.Request) -> web.StreamResponse:
     model = _extract_model_from_body(body) if body else ""
     model_label = model or "unknown"
 
+    # Priority lane: a short/latency-sensitive call (the /goal Stop-hook
+    # evaluator — small max_tokens, no tools, small body) dispatches from a
+    # dedicated reserve pool so it never starves behind long generations.
+    # Fail-safe: an unparseable/absent max_tokens stays in the normal lane,
+    # and so does any large body — max_tokens caps only the OUTPUT, so a
+    # giant no-tools prompt could otherwise jump the queue.
+    req_max_tokens, req_has_tools = _short_request_hint(body)
+    is_priority = _is_priority_request(req_max_tokens, req_has_tools, len(body or b""))
+
     if _request_disconnected(request):
         return _disconnect_before_forward(request, path, "pre-queue", bid, cid, via, model_label)
 
@@ -1266,7 +1299,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        async with limiter.slot(cid):
+        async with limiter.slot(cid, priority=is_priority) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -1275,7 +1308,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
             try:
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "post-queue", attempt)
-                _log_request_start(request, path, bid, cid, via, model_label)
+                # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
+                # retune can demote) — log that, not the requested one.
+                _log_request_start(
+                    request, path, bid, cid, via, model_label, req_max_tokens, held.priority
+                )
                 # Honor any outstanding upstream Retry-After for this bearer before
                 # we dispatch — don't spin a request against a known-closed window.
                 await limiter.wait_retry_after()

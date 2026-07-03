@@ -346,6 +346,31 @@ def _extract_model_from_body(body: bytes | None) -> str:
         return m.group(1).decode("utf-8", "ignore") if m else ""
 
 
+def _short_request_hint(body: bytes | None) -> tuple[int | None, bool]:
+    """Return ``(max_tokens, has_tools)`` from a POST /v1/messages JSON body.
+
+    Classifies short/latency-sensitive calls (the /goal Stop-hook evaluator:
+    small ``max_tokens``, no ``tools``) for the limiter priority lane.
+    ``max_tokens`` is None when absent or unparseable so the caller treats it
+    as 'not obviously short' — fail-safe: an unknown shape stays in the normal
+    lane, never priority, so a giant generation cannot jump the queue by
+    accident.
+    """
+    if not body:
+        return None, False
+    try:
+        obj = _json.loads(body)
+    except (ValueError, TypeError):
+        return None, False
+    if not isinstance(obj, dict):
+        return None, False
+    mt = obj.get("max_tokens")
+    max_tokens = mt if isinstance(mt, int) and not isinstance(mt, bool) else None
+    tools = obj.get("tools")
+    has_tools = isinstance(tools, list) and len(tools) > 0
+    return max_tokens, has_tools
+
+
 # Match a 'data: {...}' SSE line carrying a `usage` block. Streamed responses
 # emit message_start (with input usage) and message_delta (with output usage).
 _USAGE_RE = re.compile(rb'"usage"\s*:\s*\{[^}]+\}')

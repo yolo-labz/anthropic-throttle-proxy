@@ -57,6 +57,23 @@ SHUTDOWN_TIMEOUT_S = float(os.environ.get("THROTTLE_SHUTDOWN_TIMEOUT_S", "85"))
 # (= 20 req/s peak burst to upstream); 100 = gentler 10 req/s peak.
 MIN_DISPATCH_GAP_S = float(os.environ.get("THROTTLE_MIN_DISPATCH_GAP_MS", "0")) / 1000.0
 
+# Priority lane (03/07/2026 fix): short/latency-sensitive calls — the /goal
+# Stop-hook evaluator (small max_tokens, no tools) — dispatch through a
+# DEDICATED pool of PRIORITY_RESERVE_SLOTS, independent of the main AIMD pool,
+# so they never starve behind long generations holding every main slot
+# (verified: a 24s evaluator waited 46s in the FIFO past its 30s client
+# timeout → disconnected → Claude Code shows the misleading "model (sonnet)"
+# error → /goal halts). The pool is a deliberate, bounded overshoot: total
+# upstream concurrency ≤ max_concurrent + reserve. Priority calls still honour
+# Retry-After before dispatch. A request is "short" iff it parses as
+# 0 < max_tokens <= PRIORITY_MAX_TOKENS AND carries no tools AND its body is
+# ≤ PRIORITY_MAX_BODY_BYTES (so a giant no-tools generation that happens to
+# set a small max_tokens cannot jump the queue). Reserve 0 disables the lane
+# (priority calls demote to normal round-robin traffic).
+PRIORITY_RESERVE_SLOTS = max(0, int(os.environ.get("THROTTLE_PRIORITY_RESERVE_SLOTS", "2")))
+PRIORITY_MAX_TOKENS = max(0, int(os.environ.get("THROTTLE_PRIORITY_MAX_TOKENS", "8192")))
+PRIORITY_MAX_BODY_BYTES = max(0, int(os.environ.get("THROTTLE_PRIORITY_MAX_BODY_BYTES", "262144")))
+
 # Central-tier opt-in: when set, the local proxy forwards each request to
 # this URL instead of straight to upstream. Empty = direct upstream.
 CENTRAL_URL = os.environ.get("THROTTLE_CENTRAL_URL", "").rstrip("/")
@@ -338,6 +355,42 @@ def _set_aimd_min(v: int) -> None:
     _schedule_existing_limiter_retune(live_floor=v)
 
 
+def _schedule_limiter_kick() -> None:
+    """Best-effort dispatch kick for already-allocated bearer limiters.
+
+    Queued waiters only wake on acquire/release events; a retune that changes
+    dispatch math (reserve raised, or lowered to 0 which migrates parked lane
+    waiters to the normal queue) must kick the loop itself or those futures
+    sit stranded until unrelated traffic arrives.
+    """
+    try:
+        import asyncio
+        import importlib
+
+        loop = asyncio.get_running_loop()
+        limiter_mod = importlib.import_module("anthropic_throttle_proxy.limiter")
+        loop.create_task(limiter_mod.kick_existing_limiters())
+    except RuntimeError:
+        # No running event loop during import/tests; the next request will
+        # re-enter _try_dispatch anyway.
+        return
+
+
+def _set_priority_reserve_slots(v: int) -> None:
+    # Dispatch math reads this live; kick so already-parked waiters re-evaluate
+    # (raise → lane dispatches now; 0 → parked lane waiters migrate to normal).
+    _set_module_attr(_MOD_CONFIG, "PRIORITY_RESERVE_SLOTS", v)
+    _schedule_limiter_kick()
+
+
+def _set_priority_max_tokens(v: int) -> None:
+    _set_module_attr(_MOD_CONFIG, "PRIORITY_MAX_TOKENS", v)
+
+
+def _set_priority_max_body_bytes(v: int) -> None:
+    _set_module_attr(_MOD_CONFIG, "PRIORITY_MAX_BODY_BYTES", v)
+
+
 def _set_aimd_initial_concurrent(v: int) -> None:
     _set_module_attr(_MOD_CONFIG, "AIMD_INITIAL_CONCURRENT", v)
     _schedule_existing_limiter_retune(live_floor=v)
@@ -446,6 +499,51 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "as the direct-fallback cap when central is down. Suggested: "
             "3 for Opus-heavy Claude Code traffic; lower if Anthropic still "
             "returns 429s."
+        ),
+    },
+    "priority_reserve_slots": {
+        "label": "Priority reserve slots",
+        "type": "int",
+        "min": 0,
+        "max": 16,
+        "getter": lambda: PRIORITY_RESERVE_SLOTS,
+        "setter": _set_priority_reserve_slots,
+        "units": "slots",
+        "help": (
+            "Dedicated dispatch pool for short/latency-sensitive calls "
+            "(e.g. Stop-hook evaluators: small max_tokens, no tools, small "
+            "body). Independent of the main AIMD pool, so evaluators never "
+            "starve behind long generations — total upstream concurrency is "
+            "bounded by max_concurrent + this. 0 disables the lane."
+        ),
+    },
+    "priority_max_tokens": {
+        "label": "Priority max_tokens cutoff",
+        "type": "int",
+        "min": 0,
+        "max": 65536,
+        "getter": lambda: PRIORITY_MAX_TOKENS,
+        "setter": _set_priority_max_tokens,
+        "units": "tokens",
+        "help": (
+            "A request classifies as priority only when its JSON body has "
+            "0 < max_tokens ≤ this, carries no tools, and the body is under "
+            "the priority body-size cutoff. 8192 matches claude -p defaults."
+        ),
+    },
+    "priority_max_body_bytes": {
+        "label": "Priority body-size cutoff",
+        "type": "int",
+        "min": 0,
+        "max": 33554432,
+        "getter": lambda: PRIORITY_MAX_BODY_BYTES,
+        "setter": _set_priority_max_body_bytes,
+        "units": "bytes",
+        "help": (
+            "Requests with bodies larger than this never enter the priority "
+            "lane, so a giant no-tools generation that happens to set a small "
+            "max_tokens cannot jump the queue. Default 262144 (256 KiB) "
+            "clears Stop-hook evaluator prompts with margin."
         ),
     },
     "utilization_target": {
