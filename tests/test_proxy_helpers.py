@@ -608,6 +608,53 @@ def test_account_routing_skips_retry_after_candidate(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
 
+@pytest.mark.parametrize(
+    "unified",
+    [
+        {"status": "allowed_warning", "util_5h": 0.37, "util_7d": 0.97},
+        {"status": "allowed", "util_7d": 0.97},
+    ],
+)
+def test_account_routing_skips_unified_pressure_candidate(
+    isolated_account_routing,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    unified: dict[str, object],
+) -> None:
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    config.bearer_state[bid_b] = {"unified": unified}
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_b, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_account_routing_uses_pressured_configured_account_for_stale_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    cred_a = tmp_path / "a.json"
+    bid_a = _write_cred(cred_a, "sk-ant-oat01-SIM-A")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred_a}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    config.bearer_state[bid_a] = {"unified": {"status": "allowed_warning", "util_5h": 0.95}}
+    headers = {"Authorization": "Bearer sk-ant-oat01-STALE-B"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "stale-b", method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
 def test_fast_fail_429_when_account_routing_enabled(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
