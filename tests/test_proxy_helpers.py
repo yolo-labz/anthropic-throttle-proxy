@@ -26,7 +26,7 @@ from typing import Any, cast
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
-from anthropic_throttle_proxy import config, proxy
+from anthropic_throttle_proxy import accounts, config, proxy
 from anthropic_throttle_proxy.limiter import FairBearerLimiter
 
 # ---------------------------------------------------------------------------
@@ -526,6 +526,104 @@ def _write_cred(path: Any, token: str) -> str:
     would compute for that token (sha256 of the full ``Bearer <token>`` header)."""
     path.write_text(json.dumps({"claudeAiOauth": {"accessToken": token}}))
     return hashlib.sha256(f"Bearer {token}".encode("utf-8", "replace")).hexdigest()[:8]
+
+
+@pytest.fixture
+def isolated_account_routing(monkeypatch: pytest.MonkeyPatch):
+    """Keep account-router tests from leaking global limiter/account state."""
+    accounts._cache.clear()
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "off")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    yield
+    accounts._cache.clear()
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+
+
+def _setup_route_creds(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
+    cred_a = tmp_path / "a.json"
+    cred_b = tmp_path / "b.json"
+    bid_a = _write_cred(cred_a, "sk-ant-oat01-SIM-A")
+    bid_b = _write_cred(cred_b, "sk-ant-oat01-SIM-B")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred_a},B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    return bid_a, bid_b
+
+
+def test_account_routing_disabled_keeps_incoming_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "off")
+    headers = {"authorization": "Bearer incoming-token"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "incoming", method="POST", path="v1/messages"
+    )
+
+    assert selected == "incoming"
+    assert label is None
+    assert headers == {"authorization": "Bearer incoming-token"}
+
+
+def test_account_routing_selects_least_loaded_and_rewrites_authorization(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair")
+    config.bearer_limiters[bid_a].inflight = 2
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    headers = {"authorization": "Bearer sk-ant-oat01-SIM-A", "x-test": "1"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-B"
+    assert "authorization" not in headers
+    assert headers["x-test"] == "1"
+    assert any(f"from={bid_a} to={bid_b} label=B" in line for line in lines)
+    assert "SIM-B" not in "\n".join(lines)
+
+
+def test_account_routing_skips_retry_after_candidate(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    lim_b = FairBearerLimiter(8, "fair")
+    lim_b.note_retry_after(3600)
+    config.bearer_limiters[bid_b] = lim_b
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_b, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_fast_fail_429_when_account_routing_enabled(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Routing owns account choice, so stale-bearer 401 nudges must not fire."""
+    cred = tmp_path / ".credentials.json"
+    _write_cred(cred, "sk-ant-oat01-ACTIVE")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    monkeypatch.setattr(config, "ACTIVE_CRED_PATH", str(cred))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(proxy, "_active_bearer_cache", None)
+
+    resp = proxy._retry_after_fast_fail_response("staletab", "v1/messages", 9000.0, source="t")
+
+    assert resp is not None
+    assert resp.status == 429
 
 
 def test_active_account_bearer_disabled(monkeypatch: pytest.MonkeyPatch) -> None:

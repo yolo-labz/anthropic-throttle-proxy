@@ -13,9 +13,9 @@ per-account usage panel. The access token rotates ~8h, so the hash is
 recomputed whenever the credential file's mtime/size changes — between
 changes a snapshot costs one ``stat()`` per account.
 
-UI-only surface: the hot path never imports this module. The raw token is
-hashed and dropped — only the 8-hex prefix survives, matching invariant #2
-(bearer token never logged).
+Dashboard surfaces only expose the 8-hex bearer prefix. The optional hot-path
+account router also reads the token so it can rewrite the upstream
+Authorization header, but still never logs or exports the raw value.
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ PACE_WARN = 1.15
 # Mirrors claude-account-pick's b_usable grace.
 _TOKEN_GRACE_S = 90 * 60
 
-# path -> (mtime_ns, size, bearer_id, expires_at_ms, error)
-_cache: dict[str, tuple[int, int, str | None, int | None, str | None]] = {}
+# path -> (mtime_ns, size, bearer_id, expires_at_ms, error, access_token)
+_cache: dict[str, tuple[int, int, str | None, int | None, str | None, str | None]] = {}
 
 
 def parse_spec(raw: str) -> list[tuple[str, str]]:
@@ -69,26 +69,27 @@ def parse_spec(raw: str) -> list[tuple[str, str]]:
     return out
 
 
-def _digest_cred(path: str) -> tuple[str | None, int | None, str | None]:
-    """Read one credentials file → (bearer_id, expires_at_ms, error).
+def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | None]:
+    """Read one credentials file → (bearer_id, expires_at_ms, error, token).
 
     The access token is hashed exactly as the proxy hashes the incoming
-    ``Authorization`` header (``Bearer <token>``) and immediately discarded.
+    ``Authorization`` header (``Bearer <token>``). The dashboard callers drop
+    the token; the opt-in account router consumes it for upstream auth rewrite.
     """
     try:
         with open(path, encoding="utf-8") as fh:
             oauth = json.load(fh).get("claudeAiOauth") or {}
     except OSError:
-        return None, None, "credentials file unreadable"
+        return None, None, "credentials file unreadable", None
     except (ValueError, AttributeError):
-        return None, None, "credentials file malformed"
+        return None, None, "credentials file malformed", None
     token = oauth.get("accessToken")
     if not token or not isinstance(token, str):
-        return None, None, "no access token in credentials"
+        return None, None, "no access token in credentials", None
     bid = hashlib.sha256(f"Bearer {token}".encode("utf-8", "replace")).hexdigest()[:8]
     expires = oauth.get("expiresAt")
     expires_ms = int(expires) if isinstance(expires, (int, float)) else None
-    return bid, expires_ms, None
+    return bid, expires_ms, None, token
 
 
 def account_snapshot() -> list[dict[str, Any]]:
@@ -117,8 +118,8 @@ def account_snapshot() -> list[dict[str, Any]]:
             continue
         cached = _cache.get(path)
         if cached is None or cached[:2] != key:
-            bid, expires_ms, error = _digest_cred(path)
-            cached = (*key, bid, expires_ms, error)
+            bid, expires_ms, error, token = _digest_cred(path)
+            cached = (*key, bid, expires_ms, error, token)
             _cache[path] = cached
         out.append(
             {
@@ -130,6 +131,29 @@ def account_snapshot() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def routing_snapshot(now: float | None = None) -> list[dict[str, Any]]:
+    """Resolve configured accounts for hot-path routing.
+
+    Returns only currently usable credentials with their bearer hash and raw
+    access token. A token with an explicit past ``expiresAt`` is skipped; the
+    token broker should refresh the file before the router uses it again.
+    """
+    now_ms = int((now if now is not None else datetime.now().timestamp()) * 1000)
+    usable: list[dict[str, Any]] = []
+    for acct in account_snapshot():
+        if acct["error"] or not acct["bearer_id"]:
+            continue
+        cached = _cache.get(acct["path"])
+        token = cached[5] if cached is not None else None
+        if not token:
+            continue
+        expires_at = acct.get("expires_at")
+        if isinstance(expires_at, int) and expires_at <= now_ms:
+            continue
+        usable.append({**acct, "token": token})
+    return usable
 
 
 def _fmt_duration(seconds: float) -> str:

@@ -156,6 +156,28 @@ def test_snapshot_mtime_cache_refreshes_on_rotation(tmp_path, monkeypatch):
     assert second != first
 
 
+def test_routing_snapshot_returns_usable_tokens_only(tmp_path, monkeypatch):
+    fresh = tmp_path / "fresh.json"
+    expired = tmp_path / "expired.json"
+    malformed = tmp_path / "malformed.json"
+    fresh_value = "tok-" + "fresh"
+    _write_cred(fresh, fresh_value, expires_at_ms=int((NOW + 3600) * 1000))
+    _write_cred(expired, "tok-expired", expires_at_ms=int((NOW - 1) * 1000))
+    malformed.write_text(json.dumps({"claudeAiOauth": {}}))
+    monkeypatch.setattr(
+        config,
+        "ACCOUNT_CRED_PATHS",
+        f"F:{fresh},X:{expired},BAD:{malformed},GONE:{tmp_path / 'nope.json'}",
+    )
+
+    (route,) = accounts.routing_snapshot(NOW)
+
+    assert route["label"] == "F"
+    assert route["bearer_id"] == _expected_bid(fresh_value)
+    assert route["token"] == fresh_value
+    assert "token" not in accounts.account_snapshot()[0]
+
+
 # ── pace / ETA math ─────────────────────────────────────────────────────
 
 
