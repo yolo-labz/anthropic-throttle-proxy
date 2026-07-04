@@ -463,6 +463,42 @@ async def test_active_long_retry_after_window_fails_fast_before_queue(
     assert lim.snapshot()["queued_total"] == 0
 
 
+async def test_active_long_retry_after_window_fails_fast_after_queue(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    bid = proxy._bearer_id({"authorization": "Bearer postslot-long-retry"})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+
+    async with lim.slot("holder"):
+        task = asyncio.create_task(
+            _post_and_settle(
+                client,
+                data=b'{"model":"claude-sonnet-4-6"}',
+                headers={"Authorization": "Bearer postslot-long-retry"},
+            )
+        )
+        for _ in range(50):
+            if lim.snapshot()["queued_total"] == 1:
+                break
+            await asyncio.sleep(0.01)
+        assert lim.snapshot()["queued_total"] == 1
+        lim.note_retry_after(3600)
+
+    status, streamed = await asyncio.wait_for(task, timeout=1.0)
+
+    assert status == 429
+    assert b"holding the local gateway request" in streamed
+    assert config.state["queued"] == 0
+    assert config.state["inflight"] == 0
+    snap = lim.snapshot()
+    assert snap["queued_total"] == 0
+    assert snap["inflight"] == 0
+
+
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)

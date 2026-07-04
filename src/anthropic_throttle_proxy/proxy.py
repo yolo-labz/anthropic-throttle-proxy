@@ -666,7 +666,9 @@ def _account_routing_enabled() -> bool:
     return config.ACCOUNT_ROUTING_MODE == "least_loaded" and bool(config.ACCOUNT_CRED_PATHS)
 
 
-def _account_routing_candidate_score(acct: dict[str, object], incoming_bid: str) -> float:
+def _account_routing_candidate_score(
+    acct: dict[str, object], incoming_bid: str, *, allow_pressure: bool = False
+) -> float:
     """Lower is better for account routing. Uses only live pressure, no secrets."""
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
@@ -684,15 +686,18 @@ def _account_routing_candidate_score(acct: dict[str, object], incoming_bid: str)
         statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
         if "rejected" in statuses:
             return math.inf
+        under_pressure = any(status == "allowed_warning" for status in statuses)
         util = max(
             float(v)
             for v in (unified.get("util_5h"), unified.get("util_7d"), 0.0)
             if isinstance(v, (int, float))
         )
+        under_pressure = under_pressure or (UTILIZATION_WARN > 0 and util >= UTILIZATION_WARN)
+        if under_pressure and not allow_pressure:
+            return math.inf
     else:
         util = 0.0
-    # Queue dominates; utilization is a soft tie-breaker so a near-weekly-cap
-    # account is still available when the active account is visibly stuck.
+    # Queue dominates; utilization is a soft tie-breaker below the warning line.
     stickiness = -0.01 if bid == incoming_bid else 0.0
     return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0 + util * 5.0 + stickiness
 
@@ -721,9 +726,18 @@ def _route_account_if_enabled(
         and _account_routing_candidate_score(acct, incoming_bid) < math.inf
     ]
     if not candidates:
+        candidates = [
+            acct
+            for acct in accounts.routing_snapshot(time.time())
+            if isinstance(acct.get("token"), str)
+            and isinstance(acct.get("bearer_id"), str)
+            and _account_routing_candidate_score(acct, incoming_bid, allow_pressure=True) < math.inf
+        ]
+    if not candidates:
         return incoming_bid, None
     selected = min(
-        candidates, key=lambda acct: _account_routing_candidate_score(acct, incoming_bid)
+        candidates,
+        key=lambda acct: _account_routing_candidate_score(acct, incoming_bid, allow_pressure=True),
     )
     selected_bid = str(selected["bearer_id"])
     for key in list(headers):
@@ -1432,6 +1446,13 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 )
                 # Honor any outstanding upstream Retry-After for this bearer before
                 # we dispatch — don't spin a request against a known-closed window.
+                if (
+                    fast_fail := _retry_after_fast_fail_response(
+                        bid, path, limiter.retry_after_remaining(), source="post-slot"
+                    )
+                ) is not None:
+                    attempt.final_status = fast_fail.status
+                    return fast_fail
                 await limiter.wait_retry_after()
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
