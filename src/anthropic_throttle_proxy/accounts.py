@@ -133,6 +133,17 @@ def account_snapshot() -> list[dict[str, Any]]:
     return out
 
 
+def _fresh_endpoint_entry(path: str, now: float) -> dict[str, Any] | None:
+    """Fresh cached usage endpoint entry for routing/UI reuse, never fetching."""
+    entry = _endpoint_cache.get(path)
+    if entry is None:
+        return None
+    fetched = entry.get("fetched")
+    if not isinstance(fetched, (int, float)) or now - fetched > ENDPOINT_STALE_MAX_S:
+        return None
+    return entry
+
+
 def routing_snapshot(now: float | None = None) -> list[dict[str, Any]]:
     """Resolve configured accounts for hot-path routing.
 
@@ -140,7 +151,8 @@ def routing_snapshot(now: float | None = None) -> list[dict[str, Any]]:
     access token. A token with an explicit past ``expiresAt`` is skipped; the
     token broker should refresh the file before the router uses it again.
     """
-    now_ms = int((now if now is not None else datetime.now().timestamp()) * 1000)
+    now_s = now if now is not None else datetime.now().timestamp()
+    now_ms = int(now_s * 1000)
     usable: list[dict[str, Any]] = []
     for acct in account_snapshot():
         if acct["error"] or not acct["bearer_id"]:
@@ -152,7 +164,9 @@ def routing_snapshot(now: float | None = None) -> list[dict[str, Any]]:
         expires_at = acct.get("expires_at")
         if isinstance(expires_at, int) and expires_at <= now_ms:
             continue
-        usable.append({**acct, "token": token})
+        usable.append(
+            {**acct, "token": token, "endpoint": _fresh_endpoint_entry(acct["path"], now_s)}
+        )
     return usable
 
 
@@ -235,7 +249,7 @@ def _endpoint_usage(
     if entry is None:
         return None, None
     usage = entry.get("usage")
-    if usage is not None and now - entry["fetched"] <= ENDPOINT_STALE_MAX_S:
+    if usage is not None and _fresh_endpoint_entry(path, now) is not None:
         return usage, entry.get("err")
     return None, entry.get("err")
 
