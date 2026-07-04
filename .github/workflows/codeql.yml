@@ -1,0 +1,59 @@
+name: CodeQL
+
+# Static security analysis (advanced setup). Public repo → CodeQL is $0.
+# Analyzes the Python surface (proxy token/header/request flow: SSRF, request
+# smuggling, taint). HTML/CSS/Shell are not CodeQL-supported languages, so the
+# matrix is python-only. No build step — Python is interpreted.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  schedule:
+    - cron: "0 7 * * 1" # weekly Monday 07:00 UTC — catches advisories in code that hasn't changed
+  workflow_dispatch:
+
+# Deny-all at workflow scope; the analyze job re-grants the minimum it needs.
+permissions: {}
+
+# Cancel superseded runs on the same ref (new push to a PR voids the old run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+      security-events: write # upload SARIF to the code-scanning tab
+      actions: read # read workflow run metadata (private-repo compat; harmless on public)
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6
+        with:
+          category: "/language:${{ matrix.language }}"
