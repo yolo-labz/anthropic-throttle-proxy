@@ -841,7 +841,10 @@ async def _retry_direct_once(
         return response
     log(f"upstream-error final path=/{path}: {exc2!r}")
     attempt.final_status = 502
-    return web.Response(status=502, text=f"upstream error: {exc2}\n")
+    # Exception CLASS only — the repr already went to the internal log line
+    # above; echoing it to the client leaks upstream/central topology detail
+    # (py/stack-trace-exposure).
+    return web.Response(status=502, text=f"upstream error: {type(exc2).__name__}\n")
 
 
 def _should_retry_pushback(
