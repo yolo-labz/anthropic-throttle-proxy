@@ -58,12 +58,16 @@ until the reported reset. This avoids a storm of identical upstream failures.
 
 ## Credential Failover
 
-Multi-account desktop hosts use one Claude Code credentials file per account,
-but only one account should be active for a fleet at a time. The proxy has two
-opt-in credential features:
+Multi-account desktop hosts use one Claude Code credentials file per account.
+The proxy has three opt-in credential features:
 
 - `THROTTLE_ACCOUNT_CRED_PATHS`: maps account labels to credentials files so
   `/ui` can show which live bearer belongs to which local account.
+- `THROTTLE_ACCOUNT_ROUTING=least_loaded`: local-only hot-path routing. For
+  each `POST /v1/messages`, the proxy chooses the least-loaded usable account
+  from `THROTTLE_ACCOUNT_CRED_PATHS` and rewrites only the upstream
+  `Authorization` header. This is how already-running Claude sessions share
+  multiple accounts without restarting or re-reading credentials.
 - `THROTTLE_ACTIVE_CRED_PATH`: names the single active credentials file used by
   the fleet. When a stale tab is still sending an old bearer while the active
   file has moved to a different bearer, the proxy returns a local 401 nudge:
@@ -73,7 +77,8 @@ That 401 is intentional. Claude Code self-heals by re-reading the active
 credentials file. Do not recover this state with an interactive `/login` inside
 each tab; clean exit/resume preserves the session and picks up the right file.
 
-Credential-file mapping is observability and nudge logic only. The proxy cannot
+`THROTTLE_ACTIVE_CRED_PATH` nudges are disabled while account routing is enabled,
+because the router already owns account choice per request. The proxy cannot
 refresh OAuth tokens, repair dead refresh tokens, or prove two credential files
 belong to different human accounts unless local account metadata is configured
 and current.
@@ -93,7 +98,9 @@ and current.
 Dokku runs the central tier from this repository. Local desktop integration is
 owned by the NixOS configuration and points Claude clients at the local proxy.
 Deploy central changes with the Dokku remote after CI is green and the PR is
-merged:
+merged. Desktop behavior is persisted through the NixOS/Home Manager service
+configuration and must be verified with `systemctl --user show` plus
+`/__throttle/health`.
 
 ```sh
 git push dokku main

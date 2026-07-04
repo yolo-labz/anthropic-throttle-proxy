@@ -70,7 +70,7 @@ MIN_DISPATCH_GAP_S = float(os.environ.get("THROTTLE_MIN_DISPATCH_GAP_MS", "0")) 
 # ≤ PRIORITY_MAX_BODY_BYTES (so a giant no-tools generation that happens to
 # set a small max_tokens cannot jump the queue). Reserve 0 disables the lane
 # (priority calls demote to normal round-robin traffic).
-PRIORITY_RESERVE_SLOTS = max(0, int(os.environ.get("THROTTLE_PRIORITY_RESERVE_SLOTS", "2")))
+PRIORITY_RESERVE_SLOTS = max(0, int(os.environ.get("THROTTLE_PRIORITY_RESERVE_SLOTS", "0")))
 PRIORITY_MAX_TOKENS = max(0, int(os.environ.get("THROTTLE_PRIORITY_MAX_TOKENS", "8192")))
 PRIORITY_MAX_BODY_BYTES = max(0, int(os.environ.get("THROTTLE_PRIORITY_MAX_BODY_BYTES", "262144")))
 
@@ -187,11 +187,12 @@ ZAI_QUOTA_RESET_JITTER_S = max(
 # so a retry pile-up is greppable instead of buried in per-request "done" lines.
 STORM_WARN_RETRIES = int(os.environ.get("THROTTLE_STORM_WARN_RETRIES", "25"))
 
-# Optional dashboard feature: "LABEL:/path/to/.credentials.json,LABEL:..." maps
-# local Claude Code credential files to account labels so /ui can name bearers
-# and show per-account 5h/7d usage. Unset (the default, and always on the
-# central Dokku tier where no cred files exist) hides the panel entirely.
-# Parsed lazily by accounts.py — never touched on the hot path.
+# Optional local credential map: "LABEL:/path/to/.credentials.json,LABEL:..."
+# maps Claude Code credential files to account labels so /ui can name bearers
+# and show per-account 5h/7d usage. When THROTTLE_ACCOUNT_ROUTING=least_loaded,
+# the same map is also used by the hot-path router below. Unset (the default,
+# and always on the central Dokku tier where no cred files exist) hides the
+# panel entirely and no file is read.
 ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
 
 # THROTTLE_ACTIVE_CRED_PATH names the single credential file the whole fleet
@@ -205,6 +206,18 @@ ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
 # the unchanged fast-fail behavior. The token is read, hashed to its 8-hex
 # bearer_id, and dropped — never logged (invariant #2).
 ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
+
+# Opt-in hot-path account routing. When enabled on a local proxy with
+# THROTTLE_ACCOUNT_CRED_PATHS configured, the proxy selects the least-loaded
+# usable credential file for each /v1/messages request and rewrites only the
+# upstream Authorization header. This is the only way already-running Claude
+# sessions can actually share multiple accounts; otherwise every long-lived
+# process pins the bearer it read at startup. Defaults off because central
+# Dokku tiers usually do not have local credential files.
+_ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
+ACCOUNT_ROUTING_MODE = (
+    _ACCOUNT_ROUTING_MODE if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded"} else "off"
+)
 
 # Optional fleet view: sibling proxies to cross-fetch on the dashboard so the
 # whole fleet (e.g. the z.ai coding-plan proxy on :8766) shows in one pane.

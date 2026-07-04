@@ -662,6 +662,80 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
     )
 
 
+def _account_routing_enabled() -> bool:
+    return config.ACCOUNT_ROUTING_MODE == "least_loaded" and bool(config.ACCOUNT_CRED_PATHS)
+
+
+def _account_routing_candidate_score(acct: dict[str, object], incoming_bid: str) -> float:
+    """Lower is better for account routing. Uses only live pressure, no secrets."""
+    bid = acct.get("bearer_id")
+    if not isinstance(bid, str) or not bid:
+        return math.inf
+    lim = config.bearer_limiters.get(bid)
+    if lim is not None and getattr(lim, "retry_after_remaining", lambda: 0.0)() > 0:
+        return math.inf
+    snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
+    queued = float(snap.get("queued_total") or 0)
+    priority_queued = float(snap.get("priority_queued") or 0)
+    inflight = float(snap.get("inflight") or 0)
+    bstate = config.bearer_state.get(bid, {})
+    unified = bstate.get("unified") if isinstance(bstate, dict) else None
+    if isinstance(unified, dict):
+        statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
+        if "rejected" in statuses:
+            return math.inf
+        util = max(
+            float(v)
+            for v in (unified.get("util_5h"), unified.get("util_7d"), 0.0)
+            if isinstance(v, (int, float))
+        )
+    else:
+        util = 0.0
+    # Queue dominates; utilization is a soft tie-breaker so a near-weekly-cap
+    # account is still available when the active account is visibly stuck.
+    stickiness = -0.01 if bid == incoming_bid else 0.0
+    return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0 + util * 5.0 + stickiness
+
+
+def _route_account_if_enabled(
+    headers: dict[str, str],
+    incoming_bid: str,
+    *,
+    method: str,
+    path: str,
+) -> tuple[str, str | None]:
+    """Optionally rewrite upstream Authorization to a configured account.
+
+    Returns ``(bearer_id_used_for_limiter, account_label_or_none)``. Raw tokens
+    are kept inside the header dict sent upstream and are never logged.
+    """
+    if not (_account_routing_enabled() and method == "POST" and "v1/messages" in path):
+        return incoming_bid, None
+    from . import accounts
+
+    candidates = [
+        acct
+        for acct in accounts.routing_snapshot(time.time())
+        if isinstance(acct.get("token"), str)
+        and isinstance(acct.get("bearer_id"), str)
+        and _account_routing_candidate_score(acct, incoming_bid) < math.inf
+    ]
+    if not candidates:
+        return incoming_bid, None
+    selected = min(
+        candidates, key=lambda acct: _account_routing_candidate_score(acct, incoming_bid)
+    )
+    selected_bid = str(selected["bearer_id"])
+    for key in list(headers):
+        if key.lower() == "authorization":
+            del headers[key]
+    headers["Authorization"] = f"Bearer {selected['token']}"
+    if selected_bid != incoming_bid:
+        label = str(selected.get("label") or "?")
+        log(f"account-route from={incoming_bid} to={selected_bid} label={label}")
+    return selected_bid, str(selected.get("label") or "")
+
+
 def _attempt_for_request(
     request: web.Request, bid: str, cid: str, via: str, model_label: str
 ) -> _Attempt:
@@ -1017,8 +1091,9 @@ def _credential_nudge_response(bid: str, path: str, source: str) -> web.Response
     Returned INSTEAD of the long-Retry-After 429 when the fleet's active account
     was swapped out from under a still-running tab. The body mirrors an Anthropic
     auth error so the client's 401 self-heal fires; it carries no Retry-After (a
-    401 means "re-read your creds", not "back off"). NOT a rewritten upstream
-    token — the proxy never injects a bearer (invariants #2/#5 hold).
+    401 means "re-read your creds", not "back off"). Disabled when account
+    routing is enabled, because the router already selects the upstream bearer
+    per request.
     """
     M_CREDENTIAL_NUDGE.labels(bearer=bid).inc()
     log(f"credential-nudge bid={bid} path=/{path} source={source}")
@@ -1051,7 +1126,7 @@ def _retry_after_fast_fail_response(
     """
     if remaining_s <= config.MAX_HOLD_RETRY_AFTER_S:
         return None
-    active = _active_account_bearer()
+    active = "" if _account_routing_enabled() else _active_account_bearer()
     if active and active != bid:
         return _credential_nudge_response(bid, path, source)
     retry_after_s = max(1, math.ceil(remaining_s))
@@ -1311,6 +1386,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
     if body is not None and request.method == "POST":
         body = _apply_body_shrink(request, body, path, model_label, headers)
 
+    bid, _account_label = _route_account_if_enabled(
+        headers,
+        bid,
+        method=request.method,
+        path=path,
+    )
     queue_mode, hard_max = _effective_admission()
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
