@@ -697,6 +697,22 @@ def _account_routing_candidate_score(
             return math.inf
     else:
         util = 0.0
+    endpoint = acct.get("endpoint")
+    if isinstance(endpoint, dict):
+        usage = endpoint.get("usage")
+        if isinstance(usage, dict):
+            endpoint_util = max(
+                float(v)
+                for v in (usage.get("util_5h"), usage.get("util_7d"), 0.0)
+                if isinstance(v, (int, float))
+            )
+            if endpoint_util >= 1.0:
+                return math.inf
+            util = max(util, endpoint_util)
+            if UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN and not allow_pressure:
+                return math.inf
+        elif "(429)" in str(endpoint.get("err") or "") and not allow_pressure:
+            return math.inf
     # Queue dominates; utilization is a soft tie-breaker below the warning line.
     stickiness = -0.01 if bid == incoming_bid else 0.0
     return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0 + util * 5.0 + stickiness

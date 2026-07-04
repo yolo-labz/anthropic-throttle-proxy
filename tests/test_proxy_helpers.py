@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import socket
+import time
 from typing import Any, cast
 
 import pytest
@@ -532,12 +533,14 @@ def _write_cred(path: Any, token: str) -> str:
 def isolated_account_routing(monkeypatch: pytest.MonkeyPatch):
     """Keep account-router tests from leaking global limiter/account state."""
     accounts._cache.clear()
+    accounts._endpoint_cache.clear()
     config.bearer_limiters.clear()
     config.bearer_state.clear()
     monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "off")
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
     yield
     accounts._cache.clear()
+    accounts._endpoint_cache.clear()
     config.bearer_limiters.clear()
     config.bearer_state.clear()
 
@@ -624,6 +627,51 @@ def test_account_routing_skips_unified_pressure_candidate(
     bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
     monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
     config.bearer_state[bid_b] = {"unified": unified}
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_b, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_account_routing_skips_endpoint_rejected_candidate(
+    isolated_account_routing,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    accounts._endpoint_cache[str(tmp_path / "a.json")] = {
+        "fetched": time.time(),
+        "usage": {"util_5h": 1.0, "util_7d": 0.63},
+        "err": None,
+    }
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-B"
+
+
+def test_account_routing_skips_endpoint_429_candidate(
+    isolated_account_routing,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    accounts._endpoint_cache[str(tmp_path / "b.json")] = {
+        "fetched": time.time(),
+        "usage": None,
+        "err": "usage endpoint unavailable (429)",
+    }
     headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
 
     selected, label = proxy._route_account_if_enabled(
