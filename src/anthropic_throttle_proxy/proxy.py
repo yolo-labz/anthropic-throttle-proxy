@@ -255,6 +255,18 @@ UTILIZATION_TARGET = float(os.environ.get("THROTTLE_UTILIZATION_TARGET", "0"))
 # UTILIZATION_TARGET.
 UTILIZATION_WARN = float(os.environ.get("THROTTLE_UTILIZATION_WARN", "0.9"))
 
+# How long a bearer's cached unified state stays trustworthy for classifying a
+# 429 that arrived WITHOUT unified headers (see _budget_under_pressure). This is
+# the discriminator between the two headerless-429 shapes: a concurrency storm
+# interleaves successful streams that DO carry headers, so the cache keeps
+# refreshing and stays fresh; a genuine budget wall 429s *every* response, so no
+# refresh arrives and the cache ages past this window → we fall back to the
+# conservative "assume budget" default. Long enough to bridge a concurrency
+# storm's 429 bursts, short enough that a real wall is not read off a stale
+# "allowed" sample. ponytail: fixed window, not a knob — tune here if the burst
+# cadence changes.
+UNIFIED_CACHE_FRESH_S = float(os.environ.get("THROTTLE_UNIFIED_CACHE_FRESH_S", "120"))
+
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
 # ADVISOR_ENABLED=true + GROQ_API_KEY. Never on the hot path: scheduled as a
@@ -457,6 +469,11 @@ async def _apply_unified(
     if not unified:
         return
     bstate["unified"] = unified
+    # Stamp when this sample landed so a headerless-429 classification can tell a
+    # fresh cache (concurrency storm, still receiving header-bearing successes)
+    # from a stale one (budget wall, every response 429ing) — see
+    # _budget_under_pressure / UNIFIED_CACHE_FRESH_S.
+    bstate["unified_at"] = time.time()
     _publish_unified_gauges(bid, unified)
     if _maybe_pause_rejected(bid, limiter, unified):
         return
@@ -882,7 +899,7 @@ def _maybe_fast_fail_throttle_direct(
     """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
     if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
         return None
-    pause, _ = _pushback_pause(attempt.meta)
+    pause, _ = _pushback_pause(attempt.meta, bid)
     return _retry_after_fast_fail_response(bid, path, pause, source="direct-fallback")
 
 
@@ -1018,7 +1035,7 @@ async def _forward_with_retry(
         if _should_retry_pushback(response, attempt, pushback_retries):
             pushback_retries += 1
             retry_after = _parse_retry_after(attempt.meta)
-            pause, synthetic_pause = _pushback_pause(attempt.meta)
+            pause, synthetic_pause = _pushback_pause(attempt.meta, bid)
             log(
                 f"rate-pushback-retry bid={bid} status={attempt.final_status} "
                 f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
@@ -1035,7 +1052,7 @@ async def _forward_with_retry(
         return response
 
 
-def _budget_under_pressure(meta: Mapping[str, str] | None) -> bool:
+def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> bool:
     """True when the OAuth unified windows say a 429 is BUDGET, not concurrency.
 
     Anthropic returns 429-without-Retry-After for two very different reasons:
@@ -1044,10 +1061,40 @@ def _budget_under_pressure(meta: Mapping[str, str] | None) -> bool:
     same response — a budget throttle shows ``allowed_warning``/``rejected`` (or
     the binding window's utilization at/over the warn line), while a pure
     concurrency 429 arrives while every window is still ``allowed`` with low
-    utilization. Absent unified headers (API-key traffic) → assume budget so the
-    historical conservative backoff is preserved.
+    utilization.
+
+    A concurrency/rate 429 frequently arrives WITHOUT unified headers on its own
+    response. Defaulting straight to "budget" there re-opens the concentration
+    incident from the other side: an account that is 91 % weekly-empty gets the
+    full ``AIMD_BACKOFF_S`` collapse because one burst tripped its concurrency
+    cap (05/07/2026 — fresh account absorbed the whole fleet, u7d=0.09,
+    unified-status=allowed, yet every headerless 429 read as budget → cap
+    collapsed to 1 → queue → disconnects). So when the 429 itself carries no
+    unified headers, fall back to the bearer's CACHED unified state (updated on
+    every response that DOES carry them, ``bearer_state[bid]["unified"]``): a
+    real budget wall shows ``allowed_warning``/``rejected`` there before it ever
+    424s, so the cache reliably distinguishes the two. Only when neither the
+    response nor the cache has unified data (API-key traffic) → assume budget so
+    the historical conservative backoff is preserved.
     """
     unified = _parse_unified(meta)
+    if not unified and bid:
+        # ``.get(bid)`` not ``[bid]``: never KeyError if classification runs for
+        # a bearer not yet in bearer_state (defensive — the hot path always
+        # initializes it first, but the helper must not assume that).
+        bstate = bearer_state.get(bid) or {}
+        cached = bstate.get("unified")
+        cached_at = bstate.get("unified_at")
+        # Trust the cache ONLY while fresh: a budget wall stops producing the
+        # header-bearing successes that refresh it, so a stale sample must NOT
+        # keep a walled account classified as concurrency (adversarial review
+        # 05/07/2026). Stale/absent → fall through to the conservative default.
+        if (
+            cached
+            and isinstance(cached_at, (int, float))
+            and (time.time() - cached_at) <= UNIFIED_CACHE_FRESH_S
+        ):
+            unified = cached
     if not unified:
         return True
     statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
@@ -1059,29 +1106,31 @@ def _budget_under_pressure(meta: Mapping[str, str] | None) -> bool:
     return binding >= UTILIZATION_WARN
 
 
-def _pushback_pause(meta: Mapping[str, str] | None) -> tuple[float, bool]:
+def _pushback_pause(meta: Mapping[str, str] | None, bid: str = "") -> tuple[float, bool]:
     """Return the pause seconds and whether it was synthesized locally.
 
     A real ``Retry-After`` always wins. Without one, classify by the unified
-    budget headers: a genuine budget soft-throttle gets the full AIMD cooldown
-    (hold until the window eases), but a concurrency/rate 429 gets only a short
-    ``CONCURRENCY_COOLDOWN_S`` — the AIMD shrink already sheds the load and the
-    429 clears the instant inflight drops, so a 30s pause would needlessly
-    collapse the active account to cap=1 and hold it there under fleet load.
+    budget headers (falling back to the bearer's cached unified state when the
+    429 itself omits them — see ``_budget_under_pressure``): a genuine budget
+    soft-throttle gets the full AIMD cooldown (hold until the window eases), but
+    a concurrency/rate 429 gets only a short ``CONCURRENCY_COOLDOWN_S`` — the
+    AIMD shrink already sheds the load and the 429 clears the instant inflight
+    drops, so a 30s pause would needlessly collapse the active account to cap=1
+    and hold it there under fleet load.
     """
     retry_after = _parse_retry_after(meta)
     if retry_after > 0:
         return retry_after, False
-    if _budget_under_pressure(meta):
+    if _budget_under_pressure(meta, bid):
         return max(0.0, config.AIMD_BACKOFF_S), True
     return max(0.0, config.CONCURRENCY_COOLDOWN_S), True
 
 
 def _note_retry_after_if_set(
-    limiter: FairBearerLimiter, meta: Mapping[str, str] | None
+    limiter: FairBearerLimiter, meta: Mapping[str, str] | None, bid: str = ""
 ) -> tuple[float, bool]:
     """Apply pushback pause to limiter when one is set; return (pause, synthetic_pause)."""
-    pause, synthetic_pause = _pushback_pause(meta)
+    pause, synthetic_pause = _pushback_pause(meta, bid)
     if pause > 0:
         limiter.note_retry_after(pause)
     return pause, synthetic_pause
@@ -1198,7 +1247,7 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
         # quota gate, not evidence that the current concurrency ceiling is too
         # high, so hold admission until the body reset instead of AIMD shrinking.
-        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta)
+        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
         code = (attempt.meta or {}).get("zai-error-code", "unknown")
         reset = (attempt.meta or {}).get("zai-reset-epoch", "unknown")
         log(
@@ -1214,7 +1263,7 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
         if new_max is not None:
             M_AIMD_MAX.labels(bearer=bid).set(new_max)
-        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta)
+        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
         log(
             f"aimd-shrink bid={bid} status={final_status} "
             f"max_concurrent={new_max} retry_after={retry_after} "
@@ -1224,7 +1273,7 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         # 529 = upstream overloaded (not our usage): honor any retry-after but
         # do NOT shrink the ceiling.
         M_AIMD_OVERLOAD.labels(bearer=bid).inc()
-        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta)
+        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
         log(
             f"overload bid={bid} status={final_status} retry_after={retry_after} "
             f"pause={pause} synthetic_pause={synthetic_pause} (no shrink)"
