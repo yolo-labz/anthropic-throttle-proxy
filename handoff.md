@@ -6,6 +6,77 @@ host activation. Latest incident first.
 
 ---
 
+## 04-05/07/2026 - Account-routing series shipped; 7d budget brake stays on
+
+### What shipped (all merged, CI + CodeQL + Sonar green at `f984c18`)
+
+- **#76** — 502 responses no longer echo upstream exception detail.
+- **#77** — opt-in local account routing (`THROTTLE_ACCOUNT_ROUTING=least_loaded`
+  + `THROTTLE_ACCOUNT_CRED_PATHS`): the proxy picks the least-loaded usable
+  credential per `POST /v1/messages` and rewrites only the upstream
+  `Authorization` header. Also defaulted `THROTTLE_PRIORITY_RESERVE_SLOTS` to 0
+  and added the fake-Anthropic simulator + k6 workload docs.
+- **#78** — routing excludes `allowed_warning`/pressured accounts; queued
+  requests re-check long `Retry-After` after getting a slot and fast-fail
+  instead of sleeping in the only slot.
+- **#79** — routing also consults cached per-endpoint 429/`rejected` state
+  (`_fresh_endpoint_entry` in `accounts.py`).
+- NixOS twins: #1141 (routing env in the HM module) → #1143 → #1144
+  (pin `rev = f984c18`), all merged in `~/NixOS` main.
+
+### Deployment state (verified 04/07 ~23:30 -03)
+
+- **Desktop**: HM activation deferred (niri host), so the base unit still
+  points at a pre-#79 build. Bridged by the persistent drop-in
+  `~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-account-routing-hotfix.conf`
+  (cred paths + `least_loaded` + `ExecStart` pinned to the #79 store path,
+  symbol-verified) and the gcroot
+  `~/.local/state/anthropic-throttle-proxy/live-warning-fallback-package`.
+  Reboot-safe. The next `nixos-smart-switch` / `nh os boot` + reboot makes the
+  base unit current; do NOT run a live switch mid-storm — it restarts this
+  user service and kills in-flight Claude streams.
+- **Central Dokku**: was 4 PRs behind (container built 03/07 right after #74,
+  so the #76 leak fix was not live). Redeployed 04/07 23:32 via
+  `git push dokku main` (`a23e584..f984c18`), zero-downtime checks passed,
+  root probe 200 in 3 ms, local `central_status=up`. Central keeps routing
+  OFF by design (no credential files there — per #77 deploy notes).
+- Both credential files alive and DISTINCT accounts again (B was re-logged
+  after the 03/07 refresh-token wipe; utils differ, so routing is
+  live-effective).
+
+### The budget brake (do not loosen without redoing this math)
+
+`overrides.json` still carries the 03/07 storm clamp: `max_concurrent=1`,
+`central_local_max_concurrent=1`, `min_dispatch_gap_ms=500`, `ramp_after=20`,
+`decrease=0.6`. Overrides WIN over env on restart.
+
+04/07 23:30 evidence: active account 5h=0.30 but **7d=0.69 at only ~24% of the
+7d window elapsed** (window started 03/07 09:20 -03) — a burn pace of ~2.8×
+sustainable, projecting a 7d wall within ~1 day. The other account already sits
+at 7d=0.99 and is auto-excluded by #78. A 7d `rejected` means a **days-long**
+outage, unlike a 5h wall. So the clamp is doing exactly its job; the visible
+cost is client disconnects climbing (tabs time out while queued; #68 drops
+them pre-dispatch so no quota is burned). Loosening the clamp trades a
+days-long fleet outage tomorrow for tab latency today — don't.
+
+Relax criteria: BOTH accounts' 7d below ~0.8 AND burn pace ≤ ~1.15×
+(`util_7d ÷ elapsed-window-fraction`). Then restore
+`central_local_max_concurrent=2` and `min_dispatch_gap_ms=50..100` via
+`POST /ui/config` (hot, persists to overrides.json).
+
+### Priority lane enabled (05/07)
+
+Set `priority_reserve_slots=1` via `/ui/config` (persisted). Short no-tools
+calls (≤8192 max_tokens, ≤256 KB body) — Stop-hook evaluators, titles — now
+dispatch from the dedicated slot instead of starving behind long Opus/Fable
+generations at 1-slot concurrency. Negligible 7d burn; total upstream
+concurrency is now ≤ live cap (1) + reserve (1).
+
+Known observability gap: the priority lane exposes no counters in
+`/__throttle/health` or `/metrics` — you cannot yet distinguish lane
+dispatches from main-pool dispatches without reading the queue logs. Add
+gauges/counters if the lane's behavior comes into question.
+
 ## 30/06/2026 - OpenCode z.ai Coding Plan throttle split
 
 ### What changed
