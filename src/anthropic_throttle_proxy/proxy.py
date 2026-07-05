@@ -89,7 +89,14 @@ from .config import (
     log_mode,
     state,
 )
-from .forwarding import _forward_once, central_health_loop, pick_target
+from .forwarding import (
+    RetryableStatusError,
+    _forward_once,
+    central_health_loop,
+    direct_target,
+    pick_target,
+    stamp_proxy_marker,
+)
 from .limiter import FairBearerLimiter, _get_bearer_limiter
 from .metrics import (
     CONTENT_TYPE_LATEST,
@@ -898,7 +905,16 @@ async def _retry_direct_once(
     response on success, a 499 on a client disconnect, or a 502 if the retry
     also fails.
     """
-    if via == "central":
+    if via == "central" and isinstance(first_exc, RetryableStatusError) and first_exc.proxy_served:
+        # Central itself answered — the 5xx is Anthropic's, relayed (the
+        # response carried MARKER_HEADER). Retry direct for THIS request but
+        # keep central UP: force-marking DOWN here turned every upstream blip
+        # into a fleet-wide stampede past the central semaphore (05/07/2026).
+        log(f"central relayed upstream 5xx: {first_exc!r} → central stays up, retrying direct")
+        # pick_target would re-pick the still-up central; go direct explicitly.
+        retry_url, retry_timeout = direct_target(path, request.query_string)
+        retry_where = "during direct-retry"
+    elif via == "central":
         log(f"central forward failed: {first_exc!r} → marking DOWN, retrying direct")
         # A real failed request is a stronger signal than a health probe, so we
         # force DOWN immediately (bypassing the probe-fail threshold). Reset the
@@ -1648,6 +1664,10 @@ def main() -> None:
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
+    # Every response this proxy serves carries MARKER_HEADER so a downstream
+    # local tier can tell a central-served 5xx (relay — keep central up) from
+    # dokku nginx answering for a dead container (mark central down).
+    app.on_response_prepare.append(stamp_proxy_marker)
     app.router.add_get("/", root_probe)
     app.router.add_get("/__throttle/health", health)
     app.router.add_get("/metrics", metrics)

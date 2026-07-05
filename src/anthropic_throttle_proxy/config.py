@@ -247,6 +247,15 @@ HOP_HEADERS = {
     "content-length",
 }
 
+# Stamped on every response this proxy serves (forwarding.stamp_proxy_marker,
+# registered app-wide in proxy.main). A local tier receiving a 5xx from central
+# uses its presence to tell "central alive, relaying an Anthropic 5xx" apart
+# from "central layer itself dead" (dokku nginx answering for a dead
+# container). Only the latter may mark central DOWN — marking down on relayed
+# upstream blips stampedes the whole fleet into direct fallback, bypassing the
+# central semaphore (05/07/2026 incident).
+MARKER_HEADER = "x-anthropic-throttle-proxy"
+
 state: dict[str, object] = {
     "inflight": 0,
     "queued": 0,
