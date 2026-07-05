@@ -255,6 +255,18 @@ UTILIZATION_TARGET = float(os.environ.get("THROTTLE_UTILIZATION_TARGET", "0"))
 # UTILIZATION_TARGET.
 UTILIZATION_WARN = float(os.environ.get("THROTTLE_UTILIZATION_WARN", "0.9"))
 
+# How long a bearer's cached unified state stays trustworthy for classifying a
+# 429 that arrived WITHOUT unified headers (see _budget_under_pressure). This is
+# the discriminator between the two headerless-429 shapes: a concurrency storm
+# interleaves successful streams that DO carry headers, so the cache keeps
+# refreshing and stays fresh; a genuine budget wall 429s *every* response, so no
+# refresh arrives and the cache ages past this window → we fall back to the
+# conservative "assume budget" default. Long enough to bridge a concurrency
+# storm's 429 bursts, short enough that a real wall is not read off a stale
+# "allowed" sample. ponytail: fixed window, not a knob — tune here if the burst
+# cadence changes.
+UNIFIED_CACHE_FRESH_S = float(os.environ.get("THROTTLE_UNIFIED_CACHE_FRESH_S", "120"))
+
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
 # ADVISOR_ENABLED=true + GROQ_API_KEY. Never on the hot path: scheduled as a
@@ -457,6 +469,11 @@ async def _apply_unified(
     if not unified:
         return
     bstate["unified"] = unified
+    # Stamp when this sample landed so a headerless-429 classification can tell a
+    # fresh cache (concurrency storm, still receiving header-bearing successes)
+    # from a stale one (budget wall, every response 429ing) — see
+    # _budget_under_pressure / UNIFIED_CACHE_FRESH_S.
+    bstate["unified_at"] = time.time()
     _publish_unified_gauges(bid, unified)
     if _maybe_pause_rejected(bid, limiter, unified):
         return
@@ -1065,7 +1082,19 @@ def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> boo
         # ``.get(bid)`` not ``[bid]``: never KeyError if classification runs for
         # a bearer not yet in bearer_state (defensive — the hot path always
         # initializes it first, but the helper must not assume that).
-        unified = (bearer_state.get(bid) or {}).get("unified") or {}
+        bstate = bearer_state.get(bid) or {}
+        cached = bstate.get("unified")
+        cached_at = bstate.get("unified_at")
+        # Trust the cache ONLY while fresh: a budget wall stops producing the
+        # header-bearing successes that refresh it, so a stale sample must NOT
+        # keep a walled account classified as concurrency (adversarial review
+        # 05/07/2026). Stale/absent → fall through to the conservative default.
+        if (
+            cached
+            and isinstance(cached_at, (int, float))
+            and (time.time() - cached_at) <= UNIFIED_CACHE_FRESH_S
+        ):
+            unified = cached
     if not unified:
         return True
     statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))

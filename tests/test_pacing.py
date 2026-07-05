@@ -80,36 +80,53 @@ def test_budget_under_pressure_classifies_unified_headers():
 def test_budget_under_pressure_falls_back_to_cached_unified():
     # A concurrency/rate 429 frequently arrives with NO unified headers on its
     # own response. Without a bid we stay conservative (assume budget); with a
-    # bid we consult the bearer's cached unified state (05/07/2026: the fresh
-    # account, u7d=0.09/status=allowed, whose headerless 429s were collapsing
-    # to the 30s budget backoff and starving throughput).
+    # bid we consult the bearer's FRESH cached unified state (05/07/2026: the
+    # fresh account, u7d=0.09/status=allowed, whose headerless 429s were
+    # collapsing to the 30s budget backoff and starving throughput).
     bid = "cachetest0"
+    now = time.time()
+    fresh = proxy._parse_unified(_ALLOWED_LOW)
     proxy.bearer_state.pop(bid, None)
-    # No cache yet → headerless 429 stays conservative (budget), even with bid.
-    assert proxy._budget_under_pressure(None, bid) is True
-    assert proxy._budget_under_pressure({}, bid) is True
-    # Cache a recently-allowed, low-util sample (parsed form, as _apply_unified
-    # stores it). A headerless 429 now classifies as concurrency, NOT budget.
-    proxy.bearer_state[bid] = {"unified": proxy._parse_unified(_ALLOWED_LOW)}
-    assert proxy._budget_under_pressure(None, bid) is False
-    assert proxy._budget_under_pressure({}, bid) is False
-    # But a headers-bearing 429 always wins over the cache: a rejected window on
-    # THIS response is budget even if the cache still says allowed.
-    assert (
-        proxy._budget_under_pressure(
-            {**_ALLOWED_LOW, "anthropic-ratelimit-unified-status": "rejected"}, bid
+    try:
+        # No cache yet → headerless 429 stays conservative (budget), even with bid.
+        assert proxy._budget_under_pressure(None, bid) is True
+        assert proxy._budget_under_pressure({}, bid) is True
+        # Fresh, recently-allowed low-util cache → headerless 429 classifies as
+        # concurrency, NOT budget.
+        proxy.bearer_state[bid] = {"unified": fresh, "unified_at": now}
+        assert proxy._budget_under_pressure(None, bid) is False
+        assert proxy._budget_under_pressure({}, bid) is False
+        # STALE cache (older than the freshness window) must NOT be trusted: a
+        # budget wall stops refreshing it, so an aged "allowed" sample falls back
+        # to the conservative budget default.
+        proxy.bearer_state[bid] = {
+            "unified": fresh,
+            "unified_at": now - proxy.UNIFIED_CACHE_FRESH_S - 5,
+        }
+        assert proxy._budget_under_pressure(None, bid) is True
+        # A cache with no timestamp at all is also untrusted.
+        proxy.bearer_state[bid] = {"unified": fresh}
+        assert proxy._budget_under_pressure(None, bid) is True
+        # Headers on THIS response always win over the cache: a rejected window
+        # is budget even if a fresh cache still says allowed.
+        proxy.bearer_state[bid] = {"unified": fresh, "unified_at": now}
+        assert (
+            proxy._budget_under_pressure(
+                {**_ALLOWED_LOW, "anthropic-ratelimit-unified-status": "rejected"}, bid
+            )
+            is True
         )
-        is True
-    )
-    # Cache showing a real wall → headerless 429 correctly reads as budget.
-    proxy.bearer_state[bid] = {
-        "unified": proxy._parse_unified(
-            {**_ALLOWED_LOW, "anthropic-ratelimit-unified-7d-status": "rejected"}
-        )
-    }
-    assert proxy._budget_under_pressure(None, bid) is True
+        # Fresh cache showing a real wall → headerless 429 correctly reads budget.
+        proxy.bearer_state[bid] = {
+            "unified": proxy._parse_unified(
+                {**_ALLOWED_LOW, "anthropic-ratelimit-unified-7d-status": "rejected"}
+            ),
+            "unified_at": now,
+        }
+        assert proxy._budget_under_pressure(None, bid) is True
+    finally:
+        proxy.bearer_state.pop(bid, None)
     # An unknown bid must never KeyError — just stay conservative.
-    proxy.bearer_state.pop(bid, None)
     assert proxy._budget_under_pressure(None, "never-seen") is True
 
 
