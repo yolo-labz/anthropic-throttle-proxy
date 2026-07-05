@@ -63,6 +63,20 @@ async def _settle() -> None:
     await asyncio.sleep(0.02)
 
 
+async def _post_messages(
+    tc: TestClient, bearer: str, model: str = "claude-haiku-4-5"
+) -> tuple[aiohttp.ClientResponse, bytes]:
+    """POST a minimal /v1/messages body, drain it, and settle background tasks."""
+    resp = await tc.post(
+        "/v1/messages",
+        data=f'{{"model":"{model}"}}'.encode(),
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    body = await resp.read()
+    await _settle()
+    return resp, body
+
+
 @pytest.fixture
 async def env(monkeypatch):
     """Live stub upstream + a bound, route-wired proxy app + TestClient."""
@@ -76,6 +90,7 @@ async def env(monkeypatch):
     _reset()
 
     app = web.Application()
+    app.on_response_prepare.append(forwarding.stamp_proxy_marker)  # as proxy.main() does
     app.router.add_get("/__throttle/health", proxy.health)
     app.router.add_get("/metrics", proxy.metrics)
     attach_ui(app)
@@ -96,24 +111,32 @@ async def test_central_failover_marks_down_and_retries_direct(env, monkeypatch) 
     # port so the forward fails → handler marks it DOWN and retries direct.
     monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")  # unroutable
     config.state["central_status"] = "up"
-    resp = await tc.post(
-        "/v1/messages",
-        data=b'{"model":"claude-haiku-4-5"}',
-        headers={"Authorization": "Bearer central-fail"},
-    )
-    body = await resp.read()
-    await _settle()
+    resp, body = await _post_messages(tc, "central-fail")
     assert resp.status == 200  # direct retry succeeded against the stub
     assert b"message_stop" in body
     assert config.state["central_status"] == "down"
     assert config.state["upstream_retries"] >= 1
 
 
-async def test_central_502_marks_down_and_retries_direct(env, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("relay_headers", "expected_central_status"),
+    [
+        # Bare 502 = dokku nginx answering for a dead container → mark DOWN.
+        ({}, "down"),
+        # Marked 502 = live central relaying Anthropic's own edge error →
+        # retry direct for this request but keep central routable. Force-
+        # marking DOWN here stampeded the fleet past the central semaphore
+        # (05/07/2026 incident).
+        ({config.MARKER_HEADER: "1"}, "up"),
+    ],
+)
+async def test_central_502_markdown_depends_on_marker(
+    env, monkeypatch, relay_headers, expected_central_status
+) -> None:
     tc, upstream_url = env
 
     async def central_error(_request: web.Request) -> web.Response:
-        return web.Response(status=502, text="upstream error: dns")
+        return web.Response(status=502, text="upstream error: dns", headers=relay_headers)
 
     central = TestServer(web.Application())
     central.app.router.add_route("*", "/{path:.*}", central_error)
@@ -123,20 +146,23 @@ async def test_central_502_marks_down_and_retries_direct(env, monkeypatch) -> No
         monkeypatch.setattr(config, "UPSTREAM", upstream_url)
         config.state["central_status"] = "up"
 
-        resp = await tc.post(
-            "/v1/messages",
-            data=b'{"model":"claude-haiku-4-5"}',
-            headers={"Authorization": "Bearer central-502"},
-        )
-        body = await resp.read()
-        await _settle()
+        resp, body = await _post_messages(tc, "central-502")
 
-        assert resp.status == 200
+        assert resp.status == 200  # direct retry succeeded against the stub
         assert b"message_stop" in body
-        assert config.state["central_status"] == "down"
+        assert config.state["central_status"] == expected_central_status
         assert config.state["upstream_retries"] >= 1
     finally:
         await central.close()
+
+
+async def test_marker_stamped_on_every_response(env) -> None:
+    """main() registers stamp_proxy_marker app-wide; generated responses
+    (health) and streamed relays must both carry the marker header."""
+    tc, _ = env
+    resp = await tc.get("/__throttle/health")
+    assert resp.status == 200
+    assert resp.headers.get(config.MARKER_HEADER) == "1"
 
 
 async def test_central_health_marks_bad_upstream_egress_unhealthy(monkeypatch) -> None:
@@ -180,13 +206,7 @@ async def test_central_down_off_mode_uses_local_fair_queue(env, monkeypatch) -> 
     monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")
     config.state["central_status"] = "down"
 
-    resp = await tc.post(
-        "/v1/messages",
-        data=b'{"model":"claude-haiku-4-5"}',
-        headers={"Authorization": "Bearer central-down"},
-    )
-    await resp.read()
-    await _settle()
+    resp, _ = await _post_messages(tc, "central-down")
 
     assert resp.status == 200
     bid = next(iter(config.bearer_limiters))
@@ -205,13 +225,7 @@ async def test_central_up_off_mode_still_uses_local_safety_queue(env, monkeypatc
     monkeypatch.setattr(config, "CENTRAL_URL", upstream_url)
     config.state["central_status"] = "up"
 
-    resp = await tc.post(
-        "/v1/messages",
-        data=b'{"model":"claude-opus-4-7[1m]"}',
-        headers={"Authorization": "Bearer central-up"},
-    )
-    await resp.read()
-    await _settle()
+    resp, _ = await _post_messages(tc, "central-up", model="claude-opus-4-7[1m]")
 
     assert resp.status == 200
     bid = next(iter(config.bearer_limiters))
@@ -231,13 +245,7 @@ async def test_existing_limiter_raises_when_central_local_cap_increases(env, mon
     config.state["central_status"] = "up"
 
     for _ in range(2):
-        resp = await tc.post(
-            "/v1/messages",
-            data=b'{"model":"claude-haiku-4-5"}',
-            headers={"Authorization": "Bearer retune-central-local"},
-        )
-        await resp.read()
-        await _settle()
+        resp, _ = await _post_messages(tc, "retune-central-local")
         assert resp.status == 200
         monkeypatch.setattr(config, "CENTRAL_LOCAL_MAX_CONCURRENT", 4)
 
@@ -258,13 +266,7 @@ async def test_runtime_override_retunes_existing_central_local_limiter(
     monkeypatch.setattr(config, "CENTRAL_URL", upstream_url)
     config.state["central_status"] = "up"
 
-    resp = await tc.post(
-        "/v1/messages",
-        data=b'{"model":"claude-haiku-4-5"}',
-        headers={"Authorization": "Bearer hot-retune-central-local"},
-    )
-    await resp.read()
-    await _settle()
+    resp, _ = await _post_messages(tc, "hot-retune-central-local")
     assert resp.status == 200
 
     bid = next(iter(config.bearer_limiters))
@@ -285,22 +287,10 @@ async def test_fallback_promotion_does_not_downgrade_on_central_recovery(env, mo
     monkeypatch.setattr(config, "CENTRAL_URL", "http://127.0.0.1:1")
     config.state["central_status"] = "down"
 
-    resp = await tc.post(
-        "/v1/messages",
-        data=b'{"model":"claude-haiku-4-5"}',
-        headers={"Authorization": "Bearer sticky-fair"},
-    )
-    await resp.read()
-    await _settle()
+    await _post_messages(tc, "sticky-fair")
 
     config.state["central_status"] = "up"
-    resp = await tc.post(
-        "/v1/messages",
-        data=b'{"model":"claude-haiku-4-5"}',
-        headers={"Authorization": "Bearer sticky-fair"},
-    )
-    await resp.read()
-    await _settle()
+    await _post_messages(tc, "sticky-fair")
 
     bid = next(iter(config.bearer_limiters))
     assert config.bearer_limiters[bid].queue_mode == "fair"

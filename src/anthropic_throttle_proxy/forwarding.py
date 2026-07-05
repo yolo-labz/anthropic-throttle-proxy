@@ -32,6 +32,40 @@ ForwardResult = tuple[
 ]
 
 
+class RetryableStatusError(RuntimeError):
+    """Upstream answered with a status the caller asked to treat as a failure.
+
+    ``proxy_served`` is True when the response carried ``config.MARKER_HEADER``
+    — a live central relayed an upstream 5xx — so the local tier must retry
+    direct for this request but NOT mark central DOWN.
+    """
+
+    def __init__(self, message: str, proxy_served: bool = False) -> None:
+        super().__init__(message)
+        self.proxy_served = proxy_served
+
+
+async def stamp_proxy_marker(_request: web.Request, response: web.StreamResponse) -> None:
+    """``on_response_prepare`` hook: mark every response this proxy serves.
+
+    Registered app-wide in ``proxy.main()`` so streamed relays, generated
+    errors, and health responses all carry ``config.MARKER_HEADER``. See the
+    constant's comment in config.py for why the local tier needs it.
+    """
+    response.headers[config.MARKER_HEADER] = "1"
+
+
+def _target_url(base: str, path: str, query: str) -> str:
+    url = f"{base}/{path}"
+    return f"{url}?{query}" if query else url
+
+
+def direct_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout]:
+    """Direct-upstream URL + timeout for this request, ignoring central."""
+    timeout = aiohttp.ClientTimeout(total=None, sock_read=600, sock_connect=30)
+    return _target_url(config.UPSTREAM, path, query), timeout
+
+
 def pick_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout, str]:
     """Choose upstream URL for this request.
 
@@ -41,19 +75,12 @@ def pick_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout, str]
     answer, which recreates the rate-limit storm this proxy is meant to absorb.
     """
     if config.CENTRAL_URL and config.state["central_status"] != "down":
-        base = config.CENTRAL_URL
         client_timeout = aiohttp.ClientTimeout(
             total=None, sock_read=600, sock_connect=config.CENTRAL_FORWARD_TIMEOUT
         )
-        via = "central"
-    else:
-        base = config.UPSTREAM
-        client_timeout = aiohttp.ClientTimeout(total=None, sock_read=600, sock_connect=30)
-        via = "direct"
-    url = f"{base}/{path}"
-    if query:
-        url += "?" + query
-    return url, client_timeout, via
+        return _target_url(config.CENTRAL_URL, path, query), client_timeout, "central"
+    url, client_timeout = direct_target(path, query)
+    return url, client_timeout, "direct"
 
 
 def _record_central_sample(healthy: bool, detail: str = "") -> None:
@@ -209,7 +236,10 @@ async def _forward_once(
                         None,
                         upstream.status,
                         bytearray(payload[: 1024 * 1024]),
-                        RuntimeError(f"retryable upstream status {upstream.status}: {snippet}"),
+                        RetryableStatusError(
+                            f"retryable upstream status {upstream.status}: {snippet}",
+                            proxy_served=config.MARKER_HEADER in upstream.headers,
+                        ),
                         _extract_ratelimit(upstream.headers),
                     )
                 return await _stream_response(request, upstream)
