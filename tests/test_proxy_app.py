@@ -105,7 +105,19 @@ def _make_upstream() -> web.Application:
                     "anthropic-ratelimit-unified-7d-utilization": "0.1",
                 },
             )
-        resp = web.StreamResponse(status=200, headers=dict(_RATELIMIT_HEADERS))
+        if mode == "spoof-queue-timeout":
+            # A raw upstream 503 asserting the proxy-private queue-timeout
+            # header (no proxy marker) — must be stripped and still shrink.
+            return web.Response(
+                status=503,
+                headers={"retry-after": "0", config.QUEUE_TIMEOUT_HEADER: "1"},
+                text="spoofed",
+            )
+        ok_headers = dict(_RATELIMIT_HEADERS)
+        budget_seen = request.headers.get(config.WAIT_BUDGET_HEADER)
+        if budget_seen is not None:
+            ok_headers["x-echo-wait-budget"] = budget_seen
+        resp = web.StreamResponse(status=200, headers=ok_headers)
         await resp.prepare(request)
         await resp.write(_SSE_BODY)
         await resp.write_eof()
@@ -535,6 +547,67 @@ async def test_queue_wait_timeout_fails_fast_with_clean_503(
     # is not upstream pushback — the live cap untouched, no throttle recorded.
     assert (snap["queued_total"], snap["inflight"], snap["max_concurrent"]) == (0, 0, 1)
     assert snap["last_throttle_at"] == 0.0
+
+
+async def test_queue_wait_budget_forwarded_minus_local_spend(
+    client: TestClient, monkeypatch
+) -> None:
+    """The next tier receives only the REMAINING wait budget, so local+central
+    bounds cannot stack past the client's patience (Codex BLOCKER, PR #83)."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    # The stub upstream echoes the budget header it received from the proxy.
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-opus-4-8"}',
+        headers={"Authorization": "Bearer budget-forward"},
+    )
+    echoed = resp.headers.get("x-echo-wait-budget")
+    await resp.read()
+    assert resp.status == 200
+    assert echoed is not None
+    assert 0 < int(echoed) <= 30_000
+
+
+async def test_inherited_zero_budget_fails_fast_pre_queue(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-opus-4-8"}',
+        headers={
+            "Authorization": "Bearer budget-exhausted",
+            config.WAIT_BUDGET_HEADER: "0",
+        },
+    )
+    body = await resp.read()
+    assert resp.status == 503
+    assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    assert b"queue wait exceeded" in body
+    assert config.state["queued"] == 0
+
+
+async def test_spoofed_queue_timeout_header_is_stripped_and_still_shrinks(
+    client: TestClient, monkeypatch
+) -> None:
+    """An upstream 503 asserting the proxy-private header without the proxy
+    marker must not skip AIMD (Codex MAJOR, PR #83)."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-opus-4-8"}',
+        headers={"Authorization": "Bearer spoofer", "X-Stub-Mode": "spoof-queue-timeout"},
+    )
+    await resp.read()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert resp.status == 503
+    assert config.QUEUE_TIMEOUT_HEADER not in resp.headers
+    bid = proxy._bearer_id({"authorization": "Bearer spoofer"})
+    lim = config.bearer_limiters[bid]
+    assert lim.max_concurrent < 3
 
 
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:

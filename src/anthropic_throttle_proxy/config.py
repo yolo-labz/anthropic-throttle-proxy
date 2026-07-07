@@ -283,6 +283,16 @@ MARKER_HEADER = "x-anthropic-throttle-proxy"
 # bearer's upstream behavior.
 QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 
+# Request header carrying the REMAINING queue-wait budget (milliseconds) down
+# the local→central chain. Without it the two tiers' QUEUE_MAX_WAIT_S bounds
+# STACK — local waits 30 s, then central waits another 30 s, and the client
+# has been silent for ~60 s, exactly the abort threshold the bound exists to
+# stay under (Codex BLOCKER on PR #83). Each tier takes
+# min(own knob, inherited budget) for its own queue wait and forwards what is
+# left. Client-supplied values only shorten that client's own wait (min()
+# can never exceed the local knob), so the header needs no trust filtering.
+WAIT_BUDGET_HEADER = "x-anthropic-throttle-wait-budget-ms"
+
 state: dict[str, object] = {
     "inflight": 0,
     "queued": 0,

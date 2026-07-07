@@ -683,7 +683,7 @@ def _is_queue_timeout_response(response: web.StreamResponse | None) -> bool:
 
 
 def _queue_wait_timeout_response(
-    bid: str, cid: str, path: str, limiter: FairBearerLimiter
+    bid: str, cid: str, path: str, limiter: FairBearerLimiter, max_wait: float
 ) -> web.Response:
     """Fail a queued request fast with a clean 503 while the client transport
     is still alive.
@@ -699,7 +699,7 @@ def _queue_wait_timeout_response(
     snap = limiter.snapshot()
     log(
         f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
-        f"max_wait_s={config.QUEUE_MAX_WAIT_S} inflight={snap['inflight']} "
+        f"max_wait_s={max_wait:g} inflight={snap['inflight']} "
         f"queued_total={snap['queued_total']} max_concurrent={snap['max_concurrent']}"
     )
     return web.Response(
@@ -712,6 +712,27 @@ def _queue_wait_timeout_response(
             "proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue\n"
         ),
     )
+
+
+def _effective_queue_max_wait(headers: Mapping[str, str]) -> float | None:
+    """This tier's queue-wait bound: min(local knob, inherited budget).
+
+    Without the inherited term the local and central bounds STACK — 30 s in
+    the local queue plus 30 s in central's puts the client at ~60 s of
+    silence, exactly the abort threshold the bound exists to stay under
+    (Codex BLOCKER on PR #83). ``None`` = unbounded (knob off, no budget
+    header). A client-supplied budget can only shorten its own wait — min()
+    never exceeds the local knob — so the header needs no trust filtering.
+    """
+    knob = config.QUEUE_MAX_WAIT_S or None
+    raw = headers.get(config.WAIT_BUDGET_HEADER)
+    if raw is None:
+        return knob
+    try:
+        inherited = max(0.0, float(raw) / 1000.0)
+    except ValueError:
+        return knob
+    return inherited if knob is None else min(knob, inherited)
 
 
 def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int) -> bool:
@@ -1505,6 +1526,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
     the request, streams the response, and on the way out applies AIMD feedback,
     publishes metrics, fires the optional advisor, and parses SSE usage.
     """
+    handler_start = time.time()
     path = request.match_info.get("path", "")
     headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS}
     bid = _bearer_id(request.headers)
@@ -1559,6 +1581,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
     cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
     counters = _Counters(bid, cid, bstate, cstate)
 
+    max_wait = _effective_queue_max_wait(request.headers)
+    if max_wait is not None and max_wait <= 0.0:
+        # The upstream tier already spent the whole wait budget; don't park.
+        return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait)
+
     if limiter.queue_enabled:
         counters.enqueue(request, path)
     else:
@@ -1568,9 +1595,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        async with limiter.slot(
-            cid, priority=is_priority, max_wait=config.QUEUE_MAX_WAIT_S or None
-        ) as held:
+        async with limiter.slot(cid, priority=is_priority, max_wait=max_wait) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -1596,6 +1621,13 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 await limiter.wait_retry_after()
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
+                if max_wait is not None:
+                    # Hand the next tier only what is LEFT of the wait budget
+                    # (slot wait + retry-after sleep already spent from it),
+                    # so local+central queue waits cannot stack past the
+                    # client's patience window.
+                    remaining_ms = max(0, int((max_wait - (time.time() - handler_start)) * 1000))
+                    headers[config.WAIT_BUDGET_HEADER] = str(remaining_ms)
                 return await _forward_with_retry(
                     request,
                     headers,
@@ -1622,11 +1654,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
                     path,
                 )
     except QueueWaitTimeout:
-        # No slot within QUEUE_MAX_WAIT_S: answer 503 while the client's
+        # No slot within the wait bound: answer 503 while the client's
         # transport is still open (the limiter already rolled its queue entry
         # back via acquire's cancellation path; no release is owed).
         counters.dequeue()
-        return _queue_wait_timeout_response(bid, cid, path, limiter)
+        return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait or 0.0)
     finally:
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
         # and the inner `async with limiter.slot()` body decrementing it,

@@ -81,10 +81,24 @@ async def test_non_queue_mode_ignores_max_wait() -> None:
 
 def test_queue_timeout_response_shape() -> None:
     lim = FairBearerLimiter(1, "fair")
-    resp = proxy._queue_wait_timeout_response("bid12345", "cid", "v1/messages", lim)
+    resp = proxy._queue_wait_timeout_response("bid12345", "cid", "v1/messages", lim, 30.0)
     assert resp.status == 503
     assert resp.headers["retry-after"] == str(config.QUEUE_TIMEOUT_RETRY_AFTER_S)
     assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+
+
+def test_effective_queue_max_wait_budget_math(monkeypatch) -> None:
+    """min(knob, inherited): the local+central bounds must not stack."""
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    eff = proxy._effective_queue_max_wait
+    assert eff({}) == 30.0
+    assert eff({config.WAIT_BUDGET_HEADER: "12000"}) == 12.0
+    assert eff({config.WAIT_BUDGET_HEADER: "90000"}) == 30.0
+    assert eff({config.WAIT_BUDGET_HEADER: "garbage"}) == 30.0
+    assert eff({config.WAIT_BUDGET_HEADER: "0"}) == 0.0
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.0)
+    assert eff({}) is None
+    assert eff({config.WAIT_BUDGET_HEADER: "12000"}) == 12.0
 
 
 def test_should_retry_pushback_exempts_queue_timeout() -> None:
