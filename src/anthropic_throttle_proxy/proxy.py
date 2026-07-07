@@ -1080,17 +1080,31 @@ async def _forward_with_retry(
     attempt: _Attempt,
     bid: str,
     limiter: FairBearerLimiter,
+    wait_deadline: float | None = None,
 ) -> web.StreamResponse | web.Response:
     """Forward once, then retry direct on upstream error. Behavior-identical to
     the original inline chain: a central failure marks central DOWN and retries
     direct; a direct failure retries direct once; client disconnects yield 499.
+
+    ``wait_deadline`` (epoch seconds) is the end of this request's queue-wait
+    budget. Every CENTRAL attempt is stamped with the budget REMAINING at send
+    time — stamping once before the loop let a pushback-retry sleep here and
+    then re-grant central the original full window, reopening the >60 s
+    silence (Codex round-2 BLOCKER on PR #83). Direct sends to the raw
+    upstream never carry the proxy-private header.
     """
     pushback_retries = 0
     while True:
+        send_headers = headers
+        if via == "central" and wait_deadline is not None:
+            send_headers = dict(headers)
+            send_headers[config.WAIT_BUDGET_HEADER] = str(
+                max(0, int((wait_deadline - time.time()) * 1000))
+            )
         try:
             response, exc = await _try_forward(
                 request,
-                headers,
+                send_headers,
                 body,
                 url,
                 client_timeout,
@@ -1528,7 +1542,16 @@ async def handler(request: web.Request) -> web.StreamResponse:
     """
     handler_start = time.time()
     path = request.match_info.get("path", "")
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS}
+    # The wait-budget header is CONSUMED here (via _effective_queue_max_wait)
+    # and re-stamped canonically per forward attempt — passing a client's
+    # mixed-case copy through would coexist with the stamped lowercase one,
+    # and the next tier's CIMultiDict.get() would read the client's value
+    # first, defeating the min() (Codex round-2 BLOCKER on PR #83).
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in HOP_HEADERS and k.lower() != config.WAIT_BUDGET_HEADER
+    }
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
     url, client_timeout, via = pick_target(path, request.query_string)
@@ -1621,13 +1644,6 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 await limiter.wait_retry_after()
                 if _request_disconnected(request):
                     return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
-                if max_wait is not None:
-                    # Hand the next tier only what is LEFT of the wait budget
-                    # (slot wait + retry-after sleep already spent from it),
-                    # so local+central queue waits cannot stack past the
-                    # client's patience window.
-                    remaining_ms = max(0, int((max_wait - (time.time() - handler_start)) * 1000))
-                    headers[config.WAIT_BUDGET_HEADER] = str(remaining_ms)
                 return await _forward_with_retry(
                     request,
                     headers,
@@ -1639,6 +1655,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
                     attempt,
                     bid,
                     limiter,
+                    # Deadline (not a snapshot): every central attempt re-stamps
+                    # the REMAINING budget, so pushback sleeps between retries
+                    # keep eating it instead of re-granting central a full
+                    # window (Codex round-2 BLOCKER on PR #83).
+                    wait_deadline=None if max_wait is None else handler_start + max_wait,
                 )
             finally:
                 await _finalize(

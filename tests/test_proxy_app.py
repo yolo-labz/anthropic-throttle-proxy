@@ -114,9 +114,11 @@ def _make_upstream() -> web.Application:
                 text="spoofed",
             )
         ok_headers = dict(_RATELIMIT_HEADERS)
-        budget_seen = request.headers.get(config.WAIT_BUDGET_HEADER)
-        if budget_seen is not None:
-            ok_headers["x-echo-wait-budget"] = budget_seen
+        # Echo EVERY received budget value (case-insensitive) so tests can
+        # detect a duplicated client copy sneaking past the canonical stamp.
+        budget_seen = request.headers.getall(config.WAIT_BUDGET_HEADER, [])
+        if budget_seen:
+            ok_headers["x-echo-wait-budget"] = ",".join(budget_seen)
         resp = web.StreamResponse(status=200, headers=ok_headers)
         await resp.prepare(request)
         await resp.write(_SSE_BODY)
@@ -556,7 +558,9 @@ async def test_queue_wait_budget_forwarded_minus_local_spend(
     bounds cannot stack past the client's patience (Codex BLOCKER, PR #83)."""
     monkeypatch.setattr(config, "QUEUE_MODE", "fair")
     monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
-    # The stub upstream echoes the budget header it received from the proxy.
+    # Only CENTRAL sends carry the budget header; point central at the stub,
+    # which echoes every budget value it received.
+    monkeypatch.setattr(config, "CENTRAL_URL", config.UPSTREAM)
     resp = await client.post(
         "/v1/messages",
         data=b'{"model":"claude-opus-4-8"}',
@@ -566,6 +570,31 @@ async def test_queue_wait_budget_forwarded_minus_local_spend(
     await resp.read()
     assert resp.status == 200
     assert echoed is not None
+    assert 0 < int(echoed) <= 30_000
+
+
+async def test_mixed_case_client_budget_cannot_outlive_the_stamp(
+    client: TestClient, monkeypatch
+) -> None:
+    """A client's mixed-case budget copy must not coexist with the canonical
+    stamp — the next tier's CIMultiDict.get() would read the client's value
+    first and defeat the min() (Codex round-2 BLOCKER, PR #83)."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    monkeypatch.setattr(config, "CENTRAL_URL", config.UPSTREAM)
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-opus-4-8"}',
+        headers={
+            "Authorization": "Bearer budget-case",
+            "X-Anthropic-Throttle-Wait-Budget-Ms": "90000",
+        },
+    )
+    echoed = resp.headers.get("x-echo-wait-budget")
+    await resp.read()
+    assert resp.status == 200
+    assert echoed is not None
+    assert "," not in echoed  # exactly one budget header reached the next tier
     assert 0 < int(echoed) <= 30_000
 
 
