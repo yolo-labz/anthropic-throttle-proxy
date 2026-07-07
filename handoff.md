@@ -1233,3 +1233,52 @@ Durable fix in PR #68: treat body-read resets as 499 client disconnects, and
 check the aiohttp client transport after fair-queue admission and again after
 any Retry-After wait. If the Claude tab has already gone away, release the
 slot and do not forward to central/upstream.
+
+## 07/07/2026 — phantom-401 storm: bounded queue wait (PR #83)
+
+Fleet-wide `API Error: 401 InvalidHTTPResponse fetching /v1/messages?beta=true`
+was NOT a real 401. With only 2/5 bearers usable (A expired without a
+refreshToken, C empty), fair-queue waits reached 60-80 s. Claude Code aborts a
+silent request at ~60 s and closes its socket; the proxy's late write then hit
+a closing transport:
+
+```text
+client-disconnect where=first path=/v1/messages ... via=central
+elapsed_ms=75123 exc='ClientConnectionResetError: Cannot write to closing
+transport' no_upstream_retry=true
+```
+
+The truncated HTTP surfaced client-side as Node fetch `InvalidHTTPResponse`,
+which claude-code misclassifies as a 401/login failure (matches
+routatic/proxy#62). No knob bounded queue time — `max_hold_retry_after_s`
+gates only Retry-After holds.
+
+Durable fix in PR #83 (merged `c8431f8`; central deployed same day; desktop
+pin bumped in NixOS #1175):
+
+- `THROTTLE_QUEUE_MAX_WAIT_S` (default 30 s, hot-tunable, 0=off) bounds the
+  fair-queue wait. Exceeding it returns a clean
+  `503 + Retry-After: 5 + x-anthropic-throttle-queue-timeout: 1` while the
+  client transport is still alive, so the SDK retries transparently.
+- The bound is end-to-end: each tier forwards the remaining budget via
+  `x-anthropic-throttle-wait-budget-ms` and the next tier takes
+  `min(own knob, inherited)`; every central attempt restamps the remaining
+  budget so pushback-retry sleeps cannot re-grant central a full window.
+  Client-supplied copies (any case) are stripped and re-stamped canonically.
+- A local tier relays the stamped 503 verbatim — exempt from pushback-retry
+  and AIMD shrink (central queue depth is admission backpressure, not the
+  bearer's upstream pushback). The stamp is only trusted from marker-bearing
+  proxy responses; a raw upstream 503 carrying it is stripped and still
+  shrinks.
+
+Codex adversarial review ran three rounds and every finding was real:
+round 1 caught the local+central stacking BLOCKER and the spoofable-header
+MAJOR; round 2 caught the stale-budget-on-retry and mixed-case-duplicate
+BLOCKERs; round 3 approved. Single-pass review would have shipped a >60 s
+silence hole.
+
+Capacity itself is the other half of the incident: the fleet needs account A
+re-logged (Pedro-gated OAuth) — the proxy fix makes saturation *clean*, not
+free. Residual: `max_hold_retry_after_s=60` can still hold one Retry-After
+near the client's patience window; lower it via `/ui/config` if disconnect
+logs persist at high queue depth.
