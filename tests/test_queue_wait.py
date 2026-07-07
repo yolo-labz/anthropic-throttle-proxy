@@ -36,16 +36,21 @@ async def test_slot_max_wait_times_out_clean(monkeypatch) -> None:
     assert lim.snapshot()["inflight"] == 0
 
 
-async def test_slot_max_wait_dispatches_before_deadline(monkeypatch) -> None:
-    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+async def _hold_and_park(max_wait: float | None) -> tuple[FairBearerLimiter, asyncio.Task]:
+    """One-slot fair limiter with its slot held + a waiter task parked on it."""
     lim = FairBearerLimiter(1, "fair")
     await lim.acquire("holder")
 
     async def waiter() -> bool:
-        async with lim.slot("waiter", max_wait=5.0):
+        async with lim.slot("waiter", max_wait=max_wait):
             return True
 
-    task = asyncio.create_task(waiter())
+    return lim, asyncio.create_task(waiter())
+
+
+async def test_slot_max_wait_dispatches_before_deadline(monkeypatch) -> None:
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+    lim, task = await _hold_and_park(max_wait=5.0)
     for _ in range(50):
         if lim.snapshot()["queued_total"] == 1:
             break
@@ -58,14 +63,7 @@ async def test_slot_max_wait_dispatches_before_deadline(monkeypatch) -> None:
 
 async def test_slot_unbounded_when_max_wait_none(monkeypatch) -> None:
     monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
-    lim = FairBearerLimiter(1, "fair")
-    await lim.acquire("holder")
-
-    async def waiter() -> bool:
-        async with lim.slot("waiter", max_wait=None):
-            return True
-
-    task = asyncio.create_task(waiter())
+    lim, task = await _hold_and_park(max_wait=None)
     await asyncio.sleep(0.05)
     assert not task.done()
     await lim.release()

@@ -529,13 +529,11 @@ async def test_queue_wait_timeout_fails_fast_with_clean_503(
     assert resp_headers["retry-after"] == str(config.QUEUE_TIMEOUT_RETRY_AFTER_S)
     assert resp_headers[config.QUEUE_TIMEOUT_HEADER] == "1"
     assert b"queue wait exceeded" in streamed
-    assert config.state["queued"] == 0
-    assert config.state["inflight"] == 0
+    assert (config.state["queued"], config.state["inflight"]) == (0, 0)
     snap = lim.snapshot()
-    assert snap["queued_total"] == 0
-    assert snap["inflight"] == 0
-    # Admission timeout is not upstream pushback: the live cap must not shrink.
-    assert snap["max_concurrent"] == 1
+    # queue rolled back, no slot consumed, and — because an admission timeout
+    # is not upstream pushback — the live cap untouched, no throttle recorded.
+    assert (snap["queued_total"], snap["inflight"], snap["max_concurrent"]) == (0, 0, 1)
     assert snap["last_throttle_at"] == 0.0
 
 
