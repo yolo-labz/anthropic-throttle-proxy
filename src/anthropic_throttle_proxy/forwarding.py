@@ -159,9 +159,15 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     ``usage`` block after the client finishes reading — the usage block lives
     in the final few KB of any claude response, even for long generations.
     """
-    resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in config.HOP_HEADERS
-    }
+    drop_headers = config.HOP_HEADERS
+    if config.MARKER_HEADER not in upstream.headers:
+        # Only a sibling proxy tier (marker-stamped) may assert the
+        # queue-timeout contract. A raw upstream 429/503 carrying the header
+        # verbatim would exempt REAL pushback from pushback-retry and AIMD
+        # shrink (Codex MAJOR on PR #83). A double-spoof (marker + stamp) is
+        # the same accepted trust boundary as the PR #81 marker itself.
+        drop_headers = config.HOP_HEADERS | {config.QUEUE_TIMEOUT_HEADER}
+    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
     meta = _extract_ratelimit(upstream.headers)
     if upstream.status in config.THROTTLE_STATUSES:
         body = await upstream.read()

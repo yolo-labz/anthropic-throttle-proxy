@@ -165,7 +165,9 @@ class FairBearerLimiter:
         self.queue_enabled = queue_mode in {"fair", "reactive"}
         self.observe_enabled = queue_mode != "off"
 
-    def slot(self, client_id: str, *, priority: bool = False) -> _FairSlotContext:
+    def slot(
+        self, client_id: str, *, priority: bool = False, max_wait: float | None = None
+    ) -> _FairSlotContext:
         """Return an async context manager that holds one slot for ``client_id``.
 
         ``priority=True`` routes a short/latency-sensitive call through the
@@ -174,8 +176,13 @@ class FairBearerLimiter:
         of 0 demotes the call to normal traffic) and echoed back so
         acquire/release accounting stays symmetric for the call's lifetime
         even if the knob is retuned mid-flight.
+
+        ``max_wait`` bounds the QUEUE WAIT only (queue modes): a request still
+        parked after that many seconds raises :class:`QueueWaitTimeout` instead
+        of stalling past the client's own socket timeout. ``None``/0 keeps the
+        historical unbounded wait.
         """
-        return _FairSlotContext(self, client_id, priority)
+        return _FairSlotContext(self, client_id, priority, max_wait)
 
     async def shrink(self) -> int | None:
         """AIMD multiplicative-decrease. Called on upstream rate pushback (429/503).
@@ -531,19 +538,52 @@ class FairBearerLimiter:
         }
 
 
+class QueueWaitTimeout(Exception):
+    """A queued request exceeded its ``max_wait`` bound without getting a slot.
+
+    Raised from ``_FairSlotContext.__aenter__`` BEFORE any slot is held (the
+    ``asyncio.wait_for`` cancellation runs ``acquire``'s ``_cancel_cleanup``,
+    which removes the parked future or releases a raced dispatch), so the
+    caller never owes a ``release()`` and can answer the client with a clean
+    503 + Retry-After while its transport is still alive.
+    """
+
+    def __init__(self, max_wait: float) -> None:
+        super().__init__(f"no slot within {max_wait}s")
+        self.max_wait = max_wait
+
+
 class _FairSlotContext:
     """Async context manager returned by ``FairBearerLimiter.slot()``."""
 
-    def __init__(self, limiter: FairBearerLimiter, client_id: str, priority: bool = False) -> None:
+    def __init__(
+        self,
+        limiter: FairBearerLimiter,
+        client_id: str,
+        priority: bool = False,
+        max_wait: float | None = None,
+    ) -> None:
         self.limiter = limiter
         self.client_id = client_id
         self.priority = priority
+        self.max_wait = max_wait
 
     async def __aenter__(self) -> _FairSlotContext:
         # acquire() echoes the EFFECTIVE lane (reserve 0 demotes to normal);
         # remember it so __aexit__ releases the same pool it acquired from,
         # even if the knob is retuned mid-flight.
-        self.priority = await self.limiter.acquire(self.client_id, priority=self.priority)
+        acquire = self.limiter.acquire(self.client_id, priority=self.priority)
+        if self.max_wait and self.limiter.queue_enabled:
+            # wait_for cancels the parked acquire on timeout; its
+            # CancelledError path (_cancel_cleanup) rolls the queue entry —
+            # or a slot dispatched during the cancellation race — back, so
+            # no release is owed here.
+            try:
+                self.priority = await asyncio.wait_for(acquire, timeout=self.max_wait)
+            except TimeoutError as exc:
+                raise QueueWaitTimeout(self.max_wait) from exc
+        else:
+            self.priority = await acquire
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:

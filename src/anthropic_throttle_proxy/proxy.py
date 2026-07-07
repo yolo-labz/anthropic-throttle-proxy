@@ -97,7 +97,7 @@ from .forwarding import (
     pick_target,
     stamp_proxy_marker,
 )
-from .limiter import FairBearerLimiter, _get_bearer_limiter
+from .limiter import FairBearerLimiter, QueueWaitTimeout, _get_bearer_limiter
 from .metrics import (
     CONTENT_TYPE_LATEST,
     M_AIMD_GROWS,
@@ -113,6 +113,7 @@ from .metrics import (
     M_DURATION,
     M_INFLIGHT,
     M_INFLIGHT_BEARER,
+    M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
     M_REQUESTS,
@@ -671,6 +672,69 @@ def _request_disconnected(request: web.Request) -> bool:
     return transport is None or transport.is_closing()
 
 
+def _is_queue_timeout_response(response: web.StreamResponse | None) -> bool:
+    """True for a proxy-generated queue-wait-timeout 503 (ours or relayed).
+
+    The local tier must hand these to the client verbatim: pushback-retrying
+    would spin against the same full central queue, and AIMD-shrinking would
+    misattribute central's queue depth to this bearer's upstream behavior.
+    """
+    return response is not None and config.QUEUE_TIMEOUT_HEADER in response.headers
+
+
+def _queue_wait_timeout_response(
+    bid: str, cid: str, path: str, limiter: FairBearerLimiter, max_wait: float
+) -> web.Response:
+    """Fail a queued request fast with a clean 503 while the client transport
+    is still alive.
+
+    Answering INSIDE claude's patience window (it aborts a silent request at
+    ~60 s) is the whole point: a response written after the client hangs up
+    lands on a closing transport and surfaces client-side as truncated HTTP →
+    ``InvalidHTTPResponse`` → a phantom 401/login error (07/07/2026 incident).
+    A clean 503 + Retry-After makes the SDK retry transparently and re-enter
+    the round-robin fairly.
+    """
+    M_QUEUE_WAIT_TIMEOUTS.labels(bearer=bid).inc()
+    snap = limiter.snapshot()
+    log(
+        f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
+        f"max_wait_s={max_wait:g} inflight={snap['inflight']} "
+        f"queued_total={snap['queued_total']} max_concurrent={snap['max_concurrent']}"
+    )
+    return web.Response(
+        status=503,
+        headers={
+            "retry-after": str(config.QUEUE_TIMEOUT_RETRY_AFTER_S),
+            config.QUEUE_TIMEOUT_HEADER: "1",
+        },
+        text=(
+            "proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue\n"
+        ),
+    )
+
+
+def _effective_queue_max_wait(headers: Mapping[str, str]) -> float | None:
+    """This tier's queue-wait bound: min(local knob, inherited budget).
+
+    Without the inherited term the local and central bounds STACK — 30 s in
+    the local queue plus 30 s in central's puts the client at ~60 s of
+    silence, exactly the abort threshold the bound exists to stay under
+    (Codex BLOCKER on PR #83). ``None`` = unbounded (knob off, no budget
+    header). A client-supplied budget can only shorten its own wait — min()
+    never exceeds the local knob — so the header needs no trust filtering.
+    """
+    knob = config.QUEUE_MAX_WAIT_S or None
+    raw = headers.get(config.WAIT_BUDGET_HEADER)
+    if raw is None:
+        return knob
+    try:
+        inherited = max(0.0, float(raw) / 1000.0)
+    except ValueError:
+        return knob
+    return inherited if knob is None else min(knob, inherited)
+
+
 def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int) -> bool:
     """Classify a request for the limiter priority lane.
 
@@ -989,12 +1053,19 @@ def _should_retry_pushback(
     attempt: _Attempt,
     pushback_retries: int,
 ) -> bool:
-    """True when an unprepared throttle response is still within the retry budget."""
+    """True when an unprepared throttle response is still within the retry budget.
+
+    A relayed queue-wait-timeout 503 is exempt: central's queue is FULL, so a
+    pushback retry would only re-park this request against the same saturated
+    queue and burn the client's remaining patience — relay it instead so the
+    SDK retries on its own clock.
+    """
     return (
         response is not None
         and not response.prepared
         and attempt.final_status in THROTTLE_STATUSES
         and pushback_retries < config.RATE_PUSHBACK_RETRIES
+        and not _is_queue_timeout_response(response)
     )
 
 
@@ -1009,17 +1080,31 @@ async def _forward_with_retry(
     attempt: _Attempt,
     bid: str,
     limiter: FairBearerLimiter,
+    wait_deadline: float | None = None,
 ) -> web.StreamResponse | web.Response:
     """Forward once, then retry direct on upstream error. Behavior-identical to
     the original inline chain: a central failure marks central DOWN and retries
     direct; a direct failure retries direct once; client disconnects yield 499.
+
+    ``wait_deadline`` (epoch seconds) is the end of this request's queue-wait
+    budget. Every CENTRAL attempt is stamped with the budget REMAINING at send
+    time — stamping once before the loop let a pushback-retry sleep here and
+    then re-grant central the original full window, reopening the >60 s
+    silence (Codex round-2 BLOCKER on PR #83). Direct sends to the raw
+    upstream never carry the proxy-private header.
     """
     pushback_retries = 0
     while True:
+        send_headers = headers
+        if via == "central" and wait_deadline is not None:
+            send_headers = dict(headers)
+            send_headers[config.WAIT_BUDGET_HEADER] = str(
+                max(0, int((wait_deadline - time.time()) * 1000))
+            )
         try:
             response, exc = await _try_forward(
                 request,
-                headers,
+                send_headers,
                 body,
                 url,
                 client_timeout,
@@ -1243,6 +1328,13 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
     """Apply AIMD shrink/overload/grow + Retry-After feedback for one request."""
     final_status = attempt.final_status
     retry_after = _parse_retry_after(attempt.meta)
+    if final_status in AIMD_STATUSES and _is_queue_timeout_response(attempt.response):
+        # A relayed queue-wait-timeout 503 is central admission backpressure,
+        # not upstream pushback on this bearer: shrinking here would
+        # misattribute central's queue depth to the bearer's own upstream
+        # behavior and collapse a healthy local cap.
+        log(f"queue-timeout-relay bid={bid} status={final_status} (no aimd shrink)")
+        return
     if final_status in AIMD_STATUSES and _is_zai_quota_gate(attempt.meta):
         # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
         # quota gate, not evidence that the current concurrency ceiling is too
@@ -1448,8 +1540,18 @@ async def handler(request: web.Request) -> web.StreamResponse:
     the request, streams the response, and on the way out applies AIMD feedback,
     publishes metrics, fires the optional advisor, and parses SSE usage.
     """
+    handler_start = time.time()
     path = request.match_info.get("path", "")
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS}
+    # The wait-budget header is CONSUMED here (via _effective_queue_max_wait)
+    # and re-stamped canonically per forward attempt — passing a client's
+    # mixed-case copy through would coexist with the stamped lowercase one,
+    # and the next tier's CIMultiDict.get() would read the client's value
+    # first, defeating the min() (Codex round-2 BLOCKER on PR #83).
+    headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in HOP_HEADERS and k.lower() != config.WAIT_BUDGET_HEADER
+    }
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
     url, client_timeout, via = pick_target(path, request.query_string)
@@ -1502,6 +1604,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
     cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
     counters = _Counters(bid, cid, bstate, cstate)
 
+    max_wait = _effective_queue_max_wait(request.headers)
+    if max_wait is not None and max_wait <= 0.0:
+        # The upstream tier already spent the whole wait budget; don't park.
+        return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait)
+
     if limiter.queue_enabled:
         counters.enqueue(request, path)
     else:
@@ -1511,7 +1618,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        async with limiter.slot(cid, priority=is_priority) as held:
+        async with limiter.slot(cid, priority=is_priority, max_wait=max_wait) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -1548,6 +1655,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
                     attempt,
                     bid,
                     limiter,
+                    # Deadline (not a snapshot): every central attempt re-stamps
+                    # the REMAINING budget, so pushback sleeps between retries
+                    # keep eating it instead of re-granting central a full
+                    # window (Codex round-2 BLOCKER on PR #83).
+                    wait_deadline=None if max_wait is None else handler_start + max_wait,
                 )
             finally:
                 await _finalize(
@@ -1562,6 +1674,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
                     request,
                     path,
                 )
+    except QueueWaitTimeout:
+        # No slot within the wait bound: answer 503 while the client's
+        # transport is still open (the limiter already rolled its queue entry
+        # back via acquire's cancellation path; no release is owed).
+        counters.dequeue()
+        return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait or 0.0)
     finally:
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
         # and the inner `async with limiter.slot()` body decrementing it,
