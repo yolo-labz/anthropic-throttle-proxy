@@ -29,6 +29,7 @@ __all__ = [
     "M_INFLIGHT_BEARER",
     "M_QUEUED_BEARER",
     "M_CLIENT_DISCONNECTS",
+    "M_QUEUE_WAIT_TIMEOUTS",
     "M_UPSTREAM_RETRIES",
     "M_CENTRAL_STATUS",
     "M_AIMD_MAX",
@@ -105,6 +106,12 @@ M_QUEUED_BEARER = Gauge(
 M_CLIENT_DISCONNECTS = Counter(
     "anthropic_client_disconnects_total",
     "Client disconnections during response stream (claude gave up / network blip).",
+    registry=REGISTRY,
+)
+M_QUEUE_WAIT_TIMEOUTS = Counter(
+    "anthropic_queue_wait_timeouts_total",
+    "Requests failed fast with 503 after waiting QUEUE_MAX_WAIT_S without a slot.",
+    ["bearer"],
     registry=REGISTRY,
 )
 M_UPSTREAM_RETRIES = Counter(

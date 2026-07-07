@@ -174,6 +174,24 @@ RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIE
 # fast with 429 instead of sleeping behind the proxy.
 MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "60")))
 
+# Upper bound on time a request may WAIT IN THE FAIR QUEUE for a slot before
+# the proxy fails fast with a clean 503 + Retry-After. Claude Code shows
+# "Waiting for API response" after ~20 s of silence and aborts the socket at
+# ~60 s; any response written after that hits a closing transport, reaches the
+# client as truncated HTTP, and Node's fetch surfaces it as
+# `InvalidHTTPResponse` — which claude-code then misreads as a 401 login
+# failure (07/07/2026 fleet incident: 2/5 bearers usable → 60-80 s queue
+# waits → phantom-401 storm). Failing fast INSIDE the client's patience window
+# keeps the transport alive so the SDK retries transparently ("API Error:
+# 503 · Retrying…") and re-enters the round-robin fairly. 0 disables the bound
+# (historical unbounded wait). Orthogonal to MAX_HOLD_RETRY_AFTER_S above,
+# which gates only upstream Retry-After holds, not queue time.
+QUEUE_MAX_WAIT_S = max(0.0, float(os.environ.get("THROTTLE_QUEUE_MAX_WAIT_S", "30")))
+# Retry-After attached to the queue-wait-timeout 503. Short on purpose: the
+# retry re-enters the per-client round-robin fairly, and the SDK layers its
+# own exponential backoff on repeated failures.
+QUEUE_TIMEOUT_RETRY_AFTER_S = 5
+
 # Z.ai Coding Plan sends quota-window resets in the JSON error body, not a
 # Retry-After header. Add a small jitter so a fleet sharing one key does not all
 # resume on the same reset second.
@@ -255,6 +273,15 @@ HOP_HEADERS = {
 # upstream blips stampedes the whole fleet into direct fallback, bypassing the
 # central semaphore (05/07/2026 incident).
 MARKER_HEADER = "x-anthropic-throttle-proxy"
+
+# Stamped (alongside MARKER_HEADER) on the 503 this proxy GENERATES when a
+# request exceeds QUEUE_MAX_WAIT_S waiting for a slot. A local tier that
+# receives it from central must relay it to the client VERBATIM: it is
+# admission backpressure from the proxy itself, not upstream pushback —
+# pushback-retrying it would spin against the same full queue, and
+# AIMD-shrinking on it would misattribute central's queue depth to this
+# bearer's upstream behavior.
+QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 
 state: dict[str, object] = {
     "inflight": 0,
@@ -456,6 +483,10 @@ def _set_aimd_decrease(v: float) -> None:
 
 def _set_max_hold_retry_after_s(v: float) -> None:
     _set_module_attr(_MOD_CONFIG, "MAX_HOLD_RETRY_AFTER_S", v)
+
+
+def _set_queue_max_wait_s(v: float) -> None:
+    _set_module_attr(_MOD_CONFIG, "QUEUE_MAX_WAIT_S", v)
 
 
 def _set_body_shrink_cap_bytes(v: int) -> None:
@@ -749,6 +780,23 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "behind the local gateway. Default 60s holds Anthropic's common "
             "short 30s temporary throttles while still rejecting multi-hour "
             "account-window waits."
+        ),
+    },
+    "queue_max_wait_s": {
+        "label": "Max queue wait",
+        "type": "float",
+        "min": 0.0,
+        "max": 600.0,
+        "getter": lambda: QUEUE_MAX_WAIT_S,
+        "setter": _set_queue_max_wait_s,
+        "units": "s",
+        "help": (
+            "Longest a request may wait in the fair queue for a slot before "
+            "the proxy fails fast with 503 + Retry-After. Claude Code aborts "
+            "a silent request at ~60s; a response written after that hits a "
+            "closing transport and surfaces as InvalidHTTPResponse (phantom "
+            "401). Keep this inside the client's patience window (~30s) so "
+            "the SDK retries transparently instead. 0 disables the bound."
         ),
     },
     "body_shrink_cap_bytes": {

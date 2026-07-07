@@ -97,7 +97,7 @@ from .forwarding import (
     pick_target,
     stamp_proxy_marker,
 )
-from .limiter import FairBearerLimiter, _get_bearer_limiter
+from .limiter import FairBearerLimiter, QueueWaitTimeout, _get_bearer_limiter
 from .metrics import (
     CONTENT_TYPE_LATEST,
     M_AIMD_GROWS,
@@ -113,6 +113,7 @@ from .metrics import (
     M_DURATION,
     M_INFLIGHT,
     M_INFLIGHT_BEARER,
+    M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
     M_REQUESTS,
@@ -671,6 +672,48 @@ def _request_disconnected(request: web.Request) -> bool:
     return transport is None or transport.is_closing()
 
 
+def _is_queue_timeout_response(response: web.StreamResponse | None) -> bool:
+    """True for a proxy-generated queue-wait-timeout 503 (ours or relayed).
+
+    The local tier must hand these to the client verbatim: pushback-retrying
+    would spin against the same full central queue, and AIMD-shrinking would
+    misattribute central's queue depth to this bearer's upstream behavior.
+    """
+    return response is not None and config.QUEUE_TIMEOUT_HEADER in response.headers
+
+
+def _queue_wait_timeout_response(
+    bid: str, cid: str, path: str, limiter: FairBearerLimiter
+) -> web.Response:
+    """Fail a queued request fast with a clean 503 while the client transport
+    is still alive.
+
+    Answering INSIDE claude's patience window (it aborts a silent request at
+    ~60 s) is the whole point: a response written after the client hangs up
+    lands on a closing transport and surfaces client-side as truncated HTTP →
+    ``InvalidHTTPResponse`` → a phantom 401/login error (07/07/2026 incident).
+    A clean 503 + Retry-After makes the SDK retry transparently and re-enter
+    the round-robin fairly.
+    """
+    M_QUEUE_WAIT_TIMEOUTS.labels(bearer=bid).inc()
+    snap = limiter.snapshot()
+    log(
+        f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
+        f"max_wait_s={config.QUEUE_MAX_WAIT_S} inflight={snap['inflight']} "
+        f"queued_total={snap['queued_total']} max_concurrent={snap['max_concurrent']}"
+    )
+    return web.Response(
+        status=503,
+        headers={
+            "retry-after": str(config.QUEUE_TIMEOUT_RETRY_AFTER_S),
+            config.QUEUE_TIMEOUT_HEADER: "1",
+        },
+        text=(
+            "proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue\n"
+        ),
+    )
+
+
 def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int) -> bool:
     """Classify a request for the limiter priority lane.
 
@@ -989,12 +1032,19 @@ def _should_retry_pushback(
     attempt: _Attempt,
     pushback_retries: int,
 ) -> bool:
-    """True when an unprepared throttle response is still within the retry budget."""
+    """True when an unprepared throttle response is still within the retry budget.
+
+    A relayed queue-wait-timeout 503 is exempt: central's queue is FULL, so a
+    pushback retry would only re-park this request against the same saturated
+    queue and burn the client's remaining patience — relay it instead so the
+    SDK retries on its own clock.
+    """
     return (
         response is not None
         and not response.prepared
         and attempt.final_status in THROTTLE_STATUSES
         and pushback_retries < config.RATE_PUSHBACK_RETRIES
+        and not _is_queue_timeout_response(response)
     )
 
 
@@ -1243,6 +1293,13 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
     """Apply AIMD shrink/overload/grow + Retry-After feedback for one request."""
     final_status = attempt.final_status
     retry_after = _parse_retry_after(attempt.meta)
+    if final_status in AIMD_STATUSES and _is_queue_timeout_response(attempt.response):
+        # A relayed queue-wait-timeout 503 is central admission backpressure,
+        # not upstream pushback on this bearer: shrinking here would
+        # misattribute central's queue depth to the bearer's own upstream
+        # behavior and collapse a healthy local cap.
+        log(f"queue-timeout-relay bid={bid} status={final_status} (no aimd shrink)")
+        return
     if final_status in AIMD_STATUSES and _is_zai_quota_gate(attempt.meta):
         # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
         # quota gate, not evidence that the current concurrency ceiling is too
@@ -1511,7 +1568,9 @@ async def handler(request: web.Request) -> web.StreamResponse:
         )
 
     try:
-        async with limiter.slot(cid, priority=is_priority) as held:
+        async with limiter.slot(
+            cid, priority=is_priority, max_wait=config.QUEUE_MAX_WAIT_S or None
+        ) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -1562,6 +1621,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
                     request,
                     path,
                 )
+    except QueueWaitTimeout:
+        # No slot within QUEUE_MAX_WAIT_S: answer 503 while the client's
+        # transport is still open (the limiter already rolled its queue entry
+        # back via acquire's cancellation path; no release is owed).
+        counters.dequeue()
+        return _queue_wait_timeout_response(bid, cid, path, limiter)
     finally:
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
         # and the inner `async with limiter.slot()` body decrementing it,

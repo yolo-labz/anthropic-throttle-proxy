@@ -499,6 +499,46 @@ async def test_active_long_retry_after_window_fails_fast_after_queue(
     assert snap["inflight"] == 0
 
 
+async def test_queue_wait_timeout_fails_fast_with_clean_503(
+    client: TestClient, monkeypatch
+) -> None:
+    """A request parked past QUEUE_MAX_WAIT_S gets a clean 503 + Retry-After
+    while its transport is still alive. Pins the 07/07/2026 phantom-401 path:
+    the unbounded queue wait outlived claude's ~60 s socket patience, the late
+    write hit a closing transport, and the truncated HTTP surfaced client-side
+    as InvalidHTTPResponse → misread as a 401 login failure.
+    """
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.2)
+    bid = proxy._bearer_id({"authorization": "Bearer queue-wait-timeout"})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+
+    async with lim.slot("holder"):
+        resp = await client.post(
+            "/v1/messages",
+            data=b'{"model":"claude-opus-4-8"}',
+            headers={"Authorization": "Bearer queue-wait-timeout"},
+        )
+        status = resp.status
+        streamed = await resp.read()
+        resp_headers = resp.headers
+
+    assert status == 503
+    assert resp_headers["retry-after"] == str(config.QUEUE_TIMEOUT_RETRY_AFTER_S)
+    assert resp_headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    assert b"queue wait exceeded" in streamed
+    assert config.state["queued"] == 0
+    assert config.state["inflight"] == 0
+    snap = lim.snapshot()
+    assert snap["queued_total"] == 0
+    assert snap["inflight"] == 0
+    # Admission timeout is not upstream pushback: the live cap must not shrink.
+    assert snap["max_concurrent"] == 1
+    assert snap["last_throttle_at"] == 0.0
+
+
 async def test_529_overload_does_not_shrink(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
