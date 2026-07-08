@@ -1282,3 +1282,38 @@ re-logged (Pedro-gated OAuth) — the proxy fix makes saturation *clean*, not
 free. Residual: `max_hold_retry_after_s=60` can still hold one Retry-After
 near the client's patience window; lower it via `/ui/config` if disconnect
 logs persist at high queue depth.
+
+### Capacity resolved — 3-account roster, A + C re-logged (07/07 later, live-verified)
+
+The "needs account A re-logged" thread is closed. Accounts are wired via
+`THROTTLE_ACCOUNT_CRED_PATHS` with `least_loaded` routing and
+`THROTTLE_ACTIVE_CRED_PATH=/home/notroot/.claude/.credentials.json`:
+
+- **A** — `~/.claude`, Max. Was EXPIRED with no `refreshToken` (could not
+  auto-refresh — the incident trigger). Re-logged via the browser-automation
+  Claude-OAuth flow (Browser Automation Cookbook § 0.11). Now carries a
+  `refreshToken` + future `expiresAt`.
+- **B** — `~/.claude-b`, Max. **7-day quota exhausted** — bearer `116856a0`
+  holds `Retry-After ≈ 212003 s (~59 h)`; `least_loaded` auto-excludes it
+  (#78). Rejoins when its 7d window resets.
+- **C** — `~/.claude-c` (`phsb5321@gmail.com`), Max. Was the empty
+  "missing credentials" account. Re-logged (same OAuth flow). Now has a
+  `refreshToken` + future `expiresAt`.
+- rbw "Claude Key" (`sk-ant-api03-…`) has **no credits** — do NOT wire it as a
+  bearer.
+
+Live evidence (07/07, this session): `/__throttle/health` → `central_status=up`,
+`queued=0`, `max_concurrent=3`, three distinct bearers — two `allowed_warning`
+at `util_7d ≈ 0.76`, one exhausted at `~59 h`. The **#83 bound is armed**:
+`overrides.json` carries 11 keys, none is queue-wait, so `QUEUE_MAX_WAIT_S` runs
+the code default **30 s** (`config.py`), well inside claude's ~60 s abort window.
+The running store path
+`wfvlmb5qjldi4vfakqjzvxp1fzzhzrz6-anthropic-throttle-proxy-0.1.0` exposes the
+`queue_max_wait_s` editable knob → confirms it is the #83 build. (`/__throttle/health`
+has no top-level `queue_max_wait_s` field — do not read its absence as "disabled";
+the effective value lives behind `/ui/config`.)
+
+Cosmetic caveat: both A and B `.claude.json` render
+`oauthAccount = pedrobalbino@pm.me` (the two Proton aliases share one mailbox);
+the OAuth bearers are distinct hashes (one exhausted), so routing sees two real
+accounts regardless of the shared email label.
