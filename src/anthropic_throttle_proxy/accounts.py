@@ -408,6 +408,10 @@ _email_cache: dict[str, tuple[int, str]] = {}
 # emailAddress); reading it keeps the collision detectable with no token.
 _local_identity_cache: dict[str, tuple[int, int, str]] = {}  # (cred_mtime, ident_mtime, email)
 _endpoint_locks: dict[str, asyncio.Lock] = {}
+# Per-path singleflight for force_verify_email: suspected-set churn can spawn
+# overlapping verification tasks that would otherwise probe the SAME credential
+# concurrently through the loopback (the #87 self-429 class — Codex MAJOR).
+_verify_locks: dict[str, asyncio.Lock] = {}
 
 
 def _iso_epoch(value: Any) -> int | None:
@@ -540,12 +544,21 @@ async def _get_json(url: str, token: str) -> tuple[int, dict[str, Any] | None]:
         return 0, None
 
 
-async def _refresh_email(path: str, token: str) -> None:
-    """Profile email, re-fetched only when the credential file changed."""
+async def _refresh_email(path: str, token: str, expect_mtime: int | None = None) -> None:
+    """Profile email, re-fetched only when the credential file changed.
+
+    ``expect_mtime`` is the credential mtime observed when ``token`` was READ.
+    The probe result is cached only while the file still matches it — and is
+    re-checked AFTER the network round-trip — so a rotation landing mid-probe
+    can never certify the OLD token's email against the NEW file (Codex MAJOR:
+    the guard would mark a wrong identity as verified).
+    """
     try:
         mtime = os.stat(path).st_mtime_ns
     except OSError:
         return
+    if expect_mtime is not None and mtime != expect_mtime:
+        return  # credential rewritten since the token was read — don't certify
     cached = _email_cache.get(path)
     if cached is not None and cached[0] == mtime:
         return
@@ -553,6 +566,11 @@ async def _refresh_email(path: str, token: str) -> None:
     if status == 200 and body:
         email = (body.get("account") or {}).get("email")
         if isinstance(email, str) and email:
+            try:
+                if os.stat(path).st_mtime_ns != mtime:
+                    return  # rotated mid-probe — this email belongs to the OLD token
+            except OSError:
+                return
             _email_cache[path] = (mtime, email)
 
 
@@ -566,13 +584,17 @@ async def _refresh_one(path: str, now: float) -> None:
         entry = _endpoint_cache.get(path)
         if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
             return
+        try:
+            token_mtime = os.stat(path).st_mtime_ns
+        except OSError:
+            token_mtime = None
         token = _read_token(path)
         if token is None:
             return
         status, body = await _get_json(_oauth_base() + _USAGE_PATH, token)
         if status == 200 and body is not None:
             _endpoint_cache[path] = {"fetched": now, "usage": _parse_usage(body), "err": None}
-            await _refresh_email(path, token)
+            await _refresh_email(path, token, expect_mtime=token_mtime)
         elif status == 401:
             # Credential invalid server-side — surface it and DROP the stale
             # numbers (a dead account's old readings must not style the panel
@@ -684,14 +706,29 @@ async def force_verify_email(path: str) -> str | None:
     the verified email, or None when the token is unreadable or the probe
     failed (dead account / throttled) — the caller decides how loudly to warn
     about an unverified suspicion.
+
+    Singleflight per path: overlapping verification tasks (suspected-set churn)
+    serialize here, and a probe another task just completed is reused instead
+    of re-hitting the endpoint. Token + mtime are snapshotted together so a
+    rotation mid-probe can never certify the old token's email as the new
+    file's verified identity (``_refresh_email`` re-checks after the probe).
     """
-    token = _read_token(path)
-    if token is None:
-        return None
-    _email_cache.pop(path, None)  # force _refresh_email past its mtime short-circuit
-    await _refresh_email(path, token)
-    cached = _email_cache.get(path)
-    return cached[1] if cached is not None else None
+    lock = _verify_locks.setdefault(path, asyncio.Lock())
+    async with lock:
+        try:
+            mtime = os.stat(path).st_mtime_ns
+        except OSError:
+            return None
+        cached = _email_cache.get(path)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]  # already verified for the CURRENT credential
+        token = _read_token(path)
+        if token is None:
+            return None
+        _email_cache.pop(path, None)  # force _refresh_email past its mtime short-circuit
+        await _refresh_email(path, token, expect_mtime=mtime)
+        cached = _email_cache.get(path)
+        return cached[1] if cached is not None else None
 
 
 def identity_state(accounts: list[dict[str, Any]]) -> dict[str, Any]:

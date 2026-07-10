@@ -156,11 +156,21 @@ M_ACCOUNTS_DISTINCT = Gauge(
 # FR-005: partial-collision count. M_ACCOUNTS_DISTINCT is all-or-nothing
 # (collapsed only when EVERY store shares one account), so it reads 1 when
 # some-but-not-all stores collide (09/07: A+B on pm.me, C distinct). This
-# counts credential stores tied to a NON-unique account; 0 = all distinct.
+# counts credential stores tied to a VERIFIED non-unique account (every member
+# email confirmed by a live profile probe); 0 = no verified collision. A shared
+# email pending/failing verification counts in M_ACCOUNT_SUSPECTED instead —
+# alert on (collisions > 0 OR suspected > 0) to keep the 09/07 dead-token
+# collision class visible.
 M_ACCOUNT_COLLISIONS = Gauge(
     "anthropic_account_identity_collisions",
-    "Credential stores resolving to a non-unique account identity "
-    "(duplicate-account collision; mutually revokes refresh tokens). 0=all distinct.",
+    "Credential stores resolving to a VERIFIED non-unique account identity "
+    "(duplicate-account collision; mutually revokes refresh tokens). 0=none verified.",
+    registry=REGISTRY,
+)
+M_ACCOUNT_SUSPECTED = Gauge(
+    "anthropic_account_identity_suspected",
+    "Credential stores in a SUSPECTED shared-account group (shared email with an "
+    "unverified member — stale label or dead token) pending live-probe verification.",
     registry=REGISTRY,
 )
 # PR #575: AIMD ceiling per bearer + shrink counter.

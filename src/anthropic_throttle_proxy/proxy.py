@@ -101,6 +101,7 @@ from .limiter import FairBearerLimiter, QueueWaitTimeout, _get_bearer_limiter
 from .metrics import (
     CONTENT_TYPE_LATEST,
     M_ACCOUNT_COLLISIONS,
+    M_ACCOUNT_SUSPECTED,
     M_AIMD_GROWS,
     M_AIMD_MAX,
     M_AIMD_OVERLOAD,
@@ -1884,17 +1885,23 @@ async def _verify_suspected_identity(key: str, suspected: dict[str, list[str]]) 
         duplicates = verdict.get("duplicates") or {}
         still_suspected = verdict.get("suspected") or {}
         M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
-        if duplicates:
+        M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in still_suspected.values()))
+        # Debounce against interleaved emitters (Codex MINOR): a health poll may
+        # have already warned this verdict while we slept — only the verifier
+        # warns unverified, so that branch is its own once-per-epoch emitter.
+        new_sig = _identity_sig(verdict)
+        changed = new_sig != _identity_warn_state["sig"]
+        _identity_warn_state["sig"] = new_sig
+        if duplicates and changed:
             _emit_identity_warning(duplicates, verified=True)
-        elif still_suspected:
+        if still_suspected:
             _emit_identity_warning(still_suspected, verified=False)
-        else:
+        elif not duplicates and changed:
             log(
                 f"account-identity: suspected collision cleared by profile probe ({key}) — "
                 "stale .claude.json label (e.g. promote credential swap); stores verified "
                 "distinct."
             )
-        _identity_warn_state["sig"] = _identity_sig(verdict)
     except Exception as exc:
         log(f"account-identity verification error (non-fatal): {exc!r}")
 
@@ -1906,7 +1913,14 @@ def _spawn_identity_verification(suspected: dict[str, list[str]]) -> None:
         return
     task = asyncio.create_task(_verify_suspected_identity(key, suspected))
     _identity_verify_tasks[key] = task
-    task.add_done_callback(lambda _t: _identity_verify_tasks.pop(key, None))
+
+    def _cleanup(_t: asyncio.Task, key: str = key, task: asyncio.Task = task) -> None:
+        # Pop only OUR entry: a stale done-callback firing after a same-key
+        # respawn must not evict the newer live task (Codex MAJOR).
+        if _identity_verify_tasks.get(key) is task:
+            _identity_verify_tasks.pop(key, None)
+
+    task.add_done_callback(_cleanup)
 
 
 def _note_identity_collision(verdict: dict[str, object] | None) -> None:
@@ -1917,8 +1931,8 @@ def _note_identity_collision(verdict: dict[str, object] | None) -> None:
     """
     duplicates = (verdict or {}).get("duplicates") or {}
     suspected = (verdict or {}).get("suspected") or {}
-    collided = sum(len(labels) for labels in duplicates.values())
-    M_ACCOUNT_COLLISIONS.set(collided)
+    M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
+    M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in suspected.values()))
     sig = _identity_sig(verdict or {})
     if sig == _identity_warn_state["sig"]:
         return

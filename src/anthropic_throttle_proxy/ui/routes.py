@@ -161,9 +161,11 @@ def _publish_account_gauges(
         _metrics.M_ACCOUNTS_DISTINCT.set(-1)
     # FR-005: partial collisions (some-but-not-all stores share an account) that
     # the binary distinct gauge above reads as "distinct". duplicates from the
-    # richer identity verdict → count of stores tied to a non-unique account.
+    # richer identity verdict → count of stores tied to a VERIFIED non-unique
+    # account; suspected → stores pending live-probe verification.
     duplicates = identity.get("duplicates") or {}
     _metrics.M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
+    _metrics.M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in suspected.values()))
 
 
 async def _collect_view() -> dict[str, object]:

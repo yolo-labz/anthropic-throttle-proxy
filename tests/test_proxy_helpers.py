@@ -952,7 +952,7 @@ def _write_guard_account(base, sub: str, token: str, email: str) -> str:
 
 
 async def _promote_swap_scene(
-    tmp_path, monkeypatch, profiles: dict[str, tuple[int, dict | None]]
+    tmp_path, monkeypatch, profiles: dict[str, tuple[int, dict | None]], extra_spec: str = ""
 ) -> list[str]:
     """Two stores whose LOCAL labels agree (stale after a promote swap).
 
@@ -962,7 +962,7 @@ async def _promote_swap_scene(
     """
     a = _write_guard_account(tmp_path, "a", "tok-a", "dup@pm.me")
     b = _write_guard_account(tmp_path, "b", "tok-b", "dup@pm.me")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{a},B:{b}")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{a},B:{b}{extra_spec}")
     lines: list[str] = []
     monkeypatch.setattr(proxy, "log", lines.append)
     monkeypatch.setattr(proxy, "_IDENTITY_VERIFY_RETRY_S", 0.0)
@@ -973,6 +973,7 @@ async def _promote_swap_scene(
         accounts._endpoint_cache,
         accounts._email_cache,
         accounts._local_identity_cache,
+        accounts._verify_locks,
     ):
         cache.clear()
 
@@ -991,6 +992,7 @@ async def _promote_swap_scene(
     # Never warns inline — health stays quiet + fast while the probe runs.
     assert not any("ACCOUNT COLLISION" in ln for ln in lines)
     assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 0
+    assert proxy.M_ACCOUNT_SUSPECTED._value.get() == 2  # visible while pending
     task = next(iter(proxy._identity_verify_tasks.values()))
     await task
     return lines
@@ -1032,9 +1034,61 @@ async def test_suspected_collision_probe_dead_warns_unverified(tmp_path, monkeyp
     warns = [ln for ln in lines if "ACCOUNT COLLISION" in ln]
     assert len(warns) == 1 and "(unverified)" in warns[0]
     assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 0  # gauge counts VERIFIED only
+    assert proxy.M_ACCOUNT_SUSPECTED._value.get() == 2  # …but suspected stays visible
     verdict = proxy._account_identity_verdict()
     assert verdict is not None
     assert verdict["suspected"] == {"dup@pm.me": ["A", "B"]}
+
+
+async def test_suspected_collision_third_account_untouched(tmp_path, monkeypatch) -> None:
+    # C rides alongside the A+B suspicion: it must never be probed (only
+    # unverified SUSPECTED members are), and the cleared verdict must count it.
+    c = _write_guard_account(tmp_path, "c", "tok-c", "solo@gmail.com")
+    probed: list[str] = []
+
+    async def spying_force_verify(path: str, _orig=accounts.force_verify_email):
+        probed.append(path)
+        return await _orig(path)
+
+    monkeypatch.setattr(accounts, "force_verify_email", spying_force_verify)
+    lines = await _promote_swap_scene(
+        tmp_path,
+        monkeypatch,
+        {
+            "tok-a": (200, {"account": {"email": "real-a@pm.me"}}),
+            "tok-b": (200, {"account": {"email": "real-b@proton.me"}}),
+        },
+        extra_spec=f",C:{c}",
+    )
+    assert any("cleared by profile probe" in ln for ln in lines)
+    assert not any("ACCOUNT COLLISION" in ln for ln in lines)
+    assert probed and all(p != c for p in probed)  # C never probed
+    verdict = proxy._account_identity_verdict()
+    assert verdict is not None
+    assert verdict["distinct"] == 3 and verdict["suspected"] == {}
+
+
+async def test_spawn_identity_verification_pop_race(monkeypatch) -> None:
+    # Codex MAJOR: a stale done-callback firing AFTER a same-key respawn must
+    # not evict the newer live task from the dedupe dict.
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")  # verdict → None, task is a no-op
+    monkeypatch.setattr(proxy, "log", lambda _m: None)
+    proxy._identity_verify_tasks.clear()
+    suspected = {"d@x": ["A", "B"]}
+    key = proxy._verify_suspected_key(suspected)
+
+    proxy._spawn_identity_verification(suspected)
+    t1 = proxy._identity_verify_tasks[key]
+    await t1  # done — but its done-callback has NOT run yet (call_soon)
+    proxy._spawn_identity_verification(suspected)
+    t2 = proxy._identity_verify_tasks[key]
+    assert t2 is not t1
+    await asyncio.sleep(0)  # now t1's stale callback fires
+    assert proxy._identity_verify_tasks.get(key) is t2  # survived the stale pop
+    await t2
+    for _ in range(3):
+        await asyncio.sleep(0)  # let t2's own callback clean up
+    assert key not in proxy._identity_verify_tasks
 
 
 def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
