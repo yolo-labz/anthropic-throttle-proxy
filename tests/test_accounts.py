@@ -662,3 +662,22 @@ def test_oauth_base_direct_when_no_accounts(monkeypatch):
     # Central tier (no accounts) has no local semaphore to gain → direct.
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
     assert accounts._oauth_base() == "https://api.anthropic.com"
+
+
+async def test_refresh_endpoint_polls_via_loopback(monkeypatch, tmp_path):
+    # Codex test-gap: lock the WIRING, not just _oauth_base in isolation — the
+    # poll must actually hit the loopback (127.0.0.1) not direct anthropic.com.
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+    seen: list[str] = []
+
+    async def _capture(url, token):
+        seen.append(url)
+        return 0, None  # transport error → _refresh_one handles gracefully
+
+    monkeypatch.setattr(accounts, "_get_json", _capture)
+    await accounts.refresh_endpoint(NOW)
+    assert seen and all(u.startswith("http://127.0.0.1:8765/api/oauth/") for u in seen)
+    assert not any("api.anthropic.com" in u for u in seen)
