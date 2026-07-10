@@ -655,7 +655,6 @@ def test_oauth_base_routes_via_proxy_when_accounts_configured(monkeypatch):
     monkeypatch.setattr(config, "LISTEN_PORT", 8765)
     assert accounts._oauth_base() == "http://127.0.0.1:8765"
     assert accounts._oauth_base() + accounts._USAGE_PATH == "http://127.0.0.1:8765/api/oauth/usage"
-    assert "usage" in accounts._oauth_base() + accounts._USAGE_PATH  # stub-router still matches
 
 
 def test_oauth_base_direct_when_no_accounts(monkeypatch):
@@ -679,5 +678,7 @@ async def test_refresh_endpoint_polls_via_loopback(monkeypatch, tmp_path):
 
     monkeypatch.setattr(accounts, "_get_json", _capture)
     await accounts.refresh_endpoint(NOW)
-    assert seen and all(u.startswith("http://127.0.0.1:8765/api/oauth/") for u in seen)
-    assert not any("api.anthropic.com" in u for u in seen)
+    # Exact match (not substring/startswith on a URL — CodeQL
+    # py/incomplete-url-substring-sanitization): the poll hits ONLY the
+    # loopback usage endpoint, never direct anthropic.com.
+    assert seen == ["http://127.0.0.1:8765/api/oauth/usage"]
