@@ -792,10 +792,32 @@ def _account_routing_enabled() -> bool:
     return config.ACCOUNT_ROUTING_MODE == "least_loaded" and bool(config.ACCOUNT_CRED_PATHS)
 
 
+def _model_tier(model: str) -> str:
+    """Coarse model tier from a model id / display name, or "" when unknown.
+
+    ``claude-sonnet-4-6`` → ``sonnet``, ``Fable`` → ``fable``. Matches on exact
+    separator-split tokens (not raw substrings, so ``sonnets`` ≠ ``sonnet``) and
+    treats an ambiguous id carrying >1 tier token as unknown (Codex LOW). Used
+    to align a request with the account's scoped (per-model) weekly meter.
+    """
+    normalized = model.lower()
+    for sep in "-_./":
+        normalized = normalized.replace(sep, " ")
+    tokens = set(normalized.split())
+    tiers = [tier for tier in ("opus", "sonnet", "haiku", "fable") if tier in tokens]
+    return tiers[0] if len(tiers) == 1 else ""
+
+
 def _account_routing_candidate_score(
-    acct: dict[str, object], incoming_bid: str, *, allow_pressure: bool = False
+    acct: dict[str, object], incoming_bid: str, *, allow_pressure: bool = False, model: str = ""
 ) -> float:
-    """Lower is better for account routing. Uses only live pressure, no secrets."""
+    """Lower is better for account routing. Uses only live pressure, no secrets.
+
+    ``model`` (spec 3) makes routing model-aware: when the request's tier matches
+    the account's scoped (per-model) weekly meter, that meter's utilization is
+    folded into the pressure — a Sonnet request avoids an account whose Sonnet
+    meter is near cap even if its all-models window still has room.
+    """
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
@@ -837,6 +859,20 @@ def _account_routing_candidate_score(
             util = max(util, endpoint_util)
             if UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN and not allow_pressure:
                 return math.inf
+            # spec 3: model-aware — if this request's tier matches the account's
+            # scoped weekly meter, fold that meter's utilization in (it is the
+            # binding budget for THIS request even when all-models has room).
+            scoped = usage.get("scoped")
+            if model and isinstance(scoped, dict):
+                s_util = scoped.get("util")
+                if isinstance(s_util, (int, float)) and _model_tier(model) == _model_tier(
+                    str(scoped.get("model") or "")
+                ):
+                    if s_util >= 1.0:
+                        return math.inf
+                    util = max(util, float(s_util))
+                    if UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN and not allow_pressure:
+                        return math.inf
         elif "(429)" in str(endpoint.get("err") or "") and not allow_pressure:
             return math.inf
     # Queue dominates; utilization is a soft tie-breaker below the warning line.
@@ -850,11 +886,14 @@ def _route_account_if_enabled(
     *,
     method: str,
     path: str,
+    model: str = "",
 ) -> tuple[str, str | None]:
     """Optionally rewrite upstream Authorization to a configured account.
 
     Returns ``(bearer_id_used_for_limiter, account_label_or_none)``. Raw tokens
-    are kept inside the header dict sent upstream and are never logged.
+    are kept inside the header dict sent upstream and are never logged. ``model``
+    (spec 3) biases selection toward the account with headroom on that model's
+    scoped weekly meter.
     """
     if not (_account_routing_enabled() and method == "POST" and "v1/messages" in path):
         return incoming_bid, None
@@ -865,7 +904,7 @@ def _route_account_if_enabled(
         for acct in accounts.routing_snapshot(time.time())
         if isinstance(acct.get("token"), str)
         and isinstance(acct.get("bearer_id"), str)
-        and _account_routing_candidate_score(acct, incoming_bid) < math.inf
+        and _account_routing_candidate_score(acct, incoming_bid, model=model) < math.inf
     ]
     if not candidates:
         candidates = [
@@ -873,13 +912,18 @@ def _route_account_if_enabled(
             for acct in accounts.routing_snapshot(time.time())
             if isinstance(acct.get("token"), str)
             and isinstance(acct.get("bearer_id"), str)
-            and _account_routing_candidate_score(acct, incoming_bid, allow_pressure=True) < math.inf
+            and _account_routing_candidate_score(
+                acct, incoming_bid, allow_pressure=True, model=model
+            )
+            < math.inf
         ]
     if not candidates:
         return incoming_bid, None
     selected = min(
         candidates,
-        key=lambda acct: _account_routing_candidate_score(acct, incoming_bid, allow_pressure=True),
+        key=lambda acct: _account_routing_candidate_score(
+            acct, incoming_bid, allow_pressure=True, model=model
+        ),
     )
     selected_bid = str(selected["bearer_id"])
     for key in list(headers):
@@ -1626,6 +1670,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         bid,
         method=request.method,
         path=path,
+        model=model,
     )
     queue_mode, hard_max = _effective_admission()
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
