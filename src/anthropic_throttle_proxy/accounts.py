@@ -322,13 +322,17 @@ def account_view(
             if usage is not None
             else _fields_from_proxy_headers(bearer, now)
         )
+        email, email_verified = guard_email(acct["path"])
         out.append(
             {
                 "label": acct["label"],
                 "bearer_id": acct["bearer_id"],
                 "error": acct["error"],
                 "seen": bearer is not None,
-                "email": account_email(acct["path"]),
+                "email": email,
+                # identity_state provenance — a local .claude.json label must
+                # not be treated as a probed identity (promote-swap false alarm)
+                "verified": email_verified,
                 "endpoint_err": endpoint_err,
                 "token": _token_view(acct["expires_at"], now),
                 "pace_warn": fields["pace"] is not None and fields["pace"] >= PACE_WARN,
@@ -634,8 +638,8 @@ def _local_identity(path: str) -> str | None:
     return None
 
 
-def account_email(path: str) -> str | None:
-    """Best-known account email for a credential path (may be absent).
+def guard_email(path: str) -> tuple[str | None, bool]:
+    """Best-known account email for a credential path + whether it is VERIFIED.
 
     Prefers the authoritative profile email, but ONLY while its cached
     credential mtime still matches: after a re-/login the network email is stale
@@ -644,6 +648,15 @@ def account_email(path: str) -> str | None:
     the stale entry and fall back to the locally-persisted identity, which
     tracks the current file — also the path that keeps a DEAD account's
     duplicate collision detectable (the case the network-only path missed 09/07).
+
+    ``verified=True`` means the email was probed from the CURRENT credential
+    (profile cache, mtime-fresh). ``verified=False`` means it is the local
+    ``.claude.json`` label — which LIES when something rewrites the credential
+    without the label: claude-account-promote swaps ``.credentials.json``
+    between stores and leaves both ``.claude.json`` behind (10/07: swap at
+    10:22:07 → guard mis-read A+B→pm.me for ~2.6 h while live uuid probes
+    showed three distinct accounts). Collision verdicts must not alarm on
+    unverified emails without probing first — see ``identity_state``.
     """
     cached = _email_cache.get(path)
     if cached is not None:
@@ -652,9 +665,33 @@ def account_email(path: str) -> str | None:
         except OSError:
             fresh = False  # credential vanished → treat the cached email as stale
         if fresh:
-            return cached[1]
+            return cached[1], True
         _email_cache.pop(path, None)  # stale (credential rewritten) — refetched later
-    return _local_identity(path)
+    return _local_identity(path), False
+
+
+def account_email(path: str) -> str | None:
+    """Best-known account email for a credential path (display convenience)."""
+    return guard_email(path)[0]
+
+
+async def force_verify_email(path: str) -> str | None:
+    """Probe ``/api/oauth/profile`` for THIS credential now, bypassing caches.
+
+    The verify-before-warn collision path: a SUSPECTED duplicate (one member's
+    email is only a local label) must be confirmed against the live token
+    before the guard alarms or the promote rail refuses swaps on it. Returns
+    the verified email, or None when the token is unreadable or the probe
+    failed (dead account / throttled) — the caller decides how loudly to warn
+    about an unverified suspicion.
+    """
+    token = _read_token(path)
+    if token is None:
+        return None
+    _email_cache.pop(path, None)  # force _refresh_email past its mtime short-circuit
+    await _refresh_email(path, token)
+    cached = _email_cache.get(path)
+    return cached[1] if cached is not None else None
 
 
 def identity_state(accounts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -667,19 +704,39 @@ def identity_state(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     09/07 outage needed (two dirs both on pedrobalbino@pm.me while a third was
     distinct: not fully ``collapsed`` but still a mutually-revoking collision).
     Distinct-account routing (FR-005) requires ``duplicates`` to stay empty.
+
+    Rows may carry ``verified`` (``guard_email`` provenance; absent = True for
+    back-compat). A shared-email group with ANY unverified member lands in
+    ``suspected``, not ``duplicates``: an unverified email is a ``.claude.json``
+    label that lies after a promote credential swap (10/07 false alarm), so the
+    guard must probe the live tokens before treating the group as a real
+    mutually-revoking collision. ``collapsed`` likewise requires the group to
+    be fully verified — while a suspicion is pending, the state is UNKNOWN,
+    not collapsed and not distinct.
     """
     by_email: dict[str, list[str]] = {}
+    unverified: set[str] = set()
     for a in accounts:
         email = a.get("email")
         if email:
-            by_email.setdefault(email, []).append(str(a.get("label") or "?"))
+            label = str(a.get("label") or "?")
+            by_email.setdefault(email, []).append(label)
+            if not a.get("verified", True):
+                unverified.add(label)
     known = sum(len(labels) for labels in by_email.values())
-    duplicates = {e: sorted(labels) for e, labels in by_email.items() if len(labels) > 1}
-    collapsed = known >= 2 and len(by_email) == 1
+    groups = {e: sorted(labels) for e, labels in by_email.items() if len(labels) > 1}
+    duplicates = {
+        e: labels for e, labels in groups.items() if not any(lb in unverified for lb in labels)
+    }
+    suspected = {
+        e: labels for e, labels in groups.items() if any(lb in unverified for lb in labels)
+    }
+    collapsed = known >= 2 and len(by_email) == 1 and not suspected
     return {
         "collapsed": collapsed,
         "email": next(iter(by_email)) if collapsed else None,
         "known": known,
         "distinct": len(by_email),
         "duplicates": duplicates,
+        "suspected": suspected,
     }

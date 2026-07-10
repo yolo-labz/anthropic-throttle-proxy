@@ -1794,12 +1794,18 @@ async def _check_upstream_egress() -> tuple[bool, str]:
 # poll (every ~5 s) emits ONE log line per distinct collision set instead of
 # spamming. Empty = no collision currently warned.
 _identity_warn_state: dict[str, str] = {"sig": ""}
+# suspected-signature → in-flight verification task (verify-before-warn):
+# dedupes the probe while health keeps polling the same suspicion.
+_identity_verify_tasks: dict[str, asyncio.Task] = {}
+# Gap before the second probe attempt of an unresolved suspicion. Module-level
+# so tests can zero it.
+_IDENTITY_VERIFY_RETRY_S = 5.0
 
 
 def _account_identity_verdict() -> dict[str, object] | None:
     """Cheap cross-store identity verdict for the health surface (or None).
 
-    Off the request hot path; each ``account_email`` is a cache hit except on a
+    Off the request hot path; each ``guard_email`` is a cache hit except on a
     credential rotation (then one small local read). Returns None when account
     routing/paths are unconfigured so the field stays invisible on the central
     tier. Never raises to the caller — health is load-bearing (invariant #4).
@@ -1808,31 +1814,119 @@ def _account_identity_verdict() -> dict[str, object] | None:
         return None
     from . import accounts
 
-    view = [
-        {"label": acct["label"], "email": accounts.account_email(acct["path"])}
-        for acct in accounts.account_snapshot()
-    ]
+    view = []
+    for acct in accounts.account_snapshot():
+        email, verified = accounts.guard_email(acct["path"])
+        view.append({"label": acct["label"], "email": email, "verified": verified})
     return accounts.identity_state(view)
 
 
-def _note_identity_collision(verdict: dict[str, object] | None) -> None:
-    """Publish the collision gauge and emit a debounced warning on duplicates."""
-    duplicates = (verdict or {}).get("duplicates") or {}
-    collided = sum(len(labels) for labels in duplicates.values())
-    M_ACCOUNT_COLLISIONS.set(collided)
-    sig = ";".join(f"{email}={','.join(labels)}" for email, labels in sorted(duplicates.items()))
-    if sig == _identity_warn_state["sig"]:
-        return
-    _identity_warn_state["sig"] = sig
-    if duplicates:
-        detail = "; ".join(
-            f"{'+'.join(labels)} → {email}" for email, labels in sorted(duplicates.items())
-        )
+def _identity_sig(verdict: dict[str, object]) -> str:
+    """Debounce signature over BOTH verified and suspected collision sets."""
+    dup = verdict.get("duplicates") or {}
+    sus = verdict.get("suspected") or {}
+    return ";".join(
+        [f"dup:{email}={','.join(labels)}" for email, labels in sorted(dup.items())]
+        + [f"sus:{email}={','.join(labels)}" for email, labels in sorted(sus.items())]
+    )
+
+
+def _emit_identity_warning(groups: dict[str, list[str]], verified: bool) -> None:
+    """One collision log line; the unverified variant names its uncertainty."""
+    detail = "; ".join(f"{'+'.join(labels)} → {email}" for email, labels in sorted(groups.items()))
+    if verified:
         log(
             f"ACCOUNT COLLISION: credential stores share one account — {detail}. "
             "The same account in >1 store rotates one refresh-token family and mutually "
             "revokes it (09/07 outage). Give each store a DISTINCT account."
         )
+    else:
+        log(
+            f"ACCOUNT COLLISION (unverified): credential stores may share one account — "
+            f"{detail} — but the profile probe could not confirm it (dead token or "
+            "throttled probe). The shared email may also be a stale .claude.json label "
+            "(promote credential swap). Verify the stores before re-authing anything."
+        )
+
+
+def _verify_suspected_key(suspected: dict[str, list[str]]) -> str:
+    return ";".join(f"{email}={','.join(labels)}" for email, labels in sorted(suspected.items()))
+
+
+async def _verify_suspected_identity(key: str, suspected: dict[str, list[str]]) -> None:
+    """Probe the live tokens behind a SUSPECTED collision before alarming.
+
+    A suspected group carries at least one email that is only a local
+    ``.claude.json`` label. Probing ``/api/oauth/profile`` for the unverified
+    members either dissolves the group (stale label — the 10/07 promote-swap
+    false alarm held for ~2.6 h before this path existed), confirms a real
+    verified collision (warn exactly as before), or fails (dead token — warn,
+    flagged unverified, so the 09/07 dead-collision class stays detectable).
+    """
+    from . import accounts
+
+    try:
+        flagged = {label for labels in suspected.values() for label in labels}
+        paths = {a["label"]: a["path"] for a in accounts.account_snapshot()}
+        for attempt in range(2):
+            unresolved = [
+                paths[lb]
+                for lb in sorted(flagged)
+                if lb in paths and not accounts.guard_email(paths[lb])[1]
+            ]
+            if not unresolved:
+                break
+            if attempt:
+                await asyncio.sleep(_IDENTITY_VERIFY_RETRY_S)
+            for path in unresolved:
+                await accounts.force_verify_email(path)
+        verdict = _account_identity_verdict() or {}
+        duplicates = verdict.get("duplicates") or {}
+        still_suspected = verdict.get("suspected") or {}
+        M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
+        if duplicates:
+            _emit_identity_warning(duplicates, verified=True)
+        elif still_suspected:
+            _emit_identity_warning(still_suspected, verified=False)
+        else:
+            log(
+                f"account-identity: suspected collision cleared by profile probe ({key}) — "
+                "stale .claude.json label (e.g. promote credential swap); stores verified "
+                "distinct."
+            )
+        _identity_warn_state["sig"] = _identity_sig(verdict)
+    except Exception as exc:
+        log(f"account-identity verification error (non-fatal): {exc!r}")
+
+
+def _spawn_identity_verification(suspected: dict[str, list[str]]) -> None:
+    key = _verify_suspected_key(suspected)
+    task = _identity_verify_tasks.get(key)
+    if task is not None and not task.done():
+        return
+    task = asyncio.create_task(_verify_suspected_identity(key, suspected))
+    _identity_verify_tasks[key] = task
+    task.add_done_callback(lambda _t: _identity_verify_tasks.pop(key, None))
+
+
+def _note_identity_collision(verdict: dict[str, object] | None) -> None:
+    """Gauge + debounced warning on VERIFIED duplicates; probe suspected ones.
+
+    Health must answer in <50 ms (invariant #4), so suspected groups are never
+    probed inline — a background task verifies, then warns or clears.
+    """
+    duplicates = (verdict or {}).get("duplicates") or {}
+    suspected = (verdict or {}).get("suspected") or {}
+    collided = sum(len(labels) for labels in duplicates.values())
+    M_ACCOUNT_COLLISIONS.set(collided)
+    sig = _identity_sig(verdict or {})
+    if sig == _identity_warn_state["sig"]:
+        return
+    _identity_warn_state["sig"] = sig
+    if duplicates:
+        _emit_identity_warning(duplicates, verified=True)
+    if suspected:
+        _spawn_identity_verification(suspected)
 
 
 def _publish_brake_enabled() -> None:
@@ -1883,9 +1977,12 @@ async def health(_request: web.Request) -> web.Response:
         "upstream_egress_error": upstream_egress_error,
         "central_url": config.CENTRAL_URL,
         "central_status": cs,
-        # FR-005: distinct-account guard — {collapsed,duplicates,distinct,known}
-        # or null when unconfigured. duplicates non-empty ⇒ a mutually-revoking
-        # same-account-in-two-stores collision (the 09/07 outage).
+        # FR-005: distinct-account guard — {collapsed,duplicates,suspected,
+        # distinct,known} or null when unconfigured. duplicates non-empty ⇒ a
+        # VERIFIED mutually-revoking same-account-in-two-stores collision (the
+        # 09/07 outage). suspected non-empty ⇒ a shared email pending live-token
+        # verification (a stale .claude.json label after a promote credential
+        # swap looks identical until probed — the 10/07 false alarm).
         "account_identity": account_identity,
         # Pane-19 gap: surface whether the 7d/5h utilization brake is armed.
         # enabled=false means accounts can march to a hard 1.0 lockout unbraked.

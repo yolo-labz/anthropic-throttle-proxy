@@ -930,6 +930,113 @@ def test_account_identity_verdict_none_when_unconfigured(monkeypatch) -> None:
     assert proxy._account_identity_verdict() is None
 
 
+# ---------------------------------------------------------------------------
+# FR-005 verify-before-warn — suspected collisions probed before alarming.
+# 10/07 incident: claude-account-promote swapped .credentials.json between two
+# stores and left both .claude.json labels behind → the guard mixed one fresh
+# profile email with one stale label and warned a false A+B duplicate for
+# ~2.6 h. Suspected groups must be probed live before warning.
+# ---------------------------------------------------------------------------
+
+
+def _write_guard_account(base, sub: str, token: str, email: str) -> str:
+    """Synthetic credential + .claude.json label pair (NEVER a real token)."""
+    acct = base / sub
+    acct.mkdir()
+    cred = acct / ".credentials.json"
+    cred.write_text(
+        json.dumps({"claudeAiOauth": {"accessToken": token, "refreshToken": "never-read"}})
+    )
+    (acct / ".claude.json").write_text(json.dumps({"oauthAccount": {"emailAddress": email}}))
+    return str(cred)
+
+
+async def _promote_swap_scene(
+    tmp_path, monkeypatch, profiles: dict[str, tuple[int, dict | None]]
+) -> list[str]:
+    """Two stores whose LOCAL labels agree (stale after a promote swap).
+
+    Runs verdict → _note_identity_collision → awaits the spawned verification
+    task; returns the captured log lines. ``profiles`` routes the stubbed
+    ``/api/oauth/profile`` responses by token (absent = transport error).
+    """
+    a = _write_guard_account(tmp_path, "a", "tok-a", "dup@pm.me")
+    b = _write_guard_account(tmp_path, "b", "tok-b", "dup@pm.me")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{a},B:{b}")
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    monkeypatch.setattr(proxy, "_IDENTITY_VERIFY_RETRY_S", 0.0)
+    proxy._identity_warn_state["sig"] = ""
+    proxy._identity_verify_tasks.clear()
+    for cache in (
+        accounts._cache,
+        accounts._endpoint_cache,
+        accounts._email_cache,
+        accounts._local_identity_cache,
+    ):
+        cache.clear()
+
+    async def fake_get_json(url: str, token: str):
+        if "profile" in url:
+            return profiles.get(token, (0, None))
+        return 0, None
+
+    monkeypatch.setattr(accounts, "_get_json", fake_get_json)
+
+    verdict = proxy._account_identity_verdict()
+    assert verdict is not None
+    assert verdict["duplicates"] == {}
+    assert verdict["suspected"] == {"dup@pm.me": ["A", "B"]}
+    proxy._note_identity_collision(verdict)
+    # Never warns inline — health stays quiet + fast while the probe runs.
+    assert not any("ACCOUNT COLLISION" in ln for ln in lines)
+    assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 0
+    task = next(iter(proxy._identity_verify_tasks.values()))
+    await task
+    return lines
+
+
+async def test_suspected_collision_cleared_by_probe(tmp_path, monkeypatch) -> None:
+    # The 10/07 false alarm: labels agree, live tokens are DISTINCT accounts.
+    lines = await _promote_swap_scene(
+        tmp_path,
+        monkeypatch,
+        {
+            "tok-a": (200, {"account": {"email": "real-a@pm.me"}}),
+            "tok-b": (200, {"account": {"email": "real-b@proton.me"}}),
+        },
+    )
+    assert not any("ACCOUNT COLLISION" in ln for ln in lines)
+    assert any("cleared by profile probe" in ln for ln in lines)
+    assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 0
+    verdict = proxy._account_identity_verdict()
+    assert verdict is not None
+    assert verdict["distinct"] == 2 and verdict["suspected"] == {}
+
+
+async def test_suspected_collision_confirmed_by_probe(tmp_path, monkeypatch) -> None:
+    # Both live tokens really resolve to ONE account → the verified warning,
+    # exactly as loud as before the suspected split existed.
+    same = (200, {"account": {"email": "dup@pm.me"}})
+    lines = await _promote_swap_scene(tmp_path, monkeypatch, {"tok-a": same, "tok-b": same})
+    warns = [ln for ln in lines if "ACCOUNT COLLISION" in ln]
+    assert len(warns) == 1 and "(unverified)" not in warns[0]
+    assert "A+B" in warns[0] and "dup@pm.me" in warns[0]
+    assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 2
+
+
+async def test_suspected_collision_probe_dead_warns_unverified(tmp_path, monkeypatch) -> None:
+    # 09/07 class: every token dead → the collision must STILL surface, but
+    # flagged unverified so nobody re-auths on a possibly-stale label alone.
+    lines = await _promote_swap_scene(tmp_path, monkeypatch, {})
+    warns = [ln for ln in lines if "ACCOUNT COLLISION" in ln]
+    assert len(warns) == 1 and "(unverified)" in warns[0]
+    assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 0  # gauge counts VERIFIED only
+    verdict = proxy._account_identity_verdict()
+    assert verdict is not None
+    assert verdict["suspected"] == {"dup@pm.me": ["A", "B"]}
+
+
 def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
     # Codex MAJOR: the gauge must be settable from metrics() too, not only
     # health() — verify the shared publisher tracks UTILIZATION_TARGET.

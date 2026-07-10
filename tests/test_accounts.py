@@ -644,6 +644,68 @@ def test_account_email_trusts_network_cache_on_mtime_match(tmp_path):
     assert accounts.account_email(str(cred)) == "network@pm.me"  # fresh → authoritative
 
 
+# ── FR-005 verify-before-warn: email provenance + suspected collision split ──
+
+
+async def test_guard_email_reports_provenance(tmp_path, monkeypatch):
+    cred = _write_account(tmp_path, "a", "tok-a", email="label@pm.me")
+    # Local .claude.json fallback → unverified (the label that lies post-promote).
+    assert accounts.guard_email(str(cred)) == ("label@pm.me", False)
+    _stub_endpoint(monkeypatch, {"tok-a": {"profile": (200, {"account": {"email": "live@pm.me"}})}})
+    assert await accounts.force_verify_email(str(cred)) == "live@pm.me"
+    assert accounts.guard_email(str(cred)) == ("live@pm.me", True)
+    # Credential rewrite drops the verified email → back to the label, unverified.
+    _write_cred(cred, "tok-b")
+    os.utime(cred, ns=(0, os.stat(cred).st_mtime_ns + 1_000_000_000))
+    assert accounts.guard_email(str(cred)) == ("label@pm.me", False)
+
+
+async def test_force_verify_email_dead_token_returns_none(tmp_path):
+    # autouse _no_network → transport error: the probe cannot confirm anything.
+    cred = _write_account(tmp_path, "a", "tok-dead", email="label@pm.me")
+    assert await accounts.force_verify_email(str(cred)) is None
+    assert accounts.guard_email(str(cred)) == ("label@pm.me", False)
+
+
+def test_identity_state_unverified_shared_email_is_suspected_not_duplicate():
+    # Promote swaps .credentials.json but NOT .claude.json → a shared email with
+    # an unverified member may be a stale label (the 10/07 false alarm), so it
+    # must land in suspected, never straight in duplicates.
+    verdict = accounts.identity_state(
+        [
+            {"label": "A", "email": "dup@pm.me", "verified": True},
+            {"label": "B", "email": "dup@pm.me", "verified": False},
+        ]
+    )
+    assert verdict["duplicates"] == {}
+    assert verdict["suspected"] == {"dup@pm.me": ["A", "B"]}
+    # Pending verification = UNKNOWN: not collapsed even though all emails match.
+    assert verdict["collapsed"] is False
+    # Fully verified group → real duplicate (back-compat: missing key = verified).
+    confirmed = accounts.identity_state(
+        [
+            {"label": "A", "email": "dup@pm.me", "verified": True},
+            {"label": "B", "email": "dup@pm.me"},
+        ]
+    )
+    assert confirmed["duplicates"] == {"dup@pm.me": ["A", "B"]}
+    assert confirmed["suspected"] == {} and confirmed["collapsed"] is True
+
+
+def test_publish_account_gauges_suspected_reads_unknown(monkeypatch):
+    # While a suspicion is pending verification the distinct gauge must read
+    # UNKNOWN (-1), not "distinct" — Grafana must not show green mid-probe.
+    from anthropic_throttle_proxy import metrics as _m
+    from anthropic_throttle_proxy.ui import routes as _routes
+
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    base = {"collapsed": False, "known": 3, "duplicates": {}}
+    _routes._publish_account_gauges({}, {**base, "suspected": {"d@x": ["A", "B"]}})
+    assert _m.M_ACCOUNTS_DISTINCT._value.get() == -1
+    _routes._publish_account_gauges({}, {**base, "suspected": {}})
+    assert _m.M_ACCOUNTS_DISTINCT._value.get() == 1
+
+
 # ── poller routes through the proxy (087): avoid the direct-call self-429 ──
 
 

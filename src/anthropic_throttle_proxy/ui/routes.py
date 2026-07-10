@@ -149,8 +149,12 @@ def _publish_account_gauges(
                 _metrics.M_ACCOUNT_SCOPED.remove(label, prev)
             _scoped_model_seen[label] = model
             _metrics.M_ACCOUNT_SCOPED.labels(label, model).set(scoped["util"])
+    suspected = identity.get("suspected") or {}
     if identity["collapsed"]:
         _metrics.M_ACCOUNTS_DISTINCT.set(0)
+    elif suspected:
+        # Shared email pending live-token verification — unknown, not "distinct".
+        _metrics.M_ACCOUNTS_DISTINCT.set(-1)
     elif int(identity["known"]) >= 2:  # type: ignore[call-overload]
         _metrics.M_ACCOUNTS_DISTINCT.set(1)
     else:
