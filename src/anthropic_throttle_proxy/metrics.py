@@ -143,6 +143,16 @@ M_ACCOUNTS_DISTINCT = Gauge(
     "1=credential files belong to distinct accounts, 0=COLLAPSED to one, -1=unknown.",
     registry=REGISTRY,
 )
+# FR-005: partial-collision count. M_ACCOUNTS_DISTINCT is all-or-nothing
+# (collapsed only when EVERY store shares one account), so it reads 1 when
+# some-but-not-all stores collide (09/07: A+B on pm.me, C distinct). This
+# counts credential stores tied to a NON-unique account; 0 = all distinct.
+M_ACCOUNT_COLLISIONS = Gauge(
+    "anthropic_account_identity_collisions",
+    "Credential stores resolving to a non-unique account identity "
+    "(duplicate-account collision; mutually revokes refresh tokens). 0=all distinct.",
+    registry=REGISTRY,
+)
 # PR #575: AIMD ceiling per bearer + shrink counter.
 M_AIMD_MAX = Gauge(
     "anthropic_aimd_max_concurrent",

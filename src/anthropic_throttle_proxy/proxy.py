@@ -100,6 +100,7 @@ from .forwarding import (
 from .limiter import FairBearerLimiter, QueueWaitTimeout, _get_bearer_limiter
 from .metrics import (
     CONTENT_TYPE_LATEST,
+    M_ACCOUNT_COLLISIONS,
     M_AIMD_GROWS,
     M_AIMD_MAX,
     M_AIMD_OVERLOAD,
@@ -1707,6 +1708,51 @@ async def _check_upstream_egress() -> tuple[bool, str]:
     return True, ""
 
 
+# FR-005 distinctness guard: last-warned collision signature, so the health
+# poll (every ~5 s) emits ONE log line per distinct collision set instead of
+# spamming. Empty = no collision currently warned.
+_identity_warn_state: dict[str, str] = {"sig": ""}
+
+
+def _account_identity_verdict() -> dict[str, object] | None:
+    """Cheap cross-store identity verdict for the health surface (or None).
+
+    Off the request hot path; each ``account_email`` is a cache hit except on a
+    credential rotation (then one small local read). Returns None when account
+    routing/paths are unconfigured so the field stays invisible on the central
+    tier. Never raises to the caller — health is load-bearing (invariant #4).
+    """
+    if not config.ACCOUNT_CRED_PATHS:
+        return None
+    from . import accounts
+
+    view = [
+        {"label": acct["label"], "email": accounts.account_email(acct["path"])}
+        for acct in accounts.account_snapshot()
+    ]
+    return accounts.identity_state(view)
+
+
+def _note_identity_collision(verdict: dict[str, object] | None) -> None:
+    """Publish the collision gauge and emit a debounced warning on duplicates."""
+    duplicates = (verdict or {}).get("duplicates") or {}
+    collided = sum(len(labels) for labels in duplicates.values())
+    M_ACCOUNT_COLLISIONS.set(collided)
+    sig = ";".join(f"{email}={','.join(labels)}" for email, labels in sorted(duplicates.items()))
+    if sig == _identity_warn_state["sig"]:
+        return
+    _identity_warn_state["sig"] = sig
+    if duplicates:
+        detail = "; ".join(
+            f"{'+'.join(labels)} → {email}" for email, labels in sorted(duplicates.items())
+        )
+        log(
+            f"ACCOUNT COLLISION: credential stores share one account — {detail}. "
+            "The same account in >1 store rotates one refresh-token family and mutually "
+            "revokes it (09/07 outage). Give each store a DISTINCT account."
+        )
+
+
 async def health(_request: web.Request) -> web.Response:
     """GET /__throttle/health — fast JSON snapshot of proxy + per-bearer state."""
     # Reflect status into the gauge for /metrics scrape; encoded as 1/0/-1.
@@ -1723,6 +1769,15 @@ async def health(_request: web.Request) -> web.Response:
             view["limiter"] = lim.snapshot()
         bearers_view[bid] = view
     upstream_egress_ok, upstream_egress_error = await _check_upstream_egress()
+    account_identity = None
+    try:
+        account_identity = _account_identity_verdict()
+        _note_identity_collision(account_identity)
+    except Exception as exc:  # noqa: BLE001 — health is load-bearing; the guard must never break it
+        # Don't silently swallow (adversarial-review MEDIUM #2): a recurring
+        # guard error should be visible, but health must still answer.
+        log(f"account-identity guard error (non-fatal): {exc!r}")
+        account_identity = None
     body = {
         "inflight": state["inflight"],
         "queued": state["queued"],
@@ -1737,6 +1792,10 @@ async def health(_request: web.Request) -> web.Response:
         "upstream_egress_error": upstream_egress_error,
         "central_url": config.CENTRAL_URL,
         "central_status": cs,
+        # FR-005: distinct-account guard — {collapsed,duplicates,distinct,known}
+        # or null when unconfigured. duplicates non-empty ⇒ a mutually-revoking
+        # same-account-in-two-stores collision (the 09/07 outage).
+        "account_identity": account_identity,
         "central_last_check": state["central_last_check"],
         "last_advisor": state["last_advisor"],
         # PR #562/#573: per-bearer + per-client view so /__throttle/health

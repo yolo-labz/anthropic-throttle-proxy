@@ -37,12 +37,32 @@ def _clean_cache():
     accounts._cache.clear()
     accounts._endpoint_cache.clear()
     accounts._email_cache.clear()
+    accounts._local_identity_cache.clear()
     accounts._endpoint_locks.clear()
     yield
     accounts._cache.clear()
     accounts._endpoint_cache.clear()
     accounts._email_cache.clear()
+    accounts._local_identity_cache.clear()
     accounts._endpoint_locks.clear()
+
+
+def _write_account(base, sub: str, token: str, email: str | None, expires_at_ms=None):
+    """Write a full account dir: <base>/<sub>/{.credentials.json,.claude.json}.
+
+    Returns the credentials path. ``email`` is the locally-persisted identity
+    (``oauthAccount.emailAddress``); None writes no identity file (a dead account
+    whose email is unknown to both the network and the local fallback).
+    """
+    acct_dir = base / sub
+    acct_dir.mkdir(parents=True, exist_ok=True)
+    cred = acct_dir / ".credentials.json"
+    _write_cred(cred, token, expires_at_ms=expires_at_ms)
+    if email is not None:
+        (acct_dir / ".claude.json").write_text(
+            json.dumps({"oauthAccount": {"emailAddress": email}})
+        )
+    return cred
 
 
 @pytest.fixture(autouse=True)
@@ -543,3 +563,65 @@ async def test_ui_stats_renders_identity_banner(tmp_path, monkeypatch):
     assert "accounts collapsed" in html
     assert "same@x" in html
     assert 'class="src src-endpoint"' in html
+
+
+# ── FR-005 distinctness guard: local identity fallback + partial collision ──
+
+
+def test_account_email_falls_back_to_local_identity(tmp_path):
+    # Dead account: profile fetch offline (autouse _no_network → status 0) so
+    # the NETWORK email is unknown. The local identity (.claude.json) must still
+    # resolve — the 09/07 case where the collision was invisible precisely
+    # because every token was dead and only the network path knew the email.
+    cred = _write_account(
+        tmp_path, "a", "tok-dead", email="pedro@pm.me", expires_at_ms=int((NOW - 1) * 1000)
+    )
+    assert accounts._email_cache.get(str(cred)) is None  # no network email cached
+    assert accounts.account_email(str(cred)) == "pedro@pm.me"
+
+
+def test_local_identity_absent_without_claude_json(tmp_path):
+    cred = _write_account(tmp_path, "a", "tok", email=None)  # no .claude.json written
+    assert accounts.account_email(str(cred)) is None
+
+
+def test_local_identity_invalidates_on_identity_file_change(tmp_path):
+    cred = _write_account(tmp_path, "a", "tok", email="one@pm.me")
+    assert accounts.account_email(str(cred)) == "one@pm.me"  # reads + caches
+    assert accounts.account_email(str(cred)) == "one@pm.me"  # cache hit, unchanged
+    # A change to the identity file bumps its mtime → the cache (keyed on BOTH
+    # mtimes) invalidates and the corrected identity is picked up. The guard is
+    # a correctness surface, so it must never keep serving a stale email
+    # (adversarial-review MEDIUM #1).
+    ident = tmp_path / "a" / ".claude.json"
+    ident.write_text(json.dumps({"oauthAccount": {"emailAddress": "two@pm.me"}}))
+    os.utime(ident, ns=(0, os.stat(ident).st_mtime_ns + 1_000_000_000))
+    assert accounts.account_email(str(cred)) == "two@pm.me"
+
+
+def test_identity_state_detects_partial_collision_via_local(tmp_path, monkeypatch):
+    # The exact 09/07 outage shape: A and B are the SAME account (pm.me), C is
+    # distinct, and ALL tokens are expired (network identity unavailable). The
+    # binary "collapsed" flag reads False (not ALL same), but the collision that
+    # mutually revokes A+B must still be caught via duplicates.
+    a = _write_account(
+        tmp_path, "a", "tok-a", email="dup@pm.me", expires_at_ms=int((NOW - 1) * 1000)
+    )
+    b = _write_account(
+        tmp_path, "b", "tok-b", email="dup@pm.me", expires_at_ms=int((NOW - 1) * 1000)
+    )
+    c = _write_account(
+        tmp_path, "c", "tok-c", email="solo@x.com", expires_at_ms=int((NOW - 1) * 1000)
+    )
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{a},B:{b},C:{c}")
+
+    view = [
+        {"label": s["label"], "email": accounts.account_email(s["path"])}
+        for s in accounts.account_snapshot()
+    ]
+    verdict = accounts.identity_state(view)
+
+    assert verdict["collapsed"] is False  # C is distinct → not fully collapsed
+    assert verdict["distinct"] == 2
+    assert verdict["duplicates"] == {"dup@pm.me": ["A", "B"]}
+    assert verdict["known"] == 3

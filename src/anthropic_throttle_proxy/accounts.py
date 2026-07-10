@@ -375,6 +375,15 @@ _endpoint_cache: dict[str, dict[str, Any]] = {}
 # 24h-style time cache the picker first shipped hid a collision for up to a
 # day (Codex finding, fixed the same way there).
 _email_cache: dict[str, tuple[int, str]] = {}
+# path -> (cred mtime_ns, locally-persisted account email). Fallback identity
+# for the distinctness guard: the authoritative profile email (_email_cache)
+# needs a LIVE token, so a DEAD account (expired + refresh revoked) never
+# resolves it — exactly when a duplicate-account collision does its damage
+# (09/07 outage: two dirs both on pedrobalbino@pm.me, both expired, the
+# collision invisible to the network identity). The CLI persists the account
+# email next to the credential (``<dir>/.claude.json`` → oauthAccount.
+# emailAddress); reading it keeps the collision detectable with no token.
+_local_identity_cache: dict[str, tuple[int, int, str]] = {}  # (cred_mtime, ident_mtime, email)
 _endpoint_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -525,23 +534,78 @@ async def refresh_endpoint(now: float) -> dict[str, dict[str, Any]]:
     return {p: _endpoint_cache[p] for p in paths if p in _endpoint_cache}
 
 
+def _local_identity(path: str) -> str | None:
+    """Locally-persisted account email for a credential path, or None.
+
+    Read from the sibling ``.claude.json`` (``oauthAccount.emailAddress``),
+    cached on BOTH files' mtimes (credential AND ``.claude.json``): a re-/login
+    rewrites both, but tracking both invalidates the moment the identity file
+    changes even if the credential mtime somehow lags (adversarial-review MEDIUM
+    #1 — the guard is a correctness surface, so it must never serve a stale
+    email). Re-parsing on a ``.claude.json`` session-state write is cheap and
+    tolerable because this is OFF the request hot path — only the UI/health/
+    identity callers use it, never ``routing_snapshot``. Never raises.
+    """
+    try:
+        cred_mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+    ident_path = os.path.join(os.path.dirname(path), ".claude.json")
+    try:
+        ident_mtime = os.stat(ident_path).st_mtime_ns
+    except OSError:
+        return None
+    cached = _local_identity_cache.get(path)
+    if cached is not None and cached[0] == cred_mtime and cached[1] == ident_mtime:
+        return cached[2]
+    try:
+        with open(ident_path, encoding="utf-8") as fh:
+            account = json.load(fh).get("oauthAccount") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    email = account.get("emailAddress")
+    if isinstance(email, str) and email:
+        _local_identity_cache[path] = (cred_mtime, ident_mtime, email)
+        return email
+    return None
+
+
 def account_email(path: str) -> str | None:
-    """Best-known profile email for a credential path (may be absent)."""
+    """Best-known account email for a credential path (may be absent).
+
+    Prefers the authoritative profile email (needs a live token); falls back to
+    the locally-persisted identity so a DEAD account's duplicate collision is
+    still detectable — the exact case the network-only path missed on 09/07.
+    """
     cached = _email_cache.get(path)
-    return cached[1] if cached else None
+    if cached:
+        return cached[1]
+    return _local_identity(path)
 
 
 def identity_state(accounts: list[dict[str, Any]]) -> dict[str, Any]:
-    """Cross-account identity verdict for the panel banner.
+    """Cross-account identity verdict for the panel banner + health surface.
 
     ``collapsed`` when ≥2 accounts have a KNOWN email and they are all the
     same — the 11/06 failure where a hand-/login wrote account B's credential
-    into A's directory and every "switch" became cosmetic.
+    into A's directory and every "switch" became cosmetic. ``duplicates`` maps
+    each shared email to the labels resolving to it — the richer signal the
+    09/07 outage needed (two dirs both on pedrobalbino@pm.me while a third was
+    distinct: not fully ``collapsed`` but still a mutually-revoking collision).
+    Distinct-account routing (FR-005) requires ``duplicates`` to stay empty.
     """
-    emails = [a["email"] for a in accounts if a.get("email")]
-    collapsed = len(emails) >= 2 and len(set(emails)) == 1
+    by_email: dict[str, list[str]] = {}
+    for a in accounts:
+        email = a.get("email")
+        if email:
+            by_email.setdefault(email, []).append(str(a.get("label") or "?"))
+    known = sum(len(labels) for labels in by_email.values())
+    duplicates = {e: sorted(labels) for e, labels in by_email.items() if len(labels) > 1}
+    collapsed = known >= 2 and len(by_email) == 1
     return {
         "collapsed": collapsed,
-        "email": emails[0] if collapsed else None,
-        "known": len(emails),
+        "email": next(iter(by_email)) if collapsed else None,
+        "known": known,
+        "distinct": len(by_email),
+        "duplicates": duplicates,
     }
