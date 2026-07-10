@@ -1793,8 +1793,11 @@ async def _check_upstream_egress() -> tuple[bool, str]:
 
 # FR-005 distinctness guard: last-warned collision signature, so the health
 # poll (every ~5 s) emits ONE log line per distinct collision set instead of
-# spamming. Empty = no collision currently warned.
-_identity_warn_state: dict[str, str] = {"sig": ""}
+# spamming. Empty = no collision currently warned. "emitted_sus" tracks the
+# last verdict signature whose UNVERIFIED warning was actually logged —
+# concurrent verifier tasks (different suspected keys) reaching the same
+# still-suspected verdict must not both emit it (Codex re-verify MINOR).
+_identity_warn_state: dict[str, str] = {"sig": "", "emitted_sus": ""}
 # suspected-signature → in-flight verification task (verify-before-warn):
 # dedupes the probe while health keeps polling the same suspicion.
 _identity_verify_tasks: dict[str, asyncio.Task] = {}
@@ -1895,13 +1898,19 @@ async def _verify_suspected_identity(key: str, suspected: dict[str, list[str]]) 
         if duplicates and changed:
             _emit_identity_warning(duplicates, verified=True)
         if still_suspected:
-            _emit_identity_warning(still_suspected, verified=False)
-        elif not duplicates and changed:
-            log(
-                f"account-identity: suspected collision cleared by profile probe ({key}) — "
-                "stale .claude.json label (e.g. promote credential swap); stores verified "
-                "distinct."
-            )
+            if _identity_warn_state["emitted_sus"] != new_sig:
+                _identity_warn_state["emitted_sus"] = new_sig
+                _emit_identity_warning(still_suspected, verified=False)
+        else:
+            # Resolved (verified or cleared): re-arm the unverified emitter so a
+            # LATER re-suspicion (a real new transition) warns again.
+            _identity_warn_state["emitted_sus"] = ""
+            if not duplicates and changed:
+                log(
+                    f"account-identity: suspected collision cleared by profile probe ({key})"
+                    " — stale .claude.json label (e.g. promote credential swap); stores"
+                    " verified distinct."
+                )
     except Exception as exc:
         log(f"account-identity verification error (non-fatal): {exc!r}")
 

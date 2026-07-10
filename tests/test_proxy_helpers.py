@@ -967,6 +967,7 @@ async def _promote_swap_scene(
     monkeypatch.setattr(proxy, "log", lines.append)
     monkeypatch.setattr(proxy, "_IDENTITY_VERIFY_RETRY_S", 0.0)
     proxy._identity_warn_state["sig"] = ""
+    proxy._identity_warn_state["emitted_sus"] = ""
     proxy._identity_verify_tasks.clear()
     for cache in (
         accounts._cache,
@@ -1066,6 +1067,29 @@ async def test_suspected_collision_third_account_untouched(tmp_path, monkeypatch
     verdict = proxy._account_identity_verdict()
     assert verdict is not None
     assert verdict["distinct"] == 3 and verdict["suspected"] == {}
+
+
+async def test_concurrent_verifiers_emit_unverified_once(tmp_path, monkeypatch) -> None:
+    # Codex re-verify MINOR: two verifier tasks with DIFFERENT suspected keys
+    # reaching the same still-suspected verdict must emit ONE unverified
+    # warning, not one each.
+    lines = await _promote_swap_scene(tmp_path, monkeypatch, {})
+    assert sum("(unverified)" in ln for ln in lines) == 1
+    # A second verifier (different key, e.g. spawned off a churned suspected
+    # set) concludes on the SAME verdict → suppressed by the emitted-sig gate.
+    await proxy._verify_suspected_identity("other-key", {"dup@pm.me": ["A", "B"]})
+    assert sum("(unverified)" in ln for ln in lines) == 1
+
+    # Resolution re-arms the emitter: probe B alive + distinct → clear, then a
+    # fresh suspicion (new transition) must warn again.
+    async def alive(url: str, token: str):
+        who = {"tok-a": "real-a@pm.me", "tok-b": "real-b@proton.me"}.get(token)
+        return (200, {"account": {"email": who}}) if who else (0, None)
+
+    monkeypatch.setattr(accounts, "_get_json", alive)
+    await proxy._verify_suspected_identity("other-key", {"dup@pm.me": ["A", "B"]})
+    assert any("cleared by profile probe" in ln for ln in lines)
+    assert proxy._identity_warn_state["emitted_sus"] == ""
 
 
 async def test_spawn_identity_verification_pop_race(monkeypatch) -> None:
