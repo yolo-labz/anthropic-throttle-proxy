@@ -939,3 +939,62 @@ def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
     proxy._publish_brake_enabled()
     assert proxy.M_BRAKE_ENABLED._value.get() == 1
+
+
+# ---------------------------------------------------------------------------
+# spec 3 — model-aware routing (scoped per-model meter headroom)
+# ---------------------------------------------------------------------------
+
+
+def test_model_tier_normalization() -> None:
+    assert proxy._model_tier("claude-sonnet-4-6") == "sonnet"
+    assert proxy._model_tier("claude-opus-4-8") == "opus"
+    assert proxy._model_tier("claude-haiku-4-5") == "haiku"
+    assert proxy._model_tier("Fable") == "fable"
+    assert proxy._model_tier("gpt-5") == ""
+    assert proxy._model_tier("") == ""
+
+
+def _acct(bid, tok, label, scoped_model, scoped_util):
+    return {
+        "bearer_id": bid,
+        "token": tok,
+        "label": label,
+        "endpoint": {
+            "usage": {
+                "util_5h": 0.1,
+                "util_7d": 0.1,
+                "scoped": {"model": scoped_model, "util": scoped_util},
+            }
+        },
+    }
+
+
+def test_account_route_model_aware_prefers_scoped_headroom(monkeypatch) -> None:
+    # A's Sonnet meter is near cap, B's has headroom → a Sonnet request routes
+    # to B even though both have equal all-models room.
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x,B:/y")
+    a = _acct("aaa", "TOKA", "A", "Sonnet", 0.95)
+    b = _acct("bbb", "TOKB", "B", "Sonnet", 0.10)
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [a, b])
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
+
+
+def test_account_route_scoped_ignored_on_tier_mismatch(monkeypatch) -> None:
+    # A's scoped meter tracks FABLE at 95%; a SONNET request must NOT be
+    # penalized by it (Fable≠Sonnet) — A stays a viable candidate.
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
+    a = _acct("aaa", "TOKA", "A", "Fable", 0.95)
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [a])
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("aaa", "A")
