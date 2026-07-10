@@ -854,3 +854,88 @@ async def test_retry_direct_once_nudges_swapped_account(
     )
     assert resp.status == 401
     assert "authentication_error" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# _route_account_if_enabled — FR-019 pure-OAuth-Bearer passthrough lock
+# ---------------------------------------------------------------------------
+
+
+def test_account_route_rewrites_only_bearer_no_apikey(monkeypatch) -> None:
+    """The router swaps ONLY Authorization to a Bearer of the operator's own
+    token — never injects an api-key/auth-token (the #20976 trap that silently
+    bills subscription traffic as API usage) and leaves every other header
+    intact (FR-019/FR-022)."""
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/tmp/x")
+    monkeypatch.setattr(
+        accounts,
+        "routing_snapshot",
+        lambda _now=None: [{"bearer_id": "fakeacct1", "token": "SECRET-TOKEN", "label": "A"}],
+    )
+    headers = {
+        "Authorization": "Bearer incoming-token",
+        "x-keep": "unchanged",
+        "content-type": "application/json",
+    }
+
+    bid, label = proxy._route_account_if_enabled(
+        headers, "incbid", method="POST", path="/v1/messages"
+    )
+
+    assert (bid, label) == ("fakeacct1", "A")
+    assert headers["Authorization"] == "Bearer SECRET-TOKEN"
+    assert headers["x-keep"] == "unchanged"
+    assert headers["content-type"] == "application/json"
+    banned = {"x-api-key", "api-key", "anthropic-auth-token", "anthropic_auth_token"}
+    assert not any(k.lower() in banned for k in headers)
+
+
+def test_account_route_disabled_leaves_headers_untouched(monkeypatch) -> None:
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "off")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    headers = {"Authorization": "Bearer incoming-token"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "incbid", method="POST", path="/v1/messages"
+    )
+    assert (bid, label) == ("incbid", None)
+    assert headers["Authorization"] == "Bearer incoming-token"
+
+
+# ---------------------------------------------------------------------------
+# FR-005 distinctness guard — collision gauge + debounced warning
+# ---------------------------------------------------------------------------
+
+
+def test_note_identity_collision_gauge_and_debounced_warn(monkeypatch) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    proxy._identity_warn_state["sig"] = ""
+
+    proxy._note_identity_collision({"duplicates": {"dup@pm.me": ["A", "B"]}})
+    assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 2
+    assert len(lines) == 1 and "ACCOUNT COLLISION" in lines[0]
+    assert "A+B" in lines[0] and "dup@pm.me" in lines[0]
+
+    proxy._note_identity_collision({"duplicates": {"dup@pm.me": ["A", "B"]}})
+    assert len(lines) == 1  # debounced
+
+    proxy._note_identity_collision({"duplicates": {}})
+    assert proxy.M_ACCOUNT_COLLISIONS._value.get() == 0
+    assert len(lines) == 1  # clearing collision does not warn
+
+
+def test_account_identity_verdict_none_when_unconfigured(monkeypatch) -> None:
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    assert proxy._account_identity_verdict() is None
+
+
+def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
+    # Codex MAJOR: the gauge must be settable from metrics() too, not only
+    # health() — verify the shared publisher tracks UTILIZATION_TARGET.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.0)
+    proxy._publish_brake_enabled()
+    assert proxy.M_BRAKE_ENABLED._value.get() == 0
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
+    proxy._publish_brake_enabled()
+    assert proxy.M_BRAKE_ENABLED._value.get() == 1

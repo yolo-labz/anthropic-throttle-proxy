@@ -245,3 +245,64 @@ async def test_apply_unified_api_key_traffic_is_silent(monkeypatch):
     await proxy._apply_unified(bid, bstate, lim, {"retry-after": "5"})
     assert bstate == {}  # nothing surfaced
     assert _warn_count(bid, "5h") == before
+
+
+def _brake_disabled_count(bid: str, window: str) -> float:
+    """Current value of the disabled-brake early-warning counter."""
+    val = proxy.REGISTRY.get_sample_value(
+        "anthropic_util_brake_disabled_hot_total",
+        {"bearer": bid, "window": window},
+    )
+    return val or 0.0
+
+
+async def test_warn_flags_disabled_brake(monkeypatch):
+    # Pane-19 gap: an account crosses the warn line while the brake is OFF →
+    # loud, alertable signal that it will hard-lock unbraked (still warn-only).
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.0)  # brake OFF
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
+    bid = "brake-off-bid"
+    before = _brake_disabled_count(bid, "5h")
+
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(util_5h="0.95"))
+
+    assert _brake_disabled_count(bid, "5h") == before + 1
+    assert any("BRAKE DISABLED" in line for line in lines)
+    assert lim.max_concurrent == 32  # warn-only: ceiling untouched
+
+
+async def test_warn_no_disabled_flag_when_brake_on(monkeypatch):
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)  # brake ON
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = lim.hard_max
+    bid = "brake-on-bid"
+    before = _brake_disabled_count(bid, "5h")
+
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(util_5h="0.95"))
+
+    assert _brake_disabled_count(bid, "5h") == before  # not flagged when armed
+    assert not any("BRAKE DISABLED" in line for line in lines)
+
+
+async def test_rejected_sample_flags_disabled_brake(monkeypatch):
+    # Codex MAJOR: a sample first seen as REJECTED (already hard-locked) must
+    # still fire the disabled-brake metric — _maybe_pause_rejected returns before
+    # the warn path, so the metric would otherwise miss the exact hard-lock.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.0)  # brake OFF
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "rejected-brake-off"
+    before = _brake_disabled_count(bid, "5h")
+
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(status="rejected", util_5h="1.0"))
+
+    assert _brake_disabled_count(bid, "5h") == before + 1
+    assert any("BRAKE DISABLED" in line for line in lines)
