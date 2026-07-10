@@ -357,9 +357,28 @@ def bearer_labels() -> dict[str, str]:
 # read, sent as a header, and dropped (invariant #2: never logged, never
 # stored beyond the request).
 
-USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
+_DIRECT_OAUTH_BASE = "https://api.anthropic.com"
+_USAGE_PATH = "/api/oauth/usage"
+_PROFILE_PATH = "/api/oauth/profile"
 _OAUTH_BETA = "oauth-2025-04-20"
+
+
+def _oauth_base() -> str:
+    """Base URL for the OAuth account endpoints (usage/profile).
+
+    A LOCAL tier (has account credentials) routes these polls through its OWN
+    loopback so they pass the per-bearer fair-queue semaphore. A DIRECT call
+    bypasses admission and bursts alongside that account's real traffic,
+    tripping its concurrency cap (429) — pane-19 finding 09/07: every direct
+    ``/api/oauth/usage`` 429s while proxy-routed calls return data. The central
+    tier (no accounts) has no local semaphore to gain and calls direct. The GET
+    is not ``POST /v1/messages`` so account-routing never rewrites its bearer —
+    the poll still reports the token's OWN account.
+    """
+    if config.ACCOUNT_CRED_PATHS:
+        return f"http://127.0.0.1:{config.LISTEN_PORT}"
+    return _DIRECT_OAUTH_BASE
+
 
 # Fetch cadence mirrors claude-account-pick: 90s TTL collapses dashboard
 # polling to ≤1 request per account; readings older than the stale ceiling
@@ -481,7 +500,7 @@ async def _refresh_email(path: str, token: str) -> None:
     cached = _email_cache.get(path)
     if cached is not None and cached[0] == mtime:
         return
-    status, body = await _get_json(PROFILE_URL, token)
+    status, body = await _get_json(_oauth_base() + _PROFILE_PATH, token)
     if status == 200 and body:
         email = (body.get("account") or {}).get("email")
         if isinstance(email, str) and email:
@@ -501,7 +520,7 @@ async def _refresh_one(path: str, now: float) -> None:
         token = _read_token(path)
         if token is None:
             return
-        status, body = await _get_json(USAGE_URL, token)
+        status, body = await _get_json(_oauth_base() + _USAGE_PATH, token)
         if status == 200 and body is not None:
             _endpoint_cache[path] = {"fetched": now, "usage": _parse_usage(body), "err": None}
             await _refresh_email(path, token)

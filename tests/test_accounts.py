@@ -642,3 +642,23 @@ def test_account_email_trusts_network_cache_on_mtime_match(tmp_path):
     mt = os.stat(cred).st_mtime_ns
     accounts._email_cache[str(cred)] = (mt, "network@pm.me")
     assert accounts.account_email(str(cred)) == "network@pm.me"  # fresh → authoritative
+
+
+# ── poller routes through the proxy (087): avoid the direct-call self-429 ──
+
+
+def test_oauth_base_routes_via_proxy_when_accounts_configured(monkeypatch):
+    # A local tier with accounts must poll usage/profile through its OWN
+    # loopback so the GET shares the per-bearer semaphore with real traffic —
+    # a direct call bursts alongside it and trips the concurrency 429.
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x/c.json")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+    assert accounts._oauth_base() == "http://127.0.0.1:8765"
+    assert accounts._oauth_base() + accounts._USAGE_PATH == "http://127.0.0.1:8765/api/oauth/usage"
+    assert "usage" in accounts._oauth_base() + accounts._USAGE_PATH  # stub-router still matches
+
+
+def test_oauth_base_direct_when_no_accounts(monkeypatch):
+    # Central tier (no accounts) has no local semaphore to gain → direct.
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    assert accounts._oauth_base() == "https://api.anthropic.com"
