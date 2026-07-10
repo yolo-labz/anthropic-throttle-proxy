@@ -682,3 +682,128 @@ async def test_refresh_endpoint_polls_via_loopback(monkeypatch, tmp_path):
     # py/incomplete-url-substring-sanitization): the poll hits ONLY the
     # loopback usage endpoint, never direct anthropic.com.
     assert seen == ["http://127.0.0.1:8765/api/oauth/usage"]
+
+
+# ── spec 2: limits[] scoped per-model bucket capture ──────────────────────
+
+
+def test_parse_usage_captures_limits_and_scoped():
+    body = {
+        "five_hour": {"utilization": 99.0, "resets_at": _iso(NOW + 3600)},
+        "seven_day": {"utilization": 20.0, "resets_at": _iso(NOW + 3 * DAY)},
+        "seven_day_sonnet": None,
+        "limits": [
+            {
+                "kind": "session",
+                "group": "session",
+                "percent": 99,
+                "severity": "critical",
+                "is_active": True,
+                "scope": None,
+            },
+            {
+                "kind": "weekly_all",
+                "group": "weekly",
+                "percent": 20,
+                "severity": "normal",
+                "is_active": False,
+                "scope": None,
+            },
+            {
+                "kind": "weekly_scoped",
+                "group": "weekly",
+                "percent": 5,
+                "severity": "normal",
+                "is_active": False,
+                "scope": {"model": {"id": None, "display_name": "Fable"}},
+            },
+        ],
+    }
+    parsed = accounts._parse_usage(body)
+    assert len(parsed["limits"]) == 3
+    session = parsed["limits"][0]
+    assert session["kind"] == "session"
+    assert session["severity"] == "critical" and session["is_active"] is True
+    assert abs(session["util"] - 0.99) < 1e-9
+    scoped = parsed["scoped"]
+    assert scoped is not None and scoped["kind"] == "weekly_scoped"
+    assert scoped["model"] == "Fable" and abs(scoped["util"] - 0.05) < 1e-9
+
+
+def test_parse_usage_limits_absent_or_malformed():
+    empty = accounts._parse_usage({})
+    assert empty["limits"] == [] and empty["scoped"] is None
+    body = {
+        "limits": [
+            "not-a-dict",
+            {
+                "kind": "weekly_scoped",
+                "percent": 50,
+                "scope": {"model": {"display_name": "Sonnet"}},
+            },
+        ]
+    }
+    parsed = accounts._parse_usage(body)
+    assert len(parsed["limits"]) == 1  # malformed skipped
+    assert parsed["scoped"]["model"] == "Sonnet"
+    assert abs(parsed["scoped"]["util"] - 0.5) < 1e-9
+
+
+def test_parse_usage_scoped_prefers_active():
+    # Codex MEDIUM: multiple weekly_scoped entries → pick the ACTIVE one.
+    body = {
+        "limits": [
+            {
+                "kind": "weekly_scoped",
+                "percent": 10,
+                "is_active": False,
+                "scope": {"model": {"display_name": "Fable"}},
+            },
+            {
+                "kind": "weekly_scoped",
+                "percent": 40,
+                "is_active": True,
+                "scope": {"model": {"display_name": "Sonnet"}},
+            },
+        ]
+    }
+    scoped = accounts._parse_usage(body)["scoped"]
+    assert scoped["model"] == "Sonnet" and scoped["is_active"] is True
+    # none active → deterministic fallback to the first
+    body2 = {
+        "limits": [
+            {
+                "kind": "weekly_scoped",
+                "percent": 10,
+                "is_active": False,
+                "scope": {"model": {"display_name": "Fable"}},
+            }
+        ]
+    }
+    assert accounts._parse_usage(body2)["scoped"]["model"] == "Fable"
+
+
+def test_scoped_gauge_drops_stale_model_series_on_flip(monkeypatch):
+    # Codex MEDIUM: when the scoped model flips Fable→Sonnet, the stale
+    # per-model gauge series must be removed, not frozen.
+    from anthropic_throttle_proxy import metrics as _m
+    from anthropic_throttle_proxy.ui import routes as _routes
+
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x/c.json")
+    _routes._scoped_model_seen.clear()
+    ident = {"collapsed": False, "known": 0, "duplicates": {}}
+
+    def sample(model):
+        return _m.REGISTRY.get_sample_value(
+            "anthropic_account_scoped_utilization", {"account": "A", "model": model}
+        )
+
+    _routes._publish_account_gauges(
+        {"/x/c.json": {"usage": {"scoped": {"model": "Fable", "util": 0.1}}}}, ident
+    )
+    assert sample("Fable") == 0.1
+    _routes._publish_account_gauges(
+        {"/x/c.json": {"usage": {"scoped": {"model": "Sonnet", "util": 0.4}}}}, ident
+    )
+    assert sample("Sonnet") == 0.4
+    assert sample("Fable") is None  # stale series removed on flip
