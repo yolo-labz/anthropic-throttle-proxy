@@ -117,6 +117,12 @@ def _compute_status(bearers: list[dict], queue_mode: str) -> dict[str, object]:
     return {"level": level, "verdict": verdict, "detail": detail}
 
 
+# account label -> last-published scoped model, so a Fable→Sonnet flip drops the
+# stale per-model series instead of freezing it forever (Codex MEDIUM). Both this
+# and the registry are process-local, so they stay in sync across a restart.
+_scoped_model_seen: dict[str, str] = {}
+
+
 def _publish_account_gauges(
     endpoint: dict[str, dict[str, object]], identity: dict[str, object]
 ) -> None:
@@ -135,7 +141,14 @@ def _publish_account_gauges(
         # currently tracks so a Fable→Sonnet flip is visible per account.
         scoped = usage.get("scoped")
         if isinstance(scoped, dict) and scoped.get("util") is not None and scoped.get("model"):
-            _metrics.M_ACCOUNT_SCOPED.labels(label, str(scoped["model"])).set(scoped["util"])
+            model = str(scoped["model"])
+            prev = _scoped_model_seen.get(label)
+            if prev is not None and prev != model:
+                # Model flipped — drop the stale series (prev was published, so
+                # the labelset exists; safe to remove without a guard).
+                _metrics.M_ACCOUNT_SCOPED.remove(label, prev)
+            _scoped_model_seen[label] = model
+            _metrics.M_ACCOUNT_SCOPED.labels(label, model).set(scoped["util"])
     if identity["collapsed"]:
         _metrics.M_ACCOUNTS_DISTINCT.set(0)
     elif int(identity["known"]) >= 2:  # type: ignore[call-overload]

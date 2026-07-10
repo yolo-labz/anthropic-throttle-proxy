@@ -464,7 +464,13 @@ def _parse_usage(body: dict[str, Any]) -> dict[str, Any]:
     out["limits"] = _parse_limits(body.get("limits"))
     # The weekly per-model (scoped) meter — the one that flips Fable→Sonnet as
     # the client-side model mix shifts; spec-2/3 model-aware routing keys on it.
-    out["scoped"] = next((lim for lim in out["limits"] if lim["kind"] == "weekly_scoped"), None)
+    # Prefer the ACTIVE scoped entry (Codex MEDIUM: multiple weekly_scoped
+    # entries are possible; the binding one is what routing/warnings care about),
+    # falling back to the first when none is flagged active.
+    scoped_limits = [lim for lim in out["limits"] if lim["kind"] == "weekly_scoped"]
+    out["scoped"] = next((lim for lim in scoped_limits if lim["is_active"]), None) or (
+        scoped_limits[0] if scoped_limits else None
+    )
     return out
 
 

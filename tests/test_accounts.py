@@ -747,3 +747,63 @@ def test_parse_usage_limits_absent_or_malformed():
     assert len(parsed["limits"]) == 1  # malformed skipped
     assert parsed["scoped"]["model"] == "Sonnet"
     assert abs(parsed["scoped"]["util"] - 0.5) < 1e-9
+
+
+def test_parse_usage_scoped_prefers_active():
+    # Codex MEDIUM: multiple weekly_scoped entries → pick the ACTIVE one.
+    body = {
+        "limits": [
+            {
+                "kind": "weekly_scoped",
+                "percent": 10,
+                "is_active": False,
+                "scope": {"model": {"display_name": "Fable"}},
+            },
+            {
+                "kind": "weekly_scoped",
+                "percent": 40,
+                "is_active": True,
+                "scope": {"model": {"display_name": "Sonnet"}},
+            },
+        ]
+    }
+    scoped = accounts._parse_usage(body)["scoped"]
+    assert scoped["model"] == "Sonnet" and scoped["is_active"] is True
+    # none active → deterministic fallback to the first
+    body2 = {
+        "limits": [
+            {
+                "kind": "weekly_scoped",
+                "percent": 10,
+                "is_active": False,
+                "scope": {"model": {"display_name": "Fable"}},
+            }
+        ]
+    }
+    assert accounts._parse_usage(body2)["scoped"]["model"] == "Fable"
+
+
+def test_scoped_gauge_drops_stale_model_series_on_flip(monkeypatch):
+    # Codex MEDIUM: when the scoped model flips Fable→Sonnet, the stale
+    # per-model gauge series must be removed, not frozen.
+    from anthropic_throttle_proxy import metrics as _m
+    from anthropic_throttle_proxy.ui import routes as _routes
+
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x/c.json")
+    _routes._scoped_model_seen.clear()
+    ident = {"collapsed": False, "known": 0, "duplicates": {}}
+
+    def sample(model):
+        return _m.REGISTRY.get_sample_value(
+            "anthropic_account_scoped_utilization", {"account": "A", "model": model}
+        )
+
+    _routes._publish_account_gauges(
+        {"/x/c.json": {"usage": {"scoped": {"model": "Fable", "util": 0.1}}}}, ident
+    )
+    assert sample("Fable") == 0.1
+    _routes._publish_account_gauges(
+        {"/x/c.json": {"usage": {"scoped": {"model": "Sonnet", "util": 0.4}}}}, ident
+    )
+    assert sample("Sonnet") == 0.4
+    assert sample("Fable") is None  # stale series removed on flip
