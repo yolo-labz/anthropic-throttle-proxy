@@ -117,6 +117,7 @@ from .metrics import (
     M_DURATION,
     M_INFLIGHT,
     M_INFLIGHT_BEARER,
+    M_KEEPALIVE_HOLDS,
     M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
@@ -224,6 +225,7 @@ __all__ = [
     "M_UTIL_5H",
     "M_UTIL_7D",
     "M_UTIL_WARNINGS",
+    "M_KEEPALIVE_HOLDS",
     # defined in this module
     "UTILIZATION_TARGET",
     "UTILIZATION_WARN",
@@ -1152,6 +1154,357 @@ def _should_retry_pushback(
     )
 
 
+# ---------------------------------------------------------------------------
+# Spec 092 — SSE keepalive-hold primitives
+# ---------------------------------------------------------------------------
+#
+# For a STREAMING POST /v1/messages that hits a TRANSIENT throttle (529,
+# central-queue-depth 503, concurrency 429/503), we commit a "200
+# text/event-stream" client response immediately and emit SSE ":" keepalive
+# comment frames while internally retrying. The SDK parser silently drops
+# SSE comment lines (invariant 3), so the client sees a slow response rather
+# than an error banner. The hold consumes the same wait-budget as the queue
+# bound so local + central can never stack past client patience (invariant 6).
+
+
+def _is_streaming_body(body: bytes | None) -> bool:
+    """True when the POST body declares ``"stream": true``."""
+    if not body:
+        return False
+    try:
+        obj = json.loads(body)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(obj, dict) and obj.get("stream") is True
+
+
+def _is_transient_throttle(
+    status: int,
+    meta: dict[str, str] | None,
+    bid: str,
+    response: web.StreamResponse | web.Response | None = None,
+) -> bool:
+    """True when this throttle is TRANSIENT (hold candidate), not BUDGET.
+
+    Transient = 529 upstream-overloaded, a central-queue-timeout 503, or a
+    concurrency/rate 429/503 whose unified budget windows are still "allowed"
+    with low utilization. Budget = any of: unified status "allowed_warning" /
+    "rejected", binding utilization >= UTILIZATION_WARN, a real Retry-After
+    (long windows are budget soft-throttles not concurrency blips).
+
+    Preserves existing invariants:
+    * 529 never AIMD-shrinks (OVERLOAD_STATUSES) — we DO hold on 529.
+    * Central-queue-timeout 503 is exempt from AIMD and pushback-retry —
+      we DO hold (give upstream time to drain), but must not AIMD-shrink.
+    * Budget-rejected / long Retry-After / non-streaming → NOT held.
+    """
+    if status not in THROTTLE_STATUSES:
+        return False
+    # 529 is ALWAYS transient (Anthropic capacity, not our usage).
+    if status in OVERLOAD_STATUSES:
+        return True
+    # Central-queue-depth 503: transient (central queue is full, will drain).
+    if _is_queue_timeout_response(response):
+        return True
+    # A real Retry-After header means the upstream is asking us to back off
+    # for a defined window — classify as budget to avoid holding indefinitely.
+    retry_after = _parse_retry_after(meta)
+    if retry_after > config.MAX_HOLD_RETRY_AFTER_S:
+        return False
+    # Remaining: ambiguous 429/503. Use _budget_under_pressure to distinguish
+    # concurrency (transient) from budget soft-throttle (hold would be wrong).
+    return not _budget_under_pressure(meta, bid)
+
+
+async def _emit_keepalive_frames(response: web.StreamResponse, interval_ms: int) -> None:
+    """Emit SSE comment keepalive frames until cancelled.
+
+    Writes ``: keepalive\n\n`` every ``interval_ms`` milliseconds. The
+    Anthropic SDK parser silently drops SSE comment lines (spec 092 invariant 3)
+    so the client receives heartbeats that reset its idle timer without seeing
+    any message content. Must be cancelled from the outside (via Task.cancel).
+
+    07/07 footgun guard: interval must be < the client's idle timeout (~60 s).
+    The caller is responsible for passing a sane interval (MIN 500 ms enforced
+    in config). This coroutine trusts the caller-validated value.
+    """
+    interval_s = max(0.5, interval_ms / 1000.0)
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await response.write(b": keepalive\n\n")
+        except (ConnectionResetError, aiohttp.ClientConnectionResetError, OSError):
+            # Client disconnected while we were holding; stop silently.
+            return
+
+
+async def _emit_sse_error_terminal(
+    response: web.StreamResponse,
+    message: str,
+    error_type: str = "throttle_timeout",
+) -> None:
+    """Write a terminal SSE error event + EOF to an already-prepared response.
+
+    Spec 092 invariant 4: once a 200 SSE response is .prepared, an HTTP error
+    status can no longer be sent — the bound-exhausted tail MUST degrade to a
+    well-formed SSE error event, never a bare socket close. Callers rely on
+    this for the 07/07 falsification: no truncated write.
+    """
+    import json as _json_mod
+
+    payload = _json_mod.dumps({"type": "error", "error": {"type": error_type, "message": message}})
+    try:
+        await response.write(f"event: error\ndata: {payload}\n\n".encode())
+        await response.write_eof()
+    except (ConnectionResetError, aiohttp.ClientConnectionResetError, OSError):
+        # Client already gone; write_eof on a dead socket is expected.
+        pass
+
+
+async def _forward_once_into_sse(
+    request: web.Request,
+    headers: dict,
+    body: bytes | None,
+    url: str,
+    client_timeout: aiohttp.ClientTimeout,
+    sse_resp: web.StreamResponse,
+) -> tuple[int, dict[str, str] | None, bytearray | None, Exception | None]:
+    """Forward one attempt; on a 2xx, pipe upstream chunks into ``sse_resp``.
+
+    Unlike ``_try_forward`` / ``_stream_response``, this does NOT call
+    ``response.prepare(request)`` because ``sse_resp`` is already prepared.
+    Returns ``(status, meta, captured, exc)``; ``exc`` non-None means upstream
+    network error (not a throttle status — those return normally with their
+    status codes). Client-side disconnects raise ``_CLIENT_DISCONNECT_EXC``
+    for the caller to handle.
+
+    The caller must cancel the keepalive emitter BEFORE calling this on a 2xx
+    path so the emitter does not interleave with the real upstream body.
+    """
+    from .pacing import _pace_dispatch
+    from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
+
+    connector = aiohttp.TCPConnector(ssl=True)
+    try:
+        async with aiohttp.ClientSession(
+            timeout=client_timeout, connector=connector, auto_decompress=False
+        ) as session:
+            await _pace_dispatch()
+            try:
+                async with session.request(
+                    request.method, url, headers=headers, data=body, allow_redirects=False
+                ) as upstream:
+                    meta = _extract_ratelimit(upstream.headers)
+                    # Throttle / error status: return body as captured, no piping.
+                    if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
+                        upstream_body = await upstream.read()
+                        meta.update(
+                            _extract_zai_ratelimit_from_body(
+                                upstream_body,
+                                quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
+                            )
+                        )
+                        # Check for MARKER_HEADER: keep QUEUE_TIMEOUT_HEADER only
+                        # from a sibling proxy (anti-spoof, preserving invariant).
+                        if config.MARKER_HEADER not in upstream.headers:
+                            meta.pop(config.QUEUE_TIMEOUT_HEADER, None)
+                        captured = bytearray(upstream_body[: 1024 * 1024])
+                        # Build a synthetic response object so the caller can
+                        # call _is_queue_timeout_response on it.
+                        fake_resp_headers = {
+                            k: v
+                            for k, v in upstream.headers.items()
+                            if k.lower() not in config.HOP_HEADERS
+                        }
+                        if config.MARKER_HEADER not in upstream.headers:
+                            fake_resp_headers.pop(config.QUEUE_TIMEOUT_HEADER, None)
+                        return upstream.status, meta, captured, None
+                    # 2xx: pipe chunks into the already-prepared sse_resp.
+                    captured = bytearray()
+                    cap_limit = 1024 * 1024
+                    async for chunk in upstream.content.iter_any():
+                        if not chunk:
+                            break
+                        await sse_resp.write(chunk)
+                        if len(captured) < cap_limit:
+                            captured.extend(chunk[: cap_limit - len(captured)])
+                    await sse_resp.write_eof()
+                    return upstream.status, meta, captured, None
+            except aiohttp.ClientConnectionResetError:
+                raise
+            except (TimeoutError, aiohttp.ClientError) as exc:
+                return -1, None, None, exc
+    except aiohttp.ClientConnectionResetError:
+        raise
+
+
+async def _keepalive_hold_and_retry(
+    request: web.Request,
+    headers: dict,
+    body: bytes | None,
+    path: str,
+    via: str,
+    url: str,
+    client_timeout: aiohttp.ClientTimeout,
+    attempt: _Attempt,
+    bid: str,
+    limiter: FairBearerLimiter,
+    wait_deadline: float | None,
+    first_status: int,
+) -> web.StreamResponse:
+    """Keepalive-hold path for TRANSIENT streaming throttle (spec 092 T002).
+
+    Prepares a 200 text/event-stream client response immediately, starts the
+    keepalive emitter, and internally retries until upstream returns 200 (then
+    pipes the real body through the open response) or the wait-budget exhausts
+    (then emits a terminal SSE error event — invariant 4, no socket close).
+
+    OWNS the response lifetime: prepares, drains, and writes EOF before
+    returning. The caller must return the resulting response without writing.
+
+    Design note on the two-response problem: ``_stream_response`` always calls
+    ``response.prepare(request)``. Since ``sse_resp`` is already prepared here,
+    we cannot use ``_try_forward`` / ``_forward_once`` for the success retry
+    path — they would try to prepare a second response on the same request and
+    raise. ``_forward_once_into_sse`` pipes chunks directly into ``sse_resp``
+    bypassing the prepare step.
+    """
+    sse_resp = web.StreamResponse(
+        status=200,
+        headers={"content-type": "text/event-stream", "cache-control": "no-cache"},
+    )
+    await sse_resp.prepare(request)
+
+    interval_ms = config.KEEPALIVE_INTERVAL_MS
+    log(
+        f"keepalive-hold bid={bid} status={first_status} path=/{path} "
+        f"interval_ms={interval_ms} deadline={wait_deadline!r}"
+    )
+
+    keepalive_task = asyncio.create_task(_emit_keepalive_frames(sse_resp, interval_ms))
+    _background_tasks.add(keepalive_task)
+    keepalive_task.add_done_callback(_background_tasks.discard)
+
+    def _cancel_keepalive() -> None:
+        keepalive_task.cancel()
+
+    async def _await_keepalive_cancel() -> None:
+        keepalive_task.cancel()
+        try:
+            await keepalive_task
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        while True:
+            now = time.time()
+            if wait_deadline is not None and now >= wait_deadline:
+                # Budget exhausted — spec 092 invariant 4: emit error SSE, not
+                # a bare socket close. The 07/07 falsification test checks this.
+                await _await_keepalive_cancel()
+                M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+                log(f"keepalive-hold-exhausted bid={bid} path=/{path}")
+                await _emit_sse_error_terminal(
+                    sse_resp,
+                    "proxy keepalive hold exhausted; upstream capacity unavailable within budget",
+                )
+                attempt.final_status = 503
+                attempt.response = sse_resp
+                return sse_resp
+
+            # Honor any outstanding Retry-After pause before dispatching.
+            await limiter.wait_retry_after()
+
+            # Stamp the remaining budget on central-bound requests.
+            send_headers: dict = dict(headers)
+            if via == "central" and wait_deadline is not None:
+                remaining_ms = max(0, int((wait_deadline - time.time()) * 1000))
+                send_headers[config.WAIT_BUDGET_HEADER] = str(remaining_ms)
+
+            try:
+                status, meta, captured, exc = await _forward_once_into_sse(
+                    request,
+                    send_headers,
+                    body,
+                    url,
+                    client_timeout,
+                    sse_resp,
+                )
+            except _CLIENT_DISCONNECT_EXC:
+                # Client disconnected during our retry.
+                await _await_keepalive_cancel()
+                attempt.final_status = 499
+                attempt.response = sse_resp
+                return sse_resp
+
+            if exc is not None:
+                # Network-level error; retry after a brief pause.
+                log(f"keepalive-hold net-error bid={bid}: {exc!r}")
+                await asyncio.sleep(0.5)
+                continue
+
+            # Update attempt with the latest meta/captured.
+            if meta is not None:
+                attempt.meta = meta
+            if captured is not None:
+                attempt.captured = captured
+
+            if 200 <= status < 300:
+                # _forward_once_into_sse already piped the body and called
+                # write_eof. The hold succeeded.
+                await _await_keepalive_cancel()
+                M_KEEPALIVE_HOLDS.labels(outcome="streamed").inc()
+                log(f"keepalive-hold-streamed bid={bid} status={status}")
+                attempt.final_status = status
+                attempt.response = sse_resp
+                return sse_resp
+
+            # Build a minimal response object so _is_queue_timeout_response
+            # can inspect the headers from the new attempt.
+            retry_resp_headers = {}
+            if meta and config.QUEUE_TIMEOUT_HEADER in meta:
+                retry_resp_headers[config.QUEUE_TIMEOUT_HEADER] = "1"
+            retry_fake = web.Response(status=status, headers=retry_resp_headers)
+            attempt.final_status = status
+            attempt.response = retry_fake
+
+            if _is_transient_throttle(status, meta, bid, retry_fake):
+                # Still transient: apply narrow AIMD feedback without shrinking
+                # on 529 or queue-timeout (invariants 7 and 9).
+                if status in OVERLOAD_STATUSES:
+                    # 529: count overload, honor Retry-After, no shrink.
+                    M_AIMD_OVERLOAD.labels(bearer=bid).inc()
+                    _note_retry_after_if_set(limiter, meta, bid)
+                elif _is_queue_timeout_response(retry_fake):
+                    # Central queue-depth 503: no AIMD shrink.
+                    log(f"keepalive-hold queue-timeout-relay bid={bid} (no aimd shrink)")
+                    _note_retry_after_if_set(limiter, meta, bid)
+                else:
+                    # Concurrency 429/503: apply AIMD shrink only.
+                    new_attempt_obj = _Attempt()
+                    new_attempt_obj.final_status = status
+                    new_attempt_obj.response = retry_fake
+                    new_attempt_obj.meta = meta
+                    await _aimd_feedback(bid, limiter, new_attempt_obj)
+            else:
+                # Reclassified as BUDGET mid-hold (unified headers updated).
+                # Exit the hold and emit terminal error.
+                await _await_keepalive_cancel()
+                M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+                log(f"keepalive-hold-budget-reclassified bid={bid} path=/{path}")
+                await _emit_sse_error_terminal(
+                    sse_resp,
+                    "proxy keepalive hold stopped: upstream budget exhausted",
+                )
+                attempt.final_status = status
+                attempt.response = sse_resp
+                return sse_resp
+
+    except asyncio.CancelledError:
+        await _await_keepalive_cancel()
+        raise
+
+
 async def _forward_with_retry(
     request: web.Request,
     headers: Mapping[str, str],
@@ -1217,6 +1570,39 @@ async def _forward_with_retry(
             _schedule_advisor(bid, attempt.final_status)
             await limiter.wait_retry_after()
             continue
+        # Spec 092 keepalive-hold: before returning an unprepared transient
+        # throttle error to the client, check if we should hold with SSE
+        # keepalives and retry internally. Conditions:
+        # 1. KEEPALIVE_HOLD enabled
+        # 2. Request is a streaming POST /v1/messages (stream:true)
+        # 3. Throttle status is TRANSIENT (not budget)
+        # 4. Wait-budget is non-zero (there is still time to retry)
+        # 5. Response is not yet prepared (we can still upgrade to 200 SSE)
+        if (
+            config.KEEPALIVE_HOLD
+            and response is not None
+            and not response.prepared
+            and attempt.final_status in THROTTLE_STATUSES
+            and _is_streaming_body(body)
+            and _is_transient_throttle(attempt.final_status, attempt.meta, bid, response)
+            and (wait_deadline is None or time.time() < wait_deadline)
+            and wait_deadline is not None
+        ):
+            _schedule_advisor(bid, attempt.final_status)
+            return await _keepalive_hold_and_retry(
+                request,
+                dict(headers),
+                body,
+                path,
+                via,
+                url,
+                client_timeout,
+                attempt,
+                bid,
+                limiter,
+                wait_deadline,
+                attempt.final_status,
+            )
         return response
 
 
