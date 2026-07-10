@@ -243,3 +243,19 @@ M_UTIL_WARNINGS = Counter(
     ["bearer", "window"],
     registry=REGISTRY,
 )
+# Spec 085 / pane-19 gap: the 7d brake (THROTTLE_UTILIZATION_TARGET) shipped in
+# #80 but defaults to 0 (off), so it can sit silently dormant while accounts
+# march to a hard 1.0 lockout. These make the disabled state a first-class,
+# alertable signal without changing throttle behavior (warn-only, safe).
+M_BRAKE_ENABLED = Gauge(
+    "anthropic_util_brake_enabled",
+    "1 when the utilization brake (THROTTLE_UTILIZATION_TARGET>0) is active, else 0.",
+    registry=REGISTRY,
+)
+M_BRAKE_DISABLED_HOT = Counter(
+    "anthropic_util_brake_disabled_hot_total",
+    "Early-warnings fired while the brake was DISABLED — an account crossed the "
+    "warn line with no glide and will hard-lock at 1.0 into a multi-day lockout.",
+    ["bearer", "window"],
+    registry=REGISTRY,
+)

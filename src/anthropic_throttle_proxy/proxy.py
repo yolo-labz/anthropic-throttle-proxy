@@ -107,6 +107,8 @@ from .metrics import (
     M_AIMD_SHRINKS,
     M_BODY_SHRINK_BYTES_SAVED,
     M_BODY_SHRINK_TRIMMED,
+    M_BRAKE_DISABLED_HOT,
+    M_BRAKE_ENABLED,
     M_CENTRAL_STATUS,
     M_CLIENT_DISCONNECTS,
     M_COST,
@@ -375,10 +377,21 @@ def _maybe_warn_unified(
     bstate["_util_warn_key"] = warn_key
     M_UTIL_WARNINGS.labels(bearer=bid, window=window).inc()
     reset_in = int(reset - time.time()) if reset else -1
+    # Pane-19 gap: if the brake is DISABLED, this window will keep climbing to a
+    # hard 1.0 lockout with no glide — make that loud + alertable (still warn-
+    # only; we do NOT shrink here, that stays UTILIZATION_TARGET's job).
+    if UTILIZATION_TARGET <= 0:
+        M_BRAKE_DISABLED_HOT.labels(bearer=bid, window=window).inc()
+        brake_note = (
+            "BRAKE DISABLED (THROTTLE_UTILIZATION_TARGET=0) — no glide; "
+            "this window will hard-lock at 1.0 into a multi-day lockout. "
+            "Set the target to brake."
+        )
+    else:
+        brake_note = f"(glide target {UTILIZATION_TARGET:.2f})"
     log(
         f"unified-warning bid={bid} window={window} "
-        f"util={binding:.2f}>={UTILIZATION_WARN:.2f} reset_in={reset_in}s "
-        f"(approaching cap, still allowed)"
+        f"util={binding:.2f}>={UTILIZATION_WARN:.2f} reset_in={reset_in}s {brake_note}"
     )
 
 
@@ -1778,6 +1791,7 @@ async def health(_request: web.Request) -> web.Response:
         # guard error should be visible, but health must still answer.
         log(f"account-identity guard error (non-fatal): {exc!r}")
         account_identity = None
+    M_BRAKE_ENABLED.set(1 if UTILIZATION_TARGET > 0 else 0)
     body = {
         "inflight": state["inflight"],
         "queued": state["queued"],
@@ -1796,6 +1810,13 @@ async def health(_request: web.Request) -> web.Response:
         # or null when unconfigured. duplicates non-empty ⇒ a mutually-revoking
         # same-account-in-two-stores collision (the 09/07 outage).
         "account_identity": account_identity,
+        # Pane-19 gap: surface whether the 7d/5h utilization brake is armed.
+        # enabled=false means accounts can march to a hard 1.0 lockout unbraked.
+        "brake": {
+            "enabled": UTILIZATION_TARGET > 0,
+            "target": UTILIZATION_TARGET,
+            "warn": UTILIZATION_WARN,
+        },
         "central_last_check": state["central_last_check"],
         "last_advisor": state["last_advisor"],
         # PR #562/#573: per-bearer + per-client view so /__throttle/health
