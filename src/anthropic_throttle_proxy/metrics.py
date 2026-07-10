@@ -138,6 +138,16 @@ M_ACCOUNT_RESET = Gauge(
     ["account", "window"],
     registry=REGISTRY,
 )
+# Spec 2: the weekly per-model (scoped) meter from limits[]. Post-Nov-2025 the
+# Sonnet weekly budget is SEPARATE from all-models/Opus — the representative
+# 7d gauge alone can't tell which meter is filling. Labeled by the model the
+# scoped window currently tracks (flips Fable→Sonnet as the client mix shifts).
+M_ACCOUNT_SCOPED = Gauge(
+    "anthropic_account_scoped_utilization",
+    "Per-account weekly SCOPED (per-model) window utilization 0..1 from limits[].",
+    ["account", "model"],
+    registry=REGISTRY,
+)
 M_ACCOUNTS_DISTINCT = Gauge(
     "anthropic_accounts_identity_distinct",
     "1=credential files belong to distinct accounts, 0=COLLAPSED to one, -1=unknown.",

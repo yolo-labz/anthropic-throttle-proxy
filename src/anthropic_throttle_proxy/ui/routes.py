@@ -131,6 +131,11 @@ def _publish_account_gauges(
                 _metrics.M_ACCOUNT_USAGE.labels(label, window).set(util)
             if reset is not None:
                 _metrics.M_ACCOUNT_RESET.labels(label, window).set(reset)
+        # Spec 2: weekly per-model (scoped) meter — labeled by the model it
+        # currently tracks so a Fable→Sonnet flip is visible per account.
+        scoped = usage.get("scoped")
+        if isinstance(scoped, dict) and scoped.get("util") is not None and scoped.get("model"):
+            _metrics.M_ACCOUNT_SCOPED.labels(label, str(scoped["model"])).set(scoped["util"])
     if identity["collapsed"]:
         _metrics.M_ACCOUNTS_DISTINCT.set(0)
     elif int(identity["known"]) >= 2:  # type: ignore[call-overload]

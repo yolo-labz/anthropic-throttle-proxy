@@ -461,6 +461,45 @@ def _parse_usage(body: dict[str, Any]) -> dict[str, Any]:
         }
     else:
         out["extra"] = None
+    out["limits"] = _parse_limits(body.get("limits"))
+    # The weekly per-model (scoped) meter — the one that flips Fable→Sonnet as
+    # the client-side model mix shifts; spec-2/3 model-aware routing keys on it.
+    out["scoped"] = next((lim for lim in out["limits"] if lim["kind"] == "weekly_scoped"), None)
+    return out
+
+
+def _parse_limits(raw: Any) -> list[dict[str, Any]]:
+    """Parse the ``/api/oauth/usage`` ``limits[]`` array (ccusage shape).
+
+    Each entry: ``kind`` (session|weekly_all|weekly_scoped), ``group``,
+    ``util`` (0..1 from the 0-100 ``percent``), ``severity``
+    (normal|warning|critical — the endpoint's OWN classification, richer than a
+    hardcoded threshold), ``is_active`` (which window binds now), and ``model``
+    (display name, only present on ``weekly_scoped``). Never raises on schema
+    churn — unknown/malformed entries are skipped.
+    """
+    out: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        model = None
+        scope = entry.get("scope")
+        if isinstance(scope, dict):
+            m = scope.get("model")
+            if isinstance(m, dict) and isinstance(m.get("display_name"), str):
+                model = m["display_name"]
+        out.append(
+            {
+                "kind": str(entry.get("kind") or ""),
+                "group": str(entry.get("group") or ""),
+                "util": _pct_fraction(entry.get("percent")),
+                "severity": str(entry.get("severity") or ""),
+                "is_active": bool(entry.get("is_active")),
+                "model": model,
+            }
+        )
     return out
 
 
