@@ -795,15 +795,17 @@ def _account_routing_enabled() -> bool:
 def _model_tier(model: str) -> str:
     """Coarse model tier from a model id / display name, or "" when unknown.
 
-    ``claude-sonnet-4-6`` → ``sonnet``, ``Fable`` → ``fable``. A model id carries
-    exactly one tier token, so match order is irrelevant. Used to align a
-    request with the account's scoped (per-model) weekly meter.
+    ``claude-sonnet-4-6`` → ``sonnet``, ``Fable`` → ``fable``. Matches on exact
+    separator-split tokens (not raw substrings, so ``sonnets`` ≠ ``sonnet``) and
+    treats an ambiguous id carrying >1 tier token as unknown (Codex LOW). Used
+    to align a request with the account's scoped (per-model) weekly meter.
     """
-    m = model.lower()
-    for tier in ("opus", "sonnet", "haiku", "fable"):
-        if tier in m:
-            return tier
-    return ""
+    normalized = model.lower()
+    for sep in "-_./":
+        normalized = normalized.replace(sep, " ")
+    tokens = set(normalized.split())
+    tiers = [tier for tier in ("opus", "sonnet", "haiku", "fable") if tier in tokens]
+    return tiers[0] if len(tiers) == 1 else ""
 
 
 def _account_routing_candidate_score(

@@ -953,6 +953,9 @@ def test_model_tier_normalization() -> None:
     assert proxy._model_tier("Fable") == "fable"
     assert proxy._model_tier("gpt-5") == ""
     assert proxy._model_tier("") == ""
+    # Codex LOW: exact-token match, not substring; ambiguous >1 tier → unknown.
+    assert proxy._model_tier("sonnets") == ""  # substring, not a token
+    assert proxy._model_tier("claude-sonnet-opus-mix") == ""  # two tiers → ambiguous
 
 
 def _acct(bid, tok, label, scoped_model, scoped_util):
@@ -998,3 +1001,68 @@ def test_account_route_scoped_ignored_on_tier_mismatch(monkeypatch) -> None:
         headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
     )
     assert (bid, label) == ("aaa", "A")
+
+
+def test_account_route_scoped_full_excluded_even_in_fallback(monkeypatch) -> None:
+    # scoped meter at 1.0 → excluded in BOTH passes (never picked, even as the
+    # only option) → no candidate → no routing (incoming bid unchanged).
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
+    monkeypatch.setattr(
+        accounts, "routing_snapshot", lambda _now=None: [_acct("aaa", "TOKA", "A", "Sonnet", 1.0)]
+    )
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("inc", None)
+    assert headers["Authorization"] == "Bearer inc"
+
+
+def test_account_route_scoped_warn_picked_as_only_option(monkeypatch) -> None:
+    # scoped near cap (<1.0): first pass rejects at warn, second pass
+    # (allow_pressure) picks it since it is the only option.
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
+    monkeypatch.setattr(
+        accounts, "routing_snapshot", lambda _now=None: [_acct("aaa", "TOKA", "A", "Sonnet", 0.95)]
+    )
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_account_route_no_model_ignores_scoped(monkeypatch) -> None:
+    # model='' → scoped fold skipped, identical to pre-spec-3 behavior.
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
+    monkeypatch.setattr(
+        accounts, "routing_snapshot", lambda _now=None: [_acct("aaa", "TOKA", "A", "Sonnet", 0.95)]
+    )
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model=""
+    )
+    assert (bid, label) == ("aaa", "A")  # 0.95 scoped ignored → routes on all-models
+
+
+def test_account_route_malformed_scoped_no_crash(monkeypatch) -> None:
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
+    a = {
+        "bearer_id": "aaa",
+        "token": "TOKA",
+        "label": "A",
+        "endpoint": {
+            "usage": {"util_5h": 0.1, "util_7d": 0.1, "scoped": {"model": "Sonnet", "util": None}}
+        },
+    }
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [a])
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("aaa", "A")  # scoped util=None → not folded, no crash
