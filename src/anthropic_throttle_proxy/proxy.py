@@ -1786,9 +1786,10 @@ async def health(_request: web.Request) -> web.Response:
     try:
         account_identity = _account_identity_verdict()
         _note_identity_collision(account_identity)
-    except Exception as exc:  # noqa: BLE001 — health is load-bearing; the guard must never break it
-        # Don't silently swallow (adversarial-review MEDIUM #2): a recurring
-        # guard error should be visible, but health must still answer.
+    except Exception as exc:
+        # Health is load-bearing (invariant #4) — the identity guard must never
+        # break it. Don't silently swallow (adversarial-review MEDIUM #2): a
+        # recurring guard error should be visible, but health must still answer.
         log(f"account-identity guard error (non-fatal): {exc!r}")
         account_identity = None
     M_BRAKE_ENABLED.set(1 if UTILIZATION_TARGET > 0 else 0)
