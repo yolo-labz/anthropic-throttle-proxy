@@ -289,3 +289,20 @@ async def test_warn_no_disabled_flag_when_brake_on(monkeypatch):
 
     assert _brake_disabled_count(bid, "5h") == before  # not flagged when armed
     assert not any("BRAKE DISABLED" in line for line in lines)
+
+
+async def test_rejected_sample_flags_disabled_brake(monkeypatch):
+    # Codex MAJOR: a sample first seen as REJECTED (already hard-locked) must
+    # still fire the disabled-brake metric — _maybe_pause_rejected returns before
+    # the warn path, so the metric would otherwise miss the exact hard-lock.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.0)  # brake OFF
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    lim = FairBearerLimiter(32, "fair")
+    bid = "rejected-brake-off"
+    before = _brake_disabled_count(bid, "5h")
+
+    await proxy._apply_unified(bid, {}, lim, _oauth_meta(status="rejected", util_5h="1.0"))
+
+    assert _brake_disabled_count(bid, "5h") == before + 1
+    assert any("BRAKE DISABLED" in line for line in lines)

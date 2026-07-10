@@ -377,21 +377,41 @@ def _maybe_warn_unified(
     bstate["_util_warn_key"] = warn_key
     M_UTIL_WARNINGS.labels(bearer=bid, window=window).inc()
     reset_in = int(reset - time.time()) if reset else -1
-    # Pane-19 gap: if the brake is DISABLED, this window will keep climbing to a
-    # hard 1.0 lockout with no glide — make that loud + alertable (still warn-
-    # only; we do NOT shrink here, that stays UTILIZATION_TARGET's job).
-    if UTILIZATION_TARGET <= 0:
-        M_BRAKE_DISABLED_HOT.labels(bearer=bid, window=window).inc()
-        brake_note = (
-            "BRAKE DISABLED (THROTTLE_UTILIZATION_TARGET=0) — no glide; "
-            "this window will hard-lock at 1.0 into a multi-day lockout. "
-            "Set the target to brake."
-        )
-    else:
-        brake_note = f"(glide target {UTILIZATION_TARGET:.2f})"
     log(
         f"unified-warning bid={bid} window={window} "
-        f"util={binding:.2f}>={UTILIZATION_WARN:.2f} reset_in={reset_in}s {brake_note}"
+        f"util={binding:.2f}>={UTILIZATION_WARN:.2f} reset_in={reset_in}s "
+        "(approaching cap, still allowed)"
+    )
+    _note_brake_disabled_hot(bid, bstate, unified)
+
+
+def _note_brake_disabled_hot(
+    bid: str,
+    bstate: dict[str, object],
+    unified: Mapping[str, object],
+) -> None:
+    """Fire the disabled-brake visibility ONCE per (bearer, window, reset).
+
+    An account is 'hot while unbraked' whether it is APPROACHING the cap (the
+    warn path) or ALREADY rejected/hard-locked. Codex MAJOR: the rejected path
+    returns before the warn, so a sample first seen as ``rejected`` never fired
+    the metric that exists precisely to surface that hard-lock. Own debounce key
+    so it fires once regardless of which path observes it first. No-op when the
+    brake is armed.
+    """
+    if UTILIZATION_TARGET > 0:
+        return
+    window = _binding_window(unified) or "?"
+    reset = unified.get(f"reset_{window}") or unified.get("reset")
+    key = _per_reset_debounce_key(window, reset)
+    if bstate.get("_brake_hot_key") == key:
+        return
+    bstate["_brake_hot_key"] = key
+    M_BRAKE_DISABLED_HOT.labels(bearer=bid, window=window).inc()
+    log(
+        f"BRAKE DISABLED bid={bid} window={window} (THROTTLE_UTILIZATION_TARGET=0) — "
+        "no glide; this window hard-locks at 1.0 into a multi-day lockout. "
+        "Set the target to brake."
     )
 
 
@@ -491,6 +511,10 @@ async def _apply_unified(
     bstate["unified_at"] = time.time()
     _publish_unified_gauges(bid, unified)
     if _maybe_pause_rejected(bid, limiter, unified):
+        # Rejected = already hard-locked. If the brake is off, this IS the
+        # "hard-lock while unbraked" event the visibility metric must catch —
+        # the warn path below is never reached (Codex MAJOR).
+        _note_brake_disabled_hot(bid, bstate, unified)
         return
     _maybe_warn_unified(bid, bstate, unified)
     await _maybe_glide(bid, bstate, limiter, unified)
@@ -1766,6 +1790,13 @@ def _note_identity_collision(verdict: dict[str, object] | None) -> None:
         )
 
 
+def _publish_brake_enabled() -> None:
+    """Mirror the brake-armed state onto its gauge. Called from BOTH health()
+    and metrics() (Codex MAJOR: health-only left a /metrics scrape stale until
+    the first health poll)."""
+    M_BRAKE_ENABLED.set(1 if UTILIZATION_TARGET > 0 else 0)
+
+
 async def health(_request: web.Request) -> web.Response:
     """GET /__throttle/health — fast JSON snapshot of proxy + per-bearer state."""
     # Reflect status into the gauge for /metrics scrape; encoded as 1/0/-1.
@@ -1792,7 +1823,7 @@ async def health(_request: web.Request) -> web.Response:
         # recurring guard error should be visible, but health must still answer.
         log(f"account-identity guard error (non-fatal): {exc!r}")
         account_identity = None
-    M_BRAKE_ENABLED.set(1 if UTILIZATION_TARGET > 0 else 0)
+    _publish_brake_enabled()
     body = {
         "inflight": state["inflight"],
         "queued": state["queued"],
@@ -1835,6 +1866,7 @@ async def metrics(
     M_QUEUED.set(state["queued"])
     cs = state["central_status"]
     M_CENTRAL_STATUS.set({"up": 1, "down": 0}.get(cs, -1))
+    _publish_brake_enabled()
     # aiohttp rejects charset in content_type kwarg → set full type via headers.
     return web.Response(
         body=generate_latest(REGISTRY),

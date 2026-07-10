@@ -573,13 +573,23 @@ def _local_identity(path: str) -> str | None:
 def account_email(path: str) -> str | None:
     """Best-known account email for a credential path (may be absent).
 
-    Prefers the authoritative profile email (needs a live token); falls back to
-    the locally-persisted identity so a DEAD account's duplicate collision is
-    still detectable — the exact case the network-only path missed on 09/07.
+    Prefers the authoritative profile email, but ONLY while its cached
+    credential mtime still matches: after a re-/login the network email is stale
+    until the endpoint refresher re-fetches, and serving it would let the guard
+    miss or falsely report a collision (Codex MAJOR). On a mtime mismatch, drop
+    the stale entry and fall back to the locally-persisted identity, which
+    tracks the current file — also the path that keeps a DEAD account's
+    duplicate collision detectable (the case the network-only path missed 09/07).
     """
     cached = _email_cache.get(path)
-    if cached:
-        return cached[1]
+    if cached is not None:
+        try:
+            fresh = os.stat(path).st_mtime_ns == cached[0]
+        except OSError:
+            fresh = False  # credential vanished → treat the cached email as stale
+        if fresh:
+            return cached[1]
+        _email_cache.pop(path, None)  # stale (credential rewritten) — refetched later
     return _local_identity(path)
 
 

@@ -928,3 +928,14 @@ def test_note_identity_collision_gauge_and_debounced_warn(monkeypatch) -> None:
 def test_account_identity_verdict_none_when_unconfigured(monkeypatch) -> None:
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
     assert proxy._account_identity_verdict() is None
+
+
+def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
+    # Codex MAJOR: the gauge must be settable from metrics() too, not only
+    # health() — verify the shared publisher tracks UTILIZATION_TARGET.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.0)
+    proxy._publish_brake_enabled()
+    assert proxy.M_BRAKE_ENABLED._value.get() == 0
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
+    proxy._publish_brake_enabled()
+    assert proxy.M_BRAKE_ENABLED._value.get() == 1

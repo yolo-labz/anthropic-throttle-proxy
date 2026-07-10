@@ -625,3 +625,20 @@ def test_identity_state_detects_partial_collision_via_local(tmp_path, monkeypatc
     assert verdict["distinct"] == 2
     assert verdict["duplicates"] == {"dup@pm.me": ["A", "B"]}
     assert verdict["known"] == 3
+
+
+def test_account_email_ignores_stale_network_cache_after_relogin(tmp_path):
+    # Codex MAJOR: a network email cached against an OLD credential mtime (before
+    # a re-login rewrote the file) must NOT be served — fall back to the fresh
+    # local identity so the guard can't miss/false-report a collision.
+    cred = _write_account(tmp_path, "a", "tok", email="local-current@pm.me")
+    accounts._email_cache[str(cred)] = (123, "stale-network@old.com")  # bogus old mtime
+    assert accounts.account_email(str(cred)) == "local-current@pm.me"
+    assert str(cred) not in accounts._email_cache  # stale entry dropped
+
+
+def test_account_email_trusts_network_cache_on_mtime_match(tmp_path):
+    cred = _write_account(tmp_path, "a", "tok", email="local@pm.me")
+    mt = os.stat(cred).st_mtime_ns
+    accounts._email_cache[str(cred)] = (mt, "network@pm.me")
+    assert accounts.account_email(str(cred)) == "network@pm.me"  # fresh → authoritative
