@@ -973,18 +973,23 @@ def _acct(bid, tok, label, scoped_model, scoped_util):
     }
 
 
+def _route_for_accounts(monkeypatch, snapshot, *, paths="A:/x", model="claude-sonnet-4-6"):
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", paths)
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: snapshot)
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="POST", path="/v1/messages", model=model
+    )
+    return bid, label, headers
+
+
 def test_account_route_model_aware_prefers_scoped_headroom(monkeypatch) -> None:
     # A's Sonnet meter is near cap, B's has headroom → a Sonnet request routes
     # to B even though both have equal all-models room.
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x,B:/y")
     a = _acct("aaa", "TOKA", "A", "Sonnet", 0.95)
     b = _acct("bbb", "TOKB", "B", "Sonnet", 0.10)
-    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [a, b])
-    headers = {"Authorization": "Bearer inc"}
-    bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
-    )
+    bid, label, headers = _route_for_accounts(monkeypatch, [a, b], paths="A:/x,B:/y")
     assert (bid, label) == ("bbb", "B")
     assert headers["Authorization"] == "Bearer TOKB"
 
@@ -992,13 +997,8 @@ def test_account_route_model_aware_prefers_scoped_headroom(monkeypatch) -> None:
 def test_account_route_scoped_ignored_on_tier_mismatch(monkeypatch) -> None:
     # A's scoped meter tracks FABLE at 95%; a SONNET request must NOT be
     # penalized by it (Fable≠Sonnet) — A stays a viable candidate.
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
-    a = _acct("aaa", "TOKA", "A", "Fable", 0.95)
-    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [a])
-    headers = {"Authorization": "Bearer inc"}
-    bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    bid, label, _headers = _route_for_accounts(
+        monkeypatch, [_acct("aaa", "TOKA", "A", "Fable", 0.95)]
     )
     assert (bid, label) == ("aaa", "A")
 
@@ -1006,14 +1006,8 @@ def test_account_route_scoped_ignored_on_tier_mismatch(monkeypatch) -> None:
 def test_account_route_scoped_full_excluded_even_in_fallback(monkeypatch) -> None:
     # scoped meter at 1.0 → excluded in BOTH passes (never picked, even as the
     # only option) → no candidate → no routing (incoming bid unchanged).
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
-    monkeypatch.setattr(
-        accounts, "routing_snapshot", lambda _now=None: [_acct("aaa", "TOKA", "A", "Sonnet", 1.0)]
-    )
-    headers = {"Authorization": "Bearer inc"}
-    bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    bid, label, headers = _route_for_accounts(
+        monkeypatch, [_acct("aaa", "TOKA", "A", "Sonnet", 1.0)]
     )
     assert (bid, label) == ("inc", None)
     assert headers["Authorization"] == "Bearer inc"
@@ -1022,14 +1016,8 @@ def test_account_route_scoped_full_excluded_even_in_fallback(monkeypatch) -> Non
 def test_account_route_scoped_warn_picked_as_only_option(monkeypatch) -> None:
     # scoped near cap (<1.0): first pass rejects at warn, second pass
     # (allow_pressure) picks it since it is the only option.
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
-    monkeypatch.setattr(
-        accounts, "routing_snapshot", lambda _now=None: [_acct("aaa", "TOKA", "A", "Sonnet", 0.95)]
-    )
-    headers = {"Authorization": "Bearer inc"}
-    bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    bid, label, headers = _route_for_accounts(
+        monkeypatch, [_acct("aaa", "TOKA", "A", "Sonnet", 0.95)]
     )
     assert (bid, label) == ("aaa", "A")
     assert headers["Authorization"] == "Bearer TOKA"
@@ -1037,32 +1025,14 @@ def test_account_route_scoped_warn_picked_as_only_option(monkeypatch) -> None:
 
 def test_account_route_no_model_ignores_scoped(monkeypatch) -> None:
     # model='' → scoped fold skipped, identical to pre-spec-3 behavior.
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
-    monkeypatch.setattr(
-        accounts, "routing_snapshot", lambda _now=None: [_acct("aaa", "TOKA", "A", "Sonnet", 0.95)]
-    )
-    headers = {"Authorization": "Bearer inc"}
-    bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model=""
+    bid, label, _headers = _route_for_accounts(
+        monkeypatch, [_acct("aaa", "TOKA", "A", "Sonnet", 0.95)], model=""
     )
     assert (bid, label) == ("aaa", "A")  # 0.95 scoped ignored → routes on all-models
 
 
 def test_account_route_malformed_scoped_no_crash(monkeypatch) -> None:
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
-    a = {
-        "bearer_id": "aaa",
-        "token": "TOKA",
-        "label": "A",
-        "endpoint": {
-            "usage": {"util_5h": 0.1, "util_7d": 0.1, "scoped": {"model": "Sonnet", "util": None}}
-        },
-    }
-    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [a])
-    headers = {"Authorization": "Bearer inc"}
-    bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model="claude-sonnet-4-6"
+    bid, label, _headers = _route_for_accounts(
+        monkeypatch, [_acct("aaa", "TOKA", "A", "Sonnet", None)]
     )
     assert (bid, label) == ("aaa", "A")  # scoped util=None → not folded, no crash
