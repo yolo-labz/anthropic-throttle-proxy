@@ -6,6 +6,61 @@ host activation. Latest incident first.
 
 ---
 
+## 10/07/2026 - Distinctness-guard false positive (stale `.claude.json` label) → PR #90 verify-before-warn
+
+### Symptom
+
+The #86 distinctness guard (spec 085 FR-005) warned that two credential
+stores held the SAME Anthropic account — the exact signature of the 09/07
+mutual refresh-token-revocation outage. Alert read as "re-auth needed NOW".
+
+### Root cause — the guard trusted a label that lies after promote
+
+`claude-account-promote` swapped `.credentials.json` between stores at
+10:22:07 but did NOT swap the adjacent `.claude.json` (`oauthAccount.emailAddress`).
+The guard read that stale label 7 s later (10:22:14) and reported a
+collision. Live `/api/oauth/profile` probes of all three tokens showed
+**three distinct accounts** — no collision, no re-auth needed. The stale
+window lasted ~2.6 h until diagnosed. False alarm class: **metadata drift**,
+not credential drift.
+
+### Fix shipped
+
+- **Proxy PR #90 (this repo)** — verify-before-warn. Email provenance is now
+  explicit: `guard_email()` returns `(email, verified)`; only a mtime-fresh
+  `/api/oauth/profile` result counts as verified; the `.claude.json` label is
+  UNVERIFIED. Shared-email groups with any unverified member land in a new
+  `suspected` verdict bucket (health JSON + `anthropic_account_identity_suspected`
+  gauge, DISTINCT gauge reads -1 while pending) instead of `duplicates`. A
+  background task live-probes the suspects (2 attempts, singleflight per
+  path, TOCTOU-guarded against mid-probe rotation) then: verified duplicate →
+  the old loud warning; probe dead → warn "(unverified)"; distinct → one
+  "cleared by profile probe" log line and no alarm. `M_ACCOUNT_COLLISIONS`
+  counts VERIFIED collisions only; alert story = collisions>0 OR suspected>0.
+  Codex adversarial review: round 1 = 3 MAJOR + 1 MINOR (TOCTOU, task-dedupe
+  pop race + probe singleflight, gauge semantics regression, debounce gap) —
+  all fixed; round 2 re-verify = Findings 1–3 RESOLVED, Finding 4 residual
+  closed via `emitted_sus` once-per-epoch gate (586d0d6).
+- **NixOS PR #1188 (root cause)** — `claude-account-promote` now swaps
+  `.claude.json` `oauthAccount` SYNCHRONOUSLY with `.credentials.json` inside
+  the same locked/trapped block; rollback restores both. The proxy-side #90
+  guard hardening is belt-and-suspenders for any OTHER writer that drifts the
+  label.
+
+### Durable lessons
+
+1. **`.claude.json` `oauthAccount.emailAddress` is a display label, not an
+   identity.** Any identity decision must come from a live `/api/oauth/profile`
+   probe of the token in `.credentials.json` (routed via the proxy — #87
+   self-429 class).
+2. **Warn-paths need provenance.** An alarm built on unverified metadata must
+   say so (or verify first). The 09/07 outage made this guard's warning
+   high-stakes; a false positive here burns a Pedro-gated re-auth cycle.
+3. **Verification must never block `/__throttle/health`** (invariant #4) —
+   probes run in a background task; health returns `suspected` immediately.
+
+---
+
 ## 04-05/07/2026 - Account-routing series shipped; 7d budget brake stays on
 
 ### What shipped (all merged, CI + CodeQL + Sonar green at `f984c18`)
