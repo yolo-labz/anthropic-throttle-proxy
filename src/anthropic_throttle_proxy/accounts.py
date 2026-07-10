@@ -393,6 +393,17 @@ _FETCH_TIMEOUT_S = 6.0
 
 # path -> {"fetched": epoch, "usage": parsed|None, "err": str|None}
 _endpoint_cache: dict[str, dict[str, Any]] = {}
+# path -> earliest-next-poll epoch. Set after a FAILED usage poll so a
+# throttled/dead account is not re-polled on every dashboard render. Without
+# it, the failure branch below leaves ``fetched`` stale, the TTL gate never
+# suppresses, and the HTMX panel's ~2 s auto-refresh drives one poll per
+# render — a self-inflicted 429 loop that steals loopback slots from real
+# traffic during exactly the storm the operator is trying to ride out
+# (observed 10/07: 46 min of 2 s-cadence retry-after-fast-fail on a bearer
+# already in a 2 700 s Retry-After window). Kept SEPARATE from ``fetched`` so
+# staleness display (``account_view``) stays honest — this gates *attempts*,
+# not *freshness*.
+_endpoint_backoff: dict[str, float] = {}
 # path -> (cred mtime_ns, email). Keyed by credential mtime so a re-/login
 # (the 11/06 contamination vector) invalidates the email instantly — the
 # 24h-style time cache the picker first shipped hid a collision for up to a
@@ -579,10 +590,14 @@ async def _refresh_one(path: str, now: float) -> None:
     entry = _endpoint_cache.get(path)
     if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
         return
+    if now < _endpoint_backoff.get(path, 0.0):
+        return  # backing off after a recent poll failure — serve the cached entry
     lock = _endpoint_locks.setdefault(path, asyncio.Lock())
     async with lock:
         entry = _endpoint_cache.get(path)
         if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
+            return
+        if now < _endpoint_backoff.get(path, 0.0):
             return
         try:
             token_mtime = os.stat(path).st_mtime_ns
@@ -594,6 +609,7 @@ async def _refresh_one(path: str, now: float) -> None:
         status, body = await _get_json(_oauth_base() + _USAGE_PATH, token)
         if status == 200 and body is not None:
             _endpoint_cache[path] = {"fetched": now, "usage": _parse_usage(body), "err": None}
+            _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
             await _refresh_email(path, token, expect_mtime=token_mtime)
         elif status == 401:
             # Credential invalid server-side — surface it and DROP the stale
@@ -604,16 +620,21 @@ async def _refresh_one(path: str, now: float) -> None:
                 "usage": None,
                 "err": "credential rejected (401) — refresh pipeline?",
             }
+            _endpoint_backoff[path] = now + ENDPOINT_TTL_S
         elif entry is not None:
             # 429/5xx/timeout: keep serving the stale entry (the panel ages
-            # it out at the stale ceiling) but mark the failure.
+            # it out at the stale ceiling) but mark the failure and back off so
+            # the dashboard's auto-refresh cannot re-poll a throttled account
+            # every render (the 10/07 self-429 loop).
             entry["err"] = f"usage endpoint unavailable ({status or 'timeout'})"
+            _endpoint_backoff[path] = now + ENDPOINT_TTL_S
         else:
             _endpoint_cache[path] = {
                 "fetched": 0.0,
                 "usage": None,
                 "err": f"usage endpoint unavailable ({status or 'timeout'})",
             }
+            _endpoint_backoff[path] = now + ENDPOINT_TTL_S
 
 
 async def refresh_endpoint(now: float) -> dict[str, dict[str, Any]]:

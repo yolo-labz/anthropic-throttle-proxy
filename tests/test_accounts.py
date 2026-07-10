@@ -40,6 +40,7 @@ def _clean_cache():
     accounts._local_identity_cache.clear()
     accounts._endpoint_locks.clear()
     accounts._verify_locks.clear()
+    accounts._endpoint_backoff.clear()
     yield
     accounts._cache.clear()
     accounts._endpoint_cache.clear()
@@ -47,6 +48,7 @@ def _clean_cache():
     accounts._local_identity_cache.clear()
     accounts._endpoint_locks.clear()
     accounts._verify_locks.clear()
+    accounts._endpoint_backoff.clear()
 
 
 def _write_account(base, sub: str, token: str, email: str | None, expires_at_ms=None):
@@ -785,6 +787,51 @@ async def test_refresh_endpoint_polls_via_loopback(monkeypatch, tmp_path):
     # py/incomplete-url-substring-sanitization): the poll hits ONLY the
     # loopback usage endpoint, never direct anthropic.com.
     assert seen == ["http://127.0.0.1:8765/api/oauth/usage"]
+
+
+async def test_refresh_endpoint_backs_off_after_failed_poll(monkeypatch, tmp_path):
+    """A failed usage poll backs off for ``ENDPOINT_TTL_S`` before retrying.
+
+    Regression guard for the 10/07 self-429 loop: the failure branch used to
+    leave ``fetched`` stale, so the HTMX dashboard's ~2 s auto-refresh re-polled
+    a throttled account on every render — hammering the loopback usage endpoint
+    (which the proxy fast-fails) and stealing slots from real traffic. The
+    ``_endpoint_backoff`` gate must suppress re-polls inside the window while a
+    recovering (200) poll clears it so normal cadence resumes.
+    """
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+
+    async def _noop_email(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(accounts, "_refresh_email", _noop_email)
+    state = {"calls": 0, "status": 429}
+    ok_body = {
+        "five_hour": {"utilization": 10.0, "resets_at": _iso(NOW + 3600)},
+        "seven_day": {"utilization": 10.0, "resets_at": _iso(NOW + DAY)},
+    }
+
+    async def _stub(_url, _token):
+        state["calls"] += 1
+        return (state["status"], ok_body if state["status"] == 200 else None)
+
+    monkeypatch.setattr(accounts, "_get_json", _stub)
+    ttl = accounts.ENDPOINT_TTL_S
+
+    await accounts.refresh_endpoint(NOW)  # poll fails → backoff armed
+    assert state["calls"] == 1
+    await accounts.refresh_endpoint(NOW + 1)  # dashboard render inside window
+    await accounts.refresh_endpoint(NOW + ttl - 1)  # still inside window
+    assert state["calls"] == 1  # no self-429 loop
+    await accounts.refresh_endpoint(NOW + ttl + 1)  # window elapsed → one retry
+    assert state["calls"] == 2
+    state["status"] = 200  # account recovers
+    await accounts.refresh_endpoint(NOW + 2 * ttl + 2)
+    assert state["calls"] == 3
+    assert str(cred) not in accounts._endpoint_backoff  # 200 cleared the backoff
 
 
 # ── spec 2: limits[] scoped per-model bucket capture ──────────────────────
