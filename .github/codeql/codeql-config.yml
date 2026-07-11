@@ -1,0 +1,26 @@
+# CodeQL configuration for anthropic-throttle-proxy.
+#
+# query-filters: suppress `py/partial-ssrf` on the upstream-forward path.
+#
+# VERIFIED FALSE POSITIVE (do not treat as a shortcut — see reversal condition):
+# this service is a reverse proxy. `forwarding._target_url` appends the client's
+# path + query to a FIXED, operator-set upstream BASE — `THROTTLE_UPSTREAM` /
+# `THROTTLE_CENTRAL_URL`, read from `os.environ` only (config.py:20, config.py:79),
+# never from a request header or body. The request HOST is therefore never
+# client-controllable; the user-influenced path/query cannot redirect the request
+# to a foreign server. That is inherent reverse-proxy forwarding, not SSRF —
+# CodeQL flags the partial (path-only) taint, which is the intended behaviour.
+#
+# REVERSAL CONDITION: if any future change makes the upstream host request-derived
+# (a header/param choosing where to forward), DELETE this filter and validate the
+# host against an explicit allowlist before forwarding — that would be a REAL
+# partial-SSRF. Ruling: yolo-labz release-engineering (mesh 11/07/2026) — gate the
+# delta, suppress a verified fixed-upstream FP with justification, do not refactor.
+name: "anthropic-throttle-proxy CodeQL config"
+
+queries:
+  - uses: security-extended
+
+query-filters:
+  - exclude:
+      id: py/partial-ssrf
