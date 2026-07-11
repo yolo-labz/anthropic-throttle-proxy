@@ -1409,9 +1409,6 @@ async def _keepalive_hold_and_retry(
     _background_tasks.add(keepalive_task)
     keepalive_task.add_done_callback(_background_tasks.discard)
 
-    def _cancel_keepalive() -> None:
-        keepalive_task.cancel()
-
     async def _await_keepalive_cancel() -> None:
         keepalive_task.cancel()
         try:
@@ -1419,15 +1416,20 @@ async def _keepalive_hold_and_retry(
         except asyncio.CancelledError:
             pass
 
-    # The throttle that triggered the hold is a real throttle event. The
-    # reordered pushback branch no longer applies its AIMD, so apply it here
-    # once (canonical _aimd_feedback: 529 + queue-timeout never shrink, a
-    # concurrency 429/503 shrinks), then take ownership so _finalize skips its
-    # own _aimd_feedback (no double-apply on the terminal — Codex BLOCKER).
-    attempt.aimd_owned = True
-    await _aimd_feedback(bid, limiter, attempt)
-
     try:
+        # The throttle that triggered the hold is a real throttle event: apply
+        # its AIMD once (canonical _aimd_feedback — 529 + a marked queue-timeout
+        # never shrink, a concurrency 429/503 shrinks), then take ownership so
+        # _finalize skips its own _aimd_feedback (no double-apply on the
+        # terminal). Guarded so a metrics error cannot kill the hold, and kept
+        # INSIDE the outer try so ANY raise still hits the terminal-SSE +
+        # task-cancel safety below — never a leaked emitter or truncated 200
+        # (Codex round-2 MAJOR).
+        attempt.aimd_owned = True
+        try:
+            await _aimd_feedback(bid, limiter, attempt)
+        except Exception as origin_aimd_err:
+            log(f"keepalive-hold origin-aimd-error bid={bid}: {origin_aimd_err!r}")
         while True:
             now = time.time()
             if wait_deadline is not None and now >= wait_deadline:
@@ -1532,8 +1534,33 @@ async def _keepalive_hold_and_retry(
                 return sse_resp
 
     except asyncio.CancelledError:
+        # Client/loop cancellation — stop the emitter and propagate.
         await _await_keepalive_cancel()
         raise
+    except Exception as hold_err:
+        # We already prepared a 200 SSE, so an HTTP error can no longer be
+        # returned. Stop the emitter FIRST (never race the terminal write),
+        # then emit a well-formed terminal SSE error + clean EOF so the client
+        # gets a clean close, never a truncated write / phantom 401 (07/07;
+        # Codex round-2 MAJOR).
+        await _await_keepalive_cancel()
+        log(f"keepalive-hold internal-error bid={bid}: {hold_err!r}")
+        try:
+            await _emit_sse_error_terminal(sse_resp, "proxy keepalive hold internal error")
+        except Exception as term_err:
+            # The client transport is already gone — the terminal write is best
+            # effort; record why it failed rather than swallow it silently.
+            log(f"keepalive-hold terminal-emit-failed bid={bid}: {term_err!r}")
+        M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+        attempt.final_status = 503
+        attempt.response = sse_resp
+        return sse_resp
+    finally:
+        # Belt-and-suspenders: the emitter must NEVER outlive this call (leaked
+        # task / SSE dribble to a dead client). Every normal exit already awaited
+        # its cancel; this covers any path that did not.
+        if not keepalive_task.done():
+            keepalive_task.cancel()
 
 
 async def _forward_with_retry(

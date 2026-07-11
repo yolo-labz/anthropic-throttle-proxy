@@ -21,9 +21,10 @@ import asyncio
 import json
 import time
 
+import aiohttp
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 from anthropic_throttle_proxy import config, limiter, pacing, proxy
 from anthropic_throttle_proxy.ui.routes import attach_ui
@@ -57,6 +58,20 @@ def _reset_state() -> None:
             "central_consecutive_fail": 0,
             "last_advisor": None,
         }
+    )
+
+
+def _aimd_shrink_total() -> float:
+    """Cumulative AIMD shrink events across the process registry.
+
+    AIMD_INITIAL_CONCURRENT == the floor (1) in test config, so the max_concurrent
+    VALUE cannot drop on a shrink — the shrink COUNTER is the unambiguous signal
+    of whether a shrink event fired (reward-hack lane: prove it, don't infer it).
+    """
+    from anthropic_throttle_proxy.metrics import M_AIMD_SHRINKS
+
+    return sum(
+        s.value for m in M_AIMD_SHRINKS.collect() for s in m.samples if s.name.endswith("_total")
     )
 
 
@@ -731,6 +746,7 @@ async def test_real_concurrency_429_aimd_shrinks(monkeypatch) -> None:
     test_client, upstream_server = await _make_client_with_upstream(
         monkeypatch, upstream_app, queue_max_wait_s=0.2
     )
+    before = _aimd_shrink_total()
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
         resp = await test_client.post(
@@ -738,13 +754,123 @@ async def test_real_concurrency_429_aimd_shrinks(monkeypatch) -> None:
             data=body,
             headers={"Content-Type": "application/json", "Authorization": "Bearer test-aimd-429"},
         )
-        # Either fast-failed as 429/401, or exhausted as 200-with-error body
         await resp.read()
         for _ in range(20):
             await asyncio.sleep(0)
-        # AIMD should have shrunk; we just verify it was exercised without error
-        # (not a no-op). We can't assert exact final_status here since both paths
-        # are valid; the key invariant is no crash / no hang.
+        # A budget 429 is NOT held (allowed_warning => budget) → it flows through
+        # the pushback/finalize path and MUST fire an AIMD shrink. Assert the
+        # shrink COUNTER advanced (the value is pinned at the floor of 1, so only
+        # the event count proves it — reward-hack lane: prove the shrink).
+        assert _aimd_shrink_total() > before, "budget 429 did not fire an AIMD shrink event"
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+async def test_marked_queue_timeout_hold_no_shrink(monkeypatch) -> None:
+    """A marked central queue-timeout 503 held to exhaustion must NOT AIMD-shrink
+    (invariant 7 — central queue depth is admission backpressure, not this
+    bearer's upstream pushback). Guards the round-2 marker-propagation fix: the
+    hold sees the queue-timeout marker (anti-spoof-gated) and skips the shrink.
+    """
+    upstream_app = _make_upstream_app(
+        fail_count=9999,
+        fail_status=503,
+        fail_headers={config.QUEUE_TIMEOUT_HEADER: "1", config.MARKER_HEADER: "1"},
+    )
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, queue_max_wait_s=0.8
+    )
+    before = _aimd_shrink_total()
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-qt-hold"},
+        )
+        assert resp.status == 200
+        raw = await resp.read()
+        assert b"event: error" in raw  # exhausted → terminal SSE error
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # No shrink event may fire for a marked queue-timeout hold (counter delta
+        # is the real signal — the value is pinned at the floor regardless).
+        assert _aimd_shrink_total() == before, (
+            "marked queue-timeout hold fired an AIMD shrink event (invariant 7)"
+        )
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+async def test_forward_once_into_sse_strips_unmarked_queue_timeout(monkeypatch) -> None:
+    """Anti-spoof negative test (round-2 Codex): a queue-timeout header arriving
+    WITHOUT the sibling-proxy MARKER_HEADER must NOT be surfaced in meta — else a
+    hostile upstream could assert the no-AIMD-shrink exemption.
+    """
+
+    async def messages(request: web.Request) -> web.Response:
+        await request.read()
+        # Spoof attempt: queue-timeout header but NO MARKER_HEADER.
+        return web.Response(
+            status=503,
+            headers={config.QUEUE_TIMEOUT_HEADER: "1", "content-type": "application/json"},
+            text=json.dumps({"type": "error", "error": {"type": "x", "message": "y"}}),
+        )
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", messages)
+    upstream_server = TestServer(app)
+    await upstream_server.start_server()
+    try:
+        url = str(upstream_server.make_url("/v1/messages"))
+        monkeypatch.setattr(config, "UPSTREAM", url)
+        req = make_mocked_request("POST", "/v1/messages")
+        sse_resp = web.StreamResponse(status=200, headers={"content-type": "text/event-stream"})
+        status, meta, _captured, exc = await proxy._forward_once_into_sse(
+            req, {}, None, url, aiohttp.ClientTimeout(total=5), sse_resp
+        )
+        assert exc is None
+        assert status == 503
+        assert config.QUEUE_TIMEOUT_HEADER not in (meta or {}), (
+            "unmarked (spoofed) queue-timeout header was surfaced in meta"
+        )
+    finally:
+        await upstream_server.close()
+
+
+async def test_hold_internal_error_emits_terminal_not_leak(monkeypatch) -> None:
+    """Post-prepare exception safety (round-2 Codex MAJOR e/f): if anything raises
+    AFTER the 200 SSE is prepared, the client must get a well-formed terminal SSE
+    error + clean EOF (never a truncated write), and the keepalive task must not
+    leak.
+    """
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.0)
+
+    async def boom(*_a, **_k):
+        raise RuntimeError("injected internal error after prepare")
+
+    # Force the FIRST in-hold forward attempt to raise an unexpected error.
+    monkeypatch.setattr(proxy, "_forward_once_into_sse", boom)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, queue_max_wait_s=5.0
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-boom"},
+        )
+        assert resp.status == 200  # already committed before the raise
+        raw = await resp.read()  # completes cleanly (EOF), does not hang/truncate
+        assert b"event: error" in raw, f"no terminal SSE error after internal raise: {raw!r}"
+        for _ in range(20):
+            await asyncio.sleep(0)
+        # No keepalive task left running.
+        leaked = [t for t in proxy._background_tasks if not t.done()]
+        assert not leaked, f"keepalive task leaked after internal error: {leaked}"
     finally:
         await test_client.close()
         await upstream_server.close()
@@ -797,6 +923,7 @@ async def test_exhausted_529_hold_does_not_aimd_shrink(monkeypatch) -> None:
     test_client, upstream_server = await _make_client_with_upstream(
         monkeypatch, upstream_app, queue_max_wait_s=0.8
     )
+    before = _aimd_shrink_total()
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
         resp = await test_client.post(
@@ -809,11 +936,12 @@ async def test_exhausted_529_hold_does_not_aimd_shrink(monkeypatch) -> None:
         assert b"event: error" in raw
         for _ in range(20):
             await asyncio.sleep(0)
-        for _bid, lim in config.bearer_limiters.items():
-            snap = lim.snapshot()
-            assert snap["max_concurrent"] >= config.AIMD_INITIAL_CONCURRENT, (
-                f"exhausted 529 hold AIMD-shrank the bearer: {snap['max_concurrent']}"
-            )
+        # The terminal rewrites final_status to a synthetic 503, but no shrink may
+        # fire — a 529 is Anthropic capacity (invariant 9). Counter delta is the
+        # real signal (the ceiling value is pinned at the floor regardless).
+        assert _aimd_shrink_total() == before, (
+            "exhausted 529 hold fired an AIMD shrink event (invariant 9)"
+        )
     finally:
         await test_client.close()
         await upstream_server.close()
