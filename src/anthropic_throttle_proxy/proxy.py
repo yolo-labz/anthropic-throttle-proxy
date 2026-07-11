@@ -149,7 +149,7 @@ from .ratelimit import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Awaitable, Callable, Mapping
 
 # Public surface re-exported from the focused sibling modules + defined here.
 # Declared so static analysis treats the re-exports above as intentional.
@@ -1268,6 +1268,7 @@ async def _forward_once_into_sse(
     url: str,
     client_timeout: aiohttp.ClientTimeout,
     sse_resp: web.StreamResponse,
+    cancel_keepalive: Callable[[], Awaitable[None]] | None = None,
 ) -> tuple[int, dict[str, str] | None, bytearray | None, Exception | None]:
     """Forward one attempt; on a 2xx, pipe upstream chunks into ``sse_resp``.
 
@@ -1278,8 +1279,15 @@ async def _forward_once_into_sse(
     status codes). Client-side disconnects raise ``_CLIENT_DISCONNECT_EXC``
     for the caller to handle.
 
-    The caller must cancel the keepalive emitter BEFORE calling this on a 2xx
-    path so the emitter does not interleave with the real upstream body.
+    ``cancel_keepalive`` MUST be awaited the instant a 2xx is confirmed and
+    BEFORE the first body chunk is written — otherwise the keepalive emitter and
+    the real upstream body race on ``sse_resp.write()`` and a ``: keepalive``
+    comment lands mid-frame, corrupting any generation that streams past one
+    keepalive interval (the common case for long Opus responses). Cancelling
+    here (not in the caller after the pipe) is the ONLY safe ordering because
+    only this function knows, per attempt, whether the status is 2xx (pipe →
+    cancel first) or a throttle (return → keep the emitter running for the next
+    retry).
     """
     from .pacing import _pace_dispatch
     from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
@@ -1319,7 +1327,11 @@ async def _forward_once_into_sse(
                         if config.MARKER_HEADER not in upstream.headers:
                             fake_resp_headers.pop(config.QUEUE_TIMEOUT_HEADER, None)
                         return upstream.status, meta, captured, None
-                    # 2xx: pipe chunks into the already-prepared sse_resp.
+                    # 2xx: stop the keepalive emitter BEFORE the first body byte
+                    # so it can never interleave a `: keepalive` comment into the
+                    # real SSE frames, then pipe chunks into the prepared sse_resp.
+                    if cancel_keepalive is not None:
+                        await cancel_keepalive()
                     captured = bytearray()
                     cap_limit = 1024 * 1024
                     async for chunk in upstream.content.iter_any():
@@ -1429,6 +1441,7 @@ async def _keepalive_hold_and_retry(
                     url,
                     client_timeout,
                     sse_resp,
+                    cancel_keepalive=_await_keepalive_cancel,
                 )
             except _CLIENT_DISCONNECT_EXC:
                 # Client disconnected during our retry.

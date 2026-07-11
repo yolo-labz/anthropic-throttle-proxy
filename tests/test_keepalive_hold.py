@@ -366,6 +366,77 @@ async def test_529_then_200_client_gets_200_sse(monkeypatch) -> None:
         await upstream_server.close()
 
 
+async def test_keepalive_not_interleaved_into_slow_stream(monkeypatch) -> None:
+    """Regression: the keepalive emitter MUST stop before the real body is piped.
+
+    If it keeps firing while ``_forward_once_into_sse`` pipes a 2xx body, a
+    ``: keepalive`` comment lands between upstream chunks of a slow stream and
+    corrupts the SSE framing. The bug is invisible when the upstream returns the
+    whole body instantly (every other test here) — it only bites when the body
+    streams past one keepalive interval, i.e. every real (long) Opus generation.
+    Assert the real body arrives CONTIGUOUS with no keepalive spliced in.
+    """
+    # Split a single SSE data line MID-FRAME across two upstream chunks (TCP does
+    # not respect frame boundaries) so an interleaved keepalive lands inside the
+    # JSON — unambiguously corrupt, not a benign between-events comment.
+    full_frame = b'event: message_start\ndata: {"type":"message_start","x":"payload"}\n\n'
+    chunk_a = full_frame[:35]
+    chunk_b = full_frame[35:]
+    calls = [0]
+
+    async def messages(request: web.Request) -> web.StreamResponse:
+        await request.read()
+        calls[0] += 1
+        if calls[0] == 1:  # first attempt trips the hold
+            return web.Response(
+                status=529,
+                headers={"content-type": "application/json"},
+                text=json.dumps(
+                    {"type": "error", "error": {"type": "overloaded_error", "message": "x"}}
+                ),
+            )
+        resp = web.StreamResponse(
+            status=200, headers={"content-type": "text/event-stream", **_PROXY_MARKER}
+        )
+        await resp.prepare(request)
+        await resp.write(chunk_a)
+        # > the 500 ms keepalive floor: pre-fix at least one comment fires HERE,
+        # between the two body chunks, corrupting the frame.
+        await asyncio.sleep(0.8)
+        await resp.write(chunk_b)
+        await resp.write_eof()
+        return resp
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", messages)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, app, keepalive_interval_ms=50, queue_max_wait_s=10.0
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-slow"},
+        )
+        assert resp.status == 200
+        raw = await resp.read()
+        # The real body must arrive CONTIGUOUS — a keepalive spliced between the
+        # two upstream chunks would break this substring and corrupt SSE framing.
+        assert chunk_a + chunk_b in raw, (
+            f"real SSE body was fragmented by an interleaved keepalive: {raw!r}"
+        )
+        # And no keepalive comment survives past the point the real body began.
+        assert b": keepalive" not in raw[raw.index(chunk_a) :], (
+            f"keepalive comment leaked into the real stream: {raw[raw.index(chunk_a) :]!r}"
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
 async def test_concurrency_429_then_200(monkeypatch) -> None:
     """Concurrency 429 (allowed unified headers) that clears yields 200 SSE."""
     meta_headers = {
