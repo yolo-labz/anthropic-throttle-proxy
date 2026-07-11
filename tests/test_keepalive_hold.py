@@ -22,7 +22,6 @@ import json
 import time
 
 import aiohttp
-import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
@@ -128,40 +127,6 @@ def _make_upstream_app(
     app.router.add_route("*", "/v1/messages", messages)
     app.router.add_route("*", "/{path:.*}", passthrough)
     return app
-
-
-@pytest.fixture
-async def client(monkeypatch) -> TestClient:
-    """TestClient wrapping the real proxy app with a fast keepalive interval."""
-    upstream_server = TestServer(_make_upstream_app(fail_count=1, fail_status=529))
-    await upstream_server.start_server()
-    upstream_url = str(upstream_server.make_url("")).rstrip("/")
-
-    limiter.set_lock(asyncio.Lock())
-    pacing.set_lock(asyncio.Lock())
-    monkeypatch.setattr(config, "UPSTREAM", upstream_url)
-    monkeypatch.setattr(config, "CENTRAL_URL", "")
-    monkeypatch.setattr(config, "KEEPALIVE_HOLD", True)
-    monkeypatch.setattr(config, "KEEPALIVE_INTERVAL_MS", 50)  # fast for tests
-    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 10.0)  # 10s budget for tests
-    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)  # don't burn retries before hold
-    _reset_state()
-
-    app = web.Application(client_max_size=8 * 1024 * 1024)
-    app.router.add_get("/", proxy.root_probe)
-    app.router.add_get("/__throttle/health", proxy.health)
-    app.router.add_get("/metrics", proxy.metrics)
-    attach_ui(app)
-    app.router.add_route("*", "/{path:.*}", proxy.handler)
-
-    proxy_server = TestServer(app)
-    test_client = TestClient(proxy_server)
-    await test_client.start_server()
-    try:
-        yield test_client
-    finally:
-        await test_client.close()
-        await upstream_server.close()
 
 
 async def _make_client_with_upstream(

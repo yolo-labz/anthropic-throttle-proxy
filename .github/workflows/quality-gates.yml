@@ -43,12 +43,3 @@ jobs:
         uses: yolo-labz/quality-gates@ee170b7ba5bcda421182196472b52f8a10dab332 # v1
         with:
           base-ref: origin/main
-          # jscpd counts clones in whole TOUCHED files, so editing a large legacy
-          # file (proxy.py ~2000L, config.py) drags its PRE-EXISTING internal
-          # duplication into the diff (currently ~1.36%). That is accrued debt,
-          # not this PR's regression — verified: the changed files have 0 NEW
-          # internal clones. Per the release-eng ruling (mesh 11/07/2026): gate
-          # the delta, don't block on pre-existing debt; ratchet it separately.
-          # TODO(debt): refactor the legacy proxy.py/config.py clones, then set
-          # this back to 0. aislop (the real code-slop gate) stays at 0 errors.
-          jscpd-max-pct: 2
