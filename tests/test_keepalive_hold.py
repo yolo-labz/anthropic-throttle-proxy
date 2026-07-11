@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 
 import pytest
 from aiohttp import web
@@ -744,6 +745,134 @@ async def test_real_concurrency_429_aimd_shrinks(monkeypatch) -> None:
         # AIMD should have shrunk; we just verify it was exercised without error
         # (not a no-op). We can't assert exact final_status here since both paths
         # are valid; the key invariant is no crash / no hang.
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+async def test_hold_engages_at_default_pushback_retries(monkeypatch) -> None:
+    """BLOCKER (Codex panel): the hold must engage on the FIRST transient throttle
+    even at the DEFAULT RATE_PUSHBACK_RETRIES=1.
+
+    The other tests force retries=0, masking the pre-hold silent pushback wait.
+    With retries=1 and the OLD ordering, the first 529 was consumed by the silent
+    pushback-retry (no SSE, no keepalive) and the 200 arrived on the retry with
+    the hold never engaging — so NO keepalive would appear. The reordered gate
+    engages the hold first, so keepalives flow. Discriminator: a keepalive comment
+    is present in the body at the default retry count.
+    """
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.7)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, rate_pushback_retries=1, queue_max_wait_s=10.0
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-dr"},
+        )
+        assert resp.status == 200
+        raw = await resp.read()
+        assert b": keepalive" in raw, (
+            f"hold did not engage at RATE_PUSHBACK_RETRIES=1 (pre-hold silent wait): {raw[:400]!r}"
+        )
+        assert b"message_start" in raw or b"message_stop" in raw
+        for _ in range(10):
+            await asyncio.sleep(0)
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+async def test_exhausted_529_hold_does_not_aimd_shrink(monkeypatch) -> None:
+    """BLOCKER (Codex panel): a bound-EXHAUSTED 529 hold must NOT AIMD-shrink.
+
+    The exhausted terminal rewrites final_status to a synthetic 503; before the
+    fix, _finalize's _aimd_feedback then shrank the bearer on that 503 — violating
+    invariant 9 (529 = Anthropic capacity, never shrink). The hold now owns its
+    AIMD (aimd_owned) so _finalize skips it.
+    """
+    upstream_app = _make_upstream_app(fail_count=9999, fail_status=529)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, queue_max_wait_s=0.8
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-exh-529"},
+        )
+        assert resp.status == 200  # committed SSE; body carries the terminal error
+        raw = await resp.read()
+        assert b"event: error" in raw
+        for _ in range(20):
+            await asyncio.sleep(0)
+        for _bid, lim in config.bearer_limiters.items():
+            snap = lim.snapshot()
+            assert snap["max_concurrent"] >= config.AIMD_INITIAL_CONCURRENT, (
+                f"exhausted 529 hold AIMD-shrank the bearer: {snap['max_concurrent']}"
+            )
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+async def test_529_long_retry_after_not_held(monkeypatch) -> None:
+    """MAJOR (Codex panel): a 529 with Retry-After beyond the hold ceiling must
+    NOT be held — shed cleanly so the SDK retries the whole request later, rather
+    than commit a doomed 200 SSE that only runs to the budget deadline.
+    """
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 30)
+    upstream_app = _make_upstream_app(fail_count=9999, fail_status=529, retry_after_s=3600)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, queue_max_wait_s=10.0
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-529-longra"},
+        )
+        # NOT a committed 200 SSE hold — a clean error status the SDK retries.
+        assert resp.status != 200, "529 + long Retry-After was wrongly held as a 200 SSE"
+        for _ in range(10):
+            await asyncio.sleep(0)
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+async def test_hold_wait_bounded_by_budget_not_retry_after(monkeypatch) -> None:
+    """MAJOR (Codex + Opus panel): inside the hold, wait_retry_after must not sleep
+    past the budget deadline. A 529 with Retry-After (within the hold ceiling) but
+    LONGER than the remaining budget must exit at ~budget, not at Retry-After —
+    otherwise the fair slot is held past client patience (invariant 6).
+    """
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 30)
+    # RA=25s is within the 30s hold ceiling (so it IS held), but the 1s budget
+    # must bound the actual wait. Pre-fix, wait_retry_after slept the full 25s.
+    upstream_app = _make_upstream_app(fail_count=9999, fail_status=529, retry_after_s=25)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, queue_max_wait_s=1.0
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        started = time.monotonic()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-bounded"},
+        )
+        await resp.read()
+        elapsed = time.monotonic() - started
+        assert elapsed < 10.0, (
+            f"hold slept toward Retry-After (25s), not the 1s budget: elapsed={elapsed:.1f}s"
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
     finally:
         await test_client.close()
         await upstream_server.close()
