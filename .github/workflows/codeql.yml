@@ -51,7 +51,8 @@ jobs:
         uses: github/codeql-action/init@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6
         with:
           languages: ${{ matrix.language }}
-          queries: security-extended
+          # queries + the py/partial-ssrf verified-FP filter live in the config file.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@c35d1b164463ee62a100735382aaaa525c5d3496 # codeql-bundle-v2.25.6

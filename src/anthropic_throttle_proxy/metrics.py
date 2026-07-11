@@ -43,6 +43,7 @@ __all__ = [
     "M_RATELIMIT_TOKENS_REMAINING",
     "M_UTIL_5H",
     "M_UTIL_7D",
+    "M_KEEPALIVE_HOLDS",
     "generate_latest",
 ]
 
@@ -277,5 +278,18 @@ M_BRAKE_DISABLED_HOT = Counter(
     "Early-warnings fired while the brake was DISABLED — an account crossed the "
     "warn line with no glide and will hard-lock at 1.0 into a multi-day lockout.",
     ["bearer", "window"],
+    registry=REGISTRY,
+)
+
+# Spec 092 SSE keepalive-hold: counts holds by outcome. ``outcome="streamed"``
+# when an internal retry succeeded and the real upstream body was piped through
+# the open 200 SSE response; ``outcome="errored"`` when the hold exhausted its
+# wait-budget and the bound-exhausted SSE error tail fired.
+M_KEEPALIVE_HOLDS = Counter(
+    "anthropic_keepalive_holds_total",
+    "SSE keepalive-holds fired for TRANSIENT throttle on streaming requests. "
+    "outcome=streamed: upstream eventually returned 200 through the open response. "
+    "outcome=errored: wait-budget exhausted; SSE error event sent instead of banner.",
+    ["outcome"],
     registry=REGISTRY,
 )

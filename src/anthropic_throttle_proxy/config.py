@@ -161,6 +161,22 @@ AIMD_STATUSES = {429, 503}
 OVERLOAD_STATUSES = {529}
 # Any throttle-ish status worth an advisor diagnosis.
 THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
+# SSE keepalive-hold (spec 092): for a STREAMING POST /v1/messages that hits a
+# TRANSIENT throttle (529, central-queue-depth 503, or concurrency 429/503),
+# commit a "200 text/event-stream" client response immediately and emit SSE ":"
+# keepalive comment frames at this interval while internally retrying.  The
+# comments pass through to the client but are silently DROPPED by the Anthropic
+# SDK parser (spec 092 invariant 3), so the client sees a slow response rather
+# than a banner. On a budget-rejected / long Retry-After / non-streaming request,
+# the existing clean-error path is used unchanged. The hold consumes the SAME
+# end-to-end wait-budget as the fair-queue timeout, so local + central wait times
+# cannot stack past client patience (spec 092 invariant 6). budget 0 -> no hold.
+# True = hold enabled; False = old pass-through behavior (hot-tunable).
+KEEPALIVE_HOLD = os.environ.get("THROTTLE_KEEPALIVE_HOLD", "true").strip().lower() != "false"
+# Interval between keepalive comment frames (milliseconds). Must be well under
+# the client idle-timeout (~60 s) to prevent the 07/07 truncated-HTTP footgun.
+# Default 10 s provides 6 heartbeats before even the most aggressive 60 s abort.
+KEEPALIVE_INTERVAL_MS = max(500, int(os.environ.get("THROTTLE_KEEPALIVE_INTERVAL_MS", "10000")))
 # When upstream returns HTTP pushback before streaming a response body, hold the
 # client request and retry after the AIMD/Retry-After pause instead of handing the
 # first transient 429/503/529 directly to Claude.
@@ -520,6 +536,14 @@ def _set_advisor_enabled(v: bool) -> None:
     _set_module_attr(_MOD_PROXY, "ADVISOR_ENABLED", bool(v))
 
 
+def _set_keepalive_hold(v: bool) -> None:
+    _set_module_attr(_MOD_CONFIG, "KEEPALIVE_HOLD", bool(v))
+
+
+def _set_keepalive_interval_ms(v: int) -> None:
+    _set_module_attr(_MOD_CONFIG, "KEEPALIVE_INTERVAL_MS", max(500, v))
+
+
 # EDITABLE_KNOBS is the single source of truth the UI consumes. Each entry:
 #   key:          identifier in URLs, form fields, state file
 #   label:        operator-facing name
@@ -853,6 +877,36 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "below this threshold — saves you trimming tiny noise blocks "
             "where the savings are negligible but the readability loss "
             "is real."
+        ),
+    },
+    "keepalive_hold": {
+        "label": "SSE keepalive-hold",
+        "type": "bool",
+        "getter": lambda: KEEPALIVE_HOLD,
+        "setter": _set_keepalive_hold,
+        "help": (
+            "When true, a streaming POST /v1/messages that hits a TRANSIENT "
+            "throttle (529/concurrency-429/central-queue-503) receives a 200 "
+            "text/event-stream immediately with SSE ':' keepalive comments "
+            "while the proxy retries internally, so the SDK sees a slow "
+            "response rather than a retry banner. Budget-rejected / long "
+            "Retry-After / non-streaming requests keep the clean-error path. "
+            "False = legacy pass-through behavior."
+        ),
+    },
+    "keepalive_interval_ms": {
+        "label": "Keepalive interval",
+        "type": "int",
+        "min": 500,
+        "max": 30000,
+        "getter": lambda: KEEPALIVE_INTERVAL_MS,
+        "setter": _set_keepalive_interval_ms,
+        "units": "ms",
+        "help": (
+            "Interval between SSE ':' keepalive comment frames during a hold "
+            "(spec 092). Must be well under the client idle-timeout (~60 s); "
+            "default 10 s gives 6 heartbeats before the most aggressive abort. "
+            "Minimum 500 ms enforced to prevent tight-loop writes."
         ),
     },
     "advisor_enabled": {
