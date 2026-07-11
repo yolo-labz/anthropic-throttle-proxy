@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
 
 import aiohttp
 from aiohttp import web
@@ -22,7 +20,7 @@ from .pacing import _pace_dispatch
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping
+    from collections.abc import Mapping
 
 # Result of a single forward attempt: (response, status, captured, exc, meta).
 ForwardResult = tuple[
@@ -201,61 +199,6 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     return response, upstream.status, captured, None, meta
 
 
-def _assert_allowed_upstream(url: str) -> None:
-    """Reject any upstream URL whose host is not a CONFIGURED target.
-
-    The proxy is a reverse proxy: ``_target_url`` appends the client's path and
-    query to a FIXED operator-set base (``THROTTLE_UPSTREAM`` or
-    ``THROTTLE_CENTRAL_URL``), so the request host is never client-controlled.
-    Validating the host against that allowlist is defense-in-depth at the trust
-    boundary AND the sanitizer that lets CodeQL confirm the client-influenced
-    path/query cannot redirect the request to an arbitrary server (py/partial-ssrf).
-    Raises ``ValueError`` — callers translate it to a normal forward failure.
-    """
-    host = urlsplit(url).hostname
-    allowed = {urlsplit(config.UPSTREAM).hostname}
-    if config.CENTRAL_URL:
-        allowed.add(urlsplit(config.CENTRAL_URL).hostname)
-    if host not in allowed:
-        raise ValueError(f"refusing upstream request to non-configured host {host!r}")
-
-
-@asynccontextmanager
-async def _open_upstream(
-    request: web.Request,
-    headers: Mapping[str, str],
-    body: bytes | None,
-    url: str,
-    client_timeout: aiohttp.ClientTimeout,
-) -> AsyncIterator[aiohttp.ClientResponse]:
-    """Issue ONE paced, host-validated upstream request; yield the response.
-
-    The single place the proxy opens an upstream ``aiohttp`` request. Both the
-    streaming forwarder (``_forward_once``) and the keepalive-hold retry loop
-    (``proxy._forward_once_into_sse``) go through here, so there is exactly ONE
-    guarded SSRF sink and no duplicated connector/session/pace/request block.
-    """
-    _assert_allowed_upstream(url)
-    connector = aiohttp.TCPConnector(ssl=True)
-    async with aiohttp.ClientSession(
-        timeout=client_timeout,
-        connector=connector,
-        auto_decompress=False,
-    ) as session:
-        # Burst-smoothing pace (no-op when THROTTLE_MIN_DISPATCH_GAP_MS=0).
-        # Inside the session context so connector + TLS handshake set-up time
-        # doesn't count against the gap budget — we pace the request issuance.
-        await _pace_dispatch()
-        async with session.request(
-            request.method,
-            url,
-            headers=headers,
-            data=body,
-            allow_redirects=False,
-        ) as upstream:
-            yield upstream
-
-
 async def _forward_once(
     request: web.Request,
     headers: Mapping[str, str],
@@ -273,30 +216,45 @@ async def _forward_once(
     extracted upstream rate-limit headers. Raises ConnectionResetError /
     ClientConnectionResetError on client-side disconnect.
     """
-    try:
-        async with _open_upstream(request, headers, body, url, client_timeout) as upstream:
-            if retryable_statuses and upstream.status in retryable_statuses:
-                payload = await upstream.read()
-                snippet = payload[:500].decode("utf-8", "replace").strip()
-                return (
-                    None,
-                    upstream.status,
-                    bytearray(payload[: 1024 * 1024]),
-                    RetryableStatusError(
-                        f"retryable upstream status {upstream.status}: {snippet}",
-                        proxy_served=config.MARKER_HEADER in upstream.headers,
-                    ),
-                    _extract_ratelimit(upstream.headers),
-                )
-            return await _stream_response(request, upstream)
-    except aiohttp.ClientConnectionResetError:
-        # Raised by StreamResponse.write/write_eof when the Claude client
-        # closes its local socket while we are streaming. Let proxy.handler
-        # record this as a client disconnect; treating it as an upstream or
-        # central failure wastes a retry and can push the local proxy into
-        # direct fallback under load.
-        raise
-    except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
-        # ValueError = _assert_allowed_upstream rejected a non-configured host;
-        # surface it as a (permanent) upstream failure, not an unhandled 500.
-        return None, None, None, exc, None
+    connector = aiohttp.TCPConnector(ssl=True)
+    async with aiohttp.ClientSession(
+        timeout=client_timeout,
+        connector=connector,
+        auto_decompress=False,
+    ) as session:
+        # Burst-smoothing pace (no-op when THROTTLE_MIN_DISPATCH_GAP_MS=0).
+        # Placed inside the session context so the connector + TLS handshake
+        # set-up time doesn't count against the gap budget — we pace the
+        # actual upstream request issuance, not the prep.
+        await _pace_dispatch()
+        try:
+            async with session.request(
+                request.method,
+                url,
+                headers=headers,
+                data=body,
+                allow_redirects=False,
+            ) as upstream:
+                if retryable_statuses and upstream.status in retryable_statuses:
+                    payload = await upstream.read()
+                    snippet = payload[:500].decode("utf-8", "replace").strip()
+                    return (
+                        None,
+                        upstream.status,
+                        bytearray(payload[: 1024 * 1024]),
+                        RetryableStatusError(
+                            f"retryable upstream status {upstream.status}: {snippet}",
+                            proxy_served=config.MARKER_HEADER in upstream.headers,
+                        ),
+                        _extract_ratelimit(upstream.headers),
+                    )
+                return await _stream_response(request, upstream)
+        except aiohttp.ClientConnectionResetError:
+            # Raised by StreamResponse.write/write_eof when the Claude client
+            # closes its local socket while we are streaming. Let proxy.handler
+            # record this as a client disconnect; treating it as an upstream or
+            # central failure wastes a retry and can push the local proxy into
+            # direct fallback under load.
+            raise
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            return None, None, None, exc, None
