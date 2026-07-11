@@ -388,6 +388,9 @@ async def test_forward_once_propagates_client_disconnect(monkeypatch) -> None:
     upstream = TestServer(web.Application())
     upstream.app.router.add_route("*", "/{path:.*}", ok)
     await upstream.start_server()
+    # The upstream host must be the CONFIGURED target — _open_upstream's
+    # host-allowlist guard (spec 092 SSRF hardening) rejects any other host.
+    monkeypatch.setattr(config, "UPSTREAM", str(upstream.make_url("")).rstrip("/"))
 
     class FakeRequest:
         method = "POST"
@@ -403,6 +406,25 @@ async def test_forward_once_propagates_client_disconnect(monkeypatch) -> None:
             )
     finally:
         await upstream.close()
+
+
+def test_assert_allowed_upstream_rejects_foreign_host(monkeypatch) -> None:
+    """SSRF hardening (spec 092): _open_upstream only issues requests to the
+    CONFIGURED upstream / central host. The client-influenced path+query cannot
+    redirect the request to an arbitrary server (py/partial-ssrf sanitizer).
+    """
+    monkeypatch.setattr(config, "UPSTREAM", "https://api.anthropic.com")
+    monkeypatch.setattr(config, "CENTRAL_URL", "")
+    # Configured host + a user-controlled path/query: allowed.
+    forwarding._assert_allowed_upstream("https://api.anthropic.com/v1/messages?beta=1")
+    # A foreign host (the SSRF the guard exists to stop): rejected.
+    with pytest.raises(ValueError, match="non-configured host"):
+        forwarding._assert_allowed_upstream("https://evil.example.com/v1/messages")
+    # Central is also allowed when configured.
+    monkeypatch.setattr(config, "CENTRAL_URL", "https://central.example.net")
+    forwarding._assert_allowed_upstream("https://central.example.net/v1/messages")
+    with pytest.raises(ValueError, match="non-configured host"):
+        forwarding._assert_allowed_upstream("http://169.254.169.254/latest/meta-data")
 
 
 async def test_pace_dispatch_enforces_gap(monkeypatch) -> None:

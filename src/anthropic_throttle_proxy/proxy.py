@@ -1300,66 +1300,57 @@ async def _forward_once_into_sse(
     cancel first) or a throttle (return → keep the emitter running for the next
     retry).
     """
-    from .pacing import _pace_dispatch
+    from .forwarding import _open_upstream
     from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 
-    connector = aiohttp.TCPConnector(ssl=True)
     try:
-        async with aiohttp.ClientSession(
-            timeout=client_timeout, connector=connector, auto_decompress=False
-        ) as session:
-            await _pace_dispatch()
-            try:
-                async with session.request(
-                    request.method, url, headers=headers, data=body, allow_redirects=False
-                ) as upstream:
-                    meta = _extract_ratelimit(upstream.headers)
-                    # Throttle / error status: return body as captured, no piping.
-                    if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
-                        upstream_body = await upstream.read()
-                        meta.update(
-                            _extract_zai_ratelimit_from_body(
-                                upstream_body,
-                                quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
-                            )
-                        )
-                        # Surface the proxy-private queue-timeout marker to the
-                        # caller so the hold can classify a relayed central
-                        # queue-timeout 503 (no AIMD shrink — invariant 7).
-                        # _extract_ratelimit does NOT capture this header, so add
-                        # it explicitly — and ONLY from a sibling proxy tier
-                        # (MARKER_HEADER present), never a spoofing upstream
-                        # (anti-spoof, matching _stream_response; Codex BLOCKER).
-                        if (
-                            config.MARKER_HEADER in upstream.headers
-                            and config.QUEUE_TIMEOUT_HEADER in upstream.headers
-                        ):
-                            meta[config.QUEUE_TIMEOUT_HEADER] = upstream.headers[
-                                config.QUEUE_TIMEOUT_HEADER
-                            ]
-                        captured = bytearray(upstream_body[: 1024 * 1024])
-                        return upstream.status, meta, captured, None
-                    # 2xx: stop the keepalive emitter BEFORE the first body byte
-                    # so it can never interleave a `: keepalive` comment into the
-                    # real SSE frames, then pipe chunks into the prepared sse_resp.
-                    if cancel_keepalive is not None:
-                        await cancel_keepalive()
-                    captured = bytearray()
-                    cap_limit = 1024 * 1024
-                    async for chunk in upstream.content.iter_any():
-                        if not chunk:
-                            break
-                        await sse_resp.write(chunk)
-                        if len(captured) < cap_limit:
-                            captured.extend(chunk[: cap_limit - len(captured)])
-                    await sse_resp.write_eof()
-                    return upstream.status, meta, captured, None
-            except aiohttp.ClientConnectionResetError:
-                raise
-            except (TimeoutError, aiohttp.ClientError) as exc:
-                return -1, None, None, exc
+        async with _open_upstream(request, headers, body, url, client_timeout) as upstream:
+            meta = _extract_ratelimit(upstream.headers)
+            # Throttle / error status: return body as captured, no piping.
+            if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
+                upstream_body = await upstream.read()
+                meta.update(
+                    _extract_zai_ratelimit_from_body(
+                        upstream_body,
+                        quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
+                    )
+                )
+                # Surface the proxy-private queue-timeout marker to the caller so
+                # the hold can classify a relayed central queue-timeout 503 (no
+                # AIMD shrink — invariant 7). _extract_ratelimit does NOT capture
+                # this header, so add it explicitly — and ONLY from a sibling
+                # proxy tier (MARKER_HEADER present), never a spoofing upstream
+                # (anti-spoof, matching _stream_response; Codex BLOCKER).
+                if (
+                    config.MARKER_HEADER in upstream.headers
+                    and config.QUEUE_TIMEOUT_HEADER in upstream.headers
+                ):
+                    meta[config.QUEUE_TIMEOUT_HEADER] = upstream.headers[
+                        config.QUEUE_TIMEOUT_HEADER
+                    ]
+                captured = bytearray(upstream_body[: 1024 * 1024])
+                return upstream.status, meta, captured, None
+            # 2xx: stop the keepalive emitter BEFORE the first body byte so it can
+            # never interleave a `: keepalive` comment into the real SSE frames,
+            # then pipe chunks into the prepared sse_resp.
+            if cancel_keepalive is not None:
+                await cancel_keepalive()
+            captured = bytearray()
+            cap_limit = 1024 * 1024
+            async for chunk in upstream.content.iter_any():
+                if not chunk:
+                    break
+                await sse_resp.write(chunk)
+                if len(captured) < cap_limit:
+                    captured.extend(chunk[: cap_limit - len(captured)])
+            await sse_resp.write_eof()
+            return upstream.status, meta, captured, None
     except aiohttp.ClientConnectionResetError:
         raise
+    except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
+        # ValueError = _open_upstream rejected a non-configured host; treat it as
+        # a net error (the hold's budget bounds any resulting retry loop).
+        return -1, None, None, exc
 
 
 async def _keepalive_hold_and_retry(
