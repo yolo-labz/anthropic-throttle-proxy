@@ -1415,6 +1415,13 @@ async def _keepalive_hold_and_retry(
             await keepalive_task
         except asyncio.CancelledError:
             pass
+        except Exception as ka_err:
+            # The emitter died with a real error, not just our cancel. Record it,
+            # but NEVER let it propagate out of cleanup: this runs first in the
+            # broad exception handler below, so a re-raise here would skip the
+            # terminal-SSE emit and leave the client a truncated 200 (Codex
+            # round-3 MAJOR — the same post-prepare footgun, one level down).
+            log(f"keepalive-emitter-error bid={bid}: {ka_err!r}")
 
     try:
         # The throttle that triggered the hold is a real throttle event: apply

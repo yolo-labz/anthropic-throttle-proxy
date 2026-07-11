@@ -876,6 +876,44 @@ async def test_hold_internal_error_emits_terminal_not_leak(monkeypatch) -> None:
         await upstream_server.close()
 
 
+async def test_keepalive_emitter_death_does_not_break_hold(monkeypatch) -> None:
+    """Round-3 Codex MAJOR: if the keepalive emitter task dies with a NON-cancel
+    exception, awaiting it during cleanup must not re-raise and short-circuit the
+    hold. Discriminator: with the emitter raising, a 529-then-200 hold must still
+    deliver the REAL body (message_start), not a terminal SSE error — proving the
+    emitter's death was swallowed+logged, not propagated.
+    """
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.0)
+
+    async def dying_emitter(*_a, **_k):
+        raise RuntimeError("keepalive emitter blew up")
+
+    monkeypatch.setattr(proxy, "_emit_keepalive_frames", dying_emitter)
+    test_client, upstream_server = await _make_client_with_upstream(
+        monkeypatch, upstream_app, queue_max_wait_s=5.0
+    )
+    try:
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        resp = await test_client.post(
+            "/v1/messages",
+            data=body,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer test-emit-die"},
+        )
+        assert resp.status == 200
+        raw = await resp.read()
+        assert b"message_start" in raw, (
+            f"emitter death broke the hold (got terminal error, not real body): {raw!r}"
+        )
+        assert b"event: error" not in raw, f"unexpected terminal error: {raw!r}"
+        for _ in range(20):
+            await asyncio.sleep(0)
+        leaked = [t for t in proxy._background_tasks if not t.done()]
+        assert not leaked, f"task leaked after emitter death: {leaked}"
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
 async def test_hold_engages_at_default_pushback_retries(monkeypatch) -> None:
     """BLOCKER (Codex panel): the hold must engage on the FIRST transient throttle
     even at the DEFAULT RATE_PUSHBACK_RETRIES=1.
