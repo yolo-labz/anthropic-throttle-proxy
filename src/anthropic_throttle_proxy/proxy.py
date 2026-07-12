@@ -133,6 +133,7 @@ from .metrics import (
 )
 from .pricing import _pricing_for
 from .ratelimit import (
+    _api_key_id,
     _bearer_id,
     _binding_utilization,
     _binding_window,
@@ -334,9 +335,18 @@ def _maybe_warn_storm(retries: int) -> None:
 
 _last_advice_ts: float = 0.0
 _direct_fallback_lock: asyncio.Lock | None = None
+_api_key_cache: tuple[int, int, str, str] | None = None
 
 
-def _effective_admission() -> tuple[str, int]:
+def _api_key_bid(token: str) -> str:
+    return _api_key_id(token)
+
+
+def _is_api_key_bid(bid: str) -> bool:
+    return bid.startswith("api-")
+
+
+def _effective_admission(bid: str = "") -> tuple[str, int]:
     """Admission mode and hard cap for this request.
 
     Local deployments normally run ``THROTTLE_QUEUE_MODE=off`` because the
@@ -344,6 +354,11 @@ def _effective_admission() -> tuple[str, int]:
     4.7/1M bursts showed central-only admission reacts too late for same-host
     dogpiles, so a central-backed local proxy still keeps a small fair queue.
     """
+    if _is_api_key_bid(bid):
+        hard = config.API_KEY_MAX_CONCURRENT
+        if config.QUEUE_MODE == "off" and config.CENTRAL_URL:
+            return "fair", hard
+        return config.QUEUE_MODE, hard
     if config.QUEUE_MODE == "off" and config.CENTRAL_URL:
         return "fair", max(1, min(config.CENTRAL_LOCAL_MAX_CONCURRENT, config.MAX_CONCURRENT))
     return config.QUEUE_MODE, config.MAX_CONCURRENT
@@ -817,6 +832,45 @@ def _account_routing_enabled() -> bool:
     )
 
 
+def _api_key_routing_enabled() -> bool:
+    return config.API_KEY_ROUTING_MODE in {"overflow", "prefer"} and bool(config.API_KEY_FILE)
+
+
+def _api_key_candidate() -> dict[str, object] | None:
+    """Return the configured API-key candidate, or None when disabled/unusable.
+
+    The key stays in a 0600 runtime file. The hot path caches by (mtime, size)
+    so a request normally pays one stat(), while key rotation is picked up
+    without a restart. The raw key is returned only to the header-rewrite helper.
+    """
+    if not _api_key_routing_enabled():
+        return None
+    try:
+        st = os.stat(config.API_KEY_FILE)
+    except OSError:
+        return None
+    global _api_key_cache
+    if _api_key_cache is None or _api_key_cache[:2] != (st.st_mtime_ns, st.st_size):
+        try:
+            with open(config.API_KEY_FILE, encoding="utf-8") as fh:
+                token = fh.read().strip()
+        except OSError:
+            return None
+        if not token:
+            return None
+        _api_key_cache = (st.st_mtime_ns, st.st_size, _api_key_bid(token), token)
+    bid, token = _api_key_cache[2], _api_key_cache[3]
+    lim = config.bearer_limiters.get(bid)
+    if lim is not None and getattr(lim, "retry_after_remaining", lambda: 0.0)() > 0:
+        return None
+    return {
+        "label": config.API_KEY_LABEL,
+        "bearer_id": bid,
+        "token": token,
+        "auth_type": "api_key",
+    }
+
+
 def _model_tier(model: str) -> str:
     """Coarse model tier from a model id / display name, or "" when unknown.
 
@@ -1006,6 +1060,26 @@ def _bearer_local_load_score(bid: str) -> float:
     return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
 
 
+def _route_to_selected_auth(
+    headers: dict[str, str], incoming_bid: str, selected: dict[str, object]
+) -> tuple[str, str | None]:
+    selected_bid = str(selected["bearer_id"])
+    for key in list(headers):
+        if key.lower() in {"authorization", "x-api-key"}:
+            del headers[key]
+    token = str(selected["token"])
+    label = str(selected.get("label") or "")
+    if selected.get("auth_type") == "api_key":
+        headers["x-api-key"] = token
+        if selected_bid != incoming_bid:
+            log(f"api-key-route from={incoming_bid} to={selected_bid} label={label or '?'}")
+    else:
+        headers["Authorization"] = f"Bearer {token}"
+        if selected_bid != incoming_bid:
+            log(f"account-route from={incoming_bid} to={selected_bid} label={label or '?'}")
+    return selected_bid, label
+
+
 def _healthy_known_unconfigured_bearer(
     incoming_bid: str, configured_bids: set[str], best_configured_load: float
 ) -> bool:
@@ -1053,7 +1127,14 @@ def _route_account_if_enabled(
     (spec 3) biases selection toward the account with headroom on that model's
     scoped weekly meter.
     """
-    if not (_account_routing_enabled() and method == "POST" and "v1/messages" in path):
+    if method != "POST" or "v1/messages" not in path:
+        return incoming_bid, None
+    api_key = _api_key_candidate()
+    if api_key is not None and config.API_KEY_ROUTING_MODE == "prefer":
+        return _route_to_selected_auth(headers, incoming_bid, api_key)
+    if not _account_routing_enabled():
+        if api_key is not None:
+            return _route_to_selected_auth(headers, incoming_bid, api_key)
         return incoming_bid, None
     from . import accounts
 
@@ -1100,6 +1181,8 @@ def _route_account_if_enabled(
             < math.inf
         ]
     if not candidates:
+        if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
+            return _route_to_selected_auth(headers, incoming_bid, api_key)
         return incoming_bid, None
     selected = min(
         candidates,
@@ -1112,15 +1195,7 @@ def _route_account_if_enabled(
             now=now,
         ),
     )
-    selected_bid = str(selected["bearer_id"])
-    for key in list(headers):
-        if key.lower() == "authorization":
-            del headers[key]
-    headers["Authorization"] = f"Bearer {selected['token']}"
-    if selected_bid != incoming_bid:
-        label = str(selected.get("label") or "?")
-        log(f"account-route from={incoming_bid} to={selected_bid} label={label}")
-    return selected_bid, str(selected.get("label") or "")
+    return _route_to_selected_auth(headers, incoming_bid, selected)
 
 
 def _attempt_for_request(
@@ -2314,7 +2389,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         model=model,
         max_tokens=req_max_tokens,
     )
-    queue_mode, hard_max = _effective_admission()
+    queue_mode, hard_max = _effective_admission(bid)
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
     # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
     # dispatched round-robin per client connection.
@@ -2654,6 +2729,12 @@ async def health(_request: web.Request) -> web.Response:
             "enabled": UTILIZATION_TARGET > 0,
             "target": UTILIZATION_TARGET,
             "warn": UTILIZATION_WARN,
+        },
+        "api_key": {
+            "enabled": _api_key_candidate() is not None,
+            "routing": config.API_KEY_ROUTING_MODE,
+            "label": config.API_KEY_LABEL,
+            "max_concurrent": config.API_KEY_MAX_CONCURRENT,
         },
         "central_last_check": state["central_last_check"],
         "last_advisor": state["last_advisor"],

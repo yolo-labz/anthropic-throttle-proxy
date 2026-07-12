@@ -25,6 +25,14 @@ if TYPE_CHECKING:
     from aiohttp import web
 
 
+_API_KEY_BEARER_ID = "api-key"
+
+
+def _api_key_id(_value: str) -> str:
+    """Stable non-secret limiter key for the single configured API-key bearer."""
+    return _API_KEY_BEARER_ID
+
+
 def _bearer_id(headers: Mapping[str, str]) -> str:
     """Anonymized 8-hex bearer identifier. Keys per-bearer semaphores.
 
@@ -37,6 +45,10 @@ def _bearer_id(headers: Mapping[str, str]) -> str:
     per random caller.
     """
     auth = headers.get("Authorization") or headers.get("authorization")
+    if not auth:
+        api_key = headers.get("x-api-key") or headers.get("X-Api-Key") or headers.get("X-API-Key")
+        if api_key:
+            return _api_key_id(api_key)
     if not auth:
         return "_anon"
     return hashlib.sha256(auth.encode("utf-8", "replace")).hexdigest()[:8]

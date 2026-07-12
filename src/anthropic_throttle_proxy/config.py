@@ -261,6 +261,21 @@ ACCOUNT_ROUTING_MODE = (
     else "off"
 )
 
+# Optional metered overflow bearer. This deliberately reads the secret from a
+# runtime file instead of putting the key in the service environment or Nix
+# store. ``prefer`` sends /v1/messages to the API key first (OAuth accounts stay
+# fallback); ``overflow`` uses it only after the configured OAuth router cannot
+# find a usable account. Empty file path or "off" keeps the feature disabled.
+API_KEY_FILE = os.environ.get("THROTTLE_API_KEY_FILE", "").strip()
+_API_KEY_ROUTING_MODE = os.environ.get("THROTTLE_API_KEY_ROUTING", "off").strip().lower()
+API_KEY_ROUTING_MODE = (
+    _API_KEY_ROUTING_MODE if _API_KEY_ROUTING_MODE in {"off", "overflow", "prefer"} else "off"
+)
+API_KEY_LABEL = os.environ.get("THROTTLE_API_KEY_LABEL", "API").strip() or "API"
+API_KEY_MAX_CONCURRENT = max(
+    1, int(os.environ.get("THROTTLE_API_KEY_MAX_CONCURRENT", str(MAX_CONCURRENT)))
+)
+
 # Optional fleet view: sibling proxies to cross-fetch on the dashboard so the
 # whole fleet (e.g. the z.ai coding-plan proxy on :8766) shows in one pane.
 # Format: "LABEL:http://host:port/__throttle/health,..." Parsed lazily by

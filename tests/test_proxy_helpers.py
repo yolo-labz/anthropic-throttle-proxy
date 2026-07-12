@@ -538,11 +538,17 @@ def isolated_account_routing(monkeypatch: pytest.MonkeyPatch):
     config.bearer_state.clear()
     monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "off")
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    monkeypatch.setattr(config, "API_KEY_FILE", "")
+    monkeypatch.setattr(config, "API_KEY_ROUTING_MODE", "off")
+    monkeypatch.setattr(config, "API_KEY_LABEL", "API")
+    monkeypatch.setattr(config, "API_KEY_MAX_CONCURRENT", 8)
+    monkeypatch.setattr(proxy, "_api_key_cache", None)
     yield
     accounts._cache.clear()
     accounts._endpoint_cache.clear()
     config.bearer_limiters.clear()
     config.bearer_state.clear()
+    monkeypatch.setattr(proxy, "_api_key_cache", None)
 
 
 def _setup_route_creds(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[str, str]:
@@ -591,6 +597,70 @@ def test_account_routing_selects_least_loaded_and_rewrites_authorization(
     assert headers["x-test"] == "1"
     assert any(f"from={bid_a} to={bid_b} label=B" in line for line in lines)
     assert "SIM-B" not in "\n".join(lines)
+
+
+def test_api_key_routing_prefer_rewrites_to_metered_key(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    key_file = tmp_path / "api-key"
+    key_file.write_text("sk-ant-api03-SIM-KEY\n")
+    monkeypatch.setattr(config, "API_KEY_FILE", str(key_file))
+    monkeypatch.setattr(config, "API_KEY_ROUTING_MODE", "prefer")
+    monkeypatch.setattr(config, "API_KEY_LABEL", "metered")
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A", "X-Test": "1"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "oauth-a", method="POST", path="v1/messages"
+    )
+
+    assert selected == proxy._api_key_bid("sk-ant-api03-SIM-KEY")
+    assert selected.startswith("api-")
+    assert label == "metered"
+    assert "Authorization" not in headers
+    assert headers["x-api-key"] == "sk-ant-api03-SIM-KEY"
+    assert headers["X-Test"] == "1"
+    assert "SIM-KEY" not in "\n".join(lines)
+    assert any("api-key-route from=oauth-a" in line and "label=metered" in line for line in lines)
+
+
+def test_api_key_routing_retry_after_falls_back_to_oauth(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    key_file = tmp_path / "api-key"
+    key_file.write_text("sk-ant-api03-SIM-KEY")
+    monkeypatch.setattr(config, "API_KEY_FILE", str(key_file))
+    monkeypatch.setattr(config, "API_KEY_ROUTING_MODE", "prefer")
+    api_bid = proxy._api_key_bid("sk-ant-api03-SIM-KEY")
+    lim = FairBearerLimiter(8, "fair")
+    lim.note_retry_after(60)
+    config.bearer_limiters[api_bid] = lim
+    headers = {"Authorization": "Bearer sk-ant-oat01-STALE"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "stale", method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+    assert "x-api-key" not in headers
+
+
+def test_api_key_bearer_id_and_hard_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    api_value = "sk-ant-api03-SIM-KEY"
+    bid = proxy._api_key_bid(api_value)
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "CENTRAL_URL", "http://central")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "CENTRAL_LOCAL_MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "API_KEY_MAX_CONCURRENT", 9)
+
+    assert proxy._bearer_id({"x-api-key": api_value}) == bid
+    assert proxy._effective_admission("oauth-a") == ("fair", 1)
+    assert proxy._effective_admission(bid) == ("fair", 9)
 
 
 def test_account_routing_skips_retry_after_candidate(
