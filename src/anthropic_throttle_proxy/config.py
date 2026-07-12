@@ -223,10 +223,10 @@ STORM_WARN_RETRIES = int(os.environ.get("THROTTLE_STORM_WARN_RETRIES", "25"))
 
 # Optional local credential map: "LABEL:/path/to/.credentials.json,LABEL:..."
 # maps Claude Code credential files to account labels so /ui can name bearers
-# and show per-account 5h/7d usage. When THROTTLE_ACCOUNT_ROUTING=least_loaded,
-# the same map is also used by the hot-path router below. Unset (the default,
-# and always on the central Dokku tier where no cred files exist) hides the
-# panel entirely and no file is read.
+# and show per-account 5h/7d usage. When THROTTLE_ACCOUNT_ROUTING is
+# least_loaded or budget_paced, the same map is also used by the hot-path router
+# below. Unset (the default, and always on the central Dokku tier where no cred
+# files exist) hides the panel entirely and no file is read.
 ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
 
 # THROTTLE_ACTIVE_CRED_PATH names the single credential file the whole fleet
@@ -242,15 +242,23 @@ ACCOUNT_CRED_PATHS = os.environ.get("THROTTLE_ACCOUNT_CRED_PATHS", "")
 ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 
 # Opt-in hot-path account routing. When enabled on a local proxy with
-# THROTTLE_ACCOUNT_CRED_PATHS configured, the proxy selects the least-loaded
-# usable credential file for each /v1/messages request and rewrites only the
-# upstream Authorization header. This is the only way already-running Claude
-# sessions can actually share multiple accounts; otherwise every long-lived
-# process pins the bearer it read at startup. Defaults off because central
-# Dokku tiers usually do not have local credential files.
+# THROTTLE_ACCOUNT_CRED_PATHS configured, the proxy selects the best usable
+# credential file for each /v1/messages request and rewrites only the upstream
+# Authorization header. This is the only way already-running Claude sessions can
+# actually share multiple accounts; otherwise every long-lived process pins the
+# bearer it read at startup. Defaults off because central Dokku tiers usually do
+# not have local credential files.
+#
+# Modes: "least_loaded" ranks on raw utilization (queue/inflight first);
+# "budget_paced" (spec 4) ranks on deadline-aware pacing — each account's 5h/7d/
+# scoped window is treated as a resource budget scored by how fast it burns
+# relative to its reset, so windows near a reset with slack are cheaper and a
+# hot early-cycle window is expensive. Same hard safety gates in both modes.
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
 ACCOUNT_ROUTING_MODE = (
-    _ACCOUNT_ROUTING_MODE if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded"} else "off"
+    _ACCOUNT_ROUTING_MODE
+    if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded", "budget_paced"}
+    else "off"
 )
 
 # Optional fleet view: sibling proxies to cross-fetch on the dashboard so the
