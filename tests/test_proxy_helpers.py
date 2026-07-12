@@ -1266,15 +1266,227 @@ def _acct(bid, tok, label, scoped_model, scoped_util):
     }
 
 
-def _route_for_accounts(monkeypatch, snapshot, *, paths="A:/x", model="claude-sonnet-4-6"):
-    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+def _route_for_accounts(
+    monkeypatch,
+    snapshot,
+    *,
+    paths="A:/x",
+    model="claude-sonnet-4-6",
+    mode="least_loaded",
+    max_tokens=None,
+):
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", mode)
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", paths)
     monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: snapshot)
     headers = {"Authorization": "Bearer inc"}
     bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model=model
+        headers, "inc", method="POST", path="/v1/messages", model=model, max_tokens=max_tokens
     )
     return bid, label, headers
+
+
+_BUDGET_NOW = 1_800_000_000.0
+_HOUR = 3600
+_DAY = 24 * _HOUR
+
+
+def _budget_acct(
+    bid,
+    tok,
+    label,
+    *,
+    util_5h=0.1,
+    reset_5h=None,
+    util_7d=0.1,
+    reset_7d=None,
+    scoped_model=None,
+    scoped_util=None,
+    scoped_reset=None,
+):
+    usage = {
+        "util_5h": util_5h,
+        "util_7d": util_7d,
+    }
+    if reset_5h is not None:
+        usage["reset_5h"] = reset_5h
+    if reset_7d is not None:
+        usage["reset_7d"] = reset_7d
+    if scoped_model is not None and scoped_util is not None:
+        usage["scoped"] = {"model": scoped_model, "util": scoped_util}
+        if scoped_reset is not None:
+            usage["scoped"]["reset"] = scoped_reset
+    return {"bearer_id": bid, "token": tok, "label": label, "endpoint": {"usage": usage}}
+
+
+def _route_budget_for_accounts(
+    _isolated_account_routing,
+    monkeypatch,
+    snapshot,
+    *,
+    model="claude-sonnet-4-6",
+    max_tokens=None,
+):
+    monkeypatch.setattr(proxy.time, "time", lambda: _BUDGET_NOW)
+    return _route_for_accounts(
+        monkeypatch,
+        snapshot,
+        paths="A:/x,B:/y",
+        model=model,
+        mode="budget_paced",
+        max_tokens=max_tokens,
+    )
+
+
+def test_budget_paced_same_reset_prefers_lower_util(isolated_account_routing, monkeypatch) -> None:
+    reset_5h = _BUDGET_NOW + _HOUR
+    reset_7d = _BUDGET_NOW + 3 * _DAY
+    a = _budget_acct("aaa", "TOKA", "A", util_5h=0.30, reset_5h=reset_5h, reset_7d=reset_7d)
+    b = _budget_acct("bbb", "TOKB", "B", util_5h=0.55, reset_5h=reset_5h, reset_7d=reset_7d)
+
+    bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])
+
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_budget_paced_can_spend_closer_reset_with_safe_slack(
+    isolated_account_routing, monkeypatch
+) -> None:
+    # A has higher raw 5h utilization, but it resets in five minutes and still
+    # has slack. B is lower utilization but too early in its cycle, so pacing
+    # protects B and spends A before the reset.
+    a = _budget_acct(
+        "aaa",
+        "TOKA",
+        "A",
+        util_5h=0.62,
+        reset_5h=_BUDGET_NOW + 5 * 60,
+        util_7d=0.01,
+        reset_7d=_BUDGET_NOW + 6 * _DAY,
+    )
+    b = _budget_acct(
+        "bbb",
+        "TOKB",
+        "B",
+        util_5h=0.25,
+        reset_5h=_BUDGET_NOW + 4 * _HOUR,
+        util_7d=0.01,
+        reset_7d=_BUDGET_NOW + 6 * _DAY,
+    )
+
+    bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])
+
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_budget_paced_weekly_binding_overrides_5h_headroom(
+    isolated_account_routing, monkeypatch
+) -> None:
+    # A looks attractive on 5h, but its 7d burn is far ahead of pace. The max
+    # over budget windows makes weekly pressure binding and routes to B.
+    a = _budget_acct(
+        "aaa",
+        "TOKA",
+        "A",
+        util_5h=0.10,
+        reset_5h=_BUDGET_NOW + 5 * 60,
+        util_7d=0.80,
+        reset_7d=_BUDGET_NOW + 6 * _DAY,
+    )
+    b = _budget_acct(
+        "bbb",
+        "TOKB",
+        "B",
+        util_5h=0.35,
+        reset_5h=_BUDGET_NOW + 5 * 60,
+        util_7d=0.20,
+        reset_7d=_BUDGET_NOW + 6 * _DAY,
+    )
+
+    bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])
+
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
+
+
+def test_budget_paced_retry_after_candidate_excluded(isolated_account_routing, monkeypatch) -> None:
+    a = _budget_acct("aaa", "TOKA", "A", util_5h=0.50, reset_5h=_BUDGET_NOW + _HOUR)
+    b = _budget_acct("bbb", "TOKB", "B", util_5h=0.10, reset_5h=_BUDGET_NOW + _HOUR)
+    lim_b = FairBearerLimiter(8, "fair")
+    monkeypatch.setattr(proxy.time, "time", lambda: _BUDGET_NOW)
+    lim_b.note_retry_after(3600)
+    config.bearer_limiters["bbb"] = lim_b
+
+    bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])
+
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_budget_paced_queue_inflight_prevents_dogpiling(
+    isolated_account_routing, monkeypatch
+) -> None:
+    a = _budget_acct("aaa", "TOKA", "A", util_5h=0.05, reset_5h=_BUDGET_NOW + _HOUR)
+    b = _budget_acct("bbb", "TOKB", "B", util_5h=0.85, reset_5h=_BUDGET_NOW + 4 * _HOUR)
+    lim_a = FairBearerLimiter(8, "fair")
+    lim_a.inflight = 1
+    config.bearer_limiters["aaa"] = lim_a
+
+    bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])
+
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
+
+
+def test_budget_paced_scoped_meter_matches_request_model_only(
+    isolated_account_routing, monkeypatch
+) -> None:
+    reset_7d = _BUDGET_NOW + 6 * _DAY
+    a = _budget_acct(
+        "aaa",
+        "TOKA",
+        "A",
+        util_5h=0.10,
+        reset_5h=_BUDGET_NOW + _HOUR,
+        util_7d=0.10,
+        reset_7d=reset_7d,
+        scoped_model="Sonnet",
+        scoped_util=0.85,
+        scoped_reset=reset_7d,
+    )
+    b = _budget_acct(
+        "bbb",
+        "TOKB",
+        "B",
+        util_5h=0.30,
+        reset_5h=_BUDGET_NOW + _HOUR,
+        util_7d=0.30,
+        reset_7d=reset_7d,
+    )
+
+    bid, label, headers = _route_budget_for_accounts(
+        isolated_account_routing, monkeypatch, [a, b], model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
+
+    a["endpoint"]["usage"]["scoped"]["model"] = "Fable"
+    bid, label, headers = _route_budget_for_accounts(
+        isolated_account_routing, monkeypatch, [a, b], model="claude-sonnet-4-6"
+    )
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_expected_request_util_cost_uses_model_and_max_tokens() -> None:
+    small_sonnet = proxy._expected_request_util_cost("claude-sonnet-4-6", 1024)
+    large_sonnet = proxy._expected_request_util_cost("claude-sonnet-4-6", 32000)
+    large_opus = proxy._expected_request_util_cost("claude-opus-4-8", 32000)
+
+    assert small_sonnet < large_sonnet
+    assert large_sonnet < large_opus
+    assert large_sonnet == pytest.approx(proxy._DEFAULT_REQUEST_UTIL_COST * 4.0)
 
 
 def test_account_route_model_aware_prefers_scoped_headroom(monkeypatch) -> None:

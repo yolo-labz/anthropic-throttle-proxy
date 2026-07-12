@@ -274,6 +274,21 @@ UTILIZATION_WARN = float(os.environ.get("THROTTLE_UTILIZATION_WARN", "0.9"))
 # cadence changes.
 UNIFIED_CACHE_FRESH_S = float(os.environ.get("THROTTLE_UNIFIED_CACHE_FRESH_S", "120"))
 
+# Budget-paced routing (spec 4). Window lengths feed the elapsed-fraction pacing
+# math; the elapsed-fraction FLOOR stops an early-cycle window (reset far away)
+# from dividing pace toward infinity; the pacing SPAN is kept strictly below the
+# inflight weight (10.0 in the score) so queue + inflight pressure always
+# outweigh the pacing tie-breaker — the anti-dogpile invariant. The per-request
+# util cost gives pacing an "after this request" projection; it is deliberately
+# small because utilization is normalized 0..1 with no absolute cap on the hot
+# path (a tier weight scales it, Opus/Fable heaviest).
+_WINDOW_5H_S = 5 * 3600.0
+_WINDOW_7D_S = 7 * 86400.0
+_PACE_ELAPSED_FLOOR = 0.02
+_PACING_SPAN = 9.0
+_DEFAULT_REQUEST_UTIL_COST = 0.005
+_TYPICAL_MAX_TOKENS = 4096.0
+
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
 # ADVISOR_ENABLED=true + GROQ_API_KEY. Never on the hot path: scheduled as a
@@ -797,7 +812,9 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
 
 
 def _account_routing_enabled() -> bool:
-    return config.ACCOUNT_ROUTING_MODE == "least_loaded" and bool(config.ACCOUNT_CRED_PATHS)
+    return config.ACCOUNT_ROUTING_MODE in {"least_loaded", "budget_paced"} and bool(
+        config.ACCOUNT_CRED_PATHS
+    )
 
 
 def _model_tier(model: str) -> str:
@@ -816,8 +833,76 @@ def _model_tier(model: str) -> str:
     return tiers[0] if len(tiers) == 1 else ""
 
 
+def _append_window(
+    windows: list[tuple[float, float | None, float]],
+    util: object,
+    reset: object,
+    length: float,
+) -> None:
+    """Record a ``(utilization, reset-epoch|None, window-length-s)`` budget window.
+
+    Only appends when ``util`` is numeric; a non-numeric/absent reset becomes
+    ``None`` (priced on utilization alone, no deadline discount).
+    """
+    if isinstance(util, (int, float)):
+        reset_epoch = float(reset) if isinstance(reset, (int, float)) else None
+        windows.append((float(util), reset_epoch, length))
+
+
+def _expected_request_util_cost(model: str, max_tokens: int | None = None) -> float:
+    """Projected utilization one request adds — pacing's "after this request" view.
+
+    Utilization is normalized 0..1 with no absolute cap exposed on the hot path,
+    so this is a deliberately small heuristic: a tier weight (Opus/Fable heaviest)
+    times a token factor when ``max_tokens`` is cheaply known, else a conservative
+    constant. Ceiling: the token factor is capped at 4× so one huge request cannot
+    dominate the deadline signal.
+    """
+    tier_weight = {"opus": 2.0, "fable": 2.0, "sonnet": 1.0, "haiku": 0.5}.get(
+        _model_tier(model), 1.0
+    )
+    token_factor = 1.0
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        token_factor = min(max_tokens / _TYPICAL_MAX_TOKENS, 4.0)
+    return _DEFAULT_REQUEST_UTIL_COST * tier_weight * token_factor
+
+
+def _budget_pacing_pressure(
+    windows: list[tuple[float, float | None, float]], expected_cost: float, now: float
+) -> float:
+    """Deadline-aware pacing price for a candidate account (lower is cheaper).
+
+    Water-filling / max-min fairness: the tightest (binding) window sets the
+    price, so we take the MAX per-window pace — routing then minimizes it across
+    accounts, keeping the most-constrained budget as loose as possible. Each
+    window's pace is ``projected_util ÷ elapsed-cycle-fraction`` (the same dual
+    price as the accounts-view burn meter): a window early in its cycle burning
+    fast is expensive, one near its reset with slack is cheap. ``projected_util``
+    folds in the expected request cost so a candidate is priced AFTER admitting
+    the request. The result is a bounded monotone map into ``[0, _PACING_SPAN)``
+    so queue/inflight/retry gates always outweigh pacing (anti-dogpile).
+    """
+    worst = 0.0
+    for util, reset, length in windows:
+        projected = min(util + expected_cost, 1.0)
+        if reset is None or reset <= now or length <= 0:
+            pace = projected  # no usable deadline → price on projected util alone
+        else:
+            elapsed_frac = (length - (reset - now)) / length
+            elapsed_frac = min(max(elapsed_frac, _PACE_ELAPSED_FLOOR), 1.0)
+            pace = projected / elapsed_frac
+        worst = max(worst, pace)
+    return _PACING_SPAN * worst / (worst + 1.0)
+
+
 def _account_routing_candidate_score(
-    acct: dict[str, object], incoming_bid: str, *, allow_pressure: bool = False, model: str = ""
+    acct: dict[str, object],
+    incoming_bid: str,
+    *,
+    allow_pressure: bool = False,
+    model: str = "",
+    max_tokens: int | None = None,
+    now: float | None = None,
 ) -> float:
     """Lower is better for account routing. Uses only live pressure, no secrets.
 
@@ -825,7 +910,15 @@ def _account_routing_candidate_score(
     the account's scoped (per-model) weekly meter, that meter's utilization is
     folded into the pressure — a Sonnet request avoids an account whose Sonnet
     meter is near cap even if its all-models window still has room.
+
+    Two ranking modes share ONE gate structure (``config.ACCOUNT_ROUTING_MODE``):
+    ``least_loaded`` ranks on raw max utilization; ``budget_paced`` (spec 4) ranks
+    on deadline-aware pacing over each observed 5h/7d/scoped budget window. The
+    hard gates (retry-after, rejected, util≥1.0, endpoint 429, warning-pressure
+    without ``allow_pressure``) and the queue/inflight prefix are identical in
+    both modes — only the sub-gate tie-breaker term differs.
     """
+    now = time.time() if now is None else now
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
@@ -836,6 +929,9 @@ def _account_routing_candidate_score(
     queued = float(snap.get("queued_total") or 0)
     priority_queued = float(snap.get("priority_queued") or 0)
     inflight = float(snap.get("inflight") or 0)
+    # (util, reset-epoch|None, window-length) per observed budget window. Fed to
+    # the budget_paced ranker below; least_loaded ignores it (uses max util only).
+    windows: list[tuple[float, float | None, float]] = []
     bstate = config.bearer_state.get(bid, {})
     unified = bstate.get("unified") if isinstance(bstate, dict) else None
     if isinstance(unified, dict):
@@ -848,6 +944,8 @@ def _account_routing_candidate_score(
             for v in (unified.get("util_5h"), unified.get("util_7d"), 0.0)
             if isinstance(v, (int, float))
         )
+        _append_window(windows, unified.get("util_5h"), unified.get("reset_5h"), _WINDOW_5H_S)
+        _append_window(windows, unified.get("util_7d"), unified.get("reset_7d"), _WINDOW_7D_S)
         under_pressure = under_pressure or (UTILIZATION_WARN > 0 and util >= UTILIZATION_WARN)
         if under_pressure and not allow_pressure:
             return math.inf
@@ -865,6 +963,8 @@ def _account_routing_candidate_score(
             if endpoint_util >= 1.0:
                 return math.inf
             util = max(util, endpoint_util)
+            _append_window(windows, usage.get("util_5h"), usage.get("reset_5h"), _WINDOW_5H_S)
+            _append_window(windows, usage.get("util_7d"), usage.get("reset_7d"), _WINDOW_7D_S)
             if UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN and not allow_pressure:
                 return math.inf
             # spec 3: model-aware — if this request's tier matches the account's
@@ -879,13 +979,21 @@ def _account_routing_candidate_score(
                     if s_util >= 1.0:
                         return math.inf
                     util = max(util, float(s_util))
+                    # scoped is a per-model 7d budget; its reset (when present) prices it.
+                    _append_window(windows, s_util, scoped.get("reset"), _WINDOW_7D_S)
                     if UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN and not allow_pressure:
                         return math.inf
         elif "(429)" in str(endpoint.get("err") or "") and not allow_pressure:
             return math.inf
-    # Queue dominates; utilization is a soft tie-breaker below the warning line.
+    # Queue dominates; utilization/pacing is a soft tie-breaker below the warn line.
     stickiness = -0.01 if bid == incoming_bid else 0.0
-    return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0 + util * 5.0 + stickiness
+    load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
+    if config.ACCOUNT_ROUTING_MODE == "budget_paced":
+        pressure = _budget_pacing_pressure(
+            windows, _expected_request_util_cost(model, max_tokens), now
+        )
+        return load + pressure + stickiness
+    return load + util * 5.0 + stickiness
 
 
 def _bearer_local_load_score(bid: str) -> float:
@@ -936,6 +1044,7 @@ def _route_account_if_enabled(
     method: str,
     path: str,
     model: str = "",
+    max_tokens: int | None = None,
 ) -> tuple[str, str | None]:
     """Optionally rewrite upstream Authorization to a configured account.
 
@@ -948,7 +1057,10 @@ def _route_account_if_enabled(
         return incoming_bid, None
     from . import accounts
 
-    snapshot = accounts.routing_snapshot(time.time())
+    # One clock for the whole selection: the snapshot AND every pacing score must
+    # measure time-to-reset against the same ``now`` (budget_paced divides by it).
+    now = time.time()
+    snapshot = accounts.routing_snapshot(now)
     configured_bids = {
         str(acct["bearer_id"])
         for acct in snapshot
@@ -959,7 +1071,10 @@ def _route_account_if_enabled(
         for acct in snapshot
         if isinstance(acct.get("token"), str)
         and isinstance(acct.get("bearer_id"), str)
-        and _account_routing_candidate_score(acct, incoming_bid, model=model) < math.inf
+        and _account_routing_candidate_score(
+            acct, incoming_bid, model=model, max_tokens=max_tokens, now=now
+        )
+        < math.inf
     ]
     best_configured_load = min(
         (_bearer_local_load_score(str(acct["bearer_id"])) for acct in candidates),
@@ -975,7 +1090,12 @@ def _route_account_if_enabled(
             if isinstance(acct.get("token"), str)
             and isinstance(acct.get("bearer_id"), str)
             and _account_routing_candidate_score(
-                acct, incoming_bid, allow_pressure=True, model=model
+                acct,
+                incoming_bid,
+                allow_pressure=True,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
             )
             < math.inf
         ]
@@ -984,7 +1104,12 @@ def _route_account_if_enabled(
     selected = min(
         candidates,
         key=lambda acct: _account_routing_candidate_score(
-            acct, incoming_bid, allow_pressure=True, model=model
+            acct,
+            incoming_bid,
+            allow_pressure=True,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
         ),
     )
     selected_bid = str(selected["bearer_id"])
@@ -2187,6 +2312,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         method=request.method,
         path=path,
         model=model,
+        max_tokens=req_max_tokens,
     )
     queue_mode, hard_max = _effective_admission()
     # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
