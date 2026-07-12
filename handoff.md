@@ -1531,3 +1531,35 @@ Cosmetic caveat: both A and B `.claude.json` render
 `oauthAccount = pedrobalbino@pm.me` (the two Proton aliases share one mailbox);
 the OAuth bearers are distinct hashes (one exhausted), so routing sees two real
 accounts regardless of the shared email label.
+
+## 12/07/2026 - warning surcharge second-stage hotfix
+
+PR #96 was directionally right but too conservative live. It made warning
+accounts spendable under pressure, but `_WARNING_BACKPRESSURE_SURCHARGE=250`
+still outweighed two queued requests (`queued * 100`). Under a HOME+DeliCasa
+burst, the router kept preferring C until C had multiple queued Opus turns:
+C reached `served=107` while A/B were `20/16`, then one local
+`queue-wait-timeout` appeared. There were still no upstream `429`, no
+credit-balance errors, and API-key routing stayed `off`.
+
+Second-stage fix: lower `_WARNING_BACKPRESSURE_SURCHARGE` to `80`, below one
+queued-request weight. That keeps warning accounts protected under light
+inflight-only load, but spends them as soon as the non-warning account starts
+queueing.
+
+Live deployment:
+
+- venv: `~/.local/state/anthropic-throttle-proxy/live-094-warning-backpressure-20260712-202014`
+- service PID: `1539700`
+- API key: still disabled/off
+- 90s sample:
+  `queue_wait_timeout=0 status429=0 rate_pushback=0 aimd_shrink=0 api_key_mentions=0 credit_balance=0 routes_A=0 routes_B=5 routes_C=15`
+
+Validation in clean worktree `097-warning-surcharge`:
+
+- `uv run ruff format --check src tests`
+- `uv run ruff check src tests`
+- `uv run pytest tests/test_proxy_helpers.py -q` -> `81 passed`
+- `uv run pytest -q` -> `408 passed`, 2 existing aiohttp warnings
+
+Durable PR: `yolo-labz/anthropic-throttle-proxy#97`.

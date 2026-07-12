@@ -289,7 +289,9 @@ _PACE_ELAPSED_FLOOR = 0.02
 _PACING_SPAN = 9.0
 _DEFAULT_REQUEST_UTIL_COST = 0.005
 _TYPICAL_MAX_TOKENS = 4096.0
-_WARNING_BACKPRESSURE_SURCHARGE = 250.0
+# Keep below one queued-request weight (100.0): a warning account stays protected
+# under light inflight-only load, but strict-account queueing can spend it.
+_WARNING_BACKPRESSURE_SURCHARGE = 80.0
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
