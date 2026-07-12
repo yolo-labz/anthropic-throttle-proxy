@@ -1547,8 +1547,8 @@ def test_budget_paced_queue_inflight_prevents_dogpiling(
 @pytest.mark.parametrize(
     ("queued", "expected", "auth"),
     [
-        (2, ("aaa", "A"), "Bearer TOKA"),
-        (3, ("bbb", "B"), "Bearer TOKB"),
+        (0, ("aaa", "A"), "Bearer TOKA"),
+        (1, ("bbb", "B"), "Bearer TOKB"),
     ],
 )
 def test_budget_paced_warning_account_surcharge_balances_queue_backpressure(
