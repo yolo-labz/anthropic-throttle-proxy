@@ -713,8 +713,8 @@ def test_account_routing_preserves_only_unloaded_healthy_known_unconfigured_bear
 ) -> None:
     bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
     monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
-    incoming_token = "sk-ant-oat01-KNOWN"  # noqa: S105 - synthetic fixture, not a real token
-    incoming_bid = hashlib.sha256(f"Bearer {incoming_token}".encode()).hexdigest()[:8]
+    incoming_value = "Bearer sk-ant-oat01-KNOWN"
+    incoming_bid = hashlib.sha256(incoming_value.encode()).hexdigest()[:8]
     limiter = FairBearerLimiter(8, "fair")
     limiter.inflight = incoming_inflight
     config.bearer_limiters[incoming_bid] = limiter
@@ -722,7 +722,7 @@ def test_account_routing_preserves_only_unloaded_healthy_known_unconfigured_bear
         "unified": {"status": "allowed", "util_5h": 0.20, "util_7d": 0.32},
         "unified_at": time.time(),
     }
-    headers = {"Authorization": f"Bearer {incoming_token}"}
+    headers = {"Authorization": incoming_value}
 
     selected, label = proxy._route_account_if_enabled(
         headers, incoming_bid, method="POST", path="v1/messages"
@@ -731,7 +731,7 @@ def test_account_routing_preserves_only_unloaded_healthy_known_unconfigured_bear
     if expect_preserve:
         assert selected == incoming_bid
         assert label is None
-        assert headers == {"Authorization": f"Bearer {incoming_token}"}
+        assert headers == {"Authorization": incoming_value}
     else:
         assert selected == bid_a
         assert label == "A"
