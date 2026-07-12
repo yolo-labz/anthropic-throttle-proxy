@@ -731,15 +731,17 @@ def test_account_routing_skips_endpoint_rejected_candidate(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-B"
 
 
+@pytest.mark.parametrize("cached_usage", [None, {"util_5h": 0.10, "util_7d": 0.20}])
 def test_account_routing_skips_endpoint_429_candidate(
     isolated_account_routing,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
+    cached_usage: dict[str, float] | None,
 ) -> None:
     bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
     accounts._endpoint_cache[str(tmp_path / "b.json")] = {
         "fetched": time.time(),
-        "usage": None,
+        "usage": cached_usage,
         "err": "usage endpoint unavailable (429)",
     }
     headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
@@ -1360,6 +1362,22 @@ _HOUR = 3600
 _DAY = 24 * _HOUR
 
 
+class _RoutingLimiter:
+    def __init__(self, *, queued: int = 0, inflight: int = 0) -> None:
+        self.queued = queued
+        self.inflight = inflight
+
+    def retry_after_remaining(self) -> float:
+        return 0.0
+
+    def snapshot(self) -> dict[str, int]:
+        return {
+            "queued_total": self.queued,
+            "priority_queued": 0,
+            "inflight": self.inflight,
+        }
+
+
 def _budget_acct(
     bid,
     tok,
@@ -1386,6 +1404,23 @@ def _budget_acct(
         if scoped_reset is not None:
             usage["scoped"]["reset"] = scoped_reset
     return {"bearer_id": bid, "token": tok, "label": label, "endpoint": {"usage": usage}}
+
+
+def _warning_backpressure_accounts(queued: int) -> list[dict[str, object]]:
+    config.bearer_limiters["aaa"] = _RoutingLimiter(queued=queued)
+    config.bearer_state["bbb"] = {
+        "unified": {
+            "status": "allowed_warning",
+            "util_5h": 0.50,
+            "util_7d": 0.75,
+            "reset_5h": _BUDGET_NOW + _HOUR,
+            "reset_7d": _BUDGET_NOW + 3 * _DAY,
+        }
+    }
+    return [
+        _budget_acct("aaa", "TOKA", "A", util_5h=0.10, reset_5h=_BUDGET_NOW + _HOUR),
+        _budget_acct("bbb", "TOKB", "B", util_5h=0.50, reset_5h=_BUDGET_NOW + _HOUR),
+    ]
 
 
 def _route_budget_for_accounts(
@@ -1507,6 +1542,24 @@ def test_budget_paced_queue_inflight_prevents_dogpiling(
 
     assert (bid, label) == ("bbb", "B")
     assert headers["Authorization"] == "Bearer TOKB"
+
+
+@pytest.mark.parametrize(
+    ("queued", "expected", "auth"),
+    [
+        (2, ("aaa", "A"), "Bearer TOKA"),
+        (3, ("bbb", "B"), "Bearer TOKB"),
+    ],
+)
+def test_budget_paced_warning_account_surcharge_balances_queue_backpressure(
+    isolated_account_routing, monkeypatch, queued, expected, auth
+) -> None:
+    bid, label, headers = _route_budget_for_accounts(
+        isolated_account_routing, monkeypatch, _warning_backpressure_accounts(queued)
+    )
+
+    assert (bid, label) == expected
+    assert headers["Authorization"] == auth
 
 
 def test_budget_paced_scoped_meter_matches_request_model_only(

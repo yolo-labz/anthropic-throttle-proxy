@@ -6,6 +6,117 @@ host activation. Latest incident first.
 
 ---
 
+## 12/07/2026 - Warning-account backpressure valve (branch 094)
+
+### Symptom
+
+After the API-key path was kept disabled and the fleet was returned to
+subscription/OAuth traffic, several zellij panes still showed Claude Code's
+transient API retry banner. Local health showed no API-key route and no
+credit-balance failure, but local queue depth stayed high:
+
+- `api_key.enabled=false`, `api_key.routing="off"`.
+- `max_concurrent=1..3` during live mitigation.
+- A/B were `allowed_warning` at about `u7=0.75`; C was `allowed` around
+  `u7=0.59`.
+- The router kept selecting C, so C accumulated double-digit local queue while
+  A/B sat idle.
+- Journal lines were `queue-wait-timeout ... bid=28237b9b ...`, not upstream
+  budget 429s.
+
+### Hypothesis and fix
+
+Hypothesis: `budget_paced` strict candidate selection treated
+`allowed_warning` as an absolute exclusion whenever any non-warning account
+existed. Under fleet burst, that made C the only strict candidate even after it
+had enough queued work to surface client retries.
+
+Branch `094-warning-backpressure` keeps `rejected`, `Retry-After`, and endpoint
+`429` accounts hard-excluded, but changes warning accounts from an absolute
+fallback-only exclusion into a finite backpressure surcharge. Warning accounts
+still lose under light load, but can win when the non-warning account has
+several queued local requests.
+
+Regression tests added:
+
+- warning account loses while the safe account has only light queue
+- warning account wins once the safe account has enough queue backpressure
+- endpoint `429` remains hard-excluded, including the stale-cache shape where
+  the account usage refresher preserves prior `usage` while setting
+  `err="...(429)"`
+
+Validation in the branch:
+
+- `uv run pytest tests/test_proxy_helpers.py -q` -> `81 passed`
+- `uv run ruff format --check src tests` -> clean
+- `uv run ruff check src tests` -> clean
+- `uv run pytest -q` -> `408 passed`, 2 existing aiohttp `NotAppKeyWarning`
+  warnings
+- Codex adversarial review found one real MAJOR before merge: endpoint `429`
+  was only hard-excluded when cached `usage` was absent. Fixed by checking
+  `endpoint.err` before the `usage` branch and adding the stale-cache
+  regression above. Re-validated with the commands in this section.
+
+### Live activation
+
+For immediate recovery, a state-dir venv was built from the branch and the user
+service was restarted through a persistent drop-in:
+
+- package symlink:
+  `~/.local/state/anthropic-throttle-proxy/live-094-warning-backpressure-current`
+- drop-in:
+  `~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-warning-backpressure-hotfix.conf`
+- effective `ExecStart`:
+  `~/.local/state/anthropic-throttle-proxy/live-094-warning-backpressure-current/venv/bin/anthropic-throttle-proxy`
+- fixed symbol verified in the active package:
+  `_WARNING_BACKPRESSURE_SURCHARGE`
+
+Immediate health after restart showed the queue distributed across configured
+accounts instead of concentrating on C:
+
+- `served=1`, `queued=4`, `inflight=9`
+- A/B/C each `inflight=3`; queues `2/1/1`
+- `upstream_retries=0`, API-key route still off
+
+90-second live sample after restart:
+
+- `served=31`, `queued=3`, `inflight=8`
+- no `status=429`, `rate-pushback`, `aimd-shrink`, or `queue-wait-timeout`
+  after the restart window
+- account-route logs show traffic reaching B and C; A continued serving direct
+  incoming work
+- the remaining affected panes moved past the API error banner; Pearson Clever
+  is blocked on the WSL tunnel, not the proxy
+
+180-second live sample after restart:
+
+- `served=82`, `queued=3`, `inflight=4`
+- counts since the fixed PID started:
+  `status429=0 rate_pushback=0 aimd_shrink=0 queue_wait_timeout=0 api_key_route=0 credit_balance=0`
+
+After the adversarial-review endpoint-cache fix, the emergency venv was rebuilt
+and the service restarted again:
+
+- PID `1331010`
+- fixed symbols verified in the active venv:
+  `_WARNING_BACKPRESSURE_SURCHARGE` and the pre-`usage` endpoint `(429)` check
+- 90-second sample from that PID:
+  `served=22`, `queued=3`, `inflight=5`, `upstream_retries=0`
+- counts from that PID:
+  `status429=0 rate_pushback=0 aimd_shrink=0 queue_wait_timeout=0 api_key_route=0 credit_balance=0`
+
+Rollback for the emergency activation:
+
+```bash
+rm ~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-warning-backpressure-hotfix.conf
+systemctl --user daemon-reload
+systemctl --user restart anthropic-throttle-proxy.service
+```
+
+Durable follow-up: merge branch 094, then bump the NixOS package pin and remove
+the emergency venv drop-in after the Nix/HM unit points to a store path
+containing `_WARNING_BACKPRESSURE_SURCHARGE`.
+
 ## 12/07/2026 - Throughput 429 incident: known-bearer preserve guard (branch 093)
 
 ### Live diagnosis
