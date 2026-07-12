@@ -289,6 +289,7 @@ _PACE_ELAPSED_FLOOR = 0.02
 _PACING_SPAN = 9.0
 _DEFAULT_REQUEST_UTIL_COST = 0.005
 _TYPICAL_MAX_TOKENS = 4096.0
+_WARNING_BACKPRESSURE_SURCHARGE = 250.0
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
@@ -934,7 +935,11 @@ def _budget_pacing_pressure(
     fast is expensive, one near its reset with slack is cheap. ``projected_util``
     folds in the expected request cost so a candidate is priced AFTER admitting
     the request. The result is a bounded monotone map into ``[0, _PACING_SPAN)``
-    so queue/inflight/retry gates always outweigh pacing (anti-dogpile).
+    so queue/inflight/retry gates always outweigh pacing (anti-dogpile). A
+    bearer in ``allowed_warning`` gets a finite surcharge when pressure is
+    allowed, so warning accounts stay protected under light load but can beat a
+    non-warning bearer whose local queue is already large enough to surface
+    client retries.
     """
     worst = 0.0
     for util, reset, length in windows:
@@ -986,6 +991,7 @@ def _account_routing_candidate_score(
     # (util, reset-epoch|None, window-length) per observed budget window. Fed to
     # the budget_paced ranker below; least_loaded ignores it (uses max util only).
     windows: list[tuple[float, float | None, float]] = []
+    under_pressure = False
     bstate = config.bearer_state.get(bid, {})
     unified = bstate.get("unified") if isinstance(bstate, dict) else None
     if isinstance(unified, dict):
@@ -1007,6 +1013,8 @@ def _account_routing_candidate_score(
         util = 0.0
     endpoint = acct.get("endpoint")
     if isinstance(endpoint, dict):
+        if "(429)" in str(endpoint.get("err") or ""):
+            return math.inf
         usage = endpoint.get("usage")
         if isinstance(usage, dict):
             endpoint_util = max(
@@ -1021,6 +1029,9 @@ def _account_routing_candidate_score(
             _append_window(windows, usage.get("util_7d"), usage.get("reset_7d"), _WINDOW_7D_S)
             if UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN and not allow_pressure:
                 return math.inf
+            under_pressure = under_pressure or (
+                UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN
+            )
             # spec 3: model-aware — if this request's tier matches the account's
             # scoped weekly meter, fold that meter's utilization in (it is the
             # binding budget for THIS request even when all-models has room).
@@ -1037,17 +1048,19 @@ def _account_routing_candidate_score(
                     _append_window(windows, s_util, scoped.get("reset"), _WINDOW_7D_S)
                     if UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN and not allow_pressure:
                         return math.inf
-        elif "(429)" in str(endpoint.get("err") or "") and not allow_pressure:
-            return math.inf
+                    under_pressure = under_pressure or (
+                        UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN
+                    )
     # Queue dominates; utilization/pacing is a soft tie-breaker below the warn line.
     stickiness = -0.01 if bid == incoming_bid else 0.0
     load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
+    warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
         pressure = _budget_pacing_pressure(
             windows, _expected_request_util_cost(model, max_tokens), now
         )
-        return load + pressure + stickiness
-    return load + util * 5.0 + stickiness
+        return load + warning_surcharge + pressure + stickiness
+    return load + warning_surcharge + util * 5.0 + stickiness
 
 
 def _bearer_local_load_score(bid: str) -> float:
@@ -1147,7 +1160,7 @@ def _route_account_if_enabled(
         for acct in snapshot
         if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
     }
-    candidates = [
+    strict_candidates = [
         acct
         for acct in snapshot
         if isinstance(acct.get("token"), str)
@@ -1158,28 +1171,69 @@ def _route_account_if_enabled(
         < math.inf
     ]
     best_configured_load = min(
-        (_bearer_local_load_score(str(acct["bearer_id"])) for acct in candidates),
+        (_bearer_local_load_score(str(acct["bearer_id"])) for acct in strict_candidates),
         default=math.inf,
     )
     if _healthy_known_unconfigured_bearer(incoming_bid, configured_bids, best_configured_load):
         return incoming_bid, None
 
-    if not candidates:
-        candidates = [
-            acct
-            for acct in snapshot
-            if isinstance(acct.get("token"), str)
-            and isinstance(acct.get("bearer_id"), str)
-            and _account_routing_candidate_score(
+    pressure_candidates = [
+        acct
+        for acct in snapshot
+        if isinstance(acct.get("token"), str)
+        and isinstance(acct.get("bearer_id"), str)
+        and _account_routing_candidate_score(
+            acct,
+            incoming_bid,
+            allow_pressure=True,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+        )
+        < math.inf
+    ]
+    candidates = strict_candidates or pressure_candidates
+    if strict_candidates and pressure_candidates:
+        strict_best = min(
+            strict_candidates,
+            key=lambda acct: _account_routing_candidate_score(
                 acct,
                 incoming_bid,
                 allow_pressure=True,
                 model=model,
                 max_tokens=max_tokens,
                 now=now,
-            )
-            < math.inf
-        ]
+            ),
+        )
+        pressure_best = min(
+            pressure_candidates,
+            key=lambda acct: _account_routing_candidate_score(
+                acct,
+                incoming_bid,
+                allow_pressure=True,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            ),
+        )
+        strict_score = _account_routing_candidate_score(
+            strict_best,
+            incoming_bid,
+            allow_pressure=True,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+        )
+        pressure_score = _account_routing_candidate_score(
+            pressure_best,
+            incoming_bid,
+            allow_pressure=True,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+        )
+        if pressure_score < strict_score:
+            candidates = pressure_candidates
     if not candidates:
         if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
             return _route_to_selected_auth(headers, incoming_bid, api_key)
