@@ -6,6 +6,54 @@ host activation. Latest incident first.
 
 ---
 
+## 12/07/2026 - Throughput 429 incident: known-bearer preserve guard (branch 093)
+
+### Live diagnosis
+
+The 14:00 fleet storm showed 12 bearer rows in local health, but only three
+configured local credential stores (`A/B/C`) and three distinct account
+identities. The other bearer ids are historical/incoming client tokens the
+process has observed, not credentials the local router can mint or refresh.
+Central is healthy (`max_concurrent=8`, queued 0) but has no credential files,
+so it can admit/queue per bearer; it cannot rewrite desktop traffic onto
+bearers it does not own.
+
+At the emergency-safe live setting (`max_concurrent=1`,
+`min_dispatch_gap_ms=100`, `THROTTLE_UTILIZATION_TARGET=0.9`) the fleet has
+zero new `status=429`/`rate-pushback`/`aimd-shrink` lines after 14:14:06 -03,
+but the true free ceiling is only three active upstream requests: one per
+configured OAuth account. Raising per-bearer concurrency was already falsified
+live by fresh 429s.
+
+### Branch 093 fix scope
+
+Branch `093-preserve-known-bearers` keeps the existing `least_loaded` account
+routing for configured accounts, but adds a narrow preserve path for incoming
+non-configured OAuth bearers that are already known, have fresh unified-budget
+telemetry, are below `UTILIZATION_WARN`, have no local `Retry-After`, and are
+not locally more loaded than the best healthy configured account. Stale,
+pressured, retry-aftered, or already-loaded known bearers still fall back to
+configured A/B/C routing.
+
+This prevents the router from unnecessarily collapsing a live healthy client
+bearer onto A/B/C, without resurrecting arbitrary stale tokens or regressing
+least-loaded behavior under queue/inflight pressure. It does not create new
+free capacity when current clients only send A/B/C tokens.
+
+### Verification
+
+- Host run: `uv run pytest tests/test_proxy_helpers.py -q` -> 68 passed.
+- Host run: `uv run pytest -q` -> 395 passed, 2 existing aiohttp warnings.
+- Host run: `uv run ruff check src tests` -> all checks passed.
+- Codex adversarial review round 1 found a real P2: preserve path ignored
+  local queued/inflight load. Fixed by `_bearer_local_load_score` and a
+  parameterized regression test.
+- Codex adversarial review round 2: no actionable correctness issues.
+
+Remaining throughput levers are outside this code slice: add more active
+distinct OAuth credential stores, enable the sanctioned API-key bearer (billing
+gated), or reduce per-request model/output weight.
+
 ## 10/07/2026 - Distinctness-guard false positive (stale `.claude.json` label) → PR #90 verify-before-warn
 
 ### Symptom
