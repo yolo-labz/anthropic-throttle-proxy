@@ -703,6 +703,114 @@ def test_account_routing_uses_pressured_configured_account_for_stale_bearer(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
 
+@pytest.mark.parametrize(("incoming_inflight", "expect_preserve"), [(0, True), (1, False)])
+def test_account_routing_preserves_only_unloaded_healthy_known_unconfigured_bearer(
+    isolated_account_routing,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    incoming_inflight: int,
+    expect_preserve: bool,
+) -> None:
+    bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    incoming_token = "sk-ant-oat01-KNOWN"  # noqa: S105 - synthetic fixture, not a real token
+    incoming_bid = hashlib.sha256(f"Bearer {incoming_token}".encode()).hexdigest()[:8]
+    limiter = FairBearerLimiter(8, "fair")
+    limiter.inflight = incoming_inflight
+    config.bearer_limiters[incoming_bid] = limiter
+    config.bearer_state[incoming_bid] = {
+        "unified": {"status": "allowed", "util_5h": 0.20, "util_7d": 0.32},
+        "unified_at": time.time(),
+    }
+    headers = {"Authorization": f"Bearer {incoming_token}"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    if expect_preserve:
+        assert selected == incoming_bid
+        assert label is None
+        assert headers == {"Authorization": f"Bearer {incoming_token}"}
+    else:
+        assert selected == bid_a
+        assert label == "A"
+        assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+@pytest.mark.parametrize(
+    "unified",
+    [
+        {"status": "allowed_warning", "util_5h": 0.40, "util_7d": 0.82},
+        {"status": "allowed", "util_5h": 0.95, "util_7d": 0.30},
+    ],
+)
+def test_account_routing_routes_pressured_known_unconfigured_bearer(
+    isolated_account_routing,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    unified: dict[str, object],
+) -> None:
+    bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    incoming_bid = "known-x"
+    config.bearer_limiters[incoming_bid] = FairBearerLimiter(8, "fair")
+    config.bearer_state[incoming_bid] = {"unified": unified, "unified_at": time.time()}
+    headers = {"Authorization": "Bearer sk-ant-oat01-KNOWN"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_account_routing_routes_stale_known_unconfigured_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    incoming_bid = "known-x"
+    config.bearer_limiters[incoming_bid] = FairBearerLimiter(8, "fair")
+    config.bearer_state[incoming_bid] = {
+        "unified": {"status": "allowed", "util_5h": 0.20, "util_7d": 0.25},
+        "unified_at": time.time() - proxy.UNIFIED_CACHE_FRESH_S - 1,
+    }
+    headers = {"Authorization": "Bearer sk-ant-oat01-KNOWN"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_account_routing_routes_retry_after_known_unconfigured_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    incoming_bid = "known-x"
+    limiter = FairBearerLimiter(8, "fair")
+    limiter.note_retry_after(60)
+    config.bearer_limiters[incoming_bid] = limiter
+    config.bearer_state[incoming_bid] = {
+        "unified": {"status": "allowed", "util_5h": 0.20, "util_7d": 0.25},
+        "unified_at": time.time(),
+    }
+    headers = {"Authorization": "Bearer sk-ant-oat01-KNOWN"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
 def test_fast_fail_429_when_account_routing_enabled(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:

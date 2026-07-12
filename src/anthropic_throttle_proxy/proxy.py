@@ -888,6 +888,47 @@ def _account_routing_candidate_score(
     return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0 + util * 5.0 + stickiness
 
 
+def _bearer_local_load_score(bid: str) -> float:
+    """Queue/inflight pressure only; lower is better for same-host admission."""
+    lim = config.bearer_limiters.get(bid)
+    snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
+    queued = float(snap.get("queued_total") or 0)
+    priority_queued = float(snap.get("priority_queued") or 0)
+    inflight = float(snap.get("inflight") or 0)
+    return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
+
+
+def _healthy_known_unconfigured_bearer(
+    incoming_bid: str, configured_bids: set[str], best_configured_load: float
+) -> bool:
+    """True when an incoming non-configured bearer has fresh no-pressure evidence."""
+    if not incoming_bid or incoming_bid in configured_bids:
+        return False
+    limiter = config.bearer_limiters.get(incoming_bid)
+    if limiter is None:
+        return False
+    if getattr(limiter, "retry_after_remaining", lambda: 0.0)() > 0:
+        return False
+    bstate = config.bearer_state.get(incoming_bid)
+    if not isinstance(bstate, dict):
+        return False
+    unified = bstate.get("unified")
+    unified_at = bstate.get("unified_at")
+    if not (
+        isinstance(unified, dict)
+        and isinstance(unified_at, (int, float))
+        and (time.time() - unified_at) <= UNIFIED_CACHE_FRESH_S
+    ):
+        return False
+    statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
+    if any(status in ("allowed_warning", "rejected") for status in statuses):
+        return False
+    binding = _binding_utilization(unified)
+    if binding is None or (UTILIZATION_WARN > 0 and binding >= UTILIZATION_WARN):
+        return False
+    return _bearer_local_load_score(incoming_bid) <= best_configured_load
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -907,17 +948,30 @@ def _route_account_if_enabled(
         return incoming_bid, None
     from . import accounts
 
+    snapshot = accounts.routing_snapshot(time.time())
+    configured_bids = {
+        str(acct["bearer_id"])
+        for acct in snapshot
+        if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
+    }
     candidates = [
         acct
-        for acct in accounts.routing_snapshot(time.time())
+        for acct in snapshot
         if isinstance(acct.get("token"), str)
         and isinstance(acct.get("bearer_id"), str)
         and _account_routing_candidate_score(acct, incoming_bid, model=model) < math.inf
     ]
+    best_configured_load = min(
+        (_bearer_local_load_score(str(acct["bearer_id"])) for acct in candidates),
+        default=math.inf,
+    )
+    if _healthy_known_unconfigured_bearer(incoming_bid, configured_bids, best_configured_load):
+        return incoming_bid, None
+
     if not candidates:
         candidates = [
             acct
-            for acct in accounts.routing_snapshot(time.time())
+            for acct in snapshot
             if isinstance(acct.get("token"), str)
             and isinstance(acct.get("bearer_id"), str)
             and _account_routing_candidate_score(
