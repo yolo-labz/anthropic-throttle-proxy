@@ -295,6 +295,8 @@ _TYPICAL_MAX_TOKENS = 4096.0
 # it is strong enough that the selector does not keep spending a near-empty
 # window just because its current queue is short.
 _OVERPACE_SURCHARGE = 60.0
+_QUEUE_SPILLOVER_LOAD_THRESHOLD = 100.0
+_TARGET_SPILLOVER_SURCHARGE = 100.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
 # under light inflight-only load, but strict-account queueing can spend it.
 _WARNING_BACKPRESSURE_SURCHARGE = 80.0
@@ -1051,6 +1053,7 @@ def _account_routing_candidate_score(
     incoming_bid: str,
     *,
     allow_pressure: bool = False,
+    allow_target_spillover: bool = False,
     model: str = "",
     max_tokens: int | None = None,
     now: float | None = None,
@@ -1149,11 +1152,20 @@ def _account_routing_candidate_score(
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
         expected_cost = _expected_request_util_cost(model, max_tokens)
-        if _budget_pacing_target_crossed(windows, expected_cost):
+        target_crossed = _budget_pacing_target_crossed(windows, expected_cost)
+        if target_crossed and not allow_target_spillover:
             return math.inf
         pressure = _budget_pacing_pressure(windows, expected_cost, now)
         overpace = _budget_pacing_overpace(windows, expected_cost, now)
-        return load + warning_surcharge + overpace * _OVERPACE_SURCHARGE + pressure + stickiness
+        target_surcharge = _TARGET_SPILLOVER_SURCHARGE if target_crossed else 0.0
+        return (
+            load
+            + warning_surcharge
+            + target_surcharge
+            + overpace * _OVERPACE_SURCHARGE
+            + pressure
+            + stickiness
+        )
     return load + warning_surcharge + util * 5.0 + stickiness
 
 
@@ -1271,6 +1283,9 @@ def _route_account_if_enabled(
     if _healthy_known_unconfigured_bearer(incoming_bid, configured_bids, best_configured_load):
         return incoming_bid, None
 
+    allow_target_spillover = (
+        bool(strict_candidates) and best_configured_load >= _QUEUE_SPILLOVER_LOAD_THRESHOLD
+    )
     pressure_candidates = [
         acct
         for acct in snapshot
@@ -1280,6 +1295,7 @@ def _route_account_if_enabled(
             acct,
             incoming_bid,
             allow_pressure=True,
+            allow_target_spillover=allow_target_spillover,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -1294,6 +1310,7 @@ def _route_account_if_enabled(
                 acct,
                 incoming_bid,
                 allow_pressure=True,
+                allow_target_spillover=allow_target_spillover,
                 model=model,
                 max_tokens=max_tokens,
                 now=now,
@@ -1305,6 +1322,7 @@ def _route_account_if_enabled(
                 acct,
                 incoming_bid,
                 allow_pressure=True,
+                allow_target_spillover=allow_target_spillover,
                 model=model,
                 max_tokens=max_tokens,
                 now=now,
@@ -1314,6 +1332,7 @@ def _route_account_if_enabled(
             strict_best,
             incoming_bid,
             allow_pressure=True,
+            allow_target_spillover=allow_target_spillover,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -1322,6 +1341,7 @@ def _route_account_if_enabled(
             pressure_best,
             incoming_bid,
             allow_pressure=True,
+            allow_target_spillover=allow_target_spillover,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -1338,6 +1358,7 @@ def _route_account_if_enabled(
             acct,
             incoming_bid,
             allow_pressure=True,
+            allow_target_spillover=allow_target_spillover,
             model=model,
             max_tokens=max_tokens,
             now=now,
