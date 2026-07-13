@@ -208,6 +208,13 @@ QUEUE_MAX_WAIT_S = max(0.0, float(os.environ.get("THROTTLE_QUEUE_MAX_WAIT_S", "3
 # own exponential backoff on repeated failures.
 QUEUE_TIMEOUT_RETRY_AFTER_S = 5
 
+# Optional JSON file for per-bearer Retry-After windows. Live hotfix deploys
+# restart the user service while account windows are still cooling down; without
+# a persisted floor, the new process forgets the window and rediscovers it with
+# one fresh 429. Empty default keeps tests and stateless containers side-effect
+# free. Nix/host units should set this to an XDG state path.
+RETRY_AFTER_STATE_FILE = os.environ.get("THROTTLE_RETRY_AFTER_STATE_FILE", "").strip()
+
 # Z.ai Coding Plan sends quota-window resets in the JSON error body, not a
 # Retry-After header. Add a small jitter so a fleet sharing one key does not all
 # resume on the same reset second.
