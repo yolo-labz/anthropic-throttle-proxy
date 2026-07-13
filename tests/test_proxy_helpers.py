@@ -1463,6 +1463,15 @@ def _route_budget_for_accounts(
     )
 
 
+def _target_crossing_accounts() -> list[dict[str, object]]:
+    reset_5h = _BUDGET_NOW + 30 * 60
+    reset_7d = _BUDGET_NOW + 6 * _DAY
+    return [
+        _budget_acct("aaa", "TOKA", "A", util_5h=0.88, reset_5h=reset_5h, reset_7d=reset_7d),
+        _budget_acct("bbb", "TOKB", "B", util_5h=0.70, reset_5h=reset_5h, reset_7d=reset_7d),
+    ]
+
+
 def test_budget_paced_same_reset_prefers_lower_util(isolated_account_routing, monkeypatch) -> None:
     reset_5h = _BUDGET_NOW + _HOUR
     reset_7d = _BUDGET_NOW + 3 * _DAY
@@ -1543,21 +1552,39 @@ def test_budget_paced_target_crossing_candidate_excluded(
     # already at the cliff. With a 0.9 target, routing must not spend an Opus
     # turn that projects the account past the target and learns via 429.
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
-    reset_5h = _BUDGET_NOW + 30 * 60
-    reset_7d = _BUDGET_NOW + 6 * _DAY
-    a = _budget_acct("aaa", "TOKA", "A", util_5h=0.88, reset_5h=reset_5h, reset_7d=reset_7d)
-    b = _budget_acct("bbb", "TOKB", "B", util_5h=0.70, reset_5h=reset_5h, reset_7d=reset_7d)
 
     bid, label, headers = _route_budget_for_accounts(
         isolated_account_routing,
         monkeypatch,
-        [a, b],
+        _target_crossing_accounts(),
         model="claude-opus-4-8",
         max_tokens=64000,
     )
 
     assert (bid, label) == ("bbb", "B")
     assert headers["Authorization"] == "Bearer TOKB"
+
+
+def test_budget_paced_queue_spillover_can_cross_soft_target(
+    isolated_account_routing, monkeypatch
+) -> None:
+    # 12/07 live incident: cap=1 stopped upstream 429s, but the only strict
+    # below-target account accumulated a deep local queue while warning accounts
+    # sat idle. Once strict capacity is queued, spill to a near-target account
+    # with a surcharge instead of surfacing queue-wait-timeout 503s.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
+    config.bearer_limiters["bbb"] = _RoutingLimiter(queued=2)
+
+    bid, label, headers = _route_budget_for_accounts(
+        isolated_account_routing,
+        monkeypatch,
+        _target_crossing_accounts(),
+        model="claude-opus-4-8",
+        max_tokens=64000,
+    )
+
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
 
 
 def test_budget_paced_overpace_debt_steers_below_target(
