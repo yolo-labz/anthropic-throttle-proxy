@@ -19,7 +19,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from anthropic_throttle_proxy import config, limiter, pacing, proxy
+from anthropic_throttle_proxy import accounts, config, limiter, pacing, proxy
 from anthropic_throttle_proxy.ui.routes import _compute_status, attach_ui
 
 # A minimal but realistic streamed Messages response: message_start carries the
@@ -156,6 +156,20 @@ async def _post_and_settle(
         await asyncio.sleep(0)
     await asyncio.sleep(0.02)
     return status, payload
+
+
+async def _wait_for_limiter_queued(lim, expected: int) -> None:
+    for _ in range(50):
+        if lim.snapshot()["queued_total"] == expected:
+            return
+        await asyncio.sleep(0.01)
+
+
+def _force_single_slot_fair_queue(monkeypatch) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
 
 
 def _reset_proxy_state() -> None:
@@ -477,13 +491,71 @@ async def test_active_long_retry_after_window_fails_fast_before_queue(
     assert lim.snapshot()["queued_total"] == 0
 
 
+async def test_retry_after_window_does_not_block_oauth_probe(
+    client: TestClient, monkeypatch
+) -> None:
+    _force_single_slot_fair_queue(monkeypatch)
+    bid = proxy._bearer_id({"authorization": "Bearer oauth-probe-retry"})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    lim.note_retry_after(3600)
+
+    resp = await client.get(
+        "/api/oauth/profile",
+        headers={"Authorization": "Bearer oauth-probe-retry"},
+    )
+    body = await resp.text()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await asyncio.sleep(0.02)
+
+    assert resp.status == 200
+    assert body == "ok"
+    assert config.state["queued"] == 0
+    assert config.state["inflight"] == 0
+    assert lim.snapshot()["queued_total"] == 0
+
+
+async def test_retry_after_before_queue_reroutes_to_fresh_account(
+    client: TestClient, monkeypatch
+) -> None:
+    _force_single_slot_fair_queue(monkeypatch)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/fake/a.json,B:/fake/b.json")
+
+    raw_a = "sk-ant-oat01-PRE-SLOT-A"
+    raw_b = "sk-ant-oat01-PRE-SLOT-B"
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    account_a = {"label": "A", "token": raw_a, "bearer_id": bid_a}
+    account_b = {"label": "B", "token": raw_b, "bearer_id": bid_b}
+    route_calls = 0
+
+    def routing_snapshot(_now=None):
+        nonlocal route_calls
+        route_calls += 1
+        return [account_a] if route_calls == 1 else [account_a, account_b]
+
+    monkeypatch.setattr(accounts, "routing_snapshot", routing_snapshot)
+    lim_a = await proxy._get_bearer_limiter(bid_a, "fair", config.MAX_CONCURRENT)
+    lim_a.note_retry_after(3600)
+
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={"Authorization": f"Bearer {raw_a}"},
+    )
+
+    assert status == 200
+    assert b"upstream retry-after window is active" not in streamed
+    assert route_calls >= 2
+    assert config.bearer_state[bid_a]["served"] == 0
+    assert config.bearer_state[bid_b]["served"] == 1
+
+
 async def test_active_long_retry_after_window_fails_fast_after_queue(
     client: TestClient, monkeypatch
 ) -> None:
-    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
-    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
-    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
-    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    _force_single_slot_fair_queue(monkeypatch)
     bid = proxy._bearer_id({"authorization": "Bearer postslot-long-retry"})
     lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
 
@@ -495,10 +567,7 @@ async def test_active_long_retry_after_window_fails_fast_after_queue(
                 headers={"Authorization": "Bearer postslot-long-retry"},
             )
         )
-        for _ in range(50):
-            if lim.snapshot()["queued_total"] == 1:
-                break
-            await asyncio.sleep(0.01)
+        await _wait_for_limiter_queued(lim, 1)
         assert lim.snapshot()["queued_total"] == 1
         lim.note_retry_after(3600)
 
@@ -511,6 +580,53 @@ async def test_active_long_retry_after_window_fails_fast_after_queue(
     snap = lim.snapshot()
     assert snap["queued_total"] == 0
     assert snap["inflight"] == 0
+
+
+async def test_retry_after_after_queue_reroutes_to_fresh_account(
+    client: TestClient, monkeypatch
+) -> None:
+    _force_single_slot_fair_queue(monkeypatch)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/fake/a.json,B:/fake/b.json")
+
+    raw_a = "sk-ant-oat01-POST-SLOT-A"
+    raw_b = "sk-ant-oat01-POST-SLOT-B"
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    account_a = {"label": "A", "token": raw_a, "bearer_id": bid_a}
+    account_b = {"label": "B", "token": raw_b, "bearer_id": bid_b}
+    route_b = False
+
+    def routing_snapshot(_now=None):
+        return [account_a, account_b] if route_b else [account_a]
+
+    monkeypatch.setattr(accounts, "routing_snapshot", routing_snapshot)
+    bid = proxy._bearer_id({"authorization": f"Bearer {raw_a}"})
+    lim_a = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+
+    async with lim_a.slot("holder"):
+        task = asyncio.create_task(
+            _post_and_settle(
+                client,
+                data=b'{"model":"claude-sonnet-4-6"}',
+                headers={"Authorization": f"Bearer {raw_a}"},
+            )
+        )
+        await _wait_for_limiter_queued(lim_a, 1)
+        assert lim_a.snapshot()["queued_total"] == 1
+        route_b = True
+        lim_a.note_retry_after(3600)
+
+    status, streamed = await asyncio.wait_for(task, timeout=1.0)
+
+    assert status == 200
+    assert b"holding the local gateway request" not in streamed
+    assert config.state["queued"] == 0
+    assert config.state["inflight"] == 0
+    assert config.bearer_state[bid_a]["served"] == 0
+    assert config.bearer_state[bid_b]["served"] == 1
+    assert lim_a.snapshot()["queued_total"] == 0
+    assert lim_a.snapshot()["inflight"] == 0
 
 
 async def test_queue_wait_timeout_fails_fast_with_clean_503(
