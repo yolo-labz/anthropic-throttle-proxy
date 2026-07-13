@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import json
+import os
 import time
+from pathlib import Path
 
 from . import config
 from .config import log
@@ -18,6 +21,7 @@ from .metrics import M_AIMD_MAX
 
 # Late-bound in main() (needs the running loop) — guards the registry below.
 bearer_limiter_lock: asyncio.Lock | None = None
+_retry_after_state: dict[str, float] | None = None
 
 
 def set_lock(lock: asyncio.Lock) -> None:
@@ -29,6 +33,71 @@ def set_lock(lock: asyncio.Lock) -> None:
 def _initial_live_cap(hard_max: int) -> int:
     """Initial AIMD live cap for a new bearer, bounded by the hard ceiling."""
     return min(hard_max, max(config.AIMD_MIN, config.AIMD_INITIAL_CONCURRENT))
+
+
+def _retry_after_state_path() -> Path | None:
+    raw = config.RETRY_AFTER_STATE_FILE
+    return Path(os.path.expanduser(raw)) if raw else None
+
+
+def _load_retry_after_state() -> dict[str, float]:
+    global _retry_after_state
+    if _retry_after_state is not None:
+        return _retry_after_state
+    path = _retry_after_state_path()
+    if path is None:
+        _retry_after_state = {}
+        return _retry_after_state
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _retry_after_state = {}
+        return _retry_after_state
+    if not isinstance(raw, dict):
+        _retry_after_state = {}
+        return _retry_after_state
+    now = time.time()
+    _retry_after_state = {
+        str(bid): float(until)
+        for bid, until in raw.items()
+        if isinstance(until, (int, float)) and float(until) > now
+    }
+    return _retry_after_state
+
+
+def _persist_retry_after_state() -> None:
+    path = _retry_after_state_path()
+    if path is None:
+        return
+    state = _load_retry_after_state()
+    now = time.time()
+    live = {bid: until for bid, until in state.items() if until > now}
+    _retry_after_state.clear()
+    _retry_after_state.update(live)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(json.dumps(live, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        log(f"retry-after-state-write-error path={path} err={exc!r}")
+
+
+def _persist_retry_after_until(bid: str, until: float) -> None:
+    if not bid or _retry_after_state_path() is None:
+        return
+    state = _load_retry_after_state()
+    state[bid] = until
+    _persist_retry_after_state()
+
+
+def _restore_retry_after(lim: FairBearerLimiter, bid: str) -> None:
+    until = _load_retry_after_state().get(bid, 0.0)
+    if until <= time.time():
+        return
+    lim._retry_after_until = until
+    lim._last_throttle_at = max(lim._last_throttle_at, time.time())
+    log(f"bearer-retry-after-restore bid={bid} remaining={int(until - time.time())}s")
 
 
 async def _retune_limiter_hard_max(
@@ -102,11 +171,12 @@ class FairBearerLimiter:
     free slot, not after A's entire backlog.
     """
 
-    def __init__(self, max_concurrent: int, queue_mode: str) -> None:
+    def __init__(self, max_concurrent: int, queue_mode: str, bearer_id: str = "") -> None:
         # PR #575/PR #40: `hard_max` is the operator-set upper bound (e.g. 32).
         # `max_concurrent` is the LIVE ceiling that starts conservatively, grows
         # after clean traffic, and shrinks on upstream 429/503.
         self.hard_max = max_concurrent
+        self.bearer_id = bearer_id
         self.max_concurrent = _initial_live_cap(max_concurrent)
         self.queue_mode = queue_mode
         # PR #580: split queue from observation. `observe` mode bypasses
@@ -308,6 +378,7 @@ class FairBearerLimiter:
         until = time.time() + seconds
         if until > self._retry_after_until:
             self._retry_after_until = until
+            _persist_retry_after_until(self.bearer_id, until)
         self._last_throttle_at = max(self._last_throttle_at, time.time())
         return self._retry_after_until
 
@@ -614,7 +685,8 @@ async def _get_bearer_limiter(
     async with bearer_limiter_lock:
         lim = config.bearer_limiters.get(bid)
         if lim is None:
-            lim = FairBearerLimiter(hard_max, mode)
+            lim = FairBearerLimiter(hard_max, mode, bearer_id=bid)
+            _restore_retry_after(lim, bid)
             config.bearer_limiters[bid] = lim
             config.bearer_state[bid] = {
                 "inflight": 0,

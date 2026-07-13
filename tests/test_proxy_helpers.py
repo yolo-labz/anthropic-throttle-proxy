@@ -27,7 +27,7 @@ from typing import Any, cast
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
-from anthropic_throttle_proxy import accounts, config, proxy
+from anthropic_throttle_proxy import accounts, config, limiter, proxy
 from anthropic_throttle_proxy.limiter import FairBearerLimiter
 
 # ---------------------------------------------------------------------------
@@ -1295,6 +1295,27 @@ async def test_spawn_identity_verification_pop_race(monkeypatch) -> None:
     assert key not in proxy._identity_verify_tasks
 
 
+async def test_retry_after_state_restored_for_new_limiter(tmp_path, monkeypatch) -> None:
+    # Hotfix service restarts must not forget a known upstream Retry-After and
+    # rediscover the same window with one fresh 429 on the first request.
+    state_file = tmp_path / "retry-after.json"
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+
+    lim = await proxy._get_bearer_limiter("bid1", "fair", 3)
+    lim.note_retry_after(60)
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+
+    restored = await proxy._get_bearer_limiter("bid1", "fair", 3)
+
+    assert restored.retry_after_remaining() > 50
+
+
 def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
     # Codex MAJOR: the gauge must be settable from metrics() too, not only
     # health() — verify the shared publisher tracks UTILIZATION_TARGET.
@@ -1507,6 +1528,51 @@ def test_budget_paced_weekly_binding_overrides_5h_headroom(
         reset_5h=_BUDGET_NOW + 5 * 60,
         util_7d=0.20,
         reset_7d=_BUDGET_NOW + 6 * _DAY,
+    )
+
+    bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])
+
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
+
+
+def test_budget_paced_target_crossing_candidate_excluded(
+    isolated_account_routing, monkeypatch
+) -> None:
+    # The live 12/07 failure class: a warning bearer was still "allowed" but
+    # already at the cliff. With a 0.9 target, routing must not spend an Opus
+    # turn that projects the account past the target and learns via 429.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
+    reset_5h = _BUDGET_NOW + 30 * 60
+    reset_7d = _BUDGET_NOW + 6 * _DAY
+    a = _budget_acct("aaa", "TOKA", "A", util_5h=0.88, reset_5h=reset_5h, reset_7d=reset_7d)
+    b = _budget_acct("bbb", "TOKB", "B", util_5h=0.70, reset_5h=reset_5h, reset_7d=reset_7d)
+
+    bid, label, headers = _route_budget_for_accounts(
+        isolated_account_routing,
+        monkeypatch,
+        [a, b],
+        model="claude-opus-4-8",
+        max_tokens=64000,
+    )
+
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
+
+
+def test_budget_paced_overpace_debt_steers_below_target(
+    isolated_account_routing, monkeypatch
+) -> None:
+    # Both accounts are below the absolute target. A is ahead of the sustainable
+    # slope for its 5h reset, while B has enough elapsed-window slack. Pick B
+    # before A needs a reactive shrink/429.
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
+    reset_7d = _BUDGET_NOW + 6 * _DAY
+    a = _budget_acct(
+        "aaa", "TOKA", "A", util_5h=0.70, reset_5h=_BUDGET_NOW + 4 * _HOUR, reset_7d=reset_7d
+    )
+    b = _budget_acct(
+        "bbb", "TOKB", "B", util_5h=0.82, reset_5h=_BUDGET_NOW + 30 * 60, reset_7d=reset_7d
     )
 
     bid, label, headers = _route_budget_for_accounts(isolated_account_routing, monkeypatch, [a, b])

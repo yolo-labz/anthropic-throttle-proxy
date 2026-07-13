@@ -289,6 +289,12 @@ _PACE_ELAPSED_FLOOR = 0.02
 _PACING_SPAN = 9.0
 _DEFAULT_REQUEST_UTIL_COST = 0.005
 _TYPICAL_MAX_TOKENS = 4096.0
+# Slope debt is a routing penalty for accounts burning faster than their
+# reset-window pace. It is intentionally below one queued request (100.0), so
+# a badly queued safe account can still lose to a merely-overpace account, but
+# it is strong enough that the selector does not keep spending a near-empty
+# window just because its current queue is short.
+_OVERPACE_SURCHARGE = 60.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
 # under light inflight-only load, but strict-account queueing can spend it.
 _WARNING_BACKPRESSURE_SURCHARGE = 80.0
@@ -459,6 +465,13 @@ def _publish_unified_gauges(bid: str, unified: Mapping[str, object]) -> None:
         M_UTIL_7D.labels(bearer=bid).set(unified["util_7d"])
 
 
+def _budget_pacing_target() -> float:
+    """Utilization ceiling used by reset-aware routing and local budget pauses."""
+    if UTILIZATION_TARGET > 0:
+        return min(max(UTILIZATION_TARGET, 0.0), 1.0)
+    return 1.0
+
+
 def _maybe_pause_rejected(
     bid: str,
     limiter: FairBearerLimiter,
@@ -482,6 +495,47 @@ def _maybe_pause_rejected(
     if pause > 0:
         limiter.note_retry_after(pause)
         log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
+    return True
+
+
+def _binding_reset(unified: Mapping[str, object]) -> int | None:
+    window = _binding_window(unified)
+    reset = unified.get(f"reset_{window}") if window else None
+    if reset is None:
+        reset = unified.get("reset")
+    return int(reset) if isinstance(reset, int) else None
+
+
+def _maybe_pause_at_target(
+    bid: str,
+    limiter: FairBearerLimiter,
+    unified: Mapping[str, object],
+) -> bool:
+    """Pause future dispatch when a binding window reaches the pacing target.
+
+    This is the predictive counterpart to ``_maybe_pause_rejected``: once the
+    headers say a bearer has already spent the configured target fraction, keep
+    local admission off that bearer until reset instead of waiting for the next
+    request to discover the budget wall with a 429.
+    """
+    target = _budget_pacing_target()
+    if target >= 1.0:
+        return False
+    binding = _binding_utilization(unified)
+    if binding is None or binding < target:
+        return False
+    reset = _binding_reset(unified)
+    if reset is None:
+        return False
+    pause = reset - time.time()
+    if pause <= 0:
+        return False
+    limiter.note_retry_after(pause)
+    window = _binding_window(unified) or "?"
+    log(
+        f"budget-target-pause bid={bid} window={window} "
+        f"util={binding:.2f}>={target:.2f} pause={int(pause)}s until reset"
+    )
     return True
 
 
@@ -553,6 +607,8 @@ async def _apply_unified(
         _note_brake_disabled_hot(bid, bstate, unified)
         return
     _maybe_warn_unified(bid, bstate, unified)
+    if _maybe_pause_at_target(bid, limiter, unified):
+        return
     await _maybe_glide(bid, bstate, limiter, unified)
 
 
@@ -906,6 +962,13 @@ def _append_window(
         windows.append((float(util), reset_epoch, length))
 
 
+def _window_elapsed_fraction(reset: float | None, length: float, now: float) -> float:
+    if reset is None or reset <= now or length <= 0:
+        return 1.0
+    elapsed_frac = (length - (reset - now)) / length
+    return min(max(elapsed_frac, _PACE_ELAPSED_FLOOR), 1.0)
+
+
 def _expected_request_util_cost(model: str, max_tokens: int | None = None) -> float:
     """Projected utilization one request adds — pacing's "after this request" view.
 
@@ -946,14 +1009,41 @@ def _budget_pacing_pressure(
     worst = 0.0
     for util, reset, length in windows:
         projected = min(util + expected_cost, 1.0)
-        if reset is None or reset <= now or length <= 0:
-            pace = projected  # no usable deadline → price on projected util alone
-        else:
-            elapsed_frac = (length - (reset - now)) / length
-            elapsed_frac = min(max(elapsed_frac, _PACE_ELAPSED_FLOOR), 1.0)
-            pace = projected / elapsed_frac
+        elapsed_frac = _window_elapsed_fraction(reset, length, now)
+        pace = projected / elapsed_frac
         worst = max(worst, pace)
     return _PACING_SPAN * worst / (worst + 1.0)
+
+
+def _budget_pacing_overpace(
+    windows: list[tuple[float, float | None, float]], expected_cost: float, now: float
+) -> float:
+    """Return the worst target-slope debt across observed reset windows.
+
+    A value of 0 means projected utilization is at or below the sustainable
+    line for every window. Positive values mean this candidate is spending
+    faster than the target fraction can sustain until reset.
+    """
+    target = _budget_pacing_target()
+    if target <= 0 or target >= 1.0:
+        return 0.0
+    worst = 0.0
+    for util, reset, length in windows:
+        projected = min(util + expected_cost, 1.0)
+        elapsed_frac = _window_elapsed_fraction(reset, length, now)
+        sustainable = target * elapsed_frac
+        debt = max(0.0, projected - sustainable)
+        worst = max(worst, debt / max(target, 0.01))
+    return worst
+
+
+def _budget_pacing_target_crossed(
+    windows: list[tuple[float, float | None, float]], expected_cost: float
+) -> bool:
+    target = _budget_pacing_target()
+    if target <= 0 or target >= 1.0:
+        return False
+    return any(min(util + expected_cost, 1.0) >= target for util, _, _ in windows)
 
 
 def _account_routing_candidate_score(
@@ -1058,10 +1148,12 @@ def _account_routing_candidate_score(
     load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
-        pressure = _budget_pacing_pressure(
-            windows, _expected_request_util_cost(model, max_tokens), now
-        )
-        return load + warning_surcharge + pressure + stickiness
+        expected_cost = _expected_request_util_cost(model, max_tokens)
+        if _budget_pacing_target_crossed(windows, expected_cost):
+            return math.inf
+        pressure = _budget_pacing_pressure(windows, expected_cost, now)
+        overpace = _budget_pacing_overpace(windows, expected_cost, now)
+        return load + warning_surcharge + overpace * _OVERPACE_SURCHARGE + pressure + stickiness
     return load + warning_surcharge + util * 5.0 + stickiness
 
 

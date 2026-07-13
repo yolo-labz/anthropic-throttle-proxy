@@ -1563,3 +1563,46 @@ Validation in clean worktree `097-warning-surcharge`:
 - `uv run pytest -q` -> `408 passed`, 2 existing aiohttp warnings
 
 Durable PR: `yolo-labz/anthropic-throttle-proxy#97`.
+
+## 12/07/2026 - reset-aware budget pacing + restart-stable cooldowns
+
+After PR #97, live traffic still proved one gap: the router reacted to
+warning/queue pressure, but it could still spend an account that was close to
+its 5h reset cliff. At 22:19, bearer `765d8fa5` hit a real upstream 429 with
+`Retry-After` to the 22:50 reset while 5h utilization was `0.99`. A live
+service restart then exposed a second gap: Retry-After state was process-local,
+so a restarted proxy forgot that cooling window and reprobed it once.
+
+PR #98 changes the budget-paced allocator from utilization-only tie-breaking to
+reset-aware admission:
+
+- a request projected past `THROTTLE_UTILIZATION_TARGET` is not selectable;
+- below the target, accounts burning ahead of their reset-window slope get an
+  overpace debt surcharge;
+- when unified headers show the binding window has reached the target, future
+  dispatch on that bearer is paused until reset instead of waiting for a 429;
+- optional `THROTTLE_RETRY_AFTER_STATE_FILE` persists bearer Retry-After floors
+  across service restarts.
+
+Live hotfix deployment:
+
+- venv: `~/.local/state/anthropic-throttle-proxy/live-098-reset-aware-pacing-20260712-224355`
+- service PID: `2422027`
+- state file:
+  `~/.local/state/anthropic-throttle-proxy/retry-after-state.json`
+- API key: still disabled/off; no credits bought; no `/usage-credits`
+- restore proof: log line
+  `bearer-retry-after-restore bid=765d8fa5 remaining=299s`
+
+Validation:
+
+- `uv run ruff format --check src tests`
+- `uv run ruff check src tests`
+- focused routing/unified/Retry-After tests -> `16 passed`
+- full suite -> `411 passed`, 2 existing aiohttp `NotAppKeyWarning` warnings
+
+Desktop account inventory at deploy time: exactly three active credential
+stores were present and integrated via `THROTTLE_ACCOUNT_CRED_PATHS`:
+`A=~/.claude/.credentials.json`, `B=~/.claude-b/.credentials.json`,
+`C=~/.claude-c/.credentials.json`. No additional local `.credentials.json`
+stores were found on desktop.
