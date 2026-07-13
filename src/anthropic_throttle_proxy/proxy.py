@@ -898,9 +898,7 @@ def _api_key_routing_enabled() -> bool:
 
 
 def _bearer_retry_after_remaining(bid: str) -> float:
-    retry_after_remaining = getattr(
-        config.bearer_limiters.get(bid), "retry_after_remaining", None
-    )
+    retry_after_remaining = getattr(config.bearer_limiters.get(bid), "retry_after_remaining", None)
     if callable(retry_after_remaining):
         return retry_after_remaining()
     return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
@@ -2669,9 +2667,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
             if rerouted is not None:
                 bid, headers = rerouted
                 continue
-            if (fast_fail := _retry_after_fast_fail_response(
-                bid, path, retry_after_remaining, source="pre-dispatch"
-            )) is not None:
+            if (
+                fast_fail := _retry_after_fast_fail_response(
+                    bid, path, retry_after_remaining, source="pre-dispatch"
+                )
+            ) is not None:
                 return fast_fail
         bstate = bearer_state[bid]
         cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
