@@ -681,6 +681,25 @@ def test_account_routing_skips_retry_after_candidate(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
 
+def test_account_routing_skips_persisted_retry_after_candidate(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    retry_state = tmp_path / "retry-after.json"
+    retry_state.write_text(json.dumps({bid_b: time.time() + 3600}), encoding="utf-8")
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(retry_state))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_b, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
 @pytest.mark.parametrize(
     "unified",
     [

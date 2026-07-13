@@ -897,6 +897,13 @@ def _api_key_routing_enabled() -> bool:
     return config.API_KEY_ROUTING_MODE in {"overflow", "prefer"} and bool(config.API_KEY_FILE)
 
 
+def _bearer_retry_after_remaining(bid: str) -> float:
+    retry_after_remaining = getattr(config.bearer_limiters.get(bid), "retry_after_remaining", None)
+    if callable(retry_after_remaining):
+        return retry_after_remaining()
+    return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
+
+
 def _api_key_candidate() -> dict[str, object] | None:
     """Return the configured API-key candidate, or None when disabled/unusable.
 
@@ -921,8 +928,7 @@ def _api_key_candidate() -> dict[str, object] | None:
             return None
         _api_key_cache = (st.st_mtime_ns, st.st_size, _api_key_bid(token), token)
     bid, token = _api_key_cache[2], _api_key_cache[3]
-    lim = config.bearer_limiters.get(bid)
-    if lim is not None and getattr(lim, "retry_after_remaining", lambda: 0.0)() > 0:
+    if _bearer_retry_after_remaining(bid) > 0:
         return None
     return {
         "label": config.API_KEY_LABEL,
@@ -1076,9 +1082,9 @@ def _account_routing_candidate_score(
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
-    lim = config.bearer_limiters.get(bid)
-    if lim is not None and getattr(lim, "retry_after_remaining", lambda: 0.0)() > 0:
+    if _bearer_retry_after_remaining(bid) > 0:
         return math.inf
+    lim = config.bearer_limiters.get(bid)
     snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
     queued = float(snap.get("queued_total") or 0)
     priority_queued = float(snap.get("priority_queued") or 0)
@@ -1365,6 +1371,72 @@ def _route_account_if_enabled(
         ),
     )
     return _route_to_selected_auth(headers, incoming_bid, selected)
+
+
+def _retry_after_reroute_headers(
+    base_headers: Mapping[str, str],
+    incoming_bid: str,
+    current_bid: str,
+    seen_bids: set[str],
+    method: str,
+    path: str,
+    model: str,
+    max_tokens: int | None,
+) -> tuple[str, str | None, dict[str, str]] | None:
+    """Re-run account routing after a selected bearer has Retry-After state."""
+    headers = dict(base_headers)
+    rerouted_bid, label = _route_account_if_enabled(
+        headers,
+        incoming_bid,
+        method=method,
+        path=path,
+        model=model,
+        max_tokens=max_tokens,
+    )
+    if rerouted_bid == current_bid or rerouted_bid in seen_bids:
+        return None
+    return rerouted_bid, label, headers
+
+
+def _try_retry_after_reroute(
+    base_headers: Mapping[str, str],
+    incoming_bid: str,
+    current_bid: str,
+    seen_bids: set[str],
+    *,
+    method: str,
+    path: str,
+    model: str,
+    max_tokens: int | None,
+    cid: str,
+    retry_after_remaining: float,
+    source: str,
+) -> tuple[str, dict[str, str]] | None:
+    rerouted = _retry_after_reroute_headers(
+        base_headers,
+        incoming_bid,
+        current_bid,
+        seen_bids,
+        method,
+        path,
+        model,
+        max_tokens,
+    )
+    if rerouted is None:
+        return None
+    next_bid, next_label, next_headers = rerouted
+    log(
+        f"{source}-reroute from={current_bid} to={next_bid} "
+        f"label={next_label or '?'} cid={cid} path=/{path} "
+        f"retry_after={math.ceil(retry_after_remaining)}"
+    )
+    seen_bids.add(next_bid)
+    return next_bid, next_headers
+
+
+def _retry_after_blocks_path(path: str) -> bool:
+    """Retry-After admission pauses apply to generation traffic, not probes."""
+    return "v1/messages" in path
 
 
 def _attempt_for_request(
@@ -2550,113 +2622,174 @@ async def handler(request: web.Request) -> web.StreamResponse:
     if body is not None and request.method == "POST":
         body = _apply_body_shrink(request, body, path, model_label, headers)
 
+    incoming_bid = bid
+    route_base_headers = dict(headers)
     bid, _account_label = _route_account_if_enabled(
         headers,
-        bid,
+        incoming_bid,
         method=request.method,
         path=path,
         model=model,
         max_tokens=req_max_tokens,
     )
-    queue_mode, hard_max = _effective_admission(bid)
-    # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
-    # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
-    # dispatched round-robin per client connection.
-    limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
-    if (
-        fast_fail := _retry_after_fast_fail_response(
-            bid, path, limiter.retry_after_remaining(), source="pre-dispatch"
-        )
-    ) is not None:
-        return fast_fail
-    bstate = bearer_state[bid]
-    cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
-    counters = _Counters(bid, cid, bstate, cstate)
-
     max_wait = _effective_queue_max_wait(request.headers)
     if max_wait is not None and max_wait <= 0.0:
         # The upstream tier already spent the whole wait budget; don't park.
+        queue_mode, hard_max = _effective_admission(bid)
+        limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
         return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait)
 
-    if limiter.queue_enabled:
-        counters.enqueue(request, path)
-    else:
-        log(
-            f"queue-bypass method={request.method} path=/{path} bid={bid} "
-            f"cid={cid} inflight={state['inflight']} queue_mode={config.QUEUE_MODE}"
+    wait_deadline = None if max_wait is None else handler_start + max_wait
+    seen_retry_after_bids = {bid}
+    while True:
+        queue_mode, hard_max = _effective_admission(bid)
+        # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
+        # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
+        # dispatched round-robin per client connection.
+        limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+        retry_after_remaining = (
+            limiter.retry_after_remaining() if _retry_after_blocks_path(path) else 0.0
         )
+        if retry_after_remaining > 0:
+            rerouted = _try_retry_after_reroute(
+                route_base_headers,
+                incoming_bid,
+                bid,
+                seen_retry_after_bids,
+                method=request.method,
+                path=path,
+                model=model,
+                max_tokens=req_max_tokens,
+                cid=cid,
+                retry_after_remaining=retry_after_remaining,
+                source="pre-dispatch",
+            )
+            if rerouted is not None:
+                bid, headers = rerouted
+                continue
+            if (
+                fast_fail := _retry_after_fast_fail_response(
+                    bid, path, retry_after_remaining, source="pre-dispatch"
+                )
+            ) is not None:
+                return fast_fail
+        bstate = bearer_state[bid]
+        cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
+        counters = _Counters(bid, cid, bstate, cstate)
 
-    try:
-        async with limiter.slot(cid, priority=is_priority, max_wait=max_wait) as held:
-            counters.dequeue()
-            counters.enter_inflight()
-            t0 = time.time()
-            attempt = _attempt_for_request(request, bid, cid, via, model_label)
-            attempt.started_at = t0
-            try:
-                if _request_disconnected(request):
-                    return _record_closed_before_dispatch(path, "post-queue", attempt)
-                # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
-                # retune can demote) — log that, not the requested one.
-                _log_request_start(
-                    request, path, bid, cid, via, model_label, req_max_tokens, held.priority
-                )
-                # Honor any outstanding upstream Retry-After for this bearer before
-                # we dispatch — don't spin a request against a known-closed window.
-                if (
-                    fast_fail := _retry_after_fast_fail_response(
-                        bid, path, limiter.retry_after_remaining(), source="post-slot"
+        slot_max_wait = None
+        if wait_deadline is not None:
+            slot_max_wait = wait_deadline - time.time()
+            if slot_max_wait <= 0.0:
+                return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
+
+        if limiter.queue_enabled:
+            counters.enqueue(request, path)
+        else:
+            log(
+                f"queue-bypass method={request.method} path=/{path} bid={bid} "
+                f"cid={cid} inflight={state['inflight']} queue_mode={config.QUEUE_MODE}"
+            )
+
+        try:
+            async with limiter.slot(cid, priority=is_priority, max_wait=slot_max_wait) as held:
+                counters.dequeue()
+                counters.enter_inflight()
+                t0 = time.time()
+                attempt = _attempt_for_request(request, bid, cid, via, model_label)
+                attempt.started_at = t0
+                rerouted = None
+                try:
+                    if _request_disconnected(request):
+                        return _record_closed_before_dispatch(path, "post-queue", attempt)
+                    # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
+                    # retune can demote) — log that, not the requested one.
+                    _log_request_start(
+                        request, path, bid, cid, via, model_label, req_max_tokens, held.priority
                     )
-                ) is not None:
-                    attempt.final_status = fast_fail.status
-                    return fast_fail
-                await limiter.wait_retry_after()
-                if _request_disconnected(request):
-                    return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
-                return await _forward_with_retry(
-                    request,
-                    headers,
-                    body,
-                    path,
-                    via,
-                    url,
-                    client_timeout,
-                    attempt,
-                    bid,
-                    limiter,
-                    # Deadline (not a snapshot): every central attempt re-stamps
-                    # the REMAINING budget, so pushback sleeps between retries
-                    # keep eating it instead of re-granting central a full
-                    # window (Codex round-2 BLOCKER on PR #83).
-                    wait_deadline=None if max_wait is None else handler_start + max_wait,
-                )
-            finally:
-                await _finalize(
-                    counters,
-                    bid,
-                    limiter,
-                    bstate,
-                    attempt,
-                    t0,
-                    model,
-                    model_label,
-                    request,
-                    path,
-                )
-    except QueueWaitTimeout:
-        # No slot within the wait bound: answer 503 while the client's
-        # transport is still open (the limiter already rolled its queue entry
-        # back via acquire's cancellation path; no release is owed).
-        counters.dequeue()
-        return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait or 0.0)
-    finally:
-        # PR #575 B1 fix: if we got cancelled between incrementing `queued`
-        # and the inner `async with limiter.slot()` body decrementing it,
-        # roll back the queue counter so it doesn't leak forever and starve
-        # the /__throttle/health gauge.
-        if counters.queued_incremented:
+                    # A bearer can cross its 5h/7d target while this request is
+                    # parked in its local fair queue. Re-run account routing from
+                    # the original auth headers before surfacing a stale 429.
+                    retry_after_remaining = (
+                        limiter.retry_after_remaining() if _retry_after_blocks_path(path) else 0.0
+                    )
+                    if retry_after_remaining > 0:
+                        rerouted = _try_retry_after_reroute(
+                            route_base_headers,
+                            incoming_bid,
+                            bid,
+                            seen_retry_after_bids,
+                            method=request.method,
+                            path=path,
+                            model=model,
+                            max_tokens=req_max_tokens,
+                            cid=cid,
+                            retry_after_remaining=retry_after_remaining,
+                            source="post-slot",
+                        )
+                        if rerouted is not None:
+                            counters.exit_inflight(0)
+                            bid, headers = rerouted
+                            continue
+                        # Honor any outstanding upstream Retry-After for this bearer
+                        # before we dispatch — don't spin a request against a
+                        # known-closed window.
+                        if (
+                            fast_fail := _retry_after_fast_fail_response(
+                                bid, path, retry_after_remaining, source="post-slot"
+                            )
+                        ) is not None:
+                            attempt.final_status = fast_fail.status
+                            return fast_fail
+                    if _retry_after_blocks_path(path):
+                        await limiter.wait_retry_after()
+                    if _request_disconnected(request):
+                        return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
+                    return await _forward_with_retry(
+                        request,
+                        headers,
+                        body,
+                        path,
+                        via,
+                        url,
+                        client_timeout,
+                        attempt,
+                        bid,
+                        limiter,
+                        # Deadline (not a snapshot): every central attempt re-stamps
+                        # the REMAINING budget, so pushback sleeps between retries
+                        # keep eating it instead of re-granting central a full
+                        # window (Codex round-2 BLOCKER on PR #83).
+                        wait_deadline=wait_deadline,
+                    )
+                finally:
+                    if rerouted is None:
+                        await _finalize(
+                            counters,
+                            bid,
+                            limiter,
+                            bstate,
+                            attempt,
+                            t0,
+                            model,
+                            model_label,
+                            request,
+                            path,
+                        )
+        except QueueWaitTimeout:
+            # No slot within the wait bound: answer 503 while the client's
+            # transport is still open (the limiter already rolled its queue entry
+            # back via acquire's cancellation path; no release is owed).
             counters.dequeue()
-            log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
+            return _queue_wait_timeout_response(bid, cid, path, limiter, slot_max_wait or 0.0)
+        finally:
+            # PR #575 B1 fix: if we got cancelled between incrementing `queued`
+            # and the inner `async with limiter.slot()` body decrementing it,
+            # roll back the queue counter so it doesn't leak forever and starve
+            # the /__throttle/health gauge.
+            if counters.queued_incremented:
+                counters.dequeue()
+                log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
 
 
 async def _check_upstream_egress() -> tuple[bool, str]:
