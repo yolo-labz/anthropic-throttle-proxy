@@ -21,7 +21,6 @@ Authorization header, but still never logs or exports the raw value.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 from datetime import UTC, datetime
@@ -32,6 +31,7 @@ import aiohttp
 
 from . import config
 from . import limiter as _limiter
+from .ratelimit import _bearer_id
 
 WINDOW_7D_S = 7 * 86400
 
@@ -544,7 +544,7 @@ def _read_token(path: str) -> str | None:
 
 def _token_bearer_id(token: str) -> str:
     """Bearer id for a raw OAuth access token."""
-    return hashlib.sha256(f"Bearer {token}".encode("utf-8", "replace")).hexdigest()[:8]
+    return _bearer_id({"Authorization": f"Bearer {token}"})
 
 
 def _parse_retry_after(value: str | None) -> float | None:
