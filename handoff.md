@@ -6,6 +6,97 @@ host activation. Latest incident first.
 
 ---
 
+## 14/07/2026 - Usage-poll AIMD poisoning (branch 096) — completes the 13/07 incident
+
+### Symptom
+
+The 13/07 "Usage refresher Retry-After storm" was declared closed under
+branch 095 (PR #101), but the journal still showed an hourly
+`rate-pushback-retry` / `aimd-shrink` / `retry-after-fast-fail` cycle, all on
+`path=/api/oauth/usage`. Each cycle collapsed the workhorse bearer
+(`e1241e10`) to `max_concurrent=1` and parked it ~58 min, so real
+`/v1/messages` calls fast-failed (`source=pre-dispatch` and
+`queue-timeout-relay status=503`) — the "failing fast instead of holding the
+local gateway request" banner.
+
+### Root cause — what #101 missed
+
+PR #101 made the account usage *refresher* honor `Retry-After`
+(`_refresh_one` backoff + `_retry_after_remaining_for_token` pre-check),
+which killed the 90 s re-poll storm. But each remaining poll still routed
+through `handler` (`accounts.py::_oauth_base → 127.0.0.1`) and its 429 flowed
+through the **same** `_forward_with_retry` pushback branch + `_finalize`
+AIMD-feedback as a `POST /v1/messages` 429. No path-awareness existed, so one
+limiter collapse/hour remained. The 429 is the `/api/oauth/usage` endpoint's
+OWN rate limit (unified headers: `util_5h=0.01`, `status=allowed`) — orthogonal
+to the message quota the AIMD machinery protects.
+
+### Fix (PR #102, branch `096-telemetry-aimd-exempt`)
+
+Exempt `/api/oauth/usage` + `/api/oauth/profile` telemetry reads from the
+message-dispatch pushback/AIMD/fast-fail machinery, at BOTH AIMD-affecting
+sites:
+
+- `_forward_with_retry` pushback branch (retry / fast-fail / `retry_after_until`)
+- `_finalize` finally-block `_aimd_feedback` (shrink)
+
+via `_is_oauth_telemetry_path(path)`. The 429 is relayed unchanged to the
+poller, which already backs off via #101. Unified-utilization gauges still
+update via `_apply_unified`, so budget pacing/glide is unaffected.
+
+### Verification
+
+- `uv run pytest -q` → 420 passed (+2 new), 2 pre-existing aiohttp warnings.
+- `uv run ruff check src tests` / `ruff format --check` → clean.
+- New tests force a 429+Retry-After:3600 on the telemetry path and assert
+  `lim.max_concurrent` unchanged + `lim.retry_after_remaining()==0`:
+  `test_oauth_usage_429_does_not_poison_message_limiter`,
+  `test_oauth_profile_429_also_skips_message_limiter`.
+- Message-path shrinking unchanged (`test_429_triggers_aimd_shrink`,
+  zai-quota, concurrency-429).
+- **Live (hotfix PID 938581):** a `GET /api/oauth/usage` poll completed with
+  zero `aimd-shrink`/`rate-pushback`/`retry-after-fast-fail`; the handling
+  bearer stayed `max_concurrent=3, rau=0`; the workhorse restored
+  `max_concurrent` 1→3 after the restart.
+
+### Live activation
+
+State-dir venv from branch 096 (same reversible pattern as 094/095):
+
+- package symlink:
+  `~/.local/state/anthropic-throttle-proxy/live-096-telemetry-exempt-current`
+  → `live-096-telemetry-exempt-20260714102454`
+- drop-in (replaces the 095 one):
+  `~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-telemetry-aimd-exempt-hotfix.conf`
+- live PID: `938581`, active since `14/07/2026 10:24 -03`
+- fixed symbol verified in the active package: `_is_oauth_telemetry_path`
+  (both gates, proxy.py:2180 + proxy.py:2533)
+
+Rollback:
+
+```bash
+rm ~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-telemetry-aimd-exempt-hotfix.conf
+systemctl --user daemon-reload
+systemctl --user restart anthropic-throttle-proxy.service
+```
+
+### Adversarial review
+
+Cross-family review was BLOCKED at activation time (Codex quota-locked until
+Jul 19; Claude CLI fast-failed on the workhorse's pre-restart retry-after).
+**Merge of PR #102 is gated on the review completing** — retry via the proxy
+once a bearer is usable, or via Codex after Jul 19. Do NOT merge before
+attaching the review.
+
+### Durable follow-up
+
+Merge #102, bump the NixOS package pin to the merged SHA, and remove the
+emergency `20-telemetry-aimd-exempt-hotfix.conf` drop-in after the Nix/HM
+unit points at a store path containing `_is_oauth_telemetry_path`. Then
+remove the now-superseded 095 venv (`live-095-usage-retry-after-*`).
+
+---
+
 ## 13/07/2026 - Usage refresher Retry-After storm (branch 095)
 
 ### Symptom

@@ -127,6 +127,8 @@ def _make_upstream() -> web.Application:
 
     async def passthrough(request: web.Request) -> web.Response:
         await request.read()
+        if request.headers.get("X-Stub-Mode") == "oauth-usage-429":
+            return web.Response(status=429, headers={"retry-after": "3600"}, text="rate limited")
         return web.Response(status=200, text="ok")
 
     app = web.Application()
@@ -513,6 +515,64 @@ async def test_retry_after_window_does_not_block_oauth_probe(
     assert config.state["queued"] == 0
     assert config.state["inflight"] == 0
     assert lim.snapshot()["queued_total"] == 0
+
+
+async def test_oauth_usage_429_does_not_poison_message_limiter(
+    client: TestClient, monkeypatch
+) -> None:
+    # A 429 from /api/oauth/usage is the telemetry endpoint's own rate limit,
+    # not a POST /v1/messages quota throttle. It must not AIMD-shrink the
+    # bearer nor set a retry-after pause — otherwise each dashboard poll
+    # collapses the workhorse for ~58 min (13/07 incident).
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 3)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    bid = proxy._bearer_id({"authorization": "Bearer usage-poll"})
+
+    resp = await client.get(
+        "/api/oauth/usage",
+        headers={"Authorization": "Bearer usage-poll", "X-Stub-Mode": "oauth-usage-429"},
+    )
+    await resp.read()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await asyncio.sleep(0.02)
+
+    # The 429 is relayed unchanged; the poller backs off its own Retry-After.
+    assert resp.status == 429
+    lim = config.bearer_limiters[bid]
+    # No AIMD shrink, no retry-after pause — bearer stays fully usable for
+    # real /v1/messages traffic.
+    assert lim.max_concurrent == 3
+    assert lim.retry_after_remaining() == 0.0
+
+
+async def test_oauth_profile_429_also_skips_message_limiter(
+    client: TestClient, monkeypatch
+) -> None:
+    # The sibling telemetry path /api/oauth/profile gets the same exemption.
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 1)
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 3)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    bid = proxy._bearer_id({"authorization": "Bearer profile-poll"})
+
+    resp = await client.get(
+        "/api/oauth/profile",
+        headers={"Authorization": "Bearer profile-poll", "X-Stub-Mode": "oauth-usage-429"},
+    )
+    await resp.read()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    await asyncio.sleep(0.02)
+
+    assert resp.status == 429
+    lim = config.bearer_limiters[bid]
+    assert lim.max_concurrent == 3
+    assert lim.retry_after_remaining() == 0.0
 
 
 async def test_retry_after_before_queue_reroutes_to_fresh_account(
