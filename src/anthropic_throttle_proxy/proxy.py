@@ -1633,6 +1633,23 @@ async def _retry_direct_once(
     return web.Response(status=502, text=f"upstream error: {type(exc2).__name__}\n")
 
 
+# Read-only OAuth telemetry paths polled through the loopback by the dashboard
+# refresher (accounts.py::_oauth_base → 127.0.0.1). A 429 from these is the
+# endpoint's OWN rate limit, NOT a POST /v1/messages quota signal, so it must
+# not feed the message-dispatch AIMD/pushback/fast-fail machinery below.
+_OAUTH_TELEMETRY_PATHS = frozenset({"/api/oauth/usage", "/api/oauth/profile"})
+
+
+def _is_oauth_telemetry_path(path: str) -> bool:
+    """True for read-only OAuth telemetry reads that bypass message throttling.
+
+    ``path`` arrives without a leading slash (handler match_info ``/{path:.*}``;
+    the ``path=/{path}`` log lines add it back), so normalize before comparing.
+    """
+    p = path if path.startswith("/") else "/" + path
+    return p in _OAUTH_TELEMETRY_PATHS
+
+
 def _should_retry_pushback(
     response: web.StreamResponse | web.Response | None,
     attempt: _Attempt,
@@ -2152,7 +2169,15 @@ async def _forward_with_retry(
                 wait_deadline,
                 attempt.final_status,
             )
-        if _should_retry_pushback(response, attempt, pushback_retries):
+        # OAuth telemetry 429s (usage/profile) are the endpoint's own rate
+        # limit, not message-quota pushback — relaying them through shrink /
+        # fast-fail / retry_after collapsed a healthy message bearer on every
+        # dashboard poll (13/07 incident: hourly aimd-shrink path=/api/oauth/usage
+        # parked the workhorse ~58 min). The poller backs off its own
+        # Retry-After (PR #101), so just relay the upstream 429 unchanged.
+        if _should_retry_pushback(
+            response, attempt, pushback_retries
+        ) and not _is_oauth_telemetry_path(path):
             pushback_retries += 1
             retry_after = _parse_retry_after(attempt.meta)
             pause, synthetic_pause = _pushback_pause(attempt.meta, bid)
@@ -2503,7 +2528,9 @@ async def _finalize(
     # The keepalive-hold applies AIMD per-throttle itself; re-applying here would
     # double-shrink and, on an exhausted 529/queue-timeout hold (terminal
     # synthetic 503), wrongly shrink the bearer (invariants 7 + 9 — Codex BLOCKER).
-    if not attempt.aimd_owned:
+    # OAuth telemetry 429s (usage/profile) are also exempt — their endpoint rate
+    # limit is not a message-quota signal (13/07 incident; see _forward_with_retry).
+    if not attempt.aimd_owned and not _is_oauth_telemetry_path(path):
         try:
             await _aimd_feedback(bid, limiter, attempt)
         except Exception as aimde:
