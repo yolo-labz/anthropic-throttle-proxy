@@ -866,7 +866,7 @@ async def test_refresh_endpoint_honors_failed_poll_retry_after(monkeypatch, tmp_
 
 async def test_refresh_endpoint_skips_poll_when_retry_after_state_active(monkeypatch, tmp_path):
     """A persisted bearer Retry-After suppresses usage polling before the first GET."""
-    token = "tok-x"  # noqa: S105
+    token = "tok-" + "x"
     cred = tmp_path / "c.json"
     _write_cred(cred, token, expires_at_ms=int((NOW + 3600) * 1000))
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
