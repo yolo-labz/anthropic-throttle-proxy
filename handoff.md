@@ -6,6 +6,88 @@ host activation. Latest incident first.
 
 ---
 
+## 13/07/2026 - Usage refresher Retry-After storm (branch 095)
+
+### Symptom
+
+After PR #100 removed generation fast-fail on retry-aftered bearers, Claude
+Code panes still showed many transient retry banners. The local service was not
+using the billing-gated API-key route (`api_key.enabled=false`,
+`routing="off"`), central was healthy, and `/v1/messages` requests were
+completing through account C. The fresh 429 source in the journal was instead
+the dashboard/account refresher:
+
+- `GET /api/oauth/usage` for A/B hit long `Retry-After` windows.
+- The proxy logged `retry-after-fast-fail path=/api/oauth/usage`, then
+  `rate-pushback-retry` / `aimd-shrink`.
+- The refresher retried again after its fixed 90 s failed-poll backoff, even
+  when the upstream/proxy retry-after window was still tens of minutes long.
+
+### Fix
+
+Branch `095-usage-retry-after` makes the account usage refresher honor
+`Retry-After` in two places:
+
+- `_get_json()` now returns parsed `Retry-After` seconds for non-200 responses,
+  including HTTP-date header values.
+- `_refresh_one()` backs failed usage polls off for
+  `max(ENDPOINT_TTL_S, Retry-After)`.
+- Before the first GET after a restart, `_refresh_one()` checks the persisted
+  proxy retry-after state for the credential bearer id and skips polling a
+  still-paused account.
+
+The UI/account panel can still show stale endpoint data and a clear
+`usage endpoint paused by retry-after (...)` note, but it no longer creates
+extra 429/AIMD noise while the operator is trying to keep generation flowing.
+
+### Verification
+
+- `uv run pytest tests/test_accounts.py -q` -> `51 passed`, 1 existing
+  aiohttp `NotAppKeyWarning`.
+- `uv run ruff check src tests` -> clean.
+- `uv run ruff format --check src tests` -> clean.
+- `uv run pytest -q` -> `418 passed`, 2 existing aiohttp warnings.
+
+### Live activation
+
+Built and activated a state-dir venv from this branch:
+
+- package symlink:
+  `~/.local/state/anthropic-throttle-proxy/live-095-usage-retry-after-current`
+- persistent drop-in:
+  `~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-usage-retry-after-hotfix.conf`
+- effective `ExecStart`:
+  `~/.local/state/anthropic-throttle-proxy/live-095-usage-retry-after-current/venv/bin/anthropic-throttle-proxy`
+- live PID: `3173109`, active since `13/07/2026 23:11:23 -03`
+- fixed symbol verified in the active package:
+  `_retry_after_remaining_for_token`
+
+Live sample after restart:
+
+- explicit `/ui/stats` render produced no `/api/oauth/usage` 429s.
+- 95-second sample from `13/07/2026 23:12:08 -03`:
+  `/api/oauth/usage=0`, `status=429=0`, `retry-after-fast-fail=0`,
+  `rate-pushback=0`, `aimd-shrink=0`, `status=503=0`, `status=529=0`.
+- active health during traffic:
+  `central_status=up`, `queued=0`, `upstream_retries=0`,
+  `client_disconnects=0`, `api_key.enabled=false`,
+  `api_key.routing=off`, `account_identity.distinct=3`.
+- `/v1/messages` completed with `retries=0`.
+
+Rollback for the emergency activation:
+
+```bash
+rm ~/.config/systemd/user/anthropic-throttle-proxy.service.d/20-usage-retry-after-hotfix.conf
+systemctl --user daemon-reload
+systemctl --user restart anthropic-throttle-proxy.service
+```
+
+Durable follow-up: merge branch 095, bump the NixOS package pin, and remove
+the emergency venv drop-in after the Nix/HM unit points to a store path
+containing `_retry_after_remaining_for_token`.
+
+---
+
 ## 12/07/2026 - Warning-account backpressure valve (branch 094)
 
 ### Symptom

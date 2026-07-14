@@ -14,7 +14,7 @@ from datetime import UTC
 
 import pytest
 
-from anthropic_throttle_proxy import accounts, config
+from anthropic_throttle_proxy import accounts, config, limiter
 from anthropic_throttle_proxy.ratelimit import _bearer_id
 
 NOW = 1_781_120_000.0
@@ -32,23 +32,22 @@ def _write_cred(path, token: str, expires_at_ms: int | None = None) -> None:
     path.write_text(json.dumps({"claudeAiOauth": oauth}))
 
 
+def _clear_account_module_state() -> None:
+    accounts._cache.clear()
+    accounts._endpoint_cache.clear()
+    accounts._email_cache.clear()
+    accounts._local_identity_cache.clear()
+    accounts._endpoint_locks.clear()
+    accounts._verify_locks.clear()
+    accounts._endpoint_backoff.clear()
+    limiter._retry_after_state = None
+
+
 @pytest.fixture(autouse=True)
 def _clean_cache():
-    accounts._cache.clear()
-    accounts._endpoint_cache.clear()
-    accounts._email_cache.clear()
-    accounts._local_identity_cache.clear()
-    accounts._endpoint_locks.clear()
-    accounts._verify_locks.clear()
-    accounts._endpoint_backoff.clear()
+    _clear_account_module_state()
     yield
-    accounts._cache.clear()
-    accounts._endpoint_cache.clear()
-    accounts._email_cache.clear()
-    accounts._local_identity_cache.clear()
-    accounts._endpoint_locks.clear()
-    accounts._verify_locks.clear()
-    accounts._endpoint_backoff.clear()
+    _clear_account_module_state()
 
 
 def _write_account(base, sub: str, token: str, email: str | None, expires_at_ms=None):
@@ -832,6 +831,66 @@ async def test_refresh_endpoint_backs_off_after_failed_poll(monkeypatch, tmp_pat
     await accounts.refresh_endpoint(NOW + 2 * ttl + 2)
     assert state["calls"] == 3
     assert str(cred) not in accounts._endpoint_backoff  # 200 cleared the backoff
+
+
+async def test_refresh_endpoint_honors_failed_poll_retry_after(monkeypatch, tmp_path):
+    """A failed usage poll with Retry-After backs off for the upstream window.
+
+    Live 13/07 failure class: A/B returned ``429 Retry-After: 2397`` on
+    ``/api/oauth/usage``, but the dashboard refresher retried after its fixed
+    90 s TTL and re-created the same proxy 429/AIMD/advisor noise every cycle.
+    """
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+
+    state = {"calls": 0}
+    retry_after = 2397.0
+
+    async def _stub(_url, _token):
+        state["calls"] += 1
+        return 429, None, retry_after
+
+    monkeypatch.setattr(accounts, "_get_json", _stub)
+
+    await accounts.refresh_endpoint(NOW)
+    assert state["calls"] == 1
+    await accounts.refresh_endpoint(NOW + accounts.ENDPOINT_TTL_S + 1)
+    assert state["calls"] == 1
+    await accounts.refresh_endpoint(NOW + retry_after - 1)
+    assert state["calls"] == 1
+    await accounts.refresh_endpoint(NOW + retry_after + 1)
+    assert state["calls"] == 2
+
+
+async def test_refresh_endpoint_skips_poll_when_retry_after_state_active(monkeypatch, tmp_path):
+    """A persisted bearer Retry-After suppresses usage polling before the first GET."""
+    token = "tok-" + "x"
+    cred = tmp_path / "c.json"
+    _write_cred(cred, token, expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+
+    state = {"calls": 0}
+
+    async def _stub(_url, _token):
+        state["calls"] += 1
+        return 200, _usage_body()
+
+    retry_after = 2397.0
+    monkeypatch.setattr(accounts, "_get_json", _stub)
+    monkeypatch.setattr(
+        limiter,
+        "_load_retry_after_state",
+        lambda: {accounts._token_bearer_id(token): NOW + retry_after},
+    )
+
+    await accounts.refresh_endpoint(NOW)
+
+    assert state["calls"] == 0
+    assert accounts._endpoint_backoff[str(cred)] == NOW + retry_after
+    assert "retry-after" in accounts._endpoint_cache[str(cred)]["err"]
 
 
 # ── spec 2: limits[] scoped per-model bucket capture ──────────────────────

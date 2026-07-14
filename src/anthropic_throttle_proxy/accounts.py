@@ -21,15 +21,17 @@ Authorization header, but still never logs or exports the raw value.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
-from datetime import datetime
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import aiohttp
 
 from . import config
+from . import limiter as _limiter
+from .ratelimit import _bearer_id
 
 WINDOW_7D_S = 7 * 86400
 
@@ -86,7 +88,7 @@ def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | N
     token = oauth.get("accessToken")
     if not token or not isinstance(token, str):
         return None, None, "no access token in credentials", None
-    bid = hashlib.sha256(f"Bearer {token}".encode("utf-8", "replace")).hexdigest()[:8]
+    bid = _token_bearer_id(token)
     expires = oauth.get("expiresAt")
     expires_ms = int(expires) if isinstance(expires, (int, float)) else None
     return bid, expires_ms, None, token
@@ -424,6 +426,8 @@ _endpoint_locks: dict[str, asyncio.Lock] = {}
 # concurrently through the loopback (the #87 self-429 class — Codex MAJOR).
 _verify_locks: dict[str, asyncio.Lock] = {}
 
+JsonResult = tuple[int, dict[str, Any] | None] | tuple[int, dict[str, Any] | None, float | None]
+
 
 def _iso_epoch(value: Any) -> int | None:
     """ISO-8601 (fractional seconds + offset) → epoch seconds, or None."""
@@ -538,8 +542,47 @@ def _read_token(path: str) -> str | None:
     return token if isinstance(token, str) and token else None
 
 
-async def _get_json(url: str, token: str) -> tuple[int, dict[str, Any] | None]:
-    """One authenticated GET. Returns (status, body|None); 0 = transport error."""
+def _token_bearer_id(token: str) -> str:
+    """Bearer id for a raw OAuth access token."""
+    return _bearer_id({"Authorization": f"Bearer {token}"})
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Retry-After header seconds, or None when absent/malformed."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return max(0.0, parsed.timestamp() - datetime.now(tz=UTC).timestamp())
+
+
+def _json_result_parts(result: JsonResult) -> tuple[int, dict[str, Any] | None, float | None]:
+    """Accept old 2-tuples from tests and new 3-tuples from real HTTP."""
+    status, body = result[0], result[1]
+    retry_after = result[2] if len(result) >= 3 else None
+    return status, body, retry_after
+
+
+def _failed_poll_backoff_until(now: float, retry_after: float | None) -> float:
+    """Next usage-poll attempt time after a failed fetch."""
+    return now + max(ENDPOINT_TTL_S, retry_after or 0.0)
+
+
+def _retry_after_remaining_for_token(token: str, now: float) -> float:
+    """Persisted proxy Retry-After remaining for this credential token."""
+    until = _limiter._load_retry_after_state().get(_token_bearer_id(token), 0.0)
+    return max(0.0, float(until) - now) if isinstance(until, (int, float)) else 0.0
+
+
+async def _get_json(url: str, token: str) -> JsonResult:
+    """One authenticated GET. Returns (status, body|None[, retry_after]); 0 = transport error."""
     timeout = aiohttp.ClientTimeout(total=_FETCH_TIMEOUT_S)
     headers = {"Authorization": f"Bearer {token}", "anthropic-beta": _OAUTH_BETA}
     try:
@@ -548,9 +591,9 @@ async def _get_json(url: str, token: str) -> tuple[int, dict[str, Any] | None]:
             session.get(url, headers=headers) as resp,
         ):
             if resp.status != 200:
-                return resp.status, None
+                return resp.status, None, _parse_retry_after(resp.headers.get("retry-after"))
             body = await resp.json(content_type=None)
-            return 200, body if isinstance(body, dict) else None
+            return 200, body if isinstance(body, dict) else None, None
     except (TimeoutError, aiohttp.ClientError):
         return 0, None
 
@@ -573,7 +616,9 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
     cached = _email_cache.get(path)
     if cached is not None and cached[0] == mtime:
         return
-    status, body = await _get_json(_oauth_base() + _PROFILE_PATH, token)
+    status, body, _retry_after = _json_result_parts(
+        await _get_json(_oauth_base() + _PROFILE_PATH, token)
+    )
     if status == 200 and body:
         email = (body.get("account") or {}).get("email")
         if isinstance(email, str) and email:
@@ -606,7 +651,18 @@ async def _refresh_one(path: str, now: float) -> None:
         token = _read_token(path)
         if token is None:
             return
-        status, body = await _get_json(_oauth_base() + _USAGE_PATH, token)
+        retry_after_remaining = _retry_after_remaining_for_token(token, now)
+        if retry_after_remaining > 0:
+            err = f"usage endpoint paused by retry-after ({int(retry_after_remaining)}s)"
+            if entry is not None:
+                entry["err"] = err
+            else:
+                _endpoint_cache[path] = {"fetched": 0.0, "usage": None, "err": err}
+            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after_remaining)
+            return
+        status, body, retry_after = _json_result_parts(
+            await _get_json(_oauth_base() + _USAGE_PATH, token)
+        )
         if status == 200 and body is not None:
             _endpoint_cache[path] = {"fetched": now, "usage": _parse_usage(body), "err": None}
             _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
@@ -620,21 +676,23 @@ async def _refresh_one(path: str, now: float) -> None:
                 "usage": None,
                 "err": "credential rejected (401) — refresh pipeline?",
             }
-            _endpoint_backoff[path] = now + ENDPOINT_TTL_S
+            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
         elif entry is not None:
             # 429/5xx/timeout: keep serving the stale entry (the panel ages
             # it out at the stale ceiling) but mark the failure and back off so
             # the dashboard's auto-refresh cannot re-poll a throttled account
-            # every render (the 10/07 self-429 loop).
+            # every render. Honor a proxy/upstream Retry-After when present;
+            # otherwise a 90 s retry cadence rediscovers long OAuth windows and
+            # creates the same 429 noise every UI refresh cycle.
             entry["err"] = f"usage endpoint unavailable ({status or 'timeout'})"
-            _endpoint_backoff[path] = now + ENDPOINT_TTL_S
+            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
         else:
             _endpoint_cache[path] = {
                 "fetched": 0.0,
                 "usage": None,
                 "err": f"usage endpoint unavailable ({status or 'timeout'})",
             }
-            _endpoint_backoff[path] = now + ENDPOINT_TTL_S
+            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
 
 
 async def refresh_endpoint(now: float) -> dict[str, dict[str, Any]]:
