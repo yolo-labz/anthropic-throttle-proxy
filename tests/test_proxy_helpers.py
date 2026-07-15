@@ -1390,6 +1390,61 @@ async def test_clear_retry_after_drops_live_and_persisted_window(tmp_path, monke
     assert limiter.clear_retry_after("bid1") == 0.0  # idempotent
 
 
+async def test_retry_after_restore_cap_is_persisted(tmp_path, monkeypatch) -> None:
+    # Codex MAJOR: capping was in-memory only, so the raw multi-day deadline
+    # stayed on disk and every restart re-granted a fresh 900 s stale window.
+    # The cap must be written back so subsequent loads see the capped deadline.
+    state_file = tmp_path / "retry-after.json"
+    state_file.write_text(json.dumps({"bid1": time.time() + 210_000}))
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "RETRY_AFTER_RESTORE_CAP_S", 900.0)
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+
+    await proxy._get_bearer_limiter("bid1", "fair", 3)  # triggers cap + persist
+
+    # Force a fresh limiter that re-restores from the (now-capped) file — a
+    # second restart must NOT re-grant the original 210 000 s window.
+    config.bearer_limiters.clear()
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    again = await proxy._get_bearer_limiter("bid1", "fair", 3)
+    assert 0 < again.retry_after_remaining() <= 900
+
+
+async def test_maybe_pause_rejected_caps_live_window(monkeypatch) -> None:
+    # Codex BLOCKER: a live "rejected" window noted at the reset epoch can run
+    # for days, and the central tier runs no usage poller to clear it. Cap the
+    # LIVE pause so both tiers self-heal on a re-probe cadence; if still
+    # rejected, the next request re-notes from a fresh 429.
+    monkeypatch.setattr(config, "RETRY_AFTER_REJECT_CAP_S", 900.0)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+    lim = await proxy._get_bearer_limiter("bidr", "fair", 3)
+
+    far_reset = int(time.time() + 200_000)
+    unified = {"status": "rejected", "reset": far_reset}
+
+    assert proxy._maybe_pause_rejected("bidr", lim, unified) is True
+    assert 0 < lim.retry_after_remaining() <= 900
+
+
+async def test_maybe_pause_rejected_uncapped_when_knob_zero(monkeypatch) -> None:
+    monkeypatch.setattr(config, "RETRY_AFTER_REJECT_CAP_S", 0.0)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+    lim = await proxy._get_bearer_limiter("bidr0", "fair", 3)
+
+    far_reset = int(time.time() + 200_000)
+    unified = {"status": "rejected", "reset": far_reset}
+
+    proxy._maybe_pause_rejected("bidr0", lim, unified)
+    assert lim.retry_after_remaining() > 199_000  # legacy "pause until reset"
+
+
 def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
     # Codex MAJOR: the gauge must be settable from metrics() too, not only
     # health() — verify the shared publisher tracks UTILIZATION_TARGET.

@@ -59,6 +59,7 @@ def _load_retry_after_state() -> dict[str, float]:
     now = time.time()
     cap = config.RETRY_AFTER_RESTORE_CAP_S
     state: dict[str, float] = {}
+    capped_any = False
     for bid, until in raw.items():
         if not isinstance(until, (int, float)) or float(until) <= now:
             continue
@@ -69,8 +70,13 @@ def _load_retry_after_state() -> dict[str, float]:
                 f"orig_remaining={int(capped - now)}s cap={int(cap)}s"
             )
             capped = now + cap
+            capped_any = True
         state[str(bid)] = capped
     _retry_after_state = state
+    if capped_any:
+        # Persist the capped deadlines so a restart does not re-grant a fresh
+        # stale window from the original multi-day value on disk each time.
+        _persist_retry_after_state()
     return _retry_after_state
 
 

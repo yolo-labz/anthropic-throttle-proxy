@@ -228,6 +228,18 @@ RETRY_AFTER_RESTORE_CAP_S = max(
     0.0, float(os.environ.get("THROTTLE_RETRY_AFTER_RESTORE_CAP_S", "900"))
 )
 
+# Ceiling on a LIVE "rejected"-window pause noted from `_maybe_pause_rejected`
+# (seconds; 0 = uncapped legacy "pause until reset"). A rejected budget window
+# ends at the account's reset epoch — potentially days out. The central tier
+# runs no usage poller (no cred paths), so without a cap a live-noted window
+# whose status eases back to allowed_warning blocks the bearer for the full
+# window until a restart/healthcheck (the 13-14/07 shape on the central).
+# Capping bounds it to a re-probe cadence: if still rejected, the next request
+# re-notes from a live 429; account routing + AIMD contain the probe cost.
+RETRY_AFTER_REJECT_CAP_S = max(
+    0.0, float(os.environ.get("THROTTLE_RETRY_AFTER_REJECT_CAP_S", "900"))
+)
+
 # Z.ai Coding Plan sends quota-window resets in the JSON error body, not a
 # Retry-After header. Add a small jitter so a fleet sharing one key does not all
 # resume on the same reset second.

@@ -494,6 +494,10 @@ def _maybe_pause_rejected(
         return False
     reset = unified.get("reset") or unified.get("reset_5h") or unified.get("reset_7d") or 0
     pause = reset - time.time()
+    cap = config.RETRY_AFTER_REJECT_CAP_S
+    if cap > 0 and pause > cap:
+        log(f"unified-rejected-capped bid={bid} orig={int(pause)}s cap={int(cap)}s")
+        pause = cap
     if pause > 0:
         limiter.note_retry_after(pause)
         log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
