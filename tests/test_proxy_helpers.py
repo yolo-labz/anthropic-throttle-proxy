@@ -1335,6 +1335,61 @@ async def test_retry_after_state_restored_for_new_limiter(tmp_path, monkeypatch)
     assert restored.retry_after_remaining() > 50
 
 
+async def test_retry_after_restore_capped(tmp_path, monkeypatch) -> None:
+    # 13-14/07 incident: budget windows noted at 100% exhaustion end at the
+    # account's reset epoch, but the rolling usage decays underneath. Every
+    # restart resurrected the full ~58 h window from disk and re-blocked an
+    # account that was back at 91-92%. A restored window is hearsay — cap it;
+    # a genuinely exhausted account re-notes the honest window with one 429.
+    state_file = tmp_path / "retry-after.json"
+    state_file.write_text(json.dumps({"bid1": time.time() + 210_000}))
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "RETRY_AFTER_RESTORE_CAP_S", 900.0)
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+
+    restored = await proxy._get_bearer_limiter("bid1", "fair", 3)
+
+    assert 0 < restored.retry_after_remaining() <= 900
+
+
+async def test_retry_after_restore_uncapped_when_knob_zero(tmp_path, monkeypatch) -> None:
+    state_file = tmp_path / "retry-after.json"
+    state_file.write_text(json.dumps({"bid1": time.time() + 210_000}))
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "RETRY_AFTER_RESTORE_CAP_S", 0.0)
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+
+    restored = await proxy._get_bearer_limiter("bid1", "fair", 3)
+
+    assert restored.retry_after_remaining() > 200_000
+
+
+async def test_clear_retry_after_drops_live_and_persisted_window(tmp_path, monkeypatch) -> None:
+    state_file = tmp_path / "retry-after.json"
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    limiter.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+
+    lim = await proxy._get_bearer_limiter("bid1", "fair", 3)
+    lim.note_retry_after(50_000)
+    assert lim.retry_after_remaining() > 49_000
+
+    cleared = limiter.clear_retry_after("bid1")
+
+    assert cleared > 49_000
+    assert lim.retry_after_remaining() == 0.0
+    assert "bid1" not in json.loads(state_file.read_text())
+    assert limiter.clear_retry_after("bid1") == 0.0  # idempotent
+
+
 def test_publish_brake_enabled_reflects_target(monkeypatch) -> None:
     # Codex MAJOR: the gauge must be settable from metrics() too, not only
     # health() — verify the shared publisher tracks UTILIZATION_TARGET.

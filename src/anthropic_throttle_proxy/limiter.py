@@ -57,11 +57,20 @@ def _load_retry_after_state() -> dict[str, float]:
         _retry_after_state = {}
         return _retry_after_state
     now = time.time()
-    _retry_after_state = {
-        str(bid): float(until)
-        for bid, until in raw.items()
-        if isinstance(until, (int, float)) and float(until) > now
-    }
+    cap = config.RETRY_AFTER_RESTORE_CAP_S
+    state: dict[str, float] = {}
+    for bid, until in raw.items():
+        if not isinstance(until, (int, float)) or float(until) <= now:
+            continue
+        capped = float(until)
+        if cap > 0 and capped > now + cap:
+            log(
+                f"retry-after-restore-capped bid={bid} "
+                f"orig_remaining={int(capped - now)}s cap={int(cap)}s"
+            )
+            capped = now + cap
+        state[str(bid)] = capped
+    _retry_after_state = state
     return _retry_after_state
 
 
@@ -98,6 +107,29 @@ def _restore_retry_after(lim: FairBearerLimiter, bid: str) -> None:
     lim._retry_after_until = until
     lim._last_throttle_at = max(lim._last_throttle_at, time.time())
     log(f"bearer-retry-after-restore bid={bid} remaining={int(until - time.time())}s")
+
+
+def clear_retry_after(bid: str) -> float:
+    """Drop any persisted + live Retry-After window for ``bid``.
+
+    Called with fresh evidence that the window no longer matches reality
+    (e.g. the usage endpoint reports the account back below exhaustion).
+    Returns the remaining seconds that were cleared (0 when nothing to do).
+    Reads ``config.bearer_limiters`` without the registry lock — same as the
+    metrics collectors — and only zeroes a float attribute, never mutates
+    the dict.
+    """
+    now = time.time()
+    state = _load_retry_after_state()
+    until = float(state.pop(bid, 0.0) or 0.0)
+    lim = config.bearer_limiters.get(bid)
+    if lim is not None:
+        until = max(until, lim._retry_after_until)
+        lim._retry_after_until = 0.0
+    if until <= now:
+        return 0.0
+    _persist_retry_after_state()
+    return until - now
 
 
 async def _retune_limiter_hard_max(
