@@ -689,6 +689,43 @@ async def test_retry_after_after_queue_reroutes_to_fresh_account(
     assert lim_a.snapshot()["inflight"] == 0
 
 
+async def test_short_window_holds_on_b_without_rerouting_to_dead_a(
+    client: TestClient, monkeypatch
+) -> None:
+    """The 15/07/2026 incident, end to end: a request arriving on the DEAD
+    incoming account A (long window) must route to B and HOLD through B's short
+    window, never hop back onto A's 41 h window and fast-fail. Exercises the
+    handler loop: routing -> reroute-to-self -> fast-fail-declines -> hold."""
+    _force_single_slot_fair_queue(monkeypatch)  # MAX_HOLD_RETRY_AFTER_S = 1.0
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/fake/a.json,B:/fake/b.json")
+
+    raw_a = "sk-ant-oat01-HOLD-A"
+    raw_b = "sk-ant-oat01-HOLD-B"
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    account_a = {"label": "A", "token": raw_a, "bearer_id": bid_a}
+    account_b = {"label": "B", "token": raw_b, "bearer_id": bid_b}
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [account_a, account_b])
+
+    lim_a = await proxy._get_bearer_limiter(bid_a, "fair", config.MAX_CONCURRENT)
+    lim_a.note_retry_after(3600)  # A dead: window >> MAX_HOLD → never holdable
+    lim_b = await proxy._get_bearer_limiter(bid_b, "fair", config.MAX_CONCURRENT)
+    lim_b.note_retry_after(0.05)  # B: short holdable window
+
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={"Authorization": f"Bearer {raw_a}"},
+    )
+
+    assert status == 200
+    assert b"holding the local gateway request" not in streamed
+    assert b"upstream retry-after window is active" not in streamed
+    assert config.bearer_state[bid_a]["served"] == 0  # never hopped to dead A
+    assert config.bearer_state[bid_b]["served"] == 1  # held + served on B
+
+
 async def test_queue_wait_timeout_fails_fast_with_clean_503(
     client: TestClient, monkeypatch
 ) -> None:

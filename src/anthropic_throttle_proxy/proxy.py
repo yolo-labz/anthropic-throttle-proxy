@@ -1166,7 +1166,10 @@ def _account_routing_candidate_score(
                         UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN
                     )
     # Queue dominates; utilization/pacing is a soft tie-breaker below the warn line.
-    stickiness = -0.01 if bid == incoming_bid else 0.0
+    # Stickiness is dropped while the incoming bearer is inside a Retry-After
+    # window: otherwise the -0.01 bonus lets a windowed incoming (even a
+    # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
+    stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
     load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
     retry_after_surcharge = retry_after_remaining * _RETRY_AFTER_SURCHARGE_PER_S
@@ -1373,16 +1376,42 @@ def _route_account_if_enabled(
         if pressure_score < strict_score:
             candidates = pressure_candidates
     if not candidates:
+        # budget_paced: "no candidates" can mean every account merely crossed
+        # its SOFT pacing target (still below hard cap, dispatchable), not that
+        # any is truly unusable. Recover those via a spillover pass before
+        # falling back, so real capacity isn't stranded behind the stale
+        # incoming bearer (Codex MAJOR). Hard-unusable accounts (util>=1,
+        # scoped full, rejected, retry-after>MAX_HOLD) still score inf here, so
+        # this never routes to a will-fail account.
+        spillover_candidates = [
+            acct
+            for acct in snapshot
+            if isinstance(acct.get("token"), str)
+            and isinstance(acct.get("bearer_id"), str)
+            and _account_routing_candidate_score(
+                acct,
+                incoming_bid,
+                allow_pressure=True,
+                allow_target_spillover=True,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            )
+            < math.inf
+        ]
+        if spillover_candidates:
+            candidates = spillover_candidates
+            allow_target_spillover = True
+    if not candidates:
         if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
             return _route_to_selected_auth(headers, incoming_bid, api_key)
-        # Reaching here means EVERY configured account is hard-gated even under
-        # allow_pressure (retry-after > MAX_HOLD, util>=1, scoped meter full,
-        # rejected, or endpoint 429) — i.e. genuinely unusable right now, not
-        # just holdable. Routing to one would only fast-fail or draw a real
-        # 429, so we keep the incoming bearer; the retry-after reroute path
-        # (guarded to configured-only) still owns the "never hop to a stale
-        # incoming" invariant. Short holdable windows never land here: the
-        # candidate score keeps them routable (PR #106).
+        # Even the spillover pass found nothing, so EVERY configured account is
+        # genuinely unusable right now (util>=1, scoped meter full, rejected, or
+        # retry-after > MAX_HOLD) — not just soft-target-crossed. Routing to one
+        # would only fast-fail or draw a real 429, so keep the incoming bearer;
+        # the retry-after reroute path (guarded to configured-only) still owns
+        # the "never hop to a stale incoming" invariant. Short holdable windows
+        # never land here: the candidate score keeps them routable (PR #106).
         return incoming_bid, None
     selected = min(
         candidates,
@@ -1442,7 +1471,12 @@ def _retry_after_reroute_headers(
                 f"path=/{path} reason=unconfigured-or-stale-incoming"
             )
             return None
-    if _bearer_retry_after_remaining(rerouted_bid) >= current_remaining:
+    # Re-sample BOTH windows at the same instant so an elapsed gap between the
+    # caller's snapshot and now can't let an equal/worse target slip through
+    # (Codex MINOR). ``current_remaining`` is the caller's floor; take the
+    # fresher of the two for the current bearer.
+    current_now = max(current_remaining, _bearer_retry_after_remaining(current_bid))
+    if _bearer_retry_after_remaining(rerouted_bid) >= current_now:
         # Only reroute to a bearer that can dispatch SOONER than the one we
         # are escaping. Without this, a configured-but-also-throttled sibling
         # could still steal the request onto a LONGER window: 15/07/2026 a 2 s
@@ -1730,6 +1764,38 @@ def _truthy_env(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Max total user-visible text (chars) a request may carry and still be treated
+# as a startup probe rather than real work. The observed Claude Code probe is
+# ~88 bytes / 1 message with a few chars of content; real prompts are far
+# larger. Anything above this forwards normally.
+_PROBE_MAX_CONTENT_CHARS = 16
+
+
+def _message_text_len(messages: list) -> int:
+    """Total plain-text length across messages, or a huge sentinel when the
+    payload carries anything that is NOT trivial user text (image/tool blocks,
+    unexpected shapes) — so real / multimodal work is never mistaken for a probe.
+    """
+    total = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            return 10**9
+        content = message.get("content")
+        if content is None:
+            continue
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    total += len(block["text"])
+                else:
+                    return 10**9  # non-text block → real request
+        else:
+            return 10**9
+    return total
+
+
 def _synthetic_one_token_probe_response(
     request: web.Request,
     path: str,
@@ -1745,7 +1811,14 @@ def _synthetic_one_token_probe_response(
     healthy upstream slot, delaying real work and surfacing banner errors. This
     recovery guard is opt-in (``THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES``) and
     deliberately narrow: non-streaming ``POST /v1/messages`` only, no tools,
-    small JSON body, ``max_tokens`` exactly 1. Anything else forwards normally.
+    small JSON body, ``max_tokens`` exactly 1, and trivial user content
+    (<= _PROBE_MAX_CONTENT_CHARS). Anything else forwards normally so a real
+    short request is never silently answered (Codex MAJOR).
+
+    ponytail: shape+content heuristic, not a guaranteed probe signature — a real
+    request that is <=1 token, no tools, non-streaming, <=2 messages AND <=16
+    chars of text would still be absorbed. Acceptable because the knob is
+    opt-in and recovery-only; upgrade path is an explicit probe marker header.
     """
     if not _truthy_env("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES"):
         return None
@@ -1763,6 +1836,8 @@ def _synthetic_one_token_probe_response(
         return None
     messages = payload.get("messages")
     if not isinstance(messages, list) or len(messages) > 2:
+        return None
+    if _message_text_len(messages) > _PROBE_MAX_CONTENT_CHARS:
         return None
 
     now_ms = int(time.time() * 1000)

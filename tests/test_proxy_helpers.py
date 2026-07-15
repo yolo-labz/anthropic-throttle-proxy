@@ -792,11 +792,50 @@ def test_clean_sibling_still_beats_short_retry_after(
     assert label == "B"
 
 
-def test_reroute_refuses_hop_to_longer_window_bearer(
+def test_reroute_refuses_hop_to_longer_window_configured_bearer(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """B-only config: routing falls back to the DEAD incoming bearer; the reroute
-    guard must reject a hop to a window >= the current one."""
+    """The WINDOW guard (not the allowed-bids guard) blocks a hop to a
+    CONFIGURED sibling whose window is longer than the current bearer's."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # Current bearer B: short 5 s window. Target A: configured but LONGER (50 s).
+    short_b = FairBearerLimiter(8, "fair")
+    short_b.note_retry_after(5)
+    config.bearer_limiters[bid_b] = short_b
+    long_a = FairBearerLimiter(8, "fair")
+    long_a.note_retry_after(50)
+    config.bearer_limiters[bid_a] = long_a
+    # Force the router to hand back A (configured → passes the allowed-bids
+    # guard) so only the worse-window comparison can reject it.
+    monkeypatch.setattr(
+        proxy, "_route_account_if_enabled", lambda headers, incoming, **kw: (bid_a, "A")
+    )
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is None
+    # Prove it was the window guard, not the allowed-bids skip.
+    assert not any("retry-after-reroute-skip" in line for line in lines)
+
+
+def test_reroute_refuses_masquerade_to_dead_incoming(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """B-only config: routing's empty-candidate path returns the DEAD incoming
+    bearer; the allowed-bids guard rejects that masquerade."""
     cred_b = tmp_path / "b.json"
     bid_b = _write_cred(cred_b, "sk-ant-oat01-SIM-B")
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{cred_b}")
@@ -806,11 +845,11 @@ def test_reroute_refuses_hop_to_longer_window_bearer(
     dead = FairBearerLimiter(8, "fair")
     dead.note_retry_after(147800)
     config.bearer_limiters[incoming] = dead
-    # B is over the hold ceiling too, so it is excluded and routing falls back
-    # to the incoming bearer — exactly the masquerade the guard blocks.
     long_b = FairBearerLimiter(8, "fair")
-    long_b.note_retry_after(120)
+    long_b.note_retry_after(120)  # over ceiling → excluded → routing returns incoming
     config.bearer_limiters[bid_b] = long_b
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
 
     rerouted = proxy._retry_after_reroute_headers(
         {"Authorization": "Bearer sk-ant-oat01-DEAD"},
@@ -825,6 +864,78 @@ def test_reroute_refuses_hop_to_longer_window_bearer(
     )
 
     assert rerouted is None
+    assert any("retry-after-reroute-skip" in line and "to=deadtab" in line for line in lines)
+
+
+def test_windowed_incoming_does_not_undercut_clean_sibling(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A tiny Retry-After window on the incoming bearer must not win over a
+    genuinely clean sibling via the -0.01 stickiness bonus (Codex MAJOR)."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # Incoming A: sub-millisecond window. B: clean.
+    tiny_a = FairBearerLimiter(8, "fair")
+    tiny_a.note_retry_after(0.0005)
+    config.bearer_limiters[bid_a] = tiny_a
+    config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+
+
+def test_budget_paced_soft_target_spills_over_not_stale_incoming(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """budget_paced: when every configured account only crossed its SOFT pacing
+    target (still dispatchable), route to a configured spillover account rather
+    than returning the stale incoming bearer (Codex MAJOR)."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    # Both configured accounts cross the soft target → strict + pressure empty,
+    # but they remain below any hard gate (no window, util < 1, not rejected).
+    monkeypatch.setattr(proxy, "_budget_pacing_target_crossed", lambda windows, cost: True)
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair")
+    config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")
+    headers = {"Authorization": "Bearer sk-ant-oat01-STALE"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "staletab", method="POST", path="v1/messages"
+    )
+
+    assert selected in {bid_a, bid_b}
+    assert label in {"A", "B"}
+    assert headers["Authorization"] in {"Bearer sk-ant-oat01-SIM-A", "Bearer sk-ant-oat01-SIM-B"}
+
+
+def test_synthetic_probe_forwards_real_short_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real max_tokens=1 request with substantive user content is FORWARDED,
+    never answered with a synthetic '.' (Codex MAJOR data-loss guard)."""
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
+    body = _probe_body(
+        messages=[{"role": "user", "content": "Classify this ticket as spam or ham please"}]
+    )
+    resp = proxy._synthetic_one_token_probe_response(
+        _probe_request(), "v1/messages", body, "claude-opus-4-8", 1, False
+    )
+    assert resp is None
+
+
+def test_synthetic_probe_forwards_multimodal_one_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An image content block (real multimodal request) is never absorbed."""
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
+    body = _probe_body(
+        messages=[{"role": "user", "content": [{"type": "image", "source": {"data": "x"}}]}]
+    )
+    resp = proxy._synthetic_one_token_probe_response(
+        _probe_request(), "v1/messages", body, "claude-opus-4-8", 1, False
+    )
+    assert resp is None
 
 
 def test_reroute_allows_hop_to_shorter_window_bearer(
