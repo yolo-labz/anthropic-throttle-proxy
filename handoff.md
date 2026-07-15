@@ -6,6 +6,140 @@ host activation. Latest incident first.
 
 ---
 
+## 15/07/2026 - Fresh-usage account routing + Anthropic partial outage (PR #104)
+
+### Symptom
+
+Most Claude Code panes showed:
+
+```text
+API Error: Server is temporarily limiting requests (not your usage limit) · upstream retry-after window is active; failing fast instead of holding the local gateway request
+```
+
+The local proxy also had stale per-bearer state from a previous upstream 429,
+so requests that entered with bearer A (`2f41dc68`) were not reliably moving
+to the lower-utilization bearer B (`7f082589`).
+
+### Root cause
+
+There were two independent failures:
+
+1. **Local routing bug:** `_account_routing_candidate_score` treated
+   `endpoint.err` containing `(429)` as a hard exclusion even when the account
+   had a fresh successful `usage` snapshot. That made a routable account look
+   unavailable until the stale endpoint error was cleared.
+2. **Upstream outage:** direct calls to Anthropic with A, B, and C all returned
+   fast headerless 429s. Anthropic status was `Partially Degraded Service` with
+   incident `Elevated errors on multiple models`, status `identified`, updated
+   `15/07/2026 11:49 -03`.
+
+### Fix
+
+PR #104 (`fix: keep fresh usage candidates routable`) changed the routing
+score so endpoint `(429)` only excludes a candidate when there is no fresh
+`usage` dict. It also preserves explicit API-key-only requests so account
+routing does not rewrite them.
+
+Merged:
+
+- PR: https://github.com/yolo-labz/anthropic-throttle-proxy/pull/104
+- Merge commit: `378d48d387dbf591be741a85b7c34b77fc3ca2cc`
+- Merged at: `15/07/2026 11:51 -03`
+
+### Verification
+
+- `uv run pytest tests/test_proxy_helpers.py -k 'explicit_api_key or endpoint_429_keeps_fresh_usage_candidate or api_key_routing_prefer_rewrites_to_metered_key or account_routing_selects_least_loaded'`
+  -> 4 passed.
+- `uv run ruff check .` -> clean.
+- `uv run pytest` -> 429 passed, 2 existing aiohttp UI warnings.
+- CI passed after rerunning the Sonar job that initially failed on a transient
+  SonarQube 502 upload error: `ruff + pytest`, `mypy`, `quality-gates`,
+  `CodeQL`, and `SonarQube scan`.
+- Live local venv imports the merged package and contains the fix:
+  `fresh_usage_429_fix=True`.
+- Post-restart journal showed the fixed route:
+  `account-route from=2f41dc68 to=7f082589 label=B`.
+- Local smoke through `http://127.0.0.1:8765/v1/messages` returned the current
+  upstream 429 in `0.81s` with `x-anthropic-throttle-proxy: 1`, proving the
+  proxy now fails fast instead of holding requests for 60-90 seconds.
+- Local health after deploy: `central_status=up`, bearers
+  `2586314b`, `2f41dc68`, `7f082589`, API-key routing disabled.
+- Central Dokku deploy from `main` at `378d48d` passed both healthchecks.
+
+### Live activation
+
+Central:
+
+```bash
+cd ~/Documents/Code/yolo-labz/anthropic-throttle-proxy
+git push dokku main
+```
+
+Dokku deployed `main -> main` at `378d48d` and reported:
+
+```text
+Healthcheck succeeded name='throttle ready'
+Healthcheck succeeded name='port listening check'
+Application deployed: http://anthropic-throttle.home301server.com.br
+```
+
+Local:
+
+```bash
+uv pip install --python ~/.local/state/anthropic-throttle-proxy/live-103-retry-after-revalidate-20260715001045/venv/bin/python \
+  ~/Documents/Code/yolo-labz/anthropic-throttle-proxy
+systemctl --user restart anthropic-throttle-proxy.service
+```
+
+### Temporary incident knobs
+
+To stop nested local+central retry waits during Anthropic's headerless 429
+incident, both tiers were set to fast-fail:
+
+```text
+THROTTLE_RATE_PUSHBACK_RETRIES=0
+THROTTLE_QUEUE_MAX_WAIT_S=25
+```
+
+Local drop-in:
+
+```text
+~/.config/systemd/user/anthropic-throttle-proxy.service.d/31-fast-fail-incident-hotfix.conf
+```
+
+Central Dokku config was set with:
+
+```bash
+ssh dokku 'dokku config:set anthropic-throttle THROTTLE_RATE_PUSHBACK_RETRIES=0 THROTTLE_QUEUE_MAX_WAIT_S=25'
+```
+
+Restore after Anthropic status is healthy and a local `/v1/messages` smoke is
+200 or a normal model error, not a headerless outage 429:
+
+```bash
+rm ~/.config/systemd/user/anthropic-throttle-proxy.service.d/31-fast-fail-incident-hotfix.conf
+systemctl --user daemon-reload
+systemctl --user restart anthropic-throttle-proxy.service
+ssh dokku 'dokku config:set anthropic-throttle THROTTLE_RATE_PUSHBACK_RETRIES=2 THROTTLE_QUEUE_MAX_WAIT_S=180'
+```
+
+### API-key escape hatch
+
+The Bitwarden entry `Claude Key` was checked via `rbw`, but the API-key route
+is not usable right now: Anthropic returned `Your credit balance is too low to
+access the Anthropic API`. The temporary API-key file and local prefer drop-in
+were removed; current health reports `api_key.enabled=false` and
+`api_key.routing=off`.
+
+### Current state
+
+The proxy-side bug is fixed, merged, deployed centrally, and active locally.
+Remaining Claude pane failures are expected until Anthropic clears the
+`15/07/2026` service incident or the accounts stop receiving headerless
+upstream 429s.
+
+---
+
 ## 14/07/2026 - Usage-poll AIMD poisoning (branch 096) — completes the 13/07 incident
 
 ### Symptom
