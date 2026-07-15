@@ -913,31 +913,6 @@ def test_budget_paced_soft_target_spills_over_not_stale_incoming(
     assert headers["Authorization"] in {"Bearer sk-ant-oat01-SIM-A", "Bearer sk-ant-oat01-SIM-B"}
 
 
-def test_synthetic_probe_forwards_real_short_request(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A real max_tokens=1 request with substantive user content is FORWARDED,
-    never answered with a synthetic '.' (Codex MAJOR data-loss guard)."""
-    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
-    body = _probe_body(
-        messages=[{"role": "user", "content": "Classify this ticket as spam or ham please"}]
-    )
-    resp = proxy._synthetic_one_token_probe_response(
-        _probe_request(), "v1/messages", body, "claude-opus-4-8", 1, False
-    )
-    assert resp is None
-
-
-def test_synthetic_probe_forwards_multimodal_one_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An image content block (real multimodal request) is never absorbed."""
-    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
-    body = _probe_body(
-        messages=[{"role": "user", "content": [{"type": "image", "source": {"data": "x"}}]}]
-    )
-    resp = proxy._synthetic_one_token_probe_response(
-        _probe_request(), "v1/messages", body, "claude-opus-4-8", 1, False
-    )
-    assert resp is None
-
-
 def test_reroute_allows_hop_to_shorter_window_bearer(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
@@ -1030,67 +1005,6 @@ def test_reroute_skips_unconfigured_target_even_if_sooner(
     assert any("retry-after-reroute-skip" in line and "to=ghost" in line for line in lines)
 
 
-def _probe_request() -> Any:
-    return make_mocked_request("POST", "/v1/messages")
-
-
-def _probe_body(**overrides: Any) -> bytes:
-    payload = {"model": "claude-opus-4-8", "max_tokens": 1, "messages": [{"role": "user"}]}
-    payload.update(overrides)
-    return json.dumps(payload).encode()
-
-
-def test_synthetic_probe_answers_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
-    resp = proxy._synthetic_one_token_probe_response(
-        _probe_request(), "v1/messages", _probe_body(), "claude-opus-4-8", 1, False
-    )
-    assert resp is not None
-    payload = json.loads(resp.body)
-    assert payload["id"].startswith("msg_throttle_probe_")
-    assert payload["stop_reason"] == "max_tokens"
-    assert payload["usage"]["output_tokens"] == 1
-    assert payload["model"] == "claude-opus-4-8"
-
-
-def test_synthetic_probe_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", raising=False)
-    resp = proxy._synthetic_one_token_probe_response(
-        _probe_request(), "v1/messages", _probe_body(), "claude-opus-4-8", 1, False
-    )
-    assert resp is None
-
-
-@pytest.mark.parametrize(
-    "max_tokens,has_tools,body",
-    [
-        (2, False, _probe_body(max_tokens=2)),  # not a 1-token probe
-        (1, True, _probe_body()),  # carries tools
-        (1, False, b"{" + b"x" * 4096),  # oversize body
-        (1, False, None),  # missing body
-    ],
-)
-def test_synthetic_probe_forwards_non_probes(
-    monkeypatch: pytest.MonkeyPatch, max_tokens: int, has_tools: bool, body: bytes | None
-) -> None:
-    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
-    resp = proxy._synthetic_one_token_probe_response(
-        _probe_request(), "v1/messages", body, "claude-opus-4-8", max_tokens, has_tools
-    )
-    assert resp is None
-
-
-def test_synthetic_probe_forwards_streaming_and_tool_choice(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
-    for override in ({"stream": True}, {"tool_choice": {"type": "auto"}}):
-        resp = proxy._synthetic_one_token_probe_response(
-            _probe_request(), "v1/messages", _probe_body(**override), "claude-opus-4-8", 1, False
-        )
-        assert resp is None
-
-
 @pytest.mark.parametrize(
     "unified",
     [
@@ -1116,6 +1030,27 @@ def test_account_routing_skips_unified_pressure_candidate(
     assert selected == bid_a
     assert label == "A"
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_account_routing_hard_gates_exhausted_unified_even_under_spillover(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A fully-exhausted unified window (util>=1.0) with a lagging non-rejected
+    status is HARD-unusable in every pass, incl. the spillover fallback — the
+    score is inf so it can never be recovered and draw a real 429 (Codex R2)."""
+    _bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    config.bearer_state[bid_b] = {"unified": {"status": "allowed", "util_7d": 1.0}}
+    acct = {"bearer_id": bid_b, "token": "sk-ant-oat01-SIM-B", "label": "B"}
+
+    # inf in the strict pass AND under allow_pressure + allow_target_spillover.
+    assert proxy._account_routing_candidate_score(acct, "incoming") == math.inf
+    assert (
+        proxy._account_routing_candidate_score(
+            acct, "incoming", allow_pressure=True, allow_target_spillover=True
+        )
+        == math.inf
+    )
 
 
 def test_account_routing_skips_endpoint_rejected_candidate(

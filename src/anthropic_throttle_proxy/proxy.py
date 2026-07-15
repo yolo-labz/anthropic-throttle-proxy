@@ -1120,6 +1120,14 @@ def _account_routing_candidate_score(
         )
         _append_window(windows, unified.get("util_5h"), unified.get("reset_5h"), _WINDOW_5H_S)
         _append_window(windows, unified.get("util_7d"), unified.get("reset_7d"), _WINDOW_7D_S)
+        # A fully-exhausted unified window is HARD-unusable regardless of the
+        # (sometimes lagging/inconsistent) status field — mirror the endpoint
+        # and scoped branches, which already gate util>=1.0 to inf. Without
+        # this an `allowed`+util=1.0 sample slips past the pressure gate under
+        # allow_pressure (e.g. the spillover pass) and draws a real 429
+        # (Codex round-2 MAJOR).
+        if util >= 1.0:
+            return math.inf
         under_pressure = under_pressure or (UTILIZATION_WARN > 0 and util >= UTILIZATION_WARN)
         if under_pressure and not allow_pressure:
             return math.inf
@@ -1757,110 +1765,6 @@ def _should_retry_pushback(
         and attempt.final_status in THROTTLE_STATUSES
         and pushback_retries < config.RATE_PUSHBACK_RETRIES
         and not _is_queue_timeout_response(response)
-    )
-
-
-def _truthy_env(name: str) -> bool:
-    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-# Max total user-visible text (chars) a request may carry and still be treated
-# as a startup probe rather than real work. The observed Claude Code probe is
-# ~88 bytes / 1 message with a few chars of content; real prompts are far
-# larger. Anything above this forwards normally.
-_PROBE_MAX_CONTENT_CHARS = 16
-
-
-def _message_text_len(messages: list) -> int:
-    """Total plain-text length across messages, or a huge sentinel when the
-    payload carries anything that is NOT trivial user text (image/tool blocks,
-    unexpected shapes) — so real / multimodal work is never mistaken for a probe.
-    """
-    total = 0
-    for message in messages:
-        if not isinstance(message, dict):
-            return 10**9
-        content = message.get("content")
-        if content is None:
-            continue
-        if isinstance(content, str):
-            total += len(content)
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and isinstance(block.get("text"), str):
-                    total += len(block["text"])
-                else:
-                    return 10**9  # non-text block → real request
-        else:
-            return 10**9
-    return total
-
-
-def _synthetic_one_token_probe_response(
-    request: web.Request,
-    path: str,
-    body: bytes | None,
-    model_label: str,
-    req_max_tokens: int | None,
-    req_has_tools: bool,
-) -> web.Response | None:
-    """Answer Claude Code startup probes locally during recovery.
-
-    Claude Code emits tiny ``max_tokens: 1`` Messages calls when a tab starts or
-    changes model. During a retry-after incident those probes can fill the only
-    healthy upstream slot, delaying real work and surfacing banner errors. This
-    recovery guard is opt-in (``THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES``) and
-    deliberately narrow: non-streaming ``POST /v1/messages`` only, no tools,
-    small JSON body, ``max_tokens`` exactly 1, and trivial user content
-    (<= _PROBE_MAX_CONTENT_CHARS). Anything else forwards normally so a real
-    short request is never silently answered (Codex MAJOR).
-
-    ponytail: shape+content heuristic, not a guaranteed probe signature — a real
-    request that is <=1 token, no tools, non-streaming, <=2 messages AND <=16
-    chars of text would still be absorbed. Acceptable because the knob is
-    opt-in and recovery-only; upgrade path is an explicit probe marker header.
-    """
-    if not _truthy_env("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES"):
-        return None
-    if request.method != "POST" or path != "v1/messages":
-        return None
-    if req_max_tokens != 1 or req_has_tools or not body or len(body) > 2048:
-        return None
-    try:
-        payload = json.loads(body)
-    except (TypeError, ValueError):
-        return None
-    if not isinstance(payload, dict) or payload.get("stream") is True:
-        return None
-    if payload.get("tools") or payload.get("tool_choice"):
-        return None
-    messages = payload.get("messages")
-    if not isinstance(messages, list) or len(messages) > 2:
-        return None
-    if _message_text_len(messages) > _PROBE_MAX_CONTENT_CHARS:
-        return None
-
-    now_ms = int(time.time() * 1000)
-    log(
-        f"synthetic-one-token-probe path=/{path} model={model_label} "
-        f"bytes={len(body)} messages={len(messages)}"
-    )
-    return web.json_response(
-        {
-            "id": f"msg_throttle_probe_{now_ms}",
-            "type": "message",
-            "role": "assistant",
-            "model": model_label,
-            "content": [{"type": "text", "text": "."}],
-            "stop_reason": "max_tokens",
-            "stop_sequence": None,
-            "usage": {
-                "input_tokens": 0,
-                "cache_creation_input_tokens": 0,
-                "cache_read_input_tokens": 0,
-                "output_tokens": 1,
-            },
-        }
     )
 
 
@@ -2830,12 +2734,6 @@ async def handler(request: web.Request) -> web.StreamResponse:
     # and so does any large body — max_tokens caps only the OUTPUT, so a
     # giant no-tools prompt could otherwise jump the queue.
     req_max_tokens, req_has_tools = _short_request_hint(body)
-    if (
-        synthetic_response := _synthetic_one_token_probe_response(
-            request, path, body, model_label, req_max_tokens, req_has_tools
-        )
-    ) is not None:
-        return synthetic_response
     is_priority = _is_priority_request(req_max_tokens, req_has_tools, len(body or b""))
 
     if _request_disconnected(request):
