@@ -857,6 +857,129 @@ def test_reroute_allows_hop_to_shorter_window_bearer(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
 
+def test_all_configured_hard_gated_keeps_incoming_not_unusable_account(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """When every configured account is hard-gated (window > MAX_HOLD, i.e.
+    genuinely unusable, not holdable), routing keeps the incoming bearer rather
+    than hopping onto a will-fail account. Short holdable windows never reach
+    this branch (the candidate score keeps them routable)."""
+    cred_b = tmp_path / "b.json"
+    bid_b = _write_cred(cred_b, "sk-ant-oat01-SIM-B")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    long_b = FairBearerLimiter(8, "fair")
+    long_b.note_retry_after(120)  # over the hold ceiling → unusable
+    config.bearer_limiters[bid_b] = long_b
+    headers = {"Authorization": "Bearer sk-ant-oat01-STALE"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "staletab", method="POST", path="v1/messages"
+    )
+
+    assert (selected, label) == ("staletab", None)
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-STALE"
+
+
+def test_reroute_skips_unconfigured_target_even_if_sooner(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A reroute target that is not a configured account (nor the API key) is
+    rejected even when its window is SHORTER than the current bearer's."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    current = FairBearerLimiter(8, "fair")
+    current.note_retry_after(40)  # current window
+    config.bearer_limiters[bid_a] = current
+    # Force the router to hand back an UNCONFIGURED bid with a shorter window,
+    # so only the allowed-bids skip (not the worse-window guard) can catch it.
+    unconf = FairBearerLimiter(8, "fair")
+    unconf.note_retry_after(2)
+    config.bearer_limiters["ghost"] = unconf
+    monkeypatch.setattr(
+        proxy, "_route_account_if_enabled", lambda headers, incoming, **kw: ("ghost", None)
+    )
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-A"},
+        bid_a,
+        bid_a,
+        {bid_a},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_a),
+    )
+
+    assert rerouted is None
+    assert any("retry-after-reroute-skip" in line and "to=ghost" in line for line in lines)
+
+
+def _probe_request() -> Any:
+    return make_mocked_request("POST", "/v1/messages")
+
+
+def _probe_body(**overrides: Any) -> bytes:
+    payload = {"model": "claude-opus-4-8", "max_tokens": 1, "messages": [{"role": "user"}]}
+    payload.update(overrides)
+    return json.dumps(payload).encode()
+
+
+def test_synthetic_probe_answers_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
+    resp = proxy._synthetic_one_token_probe_response(
+        _probe_request(), "v1/messages", _probe_body(), "claude-opus-4-8", 1, False
+    )
+    assert resp is not None
+    payload = json.loads(resp.body)
+    assert payload["id"].startswith("msg_throttle_probe_")
+    assert payload["stop_reason"] == "max_tokens"
+    assert payload["usage"]["output_tokens"] == 1
+    assert payload["model"] == "claude-opus-4-8"
+
+
+def test_synthetic_probe_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", raising=False)
+    resp = proxy._synthetic_one_token_probe_response(
+        _probe_request(), "v1/messages", _probe_body(), "claude-opus-4-8", 1, False
+    )
+    assert resp is None
+
+
+@pytest.mark.parametrize(
+    "max_tokens,has_tools,body",
+    [
+        (2, False, _probe_body(max_tokens=2)),  # not a 1-token probe
+        (1, True, _probe_body()),  # carries tools
+        (1, False, b"{" + b"x" * 4096),  # oversize body
+        (1, False, None),  # missing body
+    ],
+)
+def test_synthetic_probe_forwards_non_probes(
+    monkeypatch: pytest.MonkeyPatch, max_tokens: int, has_tools: bool, body: bytes | None
+) -> None:
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
+    resp = proxy._synthetic_one_token_probe_response(
+        _probe_request(), "v1/messages", body, "claude-opus-4-8", max_tokens, has_tools
+    )
+    assert resp is None
+
+
+def test_synthetic_probe_forwards_streaming_and_tool_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "true")
+    for override in ({"stream": True}, {"tool_choice": {"type": "auto"}}):
+        resp = proxy._synthetic_one_token_probe_response(
+            _probe_request(), "v1/messages", _probe_body(**override), "claude-opus-4-8", 1, False
+        )
+        assert resp is None
+
+
 @pytest.mark.parametrize(
     "unified",
     [

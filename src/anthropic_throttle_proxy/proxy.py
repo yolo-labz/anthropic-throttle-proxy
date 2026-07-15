@@ -1375,6 +1375,14 @@ def _route_account_if_enabled(
     if not candidates:
         if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
             return _route_to_selected_auth(headers, incoming_bid, api_key)
+        # Reaching here means EVERY configured account is hard-gated even under
+        # allow_pressure (retry-after > MAX_HOLD, util>=1, scoped meter full,
+        # rejected, or endpoint 429) — i.e. genuinely unusable right now, not
+        # just holdable. Routing to one would only fast-fail or draw a real
+        # 429, so we keep the incoming bearer; the retry-after reroute path
+        # (guarded to configured-only) still owns the "never hop to a stale
+        # incoming" invariant. Short holdable windows never land here: the
+        # candidate score keeps them routable (PR #106).
         return incoming_bid, None
     selected = min(
         candidates,
@@ -1414,13 +1422,32 @@ def _retry_after_reroute_headers(
     )
     if rerouted_bid == current_bid or rerouted_bid in seen_bids:
         return None
+    if _account_routing_enabled():
+        from . import accounts
+
+        allowed_bids = {
+            str(acct["bearer_id"])
+            for acct in accounts.routing_snapshot(time.time())
+            if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
+        }
+        api_key = _api_key_candidate()
+        if api_key is not None and isinstance(api_key.get("bearer_id"), str):
+            allowed_bids.add(str(api_key["bearer_id"]))
+        if rerouted_bid not in allowed_bids:
+            # The router's empty-candidate path can return the raw incoming
+            # bearer; never let that masquerade as a reroute onto a stale /
+            # unconfigured tab. Reroute targets must be accounts we manage.
+            log(
+                f"retry-after-reroute-skip from={current_bid} to={rerouted_bid} "
+                f"path=/{path} reason=unconfigured-or-stale-incoming"
+            )
+            return None
     if _bearer_retry_after_remaining(rerouted_bid) >= current_remaining:
         # Only reroute to a bearer that can dispatch SOONER than the one we
-        # are escaping. Without this, the router's no-candidate fallback
-        # (return incoming_bid) masquerades as a reroute: 15/07/2026 a 2 s
-        # window on the current bearer hopped the request onto the incoming
-        # DEAD bearer (41 h window) → pre-dispatch fast-fail, instead of
-        # holding the local gateway request for those 2 s.
+        # are escaping. Without this, a configured-but-also-throttled sibling
+        # could still steal the request onto a LONGER window: 15/07/2026 a 2 s
+        # window on the current bearer hopped the request onto a 41 h-window
+        # bearer → pre-dispatch fast-fail, instead of holding those 2 s.
         return None
     return rerouted_bid, label, headers
 
@@ -1696,6 +1723,69 @@ def _should_retry_pushback(
         and attempt.final_status in THROTTLE_STATUSES
         and pushback_retries < config.RATE_PUSHBACK_RETRIES
         and not _is_queue_timeout_response(response)
+    )
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _synthetic_one_token_probe_response(
+    request: web.Request,
+    path: str,
+    body: bytes | None,
+    model_label: str,
+    req_max_tokens: int | None,
+    req_has_tools: bool,
+) -> web.Response | None:
+    """Answer Claude Code startup probes locally during recovery.
+
+    Claude Code emits tiny ``max_tokens: 1`` Messages calls when a tab starts or
+    changes model. During a retry-after incident those probes can fill the only
+    healthy upstream slot, delaying real work and surfacing banner errors. This
+    recovery guard is opt-in (``THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES``) and
+    deliberately narrow: non-streaming ``POST /v1/messages`` only, no tools,
+    small JSON body, ``max_tokens`` exactly 1. Anything else forwards normally.
+    """
+    if not _truthy_env("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES"):
+        return None
+    if request.method != "POST" or path != "v1/messages":
+        return None
+    if req_max_tokens != 1 or req_has_tools or not body or len(body) > 2048:
+        return None
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("stream") is True:
+        return None
+    if payload.get("tools") or payload.get("tool_choice"):
+        return None
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or len(messages) > 2:
+        return None
+
+    now_ms = int(time.time() * 1000)
+    log(
+        f"synthetic-one-token-probe path=/{path} model={model_label} "
+        f"bytes={len(body)} messages={len(messages)}"
+    )
+    return web.json_response(
+        {
+            "id": f"msg_throttle_probe_{now_ms}",
+            "type": "message",
+            "role": "assistant",
+            "model": model_label,
+            "content": [{"type": "text", "text": "."}],
+            "stop_reason": "max_tokens",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 1,
+            },
+        }
     )
 
 
@@ -2665,6 +2755,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
     # and so does any large body — max_tokens caps only the OUTPUT, so a
     # giant no-tools prompt could otherwise jump the queue.
     req_max_tokens, req_has_tools = _short_request_hint(body)
+    if (
+        synthetic_response := _synthetic_one_token_probe_response(
+            request, path, body, model_label, req_max_tokens, req_has_tools
+        )
+    ) is not None:
+        return synthetic_response
     is_priority = _is_priority_request(req_max_tokens, req_has_tools, len(body or b""))
 
     if _request_disconnected(request):
