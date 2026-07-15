@@ -215,6 +215,31 @@ QUEUE_TIMEOUT_RETRY_AFTER_S = 5
 # free. Nix/host units should set this to an XDG state path.
 RETRY_AFTER_STATE_FILE = os.environ.get("THROTTLE_RETRY_AFTER_STATE_FILE", "").strip()
 
+# Ceiling on a Retry-After window RESTORED from the state file (seconds; 0 =
+# uncapped legacy). A live-noted window is evidence; a restored one is hearsay
+# from a previous process. Budget windows noted at 100% exhaustion end at the
+# account's reset epoch, but the rolling 5h/7d usage decays underneath — the
+# 13-14/07 incident kept accounts back at 91-92% blocked for ~58 h because
+# every restart resurrected the full window (and the #101 poller gate then
+# silenced the usage evidence that would have contradicted it). A capped
+# restore self-corrects: if the account is still exhausted, the first request
+# after the cap re-notes the honest window from a live 429.
+RETRY_AFTER_RESTORE_CAP_S = max(
+    0.0, float(os.environ.get("THROTTLE_RETRY_AFTER_RESTORE_CAP_S", "900"))
+)
+
+# Ceiling on a LIVE "rejected"-window pause noted from `_maybe_pause_rejected`
+# (seconds; 0 = uncapped legacy "pause until reset"). A rejected budget window
+# ends at the account's reset epoch — potentially days out. The central tier
+# runs no usage poller (no cred paths), so without a cap a live-noted window
+# whose status eases back to allowed_warning blocks the bearer for the full
+# window until a restart/healthcheck (the 13-14/07 shape on the central).
+# Capping bounds it to a re-probe cadence: if still rejected, the next request
+# re-notes from a live 429; account routing + AIMD contain the probe cost.
+RETRY_AFTER_REJECT_CAP_S = max(
+    0.0, float(os.environ.get("THROTTLE_RETRY_AFTER_REJECT_CAP_S", "900"))
+)
+
 # Z.ai Coding Plan sends quota-window resets in the JSON error body, not a
 # Retry-After header. Add a small jitter so a fleet sharing one key does not all
 # resume on the same reset second.

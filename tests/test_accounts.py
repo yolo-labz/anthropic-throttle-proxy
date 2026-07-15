@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import UTC
 
 import pytest
@@ -864,8 +865,19 @@ async def test_refresh_endpoint_honors_failed_poll_retry_after(monkeypatch, tmp_
     assert state["calls"] == 2
 
 
-async def test_refresh_endpoint_skips_poll_when_retry_after_state_active(monkeypatch, tmp_path):
-    """A persisted bearer Retry-After suppresses usage polling before the first GET."""
+async def test_refresh_endpoint_polls_relaxed_cadence_when_retry_after_active(
+    monkeypatch, tmp_path
+):
+    """A persisted bearer Retry-After relaxes (no longer gates) the usage poll.
+
+    Pre-#103 the poller skipped entirely during a messages Retry-After window,
+    starving the router of the one signal (usage decay) that can contradict a
+    stale budget window for the full ~58 h it ran (13-14/07). The poller now
+    fetches anyway — the usage endpoint is a separate rate-limit domain — at a
+    cadence capped at ``_RETRY_AFTER_GATE_CAP_S`` so a long window is never
+    hammered by UI auto-refresh. ``u7=100`` keeps the stale-clear guard dormant
+    here; the clear path has its own focused test below.
+    """
     token = "tok-" + "x"
     cred = tmp_path / "c.json"
     _write_cred(cred, token, expires_at_ms=int((NOW + 3600) * 1000))
@@ -876,7 +888,7 @@ async def test_refresh_endpoint_skips_poll_when_retry_after_state_active(monkeyp
 
     async def _stub(_url, _token):
         state["calls"] += 1
-        return 200, _usage_body()
+        return 200, _usage_body(u7=100.0)
 
     retry_after = 2397.0
     monkeypatch.setattr(accounts, "_get_json", _stub)
@@ -888,9 +900,57 @@ async def test_refresh_endpoint_skips_poll_when_retry_after_state_active(monkeyp
 
     await accounts.refresh_endpoint(NOW)
 
-    assert state["calls"] == 0
-    assert accounts._endpoint_backoff[str(cred)] == NOW + retry_after
-    assert "retry-after" in accounts._endpoint_cache[str(cred)]["err"]
+    assert state["calls"] >= 1  # usage poll happened — a skip regression would be 0
+    # Cadence capped at the gate, not the full 2397 s window.
+    assert accounts._endpoint_backoff[str(cred)] == NOW + accounts._RETRY_AFTER_GATE_CAP_S
+    cached = accounts._endpoint_cache[str(cred)]
+    assert cached["err"] is None
+    assert cached["usage"] is not None
+
+
+async def test_maybe_clear_stale_retry_after_drops_long_window_on_usage_decay(
+    monkeypatch, tmp_path
+):
+    """Fresh sub-exhaustion usage clears a long stale Retry-After window.
+
+    A budget window noted at 100 % exhaustion ends at the reset epoch, but the
+    rolling 5h/7d usage decays underneath. When the usage endpoint reports BOTH
+    windows back below 1.0, the persisted window is dropped so the fleet
+    re-adopts the account instead of concentrating on the others (13-14/07: two
+    accounts blocked ~58 h). Uses real wall-clock time because ``clear_retry_after``
+    re-derives ``now`` from ``time.time()`` internally.
+    """
+    token = "tok-" + "clear"
+    bid = accounts._token_bearer_id(token)
+    state_file = tmp_path / "retry-after.json"
+    real_now = time.time()
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
+    config.bearer_limiters.clear()
+
+    # Long stale window + sub-exhaustion usage on BOTH windows -> cleared.
+    state_file.write_text(json.dumps({bid: real_now + 5000}))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    accounts._maybe_clear_stale_retry_after(
+        token, accounts._parse_usage(_usage_body(u5=40.0, u7=84.0)), real_now
+    )
+    assert bid not in json.loads(state_file.read_text())
+
+    # Short window remaining (< 600 s) -> left alone: input-bucket rate pushback
+    # that utilization figures say nothing about must expire on its own.
+    state_file.write_text(json.dumps({bid: real_now + 60}))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    accounts._maybe_clear_stale_retry_after(
+        token, accounts._parse_usage(_usage_body(u5=40.0, u7=84.0)), real_now
+    )
+    assert bid in json.loads(state_file.read_text())
+
+    # Either window still exhausted (>= 1.0) -> left alone.
+    state_file.write_text(json.dumps({bid: real_now + 5000}))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    accounts._maybe_clear_stale_retry_after(
+        token, accounts._parse_usage(_usage_body(u5=40.0, u7=100.0)), real_now
+    )
+    assert bid in json.loads(state_file.read_text())
 
 
 # ── spec 2: limits[] scoped per-model bucket capture ──────────────────────

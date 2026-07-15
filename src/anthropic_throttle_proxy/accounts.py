@@ -575,10 +575,60 @@ def _failed_poll_backoff_until(now: float, retry_after: float | None) -> float:
     return now + max(ENDPOINT_TTL_S, retry_after or 0.0)
 
 
+# Poll cadence while the bearer's MESSAGES Retry-After window is active. The
+# messages window can legitimately run for hours (budget exhaustion until the
+# 5h/7d reset), but the usage endpoint is a SEPARATE rate-limit domain whose
+# own 429s are already honored via _endpoint_backoff — and its readings are the
+# one signal that can contradict a stale window. Skipping polls for the whole
+# window (the pre-#103 behavior) starved the panel/router of exactly that
+# evidence for 58 h on 13-14/07.
+_RETRY_AFTER_GATE_CAP_S = 300.0
+
+# Clear a messages Retry-After window on contradicting usage evidence only when
+# it still has at least this long to run. Short windows are input-bucket rate
+# pushback (60-120 s observed) that utilization figures say nothing about —
+# those must expire on their own. Hours-long windows are budget-scale and the
+# 5h/7d utilization IS their ground truth.
+_RETRY_AFTER_CLEAR_MIN_REMAINING_S = 600.0
+
+
 def _retry_after_remaining_for_token(token: str, now: float) -> float:
     """Persisted proxy Retry-After remaining for this credential token."""
     until = _limiter._load_retry_after_state().get(_token_bearer_id(token), 0.0)
     return max(0.0, float(until) - now) if isinstance(until, (int, float)) else 0.0
+
+
+def _maybe_clear_stale_retry_after(token: str, usage: dict[str, Any], now: float) -> None:
+    """Drop a long messages window contradicted by fresh usage evidence.
+
+    A budget window is noted at 100% exhaustion and ends at the reset epoch,
+    but the rolling 5h/7d usage decays underneath it. Fresh sub-exhaustion
+    utilization on BOTH windows means the account serves again; holding the
+    window concentrates the fleet on the remaining accounts (13-14/07: two
+    accounts at 91-92% blocked ~58 h → one fresh account absorbed everything,
+    tripped its concurrency cap, and overflow fast-failed). Unknown utilization
+    is never coerced to "fine" — both windows must report a number below 1.0.
+    The next real 429 re-notes an honest window, so a wrong clear costs one
+    upstream round-trip.
+    """
+    util_5h, util_7d = usage.get("util_5h"), usage.get("util_7d")
+    if not isinstance(util_5h, (int, float)) or not isinstance(util_7d, (int, float)):
+        return
+    if util_5h >= 1.0 or util_7d >= 1.0:
+        return
+    bid = _token_bearer_id(token)
+    until = _limiter._load_retry_after_state().get(bid, 0.0)
+    lim = config.bearer_limiters.get(bid)
+    if lim is not None:
+        until = max(until, lim._retry_after_until)
+    if until - now < _RETRY_AFTER_CLEAR_MIN_REMAINING_S:
+        return
+    cleared = _limiter.clear_retry_after(bid)
+    if cleared > 0:
+        config.log(
+            f"retry-after-cleared bid={bid} remaining={int(cleared)}s "
+            f"reason=usage-decay util_5h={util_5h:.2f} util_7d={util_7d:.2f}"
+        )
 
 
 async def _get_json(url: str, token: str) -> JsonResult:
@@ -652,20 +702,23 @@ async def _refresh_one(path: str, now: float) -> None:
         if token is None:
             return
         retry_after_remaining = _retry_after_remaining_for_token(token, now)
-        if retry_after_remaining > 0:
-            err = f"usage endpoint paused by retry-after ({int(retry_after_remaining)}s)"
-            if entry is not None:
-                entry["err"] = err
-            else:
-                _endpoint_cache[path] = {"fetched": 0.0, "usage": None, "err": err}
-            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after_remaining)
-            return
         status, body, retry_after = _json_result_parts(
             await _get_json(_oauth_base() + _USAGE_PATH, token)
         )
         if status == 200 and body is not None:
-            _endpoint_cache[path] = {"fetched": now, "usage": _parse_usage(body), "err": None}
-            _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
+            usage = _parse_usage(body)
+            _endpoint_cache[path] = {"fetched": now, "usage": usage, "err": None}
+            if retry_after_remaining > 0:
+                # Messages window active on this bearer: poll anyway (separate
+                # rate-limit domain, and the only evidence that can contradict
+                # a stale window) but at a relaxed cadence so a long window is
+                # never hammered by UI auto-refresh.
+                _endpoint_backoff[path] = now + min(
+                    max(ENDPOINT_TTL_S, retry_after_remaining), _RETRY_AFTER_GATE_CAP_S
+                )
+            else:
+                _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
+            _maybe_clear_stale_retry_after(token, usage, now)
             await _refresh_email(path, token, expect_mtime=token_mtime)
         elif status == 401:
             # Credential invalid server-side — surface it and DROP the stale
