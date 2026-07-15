@@ -1118,9 +1118,9 @@ def _account_routing_candidate_score(
         util = 0.0
     endpoint = acct.get("endpoint")
     if isinstance(endpoint, dict):
-        if "(429)" in str(endpoint.get("err") or ""):
-            return math.inf
         usage = endpoint.get("usage")
+        if "(429)" in str(endpoint.get("err") or "") and not isinstance(usage, dict):
+            return math.inf
         if isinstance(usage, dict):
             endpoint_util = max(
                 float(v)
@@ -1257,6 +1257,9 @@ def _route_account_if_enabled(
     scoped weekly meter.
     """
     if method != "POST" or "v1/messages" not in path:
+        return incoming_bid, None
+    lower_header_keys = {key.lower() for key in headers}
+    if "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys:
         return incoming_bid, None
     api_key = _api_key_candidate()
     if api_key is not None and config.API_KEY_ROUTING_MODE == "prefer":

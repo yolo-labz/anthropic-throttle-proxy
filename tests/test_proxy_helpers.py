@@ -576,6 +576,22 @@ def test_account_routing_disabled_keeps_incoming_bearer(
     assert headers == {"authorization": "Bearer incoming-token"}
 
 
+def test_account_routing_preserves_explicit_api_key(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    _setup_route_creds(tmp_path, monkeypatch)
+    headers = {"x-api-key": "sk-ant-api03-CLIENT", "x-test": "1"}
+    incoming_bid = proxy._bearer_id(headers)
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    assert selected == incoming_bid
+    assert label is None
+    assert headers == {"x-api-key": "sk-ant-api03-CLIENT", "x-test": "1"}
+
+
 def test_account_routing_selects_least_loaded_and_rewrites_authorization(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
@@ -1749,6 +1765,25 @@ def test_budget_paced_retry_after_candidate_excluded(isolated_account_routing, m
 
     assert (bid, label) == ("aaa", "A")
     assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_budget_paced_endpoint_429_keeps_fresh_usage_candidate(
+    isolated_account_routing, monkeypatch
+) -> None:
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.95)
+    b = _budget_acct("bbb", "TOKB", "B", util_5h=0.04, util_7d=0.07)
+    b["endpoint"]["err"] = "usage endpoint unavailable (429)"
+
+    bid, label, headers = _route_budget_for_accounts(
+        isolated_account_routing,
+        monkeypatch,
+        [_budget_acct("aaa", "TOKA", "A", util_5h=0.01, util_7d=0.92), b],
+        model="claude-opus-4-8",
+        max_tokens=64000,
+    )
+
+    assert (bid, label) == ("bbb", "B")
+    assert headers["Authorization"] == "Bearer TOKB"
 
 
 def test_budget_paced_queue_inflight_prevents_dogpiling(
