@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import socket
 import time
@@ -716,6 +717,294 @@ def test_account_routing_skips_persisted_retry_after_candidate(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
 
+# ---------------------------------------------------------------------------
+# 15/07/2026 retry-after reroute incident (PR #106)
+# A SHORT Retry-After window (<= MAX_HOLD_RETRY_AFTER_S) must NOT hard-gate a
+# bearer out of routing — the dispatch path can hold through it. When it did,
+# the router's empty-candidate fallback (return incoming_bid) masqueraded as a
+# reroute and hopped the request onto the DEAD incoming bearer (41 h window),
+# which then pre-dispatch-fast-failed instead of holding a couple seconds.
+# ---------------------------------------------------------------------------
+
+
+def test_short_retry_after_candidate_scored_finite(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """<= MAX_HOLD window: surcharged but routable; > MAX_HOLD: hard-gated inf."""
+    _bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+
+    short = FairBearerLimiter(8, "fair")
+    short.note_retry_after(5)
+    config.bearer_limiters[bid_b] = short
+    acct = {"bearer_id": bid_b, "token": "sk-ant-oat01-SIM-B", "label": "B"}
+    score = proxy._account_routing_candidate_score(acct, "incoming")
+    assert math.isfinite(score)
+    # Surcharge is ~5 s * 10/s above a clean idle bearer's baseline.
+    assert score >= 5 * proxy._RETRY_AFTER_SURCHARGE_PER_S - 1
+
+    short.note_retry_after(120)  # now past the hold ceiling
+    assert proxy._account_routing_candidate_score(acct, "incoming") == math.inf
+
+
+def test_short_retry_after_beats_dead_incoming_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Reroute picks the short-window configured bearer over a long-window one."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # A (the incoming) is effectively dead: a 41 h window.
+    dead_a = FairBearerLimiter(8, "fair")
+    dead_a.note_retry_after(147800)
+    config.bearer_limiters[bid_a] = dead_a
+    # B has a tiny window the dispatch path can hold through.
+    short_b = FairBearerLimiter(8, "fair")
+    short_b.note_retry_after(2)
+    config.bearer_limiters[bid_b] = short_b
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-B"
+
+
+def test_clean_sibling_still_beats_short_retry_after(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A clean bearer must outrank a surcharged short-window one (no regression)."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    short_a = FairBearerLimiter(8, "fair")
+    short_a.note_retry_after(5)
+    config.bearer_limiters[bid_a] = short_a
+    config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")  # clean
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+
+
+def test_reroute_refuses_hop_to_longer_window_configured_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The WINDOW guard (not the allowed-bids guard) blocks a hop to a
+    CONFIGURED sibling whose window is longer than the current bearer's."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # Current bearer B: short 5 s window. Target A: configured but LONGER (50 s).
+    short_b = FairBearerLimiter(8, "fair")
+    short_b.note_retry_after(5)
+    config.bearer_limiters[bid_b] = short_b
+    long_a = FairBearerLimiter(8, "fair")
+    long_a.note_retry_after(50)
+    config.bearer_limiters[bid_a] = long_a
+    # Force the router to hand back A (configured → passes the allowed-bids
+    # guard) so only the worse-window comparison can reject it.
+    monkeypatch.setattr(
+        proxy, "_route_account_if_enabled", lambda headers, incoming, **kw: (bid_a, "A")
+    )
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is None
+    # Prove it was the window guard, not the allowed-bids skip.
+    assert not any("retry-after-reroute-skip" in line for line in lines)
+
+
+def test_reroute_refuses_masquerade_to_dead_incoming(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """B-only config: routing's empty-candidate path returns the DEAD incoming
+    bearer; the allowed-bids guard rejects that masquerade."""
+    cred_b = tmp_path / "b.json"
+    bid_b = _write_cred(cred_b, "sk-ant-oat01-SIM-B")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    incoming = "deadtab"
+    dead = FairBearerLimiter(8, "fair")
+    dead.note_retry_after(147800)
+    config.bearer_limiters[incoming] = dead
+    long_b = FairBearerLimiter(8, "fair")
+    long_b.note_retry_after(120)  # over ceiling → excluded → routing returns incoming
+    config.bearer_limiters[bid_b] = long_b
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-DEAD"},
+        incoming,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is None
+    assert any("retry-after-reroute-skip" in line and "to=deadtab" in line for line in lines)
+
+
+def test_windowed_incoming_does_not_undercut_clean_sibling(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A tiny Retry-After window on the incoming bearer must not win over a
+    genuinely clean sibling via the -0.01 stickiness bonus (Codex MAJOR)."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # Incoming A: sub-millisecond window. B: clean.
+    tiny_a = FairBearerLimiter(8, "fair")
+    tiny_a.note_retry_after(0.0005)
+    config.bearer_limiters[bid_a] = tiny_a
+    config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+
+
+def test_budget_paced_soft_target_spills_over_not_stale_incoming(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """budget_paced: when every configured account only crossed its SOFT pacing
+    target (still dispatchable), route to a configured spillover account rather
+    than returning the stale incoming bearer (Codex MAJOR)."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    # Both configured accounts cross the soft target → strict + pressure empty,
+    # but they remain below any hard gate (no window, util < 1, not rejected).
+    monkeypatch.setattr(proxy, "_budget_pacing_target_crossed", lambda windows, cost: True)
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair")
+    config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")
+    headers = {"Authorization": "Bearer sk-ant-oat01-STALE"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "staletab", method="POST", path="v1/messages"
+    )
+
+    assert selected in {bid_a, bid_b}
+    assert label in {"A", "B"}
+    assert headers["Authorization"] in {"Bearer sk-ant-oat01-SIM-A", "Bearer sk-ant-oat01-SIM-B"}
+
+
+def test_reroute_allows_hop_to_shorter_window_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Legit reroute still fires when the target can dispatch sooner."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    long_b = FairBearerLimiter(8, "fair")
+    long_b.note_retry_after(50)
+    config.bearer_limiters[bid_b] = long_b
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair")  # clean
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is not None
+    next_bid, label, headers = rerouted
+    assert next_bid == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_all_configured_hard_gated_keeps_incoming_not_unusable_account(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """When every configured account is hard-gated (window > MAX_HOLD, i.e.
+    genuinely unusable, not holdable), routing keeps the incoming bearer rather
+    than hopping onto a will-fail account. Short holdable windows never reach
+    this branch (the candidate score keeps them routable)."""
+    cred_b = tmp_path / "b.json"
+    bid_b = _write_cred(cred_b, "sk-ant-oat01-SIM-B")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    long_b = FairBearerLimiter(8, "fair")
+    long_b.note_retry_after(120)  # over the hold ceiling → unusable
+    config.bearer_limiters[bid_b] = long_b
+    headers = {"Authorization": "Bearer sk-ant-oat01-STALE"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, "staletab", method="POST", path="v1/messages"
+    )
+
+    assert (selected, label) == ("staletab", None)
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-STALE"
+
+
+def test_reroute_skips_unconfigured_target_even_if_sooner(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A reroute target that is not a configured account (nor the API key) is
+    rejected even when its window is SHORTER than the current bearer's."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    current = FairBearerLimiter(8, "fair")
+    current.note_retry_after(40)  # current window
+    config.bearer_limiters[bid_a] = current
+    # Force the router to hand back an UNCONFIGURED bid with a shorter window,
+    # so only the allowed-bids skip (not the worse-window guard) can catch it.
+    unconf = FairBearerLimiter(8, "fair")
+    unconf.note_retry_after(2)
+    config.bearer_limiters["ghost"] = unconf
+    monkeypatch.setattr(
+        proxy, "_route_account_if_enabled", lambda headers, incoming, **kw: ("ghost", None)
+    )
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-A"},
+        bid_a,
+        bid_a,
+        {bid_a},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_a),
+    )
+
+    assert rerouted is None
+    assert any("retry-after-reroute-skip" in line and "to=ghost" in line for line in lines)
+
+
 @pytest.mark.parametrize(
     "unified",
     [
@@ -741,6 +1030,27 @@ def test_account_routing_skips_unified_pressure_candidate(
     assert selected == bid_a
     assert label == "A"
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_account_routing_hard_gates_exhausted_unified_even_under_spillover(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A fully-exhausted unified window (util>=1.0) with a lagging non-rejected
+    status is HARD-unusable in every pass, incl. the spillover fallback — the
+    score is inf so it can never be recovered and draw a real 429 (Codex R2)."""
+    _bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    config.bearer_state[bid_b] = {"unified": {"status": "allowed", "util_7d": 1.0}}
+    acct = {"bearer_id": bid_b, "token": "sk-ant-oat01-SIM-B", "label": "B"}
+
+    # inf in the strict pass AND under allow_pressure + allow_target_spillover.
+    assert proxy._account_routing_candidate_score(acct, "incoming") == math.inf
+    assert (
+        proxy._account_routing_candidate_score(
+            acct, "incoming", allow_pressure=True, allow_target_spillover=True
+        )
+        == math.inf
+    )
 
 
 def test_account_routing_skips_endpoint_rejected_candidate(

@@ -300,6 +300,14 @@ _TARGET_SPILLOVER_SURCHARGE = 100.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
 # under light inflight-only load, but strict-account queueing can spend it.
 _WARNING_BACKPRESSURE_SURCHARGE = 80.0
+# A bearer inside a SHORT Retry-After window (≤ MAX_HOLD_RETRY_AFTER_S) stays
+# routable — the dispatch path can hold through it (wait_retry_after). Price
+# each remaining second like one inflight request (10.0), so a clean account
+# always outranks it but it still beats the no-candidate fallback. 15/07/2026
+# incident: a 2 s window on the only healthy account hard-gated it to inf,
+# routing fell back to the incoming DEAD bearer (41 h window) and the request
+# fast-failed instead of holding 2 s.
+_RETRY_AFTER_SURCHARGE_PER_S = 10.0
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
@@ -1086,7 +1094,8 @@ def _account_routing_candidate_score(
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
-    if _bearer_retry_after_remaining(bid) > 0:
+    retry_after_remaining = _bearer_retry_after_remaining(bid)
+    if retry_after_remaining > config.MAX_HOLD_RETRY_AFTER_S:
         return math.inf
     lim = config.bearer_limiters.get(bid)
     snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
@@ -1111,6 +1120,14 @@ def _account_routing_candidate_score(
         )
         _append_window(windows, unified.get("util_5h"), unified.get("reset_5h"), _WINDOW_5H_S)
         _append_window(windows, unified.get("util_7d"), unified.get("reset_7d"), _WINDOW_7D_S)
+        # A fully-exhausted unified window is HARD-unusable regardless of the
+        # (sometimes lagging/inconsistent) status field — mirror the endpoint
+        # and scoped branches, which already gate util>=1.0 to inf. Without
+        # this an `allowed`+util=1.0 sample slips past the pressure gate under
+        # allow_pressure (e.g. the spillover pass) and draws a real 429
+        # (Codex round-2 MAJOR).
+        if util >= 1.0:
+            return math.inf
         under_pressure = under_pressure or (UTILIZATION_WARN > 0 and util >= UTILIZATION_WARN)
         if under_pressure and not allow_pressure:
             return math.inf
@@ -1157,9 +1174,13 @@ def _account_routing_candidate_score(
                         UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN
                     )
     # Queue dominates; utilization/pacing is a soft tie-breaker below the warn line.
-    stickiness = -0.01 if bid == incoming_bid else 0.0
+    # Stickiness is dropped while the incoming bearer is inside a Retry-After
+    # window: otherwise the -0.01 bonus lets a windowed incoming (even a
+    # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
+    stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
     load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
+    retry_after_surcharge = retry_after_remaining * _RETRY_AFTER_SURCHARGE_PER_S
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
         expected_cost = _expected_request_util_cost(model, max_tokens)
         target_crossed = _budget_pacing_target_crossed(windows, expected_cost)
@@ -1172,11 +1193,12 @@ def _account_routing_candidate_score(
             load
             + warning_surcharge
             + target_surcharge
+            + retry_after_surcharge
             + overpace * _OVERPACE_SURCHARGE
             + pressure
             + stickiness
         )
-    return load + warning_surcharge + util * 5.0 + stickiness
+    return load + warning_surcharge + retry_after_surcharge + util * 5.0 + stickiness
 
 
 def _bearer_local_load_score(bid: str) -> float:
@@ -1362,8 +1384,42 @@ def _route_account_if_enabled(
         if pressure_score < strict_score:
             candidates = pressure_candidates
     if not candidates:
+        # budget_paced: "no candidates" can mean every account merely crossed
+        # its SOFT pacing target (still below hard cap, dispatchable), not that
+        # any is truly unusable. Recover those via a spillover pass before
+        # falling back, so real capacity isn't stranded behind the stale
+        # incoming bearer (Codex MAJOR). Hard-unusable accounts (util>=1,
+        # scoped full, rejected, retry-after>MAX_HOLD) still score inf here, so
+        # this never routes to a will-fail account.
+        spillover_candidates = [
+            acct
+            for acct in snapshot
+            if isinstance(acct.get("token"), str)
+            and isinstance(acct.get("bearer_id"), str)
+            and _account_routing_candidate_score(
+                acct,
+                incoming_bid,
+                allow_pressure=True,
+                allow_target_spillover=True,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            )
+            < math.inf
+        ]
+        if spillover_candidates:
+            candidates = spillover_candidates
+            allow_target_spillover = True
+    if not candidates:
         if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
             return _route_to_selected_auth(headers, incoming_bid, api_key)
+        # Even the spillover pass found nothing, so EVERY configured account is
+        # genuinely unusable right now (util>=1, scoped meter full, rejected, or
+        # retry-after > MAX_HOLD) — not just soft-target-crossed. Routing to one
+        # would only fast-fail or draw a real 429, so keep the incoming bearer;
+        # the retry-after reroute path (guarded to configured-only) still owns
+        # the "never hop to a stale incoming" invariant. Short holdable windows
+        # never land here: the candidate score keeps them routable (PR #106).
         return incoming_bid, None
     selected = min(
         candidates,
@@ -1389,6 +1445,7 @@ def _retry_after_reroute_headers(
     path: str,
     model: str,
     max_tokens: int | None,
+    current_remaining: float,
 ) -> tuple[str, str | None, dict[str, str]] | None:
     """Re-run account routing after a selected bearer has Retry-After state."""
     headers = dict(base_headers)
@@ -1401,6 +1458,38 @@ def _retry_after_reroute_headers(
         max_tokens=max_tokens,
     )
     if rerouted_bid == current_bid or rerouted_bid in seen_bids:
+        return None
+    if _account_routing_enabled():
+        from . import accounts
+
+        allowed_bids = {
+            str(acct["bearer_id"])
+            for acct in accounts.routing_snapshot(time.time())
+            if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
+        }
+        api_key = _api_key_candidate()
+        if api_key is not None and isinstance(api_key.get("bearer_id"), str):
+            allowed_bids.add(str(api_key["bearer_id"]))
+        if rerouted_bid not in allowed_bids:
+            # The router's empty-candidate path can return the raw incoming
+            # bearer; never let that masquerade as a reroute onto a stale /
+            # unconfigured tab. Reroute targets must be accounts we manage.
+            log(
+                f"retry-after-reroute-skip from={current_bid} to={rerouted_bid} "
+                f"path=/{path} reason=unconfigured-or-stale-incoming"
+            )
+            return None
+    # Re-sample BOTH windows at the same instant so an elapsed gap between the
+    # caller's snapshot and now can't let an equal/worse target slip through
+    # (Codex MINOR). ``current_remaining`` is the caller's floor; take the
+    # fresher of the two for the current bearer.
+    current_now = max(current_remaining, _bearer_retry_after_remaining(current_bid))
+    if _bearer_retry_after_remaining(rerouted_bid) >= current_now:
+        # Only reroute to a bearer that can dispatch SOONER than the one we
+        # are escaping. Without this, a configured-but-also-throttled sibling
+        # could still steal the request onto a LONGER window: 15/07/2026 a 2 s
+        # window on the current bearer hopped the request onto a 41 h-window
+        # bearer → pre-dispatch fast-fail, instead of holding those 2 s.
         return None
     return rerouted_bid, label, headers
 
@@ -1428,6 +1517,7 @@ def _try_retry_after_reroute(
         path,
         model,
         max_tokens,
+        retry_after_remaining,
     )
     if rerouted is None:
         return None
