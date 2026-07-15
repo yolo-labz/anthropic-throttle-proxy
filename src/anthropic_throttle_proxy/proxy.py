@@ -300,6 +300,14 @@ _TARGET_SPILLOVER_SURCHARGE = 100.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
 # under light inflight-only load, but strict-account queueing can spend it.
 _WARNING_BACKPRESSURE_SURCHARGE = 80.0
+# A bearer inside a SHORT Retry-After window (≤ MAX_HOLD_RETRY_AFTER_S) stays
+# routable — the dispatch path can hold through it (wait_retry_after). Price
+# each remaining second like one inflight request (10.0), so a clean account
+# always outranks it but it still beats the no-candidate fallback. 15/07/2026
+# incident: a 2 s window on the only healthy account hard-gated it to inf,
+# routing fell back to the incoming DEAD bearer (41 h window) and the request
+# fast-failed instead of holding 2 s.
+_RETRY_AFTER_SURCHARGE_PER_S = 10.0
 
 # GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
 # diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
@@ -1086,7 +1094,8 @@ def _account_routing_candidate_score(
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
-    if _bearer_retry_after_remaining(bid) > 0:
+    retry_after_remaining = _bearer_retry_after_remaining(bid)
+    if retry_after_remaining > config.MAX_HOLD_RETRY_AFTER_S:
         return math.inf
     lim = config.bearer_limiters.get(bid)
     snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
@@ -1160,6 +1169,7 @@ def _account_routing_candidate_score(
     stickiness = -0.01 if bid == incoming_bid else 0.0
     load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
+    retry_after_surcharge = retry_after_remaining * _RETRY_AFTER_SURCHARGE_PER_S
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
         expected_cost = _expected_request_util_cost(model, max_tokens)
         target_crossed = _budget_pacing_target_crossed(windows, expected_cost)
@@ -1172,11 +1182,12 @@ def _account_routing_candidate_score(
             load
             + warning_surcharge
             + target_surcharge
+            + retry_after_surcharge
             + overpace * _OVERPACE_SURCHARGE
             + pressure
             + stickiness
         )
-    return load + warning_surcharge + util * 5.0 + stickiness
+    return load + warning_surcharge + retry_after_surcharge + util * 5.0 + stickiness
 
 
 def _bearer_local_load_score(bid: str) -> float:
@@ -1389,6 +1400,7 @@ def _retry_after_reroute_headers(
     path: str,
     model: str,
     max_tokens: int | None,
+    current_remaining: float,
 ) -> tuple[str, str | None, dict[str, str]] | None:
     """Re-run account routing after a selected bearer has Retry-After state."""
     headers = dict(base_headers)
@@ -1401,6 +1413,14 @@ def _retry_after_reroute_headers(
         max_tokens=max_tokens,
     )
     if rerouted_bid == current_bid or rerouted_bid in seen_bids:
+        return None
+    if _bearer_retry_after_remaining(rerouted_bid) >= current_remaining:
+        # Only reroute to a bearer that can dispatch SOONER than the one we
+        # are escaping. Without this, the router's no-candidate fallback
+        # (return incoming_bid) masquerades as a reroute: 15/07/2026 a 2 s
+        # window on the current bearer hopped the request onto the incoming
+        # DEAD bearer (41 h window) → pre-dispatch fast-fail, instead of
+        # holding the local gateway request for those 2 s.
         return None
     return rerouted_bid, label, headers
 
@@ -1428,6 +1448,7 @@ def _try_retry_after_reroute(
         path,
         model,
         max_tokens,
+        retry_after_remaining,
     )
     if rerouted is None:
         return None

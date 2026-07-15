@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import os
 import socket
 import time
@@ -712,6 +713,146 @@ def test_account_routing_skips_persisted_retry_after_candidate(
     )
 
     assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+# ---------------------------------------------------------------------------
+# 15/07/2026 retry-after reroute incident (PR #106)
+# A SHORT Retry-After window (<= MAX_HOLD_RETRY_AFTER_S) must NOT hard-gate a
+# bearer out of routing — the dispatch path can hold through it. When it did,
+# the router's empty-candidate fallback (return incoming_bid) masqueraded as a
+# reroute and hopped the request onto the DEAD incoming bearer (41 h window),
+# which then pre-dispatch-fast-failed instead of holding a couple seconds.
+# ---------------------------------------------------------------------------
+
+
+def test_short_retry_after_candidate_scored_finite(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """<= MAX_HOLD window: surcharged but routable; > MAX_HOLD: hard-gated inf."""
+    _bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+
+    short = FairBearerLimiter(8, "fair")
+    short.note_retry_after(5)
+    config.bearer_limiters[bid_b] = short
+    acct = {"bearer_id": bid_b, "token": "sk-ant-oat01-SIM-B", "label": "B"}
+    score = proxy._account_routing_candidate_score(acct, "incoming")
+    assert math.isfinite(score)
+    # Surcharge is ~5 s * 10/s above a clean idle bearer's baseline.
+    assert score >= 5 * proxy._RETRY_AFTER_SURCHARGE_PER_S - 1
+
+    short.note_retry_after(120)  # now past the hold ceiling
+    assert proxy._account_routing_candidate_score(acct, "incoming") == math.inf
+
+
+def test_short_retry_after_beats_dead_incoming_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Reroute picks the short-window configured bearer over a long-window one."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # A (the incoming) is effectively dead: a 41 h window.
+    dead_a = FairBearerLimiter(8, "fair")
+    dead_a.note_retry_after(147800)
+    config.bearer_limiters[bid_a] = dead_a
+    # B has a tiny window the dispatch path can hold through.
+    short_b = FairBearerLimiter(8, "fair")
+    short_b.note_retry_after(2)
+    config.bearer_limiters[bid_b] = short_b
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-B"
+
+
+def test_clean_sibling_still_beats_short_retry_after(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A clean bearer must outrank a surcharged short-window one (no regression)."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    short_a = FairBearerLimiter(8, "fair")
+    short_a.note_retry_after(5)
+    config.bearer_limiters[bid_a] = short_a
+    config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")  # clean
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, bid_a, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_b
+    assert label == "B"
+
+
+def test_reroute_refuses_hop_to_longer_window_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """B-only config: routing falls back to the DEAD incoming bearer; the reroute
+    guard must reject a hop to a window >= the current one."""
+    cred_b = tmp_path / "b.json"
+    bid_b = _write_cred(cred_b, "sk-ant-oat01-SIM-B")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    incoming = "deadtab"
+    dead = FairBearerLimiter(8, "fair")
+    dead.note_retry_after(147800)
+    config.bearer_limiters[incoming] = dead
+    # B is over the hold ceiling too, so it is excluded and routing falls back
+    # to the incoming bearer — exactly the masquerade the guard blocks.
+    long_b = FairBearerLimiter(8, "fair")
+    long_b.note_retry_after(120)
+    config.bearer_limiters[bid_b] = long_b
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-DEAD"},
+        incoming,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is None
+
+
+def test_reroute_allows_hop_to_shorter_window_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Legit reroute still fires when the target can dispatch sooner."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    long_b = FairBearerLimiter(8, "fair")
+    long_b.note_retry_after(50)
+    config.bearer_limiters[bid_b] = long_b
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair")  # clean
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is not None
+    next_bid, label, headers = rerouted
+    assert next_bid == bid_a
     assert label == "A"
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
