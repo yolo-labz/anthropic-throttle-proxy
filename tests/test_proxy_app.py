@@ -48,6 +48,14 @@ _UNIFIED_ALLOWED_LOW_HEADERS = {
     "anthropic-ratelimit-unified-7d-status": "allowed",
     "anthropic-ratelimit-unified-7d-utilization": "0.23",
 }
+_UNIFIED_REJECTED_HEADERS = {
+    "anthropic-ratelimit-unified-status": "rejected",
+    "anthropic-ratelimit-unified-representative-claim": "five_hour",
+    "anthropic-ratelimit-unified-5h-status": "rejected",
+    "anthropic-ratelimit-unified-5h-utilization": "1.0",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-7d-utilization": "0.5",
+}
 
 
 def _make_upstream() -> web.Application:
@@ -92,6 +100,14 @@ def _make_upstream() -> web.Application:
             seen_429_once += 1
             if seen_429_once == 1:
                 return web.Response(status=429, headers=_UNIFIED_ALLOWED_LOW_HEADERS)
+        if mode == "429-unified-low":
+            # Concurrency/per-rate 429: every window allowed, low util, no
+            # Retry-After — the transient burst that must NOT collapse the cap.
+            return web.Response(status=429, headers=_UNIFIED_ALLOWED_LOW_HEADERS)
+        if mode == "429-unified-rejected":
+            # Budget 429: a window already "rejected" — real exhaustion that
+            # must still multiplicatively decrease the cap.
+            return web.Response(status=429, headers=_UNIFIED_REJECTED_HEADERS)
         if mode == "529":
             return web.Response(status=529, headers={"retry-after": "0"})
         if mode in ("unified", "unified-high"):
@@ -529,6 +545,56 @@ async def test_concurrency_429_retry_uses_classified_cooldown(
     assert status == 200
     assert b"message_stop" in streamed
     assert config.state["served"] == 2
+
+
+async def test_concurrency_429_burst_does_not_collapse_aimd_cap(
+    client: TestClient, monkeypatch
+) -> None:
+    # Regression (17/07 19:03): three headerless concurrency 429s (windows
+    # allowed, low util) on an active account shrank the cap 8→4→2→1 → queue
+    # flood → queue_max_wait 503 storm → 3 dead claude sessions. A concurrency
+    # 429 is a transient inflight spike; the short cooldown paces it and the cap
+    # MUST stay at hard_max. Shrink is reserved for real budget/Retry-After.
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "CONCURRENCY_COOLDOWN_S", 0.0)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    for _ in range(3):
+        status, _ = await _post_and_settle(
+            client,
+            data=b'{"model":"claude-sonnet-4-6"}',
+            headers={
+                "Authorization": "Bearer conc-burst",
+                "X-Stub-Mode": "429-unified-low",
+            },
+        )
+        assert status == 429
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    # Cap unchanged from its AIMD_INITIAL_CONCURRENT start despite three
+    # concurrency 429s — the multiplicative-decrease that collapsed 8→1 is gone.
+    assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
+
+
+async def test_budget_rejected_429_still_shrinks(client: TestClient, monkeypatch) -> None:
+    # Guard against over-broadening the concurrency carve-out: a 429 whose
+    # unified window is already "rejected" is real budget exhaustion and must
+    # still multiplicatively decrease the cap.
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={
+            "Authorization": "Bearer budget-rejected",
+            "X-Stub-Mode": "429-unified-rejected",
+        },
+    )
+    bid = next(iter(config.bearer_state))
+    lim = config.bearer_limiters[bid]
+    # Started at AIMD_INITIAL_CONCURRENT=3; a rejected-window 429 must shrink it.
+    assert lim.max_concurrent < config.AIMD_INITIAL_CONCURRENT
 
 
 async def test_long_retry_after_fails_fast_without_sleeping(

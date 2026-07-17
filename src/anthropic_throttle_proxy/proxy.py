@@ -2148,7 +2148,8 @@ async def _keepalive_hold_and_retry(
     try:
         # The throttle that triggered the hold is a real throttle event: apply
         # its AIMD once (canonical _aimd_feedback — 529 + a marked queue-timeout
-        # never shrink, a concurrency 429/503 shrinks), then take ownership so
+        # never shrink; a budget/Retry-After 429 shrinks, a concurrency 429 only
+        # paces via CONCURRENCY_COOLDOWN_S), then take ownership so
         # _finalize skips its own _aimd_feedback (no double-apply on the
         # terminal). Guarded so a metrics error cannot kill the hold, and kept
         # INSIDE the outer try so ANY raise still hits the terminal-SSE +
@@ -2244,7 +2245,8 @@ async def _keepalive_hold_and_retry(
             if _is_transient_throttle(status, meta, bid, retry_fake):
                 # Still transient: the canonical _aimd_feedback already does the
                 # right thing per status (529 + a marked central queue-timeout
-                # never shrink — invariants 7, 9; a concurrency 429/503 shrinks).
+                # never shrink — invariants 7, 9; a budget/Retry-After 429 shrinks,
+                # a concurrency 429 holds the cap + paces via CONCURRENCY_COOLDOWN_S).
                 # attempt already reflects this retry's status/meta/response, and
                 # retry_fake carries the anti-spoof-gated queue-timeout marker.
                 await _aimd_feedback(bid, limiter, attempt)
@@ -2619,17 +2621,34 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         )
         return
     if final_status in AIMD_STATUSES:
-        # Rate pushback (429/503) → multiplicative-decrease so future requests
-        # queue here instead of being slammed against Anthropic's counter.
-        new_max = await limiter.shrink()
-        M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
-        if new_max is not None:
-            M_AIMD_MAX.labels(bearer=bid).set(new_max)
+        # Rate pushback (429/503). A headerless 429 with the unified windows
+        # still ``allowed`` and low utilization is a transient CONCURRENCY /
+        # per-rate cap, not budget exhaustion: it clears once in-flight drains,
+        # so the short ``CONCURRENCY_COOLDOWN_S`` pause (set below) is enough.
+        # Multiplicatively decreasing the cap there collapses throughput under
+        # fleet bursts — 17/07 19:03: three headerless 429s on b144f62f (2 %
+        # util, windows allowed) shrank it 8→4→2→1 → queue flood → 503 storm →
+        # 3 dead sessions (prompts-tab fleet brief 19:15). Reserve the shrink
+        # for real pushback: a ``Retry-After`` header (hard limit) or a
+        # headerless 429 the unified windows flag as budget
+        # (``allowed_warning``/``rejected``/binding util ≥ warn). Sustained
+        # overload climbs util, which flips this gate True and re-arms shrink.
+        is_concurrency_429 = retry_after <= 0 and not _budget_under_pressure(attempt.meta, bid)
         pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
+        new_max: int | None = None
+        if is_concurrency_429:
+            label, reason = "concurrency-429", "no shrink — windows allowed"
+        else:
+            new_max = await limiter.shrink()
+            M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
+            if new_max is not None:
+                M_AIMD_MAX.labels(bearer=bid).set(new_max)
+            label, reason = "aimd-shrink", "budget/real-retry-after pushback"
         log(
-            f"aimd-shrink bid={bid} status={final_status} "
-            f"max_concurrent={new_max} retry_after={retry_after} "
-            f"pause={pause} synthetic_pause={synthetic_pause}"
+            f"{label} bid={bid} status={final_status} "
+            f"max_concurrent={new_max if new_max is not None else limiter.max_concurrent} "
+            f"retry_after={retry_after} pause={pause} "
+            f"synthetic_pause={synthetic_pause} ({reason})"
         )
     elif final_status in OVERLOAD_STATUSES:
         # 529 = upstream overloaded (not our usage): honor any retry-after but
