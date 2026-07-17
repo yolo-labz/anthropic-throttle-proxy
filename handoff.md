@@ -6,6 +6,82 @@ host activation. Latest incident first.
 
 ---
 
+## 17/07/2026 - Safe synthetic probe + fleet OAT deploy (issue #107, PR #108)
+
+### Symptom
+
+After the A/B/C static-OAT migration, the one remaining unsafe diagnostic was
+the synthetic probe path: it could still look like normal user traffic if a
+future caller sent non-empty content through the probe helper. The fleet also
+needed the #107 fix deployed through the Nix pin so every host ran the same
+proxy build.
+
+### Fix
+
+PR #108 (`fix(throttle): gate synthetic one-token probe on claude-cli`) made
+the probe opt-in on all of these gates:
+
+- `THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES=true`
+- exact synthetic request shape
+- empty text-only message payload
+- `User-Agent` matching `claude-cli/*`
+
+The message-length helper now only counts blocks whose `type` is `text`, so
+non-text blocks cannot make a user request masquerade as an empty probe.
+
+Merged:
+
+- Proxy PR: https://github.com/yolo-labz/anthropic-throttle-proxy/pull/108
+- Proxy merge commit: `4f51cb72660c1f1b50202f76b7ac0e6a6f556d8d`
+- NixOS deploy PR: https://github.com/phsb5321/NixOS/pull/1258
+- NixOS merge commit: `a6a8f843affc30117e0ee78beaad7e2850adbd21`
+
+### Verification
+
+- Proxy repo: `uv run pytest` -> 455 passed; `uv run ruff check .` -> clean.
+- Cross-family adversarial review found no high/major blocker before merge.
+- Nix package build carried the expected #107 runtime markers.
+- Desktop switched to generation `1886`; local health showed
+  `central_status=up`, `known=3`, `distinct=3`, `bearer_count=3`, all bearer
+  statuses `allowed`.
+- MacBook `nh darwin switch .` succeeded; launchd proxy uses
+  `/nix/store/y6q8478g8adhdkvfrvvzzkp23yirvsh0-anthropic-throttle-proxy-0.1.0`,
+  has all three static OAT files (`access_len=108`, `refresh_len=0`), and
+  health reports `bearer_count=3`.
+- Server `nh os switch .` eventually succeeded on
+  `/nix/store/v2rsksvckp6arvjqbdgjb1iz0m9i0p1p-nixos-system-server-26.11.20260715.753cc8a`;
+  user proxy uses the same #107 package as desktop, watcher/keepalive timers
+  are active, and health reports `central_status=up`, `bearer_count=3`.
+
+### Host activation repairs during deploy
+
+The first server switch failed because unrelated services were dirty, not
+because of the throttle package:
+
+- root disk was tight; `nh clean` recovered enough space for activation
+- `zellij-unwrapped-0.44.3` was copied from desktop's valid store output
+- `podman-bookshelf.service` lacked `/mnt/torrents/data/torrents/ebooks`; the
+  directory now exists as `qbittorrent:media`
+- Nextcloud's live DB had zero tables while the data/config existed; restored
+  `/var/backup/postgresql/nextcloud.sql.gz` from `17/07/2026 01:15` after
+  saving the empty DB to a timestamped backup
+- Syncthing completed its v2.1.2 DB migrations; `syncthing-init.service`
+  starts cleanly again
+
+Post-repair server state: `systemctl --failed` -> 0 units, no queued jobs,
+`phpfpm-nextcloud`, `nextcloud-cron.timer`, `podman-bookshelf`,
+`bookshelf-provision`, `syncthing`, `syncthing-init`, `selfhosted-ci.timer`,
+and `audiobook-file-router.timer` all active.
+
+### Known caveat
+
+Desktop shows `account_identity.known=3/distinct=3` because it has identity
+metadata. MacBook and server are OAT-only and Anthropic's OAT profile/usage
+endpoints returned 403/429 during verification, so their health identity panel
+shows `known=0` while the three bearer hashes and static OAT files are present.
+
+---
+
 ## 15/07/2026 - Fresh-usage account routing + Anthropic partial outage (PR #104)
 
 ### Symptom
