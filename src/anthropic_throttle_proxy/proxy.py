@@ -1792,6 +1792,119 @@ def _is_streaming_body(body: bytes | None) -> bool:
     return isinstance(obj, dict) and obj.get("stream") is True
 
 
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _message_text_len(messages: object) -> int | None:
+    """Total text chars for narrow Claude CLI probe shapes, else ``None``."""
+    if not isinstance(messages, list):
+        return None
+    total = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            return None
+        content = message.get("content")
+        if isinstance(content, str):
+            total += len(content)
+            continue
+        if not isinstance(content, list):
+            return None
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "text":
+                return None
+            text = block.get("text")
+            if not isinstance(text, str):
+                return None
+            total += len(text)
+    return total
+
+
+def _is_empty_probe_messages(messages: object) -> bool:
+    """True only for the empty Claude CLI one-token probe message shape."""
+    if not isinstance(messages, list) or len(messages) != 1:
+        return False
+    message = messages[0]
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if content == "":
+        return True
+    return (
+        isinstance(content, list)
+        and len(content) == 1
+        and isinstance(content[0], dict)
+        and content[0].get("type") == "text"
+        and content[0].get("text") == ""
+    )
+
+
+_SYNTHETIC_PROBE_PAYLOAD_KEYS = frozenset({"model", "max_tokens", "messages", "stream"})
+
+
+def _synthetic_one_token_probe_response(
+    request: web.Request,
+    path: str,
+    body: bytes | None,
+    model_label: str,
+    req_max_tokens: int | None,
+    req_has_tools: bool,
+) -> web.Response | None:
+    """Answer Claude CLI startup probes locally during recovery.
+
+    The safe gate is a positive Claude CLI signal first. Shape checks are only
+    a secondary filter, so SDK/opencode/codex requests that happen to be tiny
+    max_tokens=1 calls are forwarded unchanged.
+    """
+    if not _truthy_env("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES"):
+        return None
+    if not request.headers.get("User-Agent", "").startswith("claude-cli/"):
+        return None
+    if request.method != "POST" or path != "v1/messages":
+        return None
+    if req_max_tokens != 1 or req_has_tools or not body or len(body) > 2048:
+        return None
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("stream") is True:
+        return None
+    if any(key not in _SYNTHETIC_PROBE_PAYLOAD_KEYS for key in payload):
+        return None
+    if payload.get("tools") or payload.get("tool_choice"):
+        return None
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or len(messages) > 2:
+        return None
+    text_len = _message_text_len(messages)
+    if text_len is None or text_len > 16 or not _is_empty_probe_messages(messages):
+        return None
+
+    now_ms = int(time.time() * 1000)
+    log(
+        f"synthetic-one-token-probe path=/{path} model={model_label} "
+        f"bytes={len(body)} messages={len(messages)} text_len={text_len}"
+    )
+    return web.json_response(
+        {
+            "id": f"msg_throttle_probe_{now_ms}",
+            "type": "message",
+            "role": "assistant",
+            "model": model_label,
+            "content": [{"type": "text", "text": "."}],
+            "stop_reason": "max_tokens",
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "output_tokens": 1,
+            },
+        }
+    )
+
+
 def _is_transient_throttle(
     status: int,
     meta: dict[str, str] | None,
@@ -2734,6 +2847,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
     # and so does any large body — max_tokens caps only the OUTPUT, so a
     # giant no-tools prompt could otherwise jump the queue.
     req_max_tokens, req_has_tools = _short_request_hint(body)
+    if (
+        synthetic_response := _synthetic_one_token_probe_response(
+            request, path, body, model_label, req_max_tokens, req_has_tools
+        )
+    ) is not None:
+        return synthetic_response
     is_priority = _is_priority_request(req_max_tokens, req_has_tools, len(body or b""))
 
     if _request_disconnected(request):
