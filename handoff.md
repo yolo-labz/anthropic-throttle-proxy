@@ -74,11 +74,11 @@ that the hard ceiling was still the necessary safety bound.
 
 ### Current status
 
-The disconnect storm is stopped and central is no longer queued, but the
-desktop is **stabilized, not fully drained**: continuing pane demand kept its
-local queue above zero (4-17) in the cap-8 follow-up. Do not call this incident
-fully recovered until the desktop queue reaches 0 under normal demand. Cap 8
-is the highest verified ceiling; cap 10 is falsified for this workload.
+The disconnect storm stopped first, then the residual desktop queue completed
+its drain. At `17/07/2026 17:43:59 -03`, desktop and central both reported
+`inflight=11`, `queued=0`, cap 8; local POST-429 remained 48 and central
+POST-429 remained 150. The incident is fully recovered. Cap 8 is the highest
+verified ceiling; cap 10 is falsified for this workload.
 
 ### Reversal and persistence caveat
 
