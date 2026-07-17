@@ -12,6 +12,7 @@ and dashboard branches that the pure-function tests don't reach.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import aiohttp
@@ -140,10 +141,10 @@ def _make_upstream() -> web.Application:
     return app
 
 
-async def _post_and_settle(
-    client: TestClient, path_suffix: str = "/v1/messages", **kwargs
+async def _request_and_settle(
+    client: TestClient, method: str = "POST", path_suffix: str = "/v1/messages", **kwargs
 ) -> tuple[int, bytes]:
-    """POST to ``path_suffix``, drain the streamed body, and let the handler's
+    """Request ``path_suffix``, drain the streamed body, and let the handler's
     ``finally`` (AIMD feedback + usage parse) complete.
 
     With ``web.StreamResponse`` the client call resolves once headers arrive,
@@ -151,13 +152,19 @@ async def _post_and_settle(
     server task. Yielding the loop a few times lets that task drain before the
     test inspects the shared state it mutated.
     """
-    resp = await client.post(path_suffix, **kwargs)
+    resp = await client.request(method, path_suffix, **kwargs)
     status = resp.status
     payload = await resp.read()
     for _ in range(20):
         await asyncio.sleep(0)
     await asyncio.sleep(0.02)
     return status, payload
+
+
+async def _post_and_settle(
+    client: TestClient, path_suffix: str = "/v1/messages", **kwargs
+) -> tuple[int, bytes]:
+    return await _request_and_settle(client, path_suffix=path_suffix, **kwargs)
 
 
 async def _wait_for_limiter_queued(lim, expected: int) -> None:
@@ -306,6 +313,136 @@ async def test_post_messages_streams_and_mints_bearer(client: TestClient) -> Non
     bid = next(iter(config.bearer_state))
     assert bid != "_anon"
     assert len(bid) == 8
+
+
+def _tiny_probe_payload(content: object = "") -> dict[str, object]:
+    return {
+        "model": "claude-opus-4-8",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": content}],
+    }
+
+
+def _tiny_probe_body(content: object = "", **overrides: object) -> bytes:
+    payload = _tiny_probe_payload(content)
+    payload.update(overrides)
+    return json.dumps(payload, separators=(",", ":")).encode()
+
+
+def _assert_forwarded(status: int, streamed: bytes) -> None:
+    assert status == 200
+    assert b"message_stop" in streamed
+    assert config.state["served"] == 1
+
+
+async def test_synthetic_one_token_probe_answers_claude_cli_locally(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "1")
+
+    status, payload = await _post_and_settle(
+        client,
+        data=_tiny_probe_body(""),
+        headers={"Authorization": "Bearer cli-probe", "User-Agent": "claude-cli/1.2.3"},
+    )
+
+    body = json.loads(payload)
+    assert status == 200
+    assert body["id"].startswith("msg_throttle_probe_")
+    assert body["content"] == [{"type": "text", "text": "."}]
+    assert config.state["served"] == 0
+    assert config.bearer_state == {}
+
+
+@pytest.mark.parametrize(
+    ("body", "headers", "token"),
+    [
+        (_tiny_probe_body("OK?"), {"User-Agent": "claude-cli/1.2.3"}, "real-short-text"),
+        (
+            _tiny_probe_body([{"type": "image", "text": "OK?", "source": {}}]),
+            {"User-Agent": "claude-cli/1.2.3"},
+            "non-text-block",
+        ),
+        (_tiny_probe_body(), {"User-Agent": "codex-cli/0.1"}, "codex-probe"),
+        (_tiny_probe_body(max_tokens=2), {"User-Agent": "claude-cli/1.2.3"}, "max-tokens"),
+        (
+            _tiny_probe_body(tools=[{"name": "noop", "input_schema": {"type": "object"}}]),
+            {"User-Agent": "claude-cli/1.2.3"},
+            "tools",
+        ),
+        (
+            _tiny_probe_body(tool_choice={"type": "auto"}),
+            {"User-Agent": "claude-cli/1.2.3"},
+            "tool-choice",
+        ),
+        (_tiny_probe_body(stream=True), {"User-Agent": "claude-cli/1.2.3"}, "stream"),
+        (
+            _tiny_probe_body(system="answer this system prompt"),
+            {"User-Agent": "claude-cli/1.2.3"},
+            "system",
+        ),
+        (
+            _tiny_probe_body("x" * 2100),
+            {"User-Agent": "claude-cli/1.2.3"},
+            "oversize",
+        ),
+        (
+            _tiny_probe_body(
+                messages=[
+                    {"role": "user", "content": ""},
+                    {"role": "assistant", "content": ""},
+                    {"role": "user", "content": ""},
+                ]
+            ),
+            {"User-Agent": "claude-cli/1.2.3"},
+            "too-many-messages",
+        ),
+    ],
+)
+async def test_synthetic_probe_forwards_negative_shapes(
+    client: TestClient, monkeypatch, body: bytes, headers: dict[str, str], token: str
+) -> None:
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "1")
+
+    status, streamed = await _post_and_settle(
+        client,
+        data=body,
+        headers={"Authorization": f"Bearer {token}", **headers},
+    )
+
+    _assert_forwarded(status, streamed)
+
+
+async def test_synthetic_probe_forwards_when_env_disabled(client: TestClient) -> None:
+    status, streamed = await _post_and_settle(
+        client,
+        data=_tiny_probe_body(),
+        headers={"Authorization": "Bearer env-disabled", "User-Agent": "claude-cli/1.2.3"},
+    )
+
+    _assert_forwarded(status, streamed)
+
+
+@pytest.mark.parametrize(
+    ("method", "path_suffix"), [("GET", "/v1/messages"), ("POST", "/api/v1/messages")]
+)
+async def test_synthetic_probe_forwards_wrong_method_or_path(
+    client: TestClient, monkeypatch, method: str, path_suffix: str
+) -> None:
+    monkeypatch.setenv("THROTTLE_SYNTHETIC_ONE_TOKEN_PROBES", "1")
+
+    status, streamed = await _request_and_settle(
+        client,
+        method=method,
+        path_suffix=path_suffix,
+        data=_tiny_probe_body(),
+        headers={
+            "Authorization": f"Bearer {method}-{path_suffix}",
+            "User-Agent": "claude-cli/1.2.3",
+        },
+    )
+
+    _assert_forwarded(status, streamed)
 
 
 async def test_usage_block_parsed_into_token_metrics(client: TestClient) -> None:
