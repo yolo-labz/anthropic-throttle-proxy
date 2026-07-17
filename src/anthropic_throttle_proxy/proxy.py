@@ -2148,7 +2148,8 @@ async def _keepalive_hold_and_retry(
     try:
         # The throttle that triggered the hold is a real throttle event: apply
         # its AIMD once (canonical _aimd_feedback — 529 + a marked queue-timeout
-        # never shrink, a concurrency 429/503 shrinks), then take ownership so
+        # never shrink; a budget/Retry-After 429 shrinks, a concurrency 429 only
+        # paces via CONCURRENCY_COOLDOWN_S), then take ownership so
         # _finalize skips its own _aimd_feedback (no double-apply on the
         # terminal). Guarded so a metrics error cannot kill the hold, and kept
         # INSIDE the outer try so ANY raise still hits the terminal-SSE +
@@ -2244,7 +2245,8 @@ async def _keepalive_hold_and_retry(
             if _is_transient_throttle(status, meta, bid, retry_fake):
                 # Still transient: the canonical _aimd_feedback already does the
                 # right thing per status (529 + a marked central queue-timeout
-                # never shrink — invariants 7, 9; a concurrency 429/503 shrinks).
+                # never shrink — invariants 7, 9; a budget/Retry-After 429 shrinks,
+                # a concurrency 429 holds the cap + paces via CONCURRENCY_COOLDOWN_S).
                 # attempt already reflects this retry's status/meta/response, and
                 # retry_fake carries the anti-spoof-gated queue-timeout marker.
                 await _aimd_feedback(bid, limiter, attempt)
