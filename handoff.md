@@ -6,6 +6,107 @@ host activation. Latest incident first.
 
 ---
 
+## 17/07/2026 - Desktop reconnect-storm stabilization
+
+### Symptom
+
+After the fleet OAT deployment and desktop reboot, roughly 50 Claude panes
+reconnected together. The desktop local tier saturated all three bearers at
+the hot cap of 6 (`inflight=18`) while its queue grew from 24 to 51. Client
+disconnects reached 255 lines in 10 minutes and caused a retry-amplified
+backlog. Central stayed healthy with only 4 queued requests, and all three
+OAuth windows remained `allowed` at 28-48% 5h utilization, so this was local
+admission overload rather than budget exhaustion.
+
+### Verified mechanism and live mitigation
+
+Two conditions combined:
+
+1. Cap 6 supplied only 18 fleet streams, below the reconnect burst's active
+   demand.
+2. The desktop unit still published `THROTTLE_QUEUE_MAX_WAIT_S=180`, unlike
+   central's 25s bound. The running aiohttp 3.14.1 defaults
+   `handler_cancellation=False`, and `proxy.main()` does not override it, so a
+   TCP disconnect does not cancel a handler parked in the fair queue. The
+   journal's repeated `client-disconnect where=post-queue` lines confirm those
+   abandoned handlers later won a slot; the proxy's post-queue transport check
+   correctly prevented upstream dispatch, but each stale waiter still had to
+   consume an admission grant before live work advanced.
+
+No code change was required. The existing `/ui/config` runtime-override path
+was used to make these reversible changes without restarting live streams:
+
+- desktop `queue_max_wait_s`: 180 -> 25
+- desktop `max_concurrent`: 6 -> 8
+- central `max_concurrent`: 6 -> 8
+
+An intermediate cap-10 calibration was rejected: central POST-429 increased
+147 -> 150 and bearer `b144f62f` acquired a new throttle timestamp. Both tiers
+were immediately restored to cap 8. AIMD remained enabled throughout, but the
+desktop's incident override (`backoff=5`, `ramp_after=1`) regrew quickly enough
+that the hard ceiling was still the necessary safety bound.
+
+### Verification
+
+- Before mitigation: desktop `inflight=18`, `queued=48-51`; central
+  `inflight=14`, `queued=4`; 11 local 429 lines, 44 queue-timeout lines, and
+  255 disconnect lines in the preceding 10 minutes.
+- Central disconnect baseline was 635 at the first capture and 665 immediately
+  before tuning. It reached 680 early in the cap-8 calibration, then stayed
+  flat; desktop disconnects likewise stayed flat at 346 for the 90s cap-8
+  window.
+- The cap-10 falsifier fired as described above. After restoring cap 8,
+  central held `inflight=24`, `queued=0`, POST-429=150, and disconnects=680;
+  desktop held `inflight=24`, queue 12-17, and disconnects=353 during the
+  initial follow-up.
+- A final four-minute cap-8 watch kept central POST-429 at 150 and disconnects
+  at 680; its queue was 0 except one transient sample at 1. Desktop queue fell
+  17 -> 4 while disconnects moved only 353 -> 354.
+- Effective and persisted desktop systemd paths agree on package
+  `xjcji67...anthropic-throttle-proxy-0.1.0`; no transient service override or
+  restart was introduced.
+- Desktop persistence was tested against the running package: with env defaults
+  forced to `3/180`, `config.load_overrides()` loaded the state file and changed
+  effective cap/queue wait to `8/25`.
+- Central had no Dokku storage mount, so its hot override alone was not durable.
+  `dokku config:set --no-restart` changed the future-start env cap from 3 to 8;
+  the live container ID stayed `4b8595e8102`, proving no restart or stream cut.
+
+### Current status
+
+The disconnect storm is stopped and central is no longer queued, but the
+desktop is **stabilized, not fully drained**: continuing pane demand kept its
+local queue above zero (4-17) in the cap-8 follow-up. Do not call this incident
+fully recovered until the desktop queue reaches 0 under normal demand. Cap 8
+is the highest verified ceiling; cap 10 is falsified for this workload.
+
+### Reversal and persistence caveat
+
+If new upstream pushback appears at cap 8, return both tiers to cap 6. Check
+central health before using the hot endpoint:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8765/ui/config \
+  --data-urlencode key=max_concurrent --data-urlencode value=6
+if curl -fsS http://anthropic-throttle.home301server.com.br/__throttle/health \
+  >/dev/null; then
+  curl -fsS -X POST http://anthropic-throttle.home301server.com.br/ui/config \
+    --data-urlencode key=max_concurrent --data-urlencode value=6
+fi
+ssh dokku@100.99.218.39 config:set --no-restart anthropic-throttle \
+  CLAUDE_API_THROTTLE_MAX=6
+```
+
+Keep the desktop queue bound at 25s; restoring 180s would re-open the
+disconnect-amplification path. The Home Manager unit still declares cap 3 and
+queue wait 180, so the verified runtime state file currently reapplies 8/25
+after desktop restart. Central's Dokku env now carries cap 8 and queue wait 25
+for the next container. A future NixOS change should converge the desktop 25s
+queue bound after the reconnect incident is fully cold; cap 8 can remain an
+incident override until normal fleet demand is re-measured.
+
+---
+
 ## 17/07/2026 - Safe synthetic probe + fleet OAT deploy (issue #107, PR #108)
 
 ### Symptom
