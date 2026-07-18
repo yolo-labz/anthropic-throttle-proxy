@@ -2338,3 +2338,68 @@ stores were present and integrated via `THROTTLE_ACCOUNT_CRED_PATHS`:
 `A=~/.claude/.credentials.json`, `B=~/.claude-b/.credentials.json`,
 `C=~/.claude-c/.credentials.json`. No additional local `.credentials.json`
 stores were found on desktop.
+
+## 18/07/2026 — OAuth telemetry isolation and Nix/Dokku activation
+
+The fleet-wide temporary-limiting incident had a proven feedback-contamination
+root cause. At 20:19:47, old desktop PID `1051165` received a `429` for bearer
+`666a53af` on `GET /api/oauth/usage`; at 20:19:48 it scheduled the message
+advisor for that bearer. An OAuth telemetry response had therefore poisoned
+message admission even though no `/v1/messages` request caused the event.
+
+Proxy PR #121 (squash `7b48c34568fcb0f4efad81eebaf703f957429029`)
+isolates `/api/oauth/{usage,profile}` from message rate-limit, AIMD, retry-state,
+and advisor feedback. NixOS PR #1294 (squash
+`eeda7549a594eeb61b2724ffa25644fe2f329e87`) pins that exact proxy revision.
+Deployment evidence on 18/07/2026:
+
+- Desktop generation 1899 activated the package at
+  `/nix/store/y8rda0047lwl8i3cfmrjf9w4a1gzklwi-anthropic-throttle-proxy-0.1.0`.
+  PID `2284564` started at 20:28:00 with local hard/max 6; the final controlled
+  diagnostic restart uses PID `2363844` from the same store, with the socket
+  and five-second keepalive timer active.
+- The first desktop activation was not a zero-inflight cutover: old PID
+  `1051165` entered SIGTERM with inflight 6 at 20:26:51 and reached zero at
+  20:28:00. The replacement logged five read-body client resets. All nine
+  active panes recovered, while Herdr PID `2015` and the service on port 8767
+  (PID `477735`) were unchanged. Future desktop activations must capture
+  `inflight=0 queued=0` before crossing the service boundary.
+- Server and macOS pulled Nix commit `eeda7549` and activated successfully.
+  Their local proxies run the pinned package and report central `up` with
+  upstream egress healthy.
+- The server activation installed the declarative Dokku sync. It changed
+  `CLAUDE_API_THROTTLE_MAX` from 8 to 6 and redeployed central container
+  `7b1b52d2c0d3`. Central health reports hard max 6, fair queueing, healthy
+  upstream egress, and bearer A recovered from initial AIMD cap 3 to live cap
+  6. The drift-sync timer remains enabled as the persistence backstop.
+
+The controlled state diagnostic separated stale contamination from real
+message throttling:
+
+- Bearer B (`47f0b262`) remains preserved because its 20:23:49 event was a
+  real `POST /v1/messages` with `Retry-After=117371`. Restart restoration
+  bounded the persisted hold to the existing 900-second safety cap; it was not
+  manually cleared.
+- The pre-fix C (`666a53af`) residue was removed while the proxy, socket, and
+  keepalive timer were stopped. After restart, a fresh telemetry
+  `GET /api/oauth/usage` returned `429`, but C stayed at retry 0 with
+  `last_ratelimit=null`; there was no advisor call or AIMD shrink. This is the
+  live end-to-end proof that PR #121 prevents telemetry poisoning.
+- C then served three real message POSTs with status 200 before real
+  `/v1/messages` requests returned `429` at 20:34:37 and 20:34:45 with
+  `Retry-After≈6323` and reset 22:20. The proxy correctly re-persisted that
+  message-path pause. B and C are therefore genuinely unavailable; A-only
+  capacity now determines queue behaviour.
+- From 20:34:46 onward, the post-diagnostic sample contained 44 message 200s,
+  10 unrelated compressed-body 400s, two client-disconnect 499s, and no
+  message 429 or 503. A direct default-model/ultracode probe returned exactly
+  `HEALTHY_A_OK` through healthy A.
+
+Client/UI verification: every visible Claude pane was normalized to the
+default Opus 4.8 1M route plus ultracode effort. Pearson verifier `w23:p2`
+made about 40 inference calls through `http://127.0.0.1:8765`, completed its
+interrupted create/check/merge workflow, and merged notes-work PR #93 at
+20:37:23 with GitGuardian green and no recurring temporary-limiting error.
+The final local sample contained 63 message 200s, 15 unrelated compressed-body
+400s, two client-disconnect 499s, and no new message 429 or 503 after C's
+legitimate pause was recorded.
