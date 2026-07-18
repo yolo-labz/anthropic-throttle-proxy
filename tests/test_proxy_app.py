@@ -110,6 +110,20 @@ def _make_upstream() -> web.Application:
             return web.Response(status=429, headers=_UNIFIED_REJECTED_HEADERS)
         if mode == "529":
             return web.Response(status=529, headers={"retry-after": "0"})
+        if mode == "400":
+            authorization = request.headers.get("Authorization", "missing")
+            return web.json_response(
+                {
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": (
+                            "max_tokens must be greater than zero; "
+                            f"Authorization: {authorization}; x-api-key=gsk_reflected_test_secret"
+                        ),
+                    }
+                },
+                status=400,
+            )
         if mode in ("unified", "unified-high"):
             util_5h = "0.92" if mode == "unified-high" else "0.42"
             return web.Response(
@@ -145,7 +159,17 @@ def _make_upstream() -> web.Application:
     async def passthrough(request: web.Request) -> web.Response:
         await request.read()
         if request.headers.get("X-Stub-Mode") == "oauth-usage-429":
-            return web.Response(status=429, headers={"retry-after": "3600"}, text="rate limited")
+            reset = str(int(time.time()) + 3600)
+            return web.Response(
+                status=429,
+                headers={
+                    "retry-after": "3600",
+                    **_UNIFIED_REJECTED_HEADERS,
+                    "anthropic-ratelimit-unified-reset": reset,
+                    "anthropic-ratelimit-unified-5h-reset": reset,
+                },
+                text="rate limited",
+            )
         return web.Response(status=200, text="ok")
 
     app = web.Application()
@@ -842,10 +866,18 @@ async def test_oauth_usage_429_does_not_poison_message_limiter(
     monkeypatch.setattr(config, "MAX_CONCURRENT", 3)
     monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
     monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
+    advisor_calls: list[tuple[str, int]] = []
+
+    async def fake_advise(trigger_bid: str, trigger_status: int) -> None:
+        advisor_calls.append((trigger_bid, trigger_status))
+
+    monkeypatch.setattr(proxy, "ADVISOR_ENABLED", True)
+    monkeypatch.setattr(proxy, "_maybe_advise", fake_advise)
     bid = proxy._bearer_id({"authorization": "Bearer usage-poll"})
 
     resp = await client.get(
         "/api/oauth/usage",
+        data=b'{"stream":true}',
         headers={"Authorization": "Bearer usage-poll", "X-Stub-Mode": "oauth-usage-429"},
     )
     await resp.read()
@@ -860,6 +892,46 @@ async def test_oauth_usage_429_does_not_poison_message_limiter(
     # real /v1/messages traffic.
     assert lim.max_concurrent == 3
     assert lim.retry_after_remaining() == 0.0
+    assert advisor_calls == []
+    assert config.bearer_state[bid]["last_ratelimit"] is None
+
+
+async def test_upstream_400_log_identifies_request_without_bearer_secret(
+    client: TestClient, monkeypatch
+) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    bearer = "Bearer secret-value-that-must-not-be-logged"
+
+    status, _ = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-opus-4-8","max_tokens":0}',
+        headers={"Authorization": bearer, "X-Stub-Mode": "400"},
+    )
+
+    assert status == 400
+    reason = next(line for line in lines if line.startswith("upstream_400 "))
+    assert "path=/v1/messages" in reason
+    assert "method=POST" in reason
+    assert "bid=" in reason
+    assert "cid=" in reason
+    assert "via=direct" in reason
+    assert "model=claude-opus-4-8" in reason
+    assert "type='invalid_request_error'" in reason
+    assert "max_tokens must be greater than zero" in reason
+    assert "Authorization=<redacted>" in reason
+    assert "x-api-key=<redacted>" in reason
+
+    done = next(line for line in lines if line.startswith("done   "))
+    assert "method=POST" in done
+    assert "path=/v1/messages" in done
+    assert "status=400" in done
+    assert "bid=" in done
+    assert "cid=" in done
+    assert "via=direct" in done
+    assert "elapsed_ms=" in done
+    assert "secret-value" not in "\n".join(lines)
+    assert "gsk_reflected_test_secret" not in "\n".join(lines)
 
 
 async def test_oauth_profile_429_also_skips_message_limiter(

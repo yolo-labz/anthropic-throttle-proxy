@@ -134,9 +134,16 @@ async def test_central_502_markdown_depends_on_marker(
     env, monkeypatch, relay_headers, expected_central_status
 ) -> None:
     tc, upstream_url = env
+    sensitive_marker = "central-reflected-secret"
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
 
     async def central_error(_request: web.Request) -> web.Response:
-        return web.Response(status=502, text="upstream error: dns", headers=relay_headers)
+        return web.Response(
+            status=502,
+            text=f"upstream error: Authorization: Bearer {sensitive_marker}",
+            headers=relay_headers,
+        )
 
     central = TestServer(web.Application())
     central.app.router.add_route("*", "/{path:.*}", central_error)
@@ -152,6 +159,7 @@ async def test_central_502_markdown_depends_on_marker(
         assert b"message_stop" in body
         assert config.state["central_status"] == expected_central_status
         assert config.state["upstream_retries"] >= 1
+        assert sensitive_marker not in "\n".join(lines)
     finally:
         await central.close()
 

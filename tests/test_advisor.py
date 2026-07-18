@@ -5,6 +5,8 @@ No network: the GROQ HTTP call is faked by monkeypatching
 ``advisor_impl.recommend`` (picked up by `_maybe_advise`'s lazy import).
 """
 
+import asyncio
+
 import pytest
 
 from anthropic_throttle_proxy import proxy
@@ -119,6 +121,21 @@ async def test_maybe_advise_disabled_is_noop(monkeypatch):
     proxy.state["last_advisor"] = None
     await proxy._maybe_advise("beef1234", 429)
     assert proxy.state["last_advisor"] is None
+
+
+async def test_schedule_advisor_still_runs_for_message_throttles(monkeypatch):
+    calls: list[tuple[str, int]] = []
+
+    async def fake_advise(trigger_bid: str, trigger_status: int) -> None:
+        calls.append((trigger_bid, trigger_status))
+
+    monkeypatch.setattr(proxy, "ADVISOR_ENABLED", True)
+    monkeypatch.setattr(proxy, "_maybe_advise", fake_advise)
+
+    proxy._schedule_advisor("beef1234", 429, "v1/messages")
+    await asyncio.sleep(0)
+
+    assert calls == [("beef1234", 429)]
 
 
 def test_advisor_snapshot_includes_trigger():
