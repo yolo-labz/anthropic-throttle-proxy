@@ -3071,6 +3071,38 @@ async def _check_upstream_egress() -> tuple[bool, str]:
     return True, ""
 
 
+async def _refresh_upstream_egress() -> None:
+    """Refresh the cached egress verdict without blocking the health route.
+
+    The longer background deadline tolerates slow container DNS without
+    weakening the failure signal: a timeout still replaces the cached verdict.
+    """
+    ok, error = await _check_upstream_egress()
+    state["upstream_egress_ok"] = ok
+    state["upstream_egress_error"] = error
+    state["upstream_egress_last_check"] = time.time()
+
+
+async def _upstream_egress_loop() -> None:
+    """Continuously refresh the cached upstream egress verdict."""
+    while True:
+        probe_failed = True
+        try:
+            await _refresh_upstream_egress()
+            probe_failed = not bool(state["upstream_egress_ok"])
+        except Exception as exc:
+            log(f"upstream egress probe error: {exc!r}")
+        interval = max(1.0, config.UPSTREAM_HEALTH_INTERVAL)
+        await asyncio.sleep(min(interval, 5.0) if probe_failed else interval)
+
+
+async def _upstream_egress_context(_app: web.Application):
+    task = asyncio.create_task(_upstream_egress_loop())
+    yield
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 # FR-005 distinctness guard: last-warned collision signature, so the health
 # poll (every ~5 s) emits ONE log line per distinct collision set instead of
 # spamming. Empty = no collision currently warned. "emitted_sus" tracks the
@@ -3254,7 +3286,8 @@ async def health(_request: web.Request) -> web.Response:
         if lim is not None:
             view["limiter"] = lim.snapshot()
         bearers_view[bid] = view
-    upstream_egress_ok, upstream_egress_error = await _check_upstream_egress()
+    upstream_egress_ok = bool(state["upstream_egress_ok"])
+    upstream_egress_error = str(state["upstream_egress_error"])
     account_identity = None
     try:
         account_identity = _account_identity_verdict()
@@ -3278,6 +3311,7 @@ async def health(_request: web.Request) -> web.Response:
         "upstream": config.UPSTREAM,
         "upstream_egress_ok": upstream_egress_ok,
         "upstream_egress_error": upstream_egress_error,
+        "upstream_egress_last_check": state["upstream_egress_last_check"],
         "central_url": config.CENTRAL_URL,
         "central_status": cs,
         # FR-005: distinct-account guard — {collapsed,duplicates,suspected,
@@ -3395,6 +3429,7 @@ def main() -> None:
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
+    app.cleanup_ctx.append(_upstream_egress_context)
     # Every response this proxy serves carries MARKER_HEADER so a downstream
     # local tier can tell a central-served 5xx (relay — keep central up) from
     # dokku nginx answering for a dead container (mark central down).
@@ -3419,7 +3454,8 @@ def main() -> None:
         f"listening on {listen_desc} "
         f"max_concurrent={config.MAX_CONCURRENT} queue_mode={config.QUEUE_MODE} "
         f"upstream={config.UPSTREAM} central={config.CENTRAL_URL or '(direct)'} "
-        f"dispatch_gap_ms={int(config.MIN_DISPATCH_GAP_S * 1000)}"
+        f"dispatch_gap_ms={int(config.MIN_DISPATCH_GAP_S * 1000)} "
+        f"egress_probe_timeout_s={config.UPSTREAM_HEALTH_TIMEOUT}"
     )
     # shutdown_timeout: on SIGTERM, aiohttp closes the listener (no new conns)
     # then waits this long for in-flight streaming turns to finish before
