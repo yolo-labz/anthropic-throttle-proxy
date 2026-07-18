@@ -2693,21 +2693,29 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
         log(f"usage-parse-error path=/{path}: {ue!r}")
 
 
+_CREDENTIAL_LABEL_PATTERN = (
+    r"(authorization|proxy-authorization|x-api-key|api[-_]?key|access[-_]?token|"
+    r"refresh[-_]?token|oauth[-_]?token|client[-_]?secret|token)"
+)
+_SCHEME_CREDENTIAL_ASSIGNMENT_RE = re.compile(
+    rf"(?<![\w-])[\"']?{_CREDENTIAL_LABEL_PATTERN}[\"']? *[:=] *"
+    r"(?:bearer|basic) +[^ ,;\"']+",
+    re.IGNORECASE,
+)
 _CREDENTIAL_ASSIGNMENT_RE = re.compile(
-    r"(?<![\w-])[\"']?(authorization|proxy-authorization|x-api-key|api[-_]?key|access[-_]?token|"
-    r"refresh[-_]?token|oauth[-_]?token|client[-_]?secret|token)[\"']?\s*[:=]\s*"
-    r"[\"']?\s*"
-    r"(?:(?:bearer|basic)\s+)?(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    rf"(?<![\w-])[\"']?{_CREDENTIAL_LABEL_PATTERN}[\"']? *[:=] *"
+    r"(?:\"[^\"]*\"|'[^']*'|[^ ,;\"']+)",
     re.IGNORECASE,
 )
 _AUTH_SCHEME_SECRET_RE = re.compile(
-    r"\b(bearer|basic)\s+(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)", re.IGNORECASE
+    r"\b(bearer|basic) +(?:\"[^\"]*\"|'[^']*'|[^ ,;\"']+)", re.IGNORECASE
 )
 _PREFIXED_SECRET_RE = re.compile(r"\b(?:sk-ant-|sk-proj-|gsk_)[A-Za-z0-9._-]+", re.IGNORECASE)
 
 
 def _bounded_error_field(value: object, limit: int = 512) -> str:
     text = " ".join(str(value).split())
+    text = _SCHEME_CREDENTIAL_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", text)
     text = _CREDENTIAL_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", text)
     text = _AUTH_SCHEME_SECRET_RE.sub(lambda match: f"{match.group(1)} <redacted>", text)
     text = _PREFIXED_SECRET_RE.sub("<redacted>", text)

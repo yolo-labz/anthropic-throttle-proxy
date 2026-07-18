@@ -29,8 +29,10 @@ central-to-direct retries update the route attribution. Telemetry keeps the same
 relay-only behavior through direct fallback and body-bearing requests cannot
 enter the Messages-only SSE keepalive path. Client-controlled correlation
 fields are flattened and bounded before logging, preventing forged log lines.
+Credential assignments use separate scheme/plain linear regex passes so hostile
+whitespace cannot trigger polynomial backtracking.
 
-Validation on the final tree: `479 passed` with the two pre-existing aiohttp
+Validation on the final tree: `480 passed` with the two pre-existing aiohttp
 warnings, Ruff lint/format clean, `git diff --check` clean, and changed-file
 duplication checks clean. Regression coverage includes hostile telemetry 429
 headers, ordinary message-throttle advisor scheduling, 400 request attribution,

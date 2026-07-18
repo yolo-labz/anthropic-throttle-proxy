@@ -134,6 +134,12 @@ def test_request_start_log_flattens_client_controlled_fields(monkeypatch) -> Non
     assert "forged-cid=true" in lines[0]
 
 
+def test_bounded_error_field_handles_long_assignment_whitespace() -> None:
+    rendered = proxy._bounded_error_field("token:" + (" " * 100_000) + "opaque-value")
+
+    assert rendered == "token=<redacted>"
+
+
 def test_log_413_reason_error_field_not_dict_uses_no_message(monkeypatch) -> None:
     """``"error"`` as a string degrades to ``<no type>``/``<no message>``.
 
