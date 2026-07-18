@@ -6,6 +6,127 @@ host activation. Latest incident first.
 
 ---
 
+## 17/07/2026-18/07/2026 - Central false-negative + 47-tab fleet recovery (issue #115, PR #114)
+
+### Symptoms and verified split diagnosis
+
+The incident contained two independent failures that initially looked like one:
+
+1. Central `GET /__throttle/health` returned 503 after about 3.0s because the
+   request handler performed an inline upstream DNS/connectivity probe with a
+   1.5s timeout. Normal forwarded `/api/oauth/usage` requests took about 4.1s,
+   so the health probe was guaranteed to produce false negatives on this path.
+   Desktop then marked central down and sent work directly.
+2. Anthropic returned the same headerless 429
+   (`rate_limit_error`, `x-should-retry: true`, no `Retry-After` or unified
+   headers) for a one-token Messages request on all three distinct OAuth
+   organizations. The result was unchanged on the home IP and a ProtonVPN
+   egress, and with both Opus and Fable. Anthropic's public status page was
+   green. This rules out the proxy, one bearer, one model, and one source IP;
+   it does not prove why Anthropic applied the shared upstream gate. The
+   reconnect storm is a plausible trigger only, so this part remains
+   partially verified rather than a claimed proxy fix.
+
+### Durable central fix
+
+PR #114 (`71d7f5596ad1668d22e4995375452f59cacf916b`) moved the upstream
+egress probe out of the health request path and into one cached background
+loop:
+
+- health reads the cached result and never performs DNS;
+- probe timeout is 10s, long enough for the measured upstream path;
+- successful probes run every 30s;
+- failures retry after 5s so a recovered upstream is not hidden for 30s;
+- timeout/failure remains authoritative (`upstream_egress_ok=false`);
+- lifecycle cleanup cancels the task, and unexpected loop errors are logged.
+
+Validation was `462 passed` with the two pre-existing aiohttp warnings, plus
+Ruff, mypy, CodeQL, Sonar, the repository quality gates, and three GLM-5.2
+adversarial rounds. The first two review rounds caught real optimistic-timeout,
+slow-recovery, and Dokku-config ordering defects; the final round approved.
+
+The merged commit was deployed to Dokku container `22bf3027648`. Six live
+central samples returned HTTP 200 in 3.2-4.4ms, reported
+`upstream_egress_ok=true`, and showed `upstream_egress_last_check` advancing.
+Desktop then reported `central_status=up`, all three bearers present, and an
+empty queue. Dokku's future-start environment carries
+`THROTTLE_UPSTREAM_HEALTH_TIMEOUT=10`.
+
+### Full tab audit and recovery
+
+Herdr was the sole active fleet. All 47 Claude panes were read; two additional
+panes were Codex and unaffected. Eleven Claude panes had a current incident
+failure:
+
+- TLS/certificate path: `w1W:p3`, `w1X:p7`, `w1Y:p3`, `w22:p3`, `w24:p3`.
+- Anthropic rate-limit path: `w1Y:p2`, `w10:p2`, `w10:p8`, `w21:p4`,
+  `w21:p5`, `w24:p4`.
+
+All eleven original tasks were restored under the explicit
+`sonnet[1m]` selector. Running `/model sonnet[1m]` also saved that selector as
+the global default for new Claude sessions. A real one-shot request through
+the fallback returned `ONE_M_OK` before fleet use.
+
+The fallback is a separate user service,
+`zai-claude-throttle-proxy.service`, listening on `127.0.0.1:8767` and
+forwarding to `https://api.z.ai/api/anthropic`. It is isolated with its own
+`XDG_STATE_HOME`, hard-capped at two requests, starts AIMD at one, and uses a
+25s queue bound. The Z.AI key comes from `rbw get api/zai`; it is never stored
+in the service or transcript command line. During the recovery it served more
+than 295 requests with no upstream retry or rate-limit event.
+
+Three histories resumed directly. Eight older Anthropic histories contained
+legacy thinking/tool payloads that Z.AI rejected with business error 1210.
+Fresh 1M requests in the same projects succeeded, proving the projects and
+tool schemas were not the cause. Removing hidden thinking blocks alone still
+failed; text-history clones succeeded. The recovery therefore left every
+original JSONL untouched, cloned the human/assistant text while omitting
+legacy thinking/tool payloads, and supplied the latest verified task
+checkpoint before continuing. This preserved the actionable context without
+modifying the source transcripts.
+
+The post-recovery fleet scan read all 47 Claude panes again and found no API,
+TLS, rate-limit, or context failure in the latest output. Recovered work also
+verified downstream progress: NextClient #337 and BridgeServer #258 merged,
+and NixOS #1266 was already merged. The recovery service remains transient
+across a user-manager reboot; relaunch it or return sessions to the normal
+Anthropic endpoint after a fresh one-token canary proves the upstream gate has
+cleared.
+
+### Reversal and recovery commands
+
+Code rollback is one revert PR:
+
+```bash
+git revert 71d7f5596ad1668d22e4995375452f59cacf916b
+```
+
+Dokku can return to the previous container with:
+
+```bash
+ssh dokku@100.99.218.39 releases:rollback anthropic-throttle 1
+```
+
+Check or stop the temporary fallback without touching the normal desktop
+proxy:
+
+```bash
+curl -fsS http://127.0.0.1:8767/__throttle/health
+systemctl --user stop zai-claude-throttle-proxy.service
+```
+
+Do not stop it while recovered tabs still point at port 8767. To canary the
+fallback without exposing its credential:
+
+```bash
+zai_key="$(rbw get api/zai)"
+ANTHROPIC_AUTH_TOKEN="$zai_key" \
+  ANTHROPIC_BASE_URL=http://127.0.0.1:8767 \
+  claude -p 'Reply exactly OK' --model 'sonnet[1m]'
+```
+
+---
+
 ## 17/07/2026 - Desktop reconnect-storm stabilization
 
 ### Symptom
