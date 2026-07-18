@@ -115,12 +115,84 @@ remaining port-8767 or direct-Z.AI client. Desktop health then reported
 `central_status=up`, `upstream_egress_ok=true`, and an empty queue. The
 transient `zai-claude-throttle-proxy.service` was stopped; port 8767 is closed.
 
+### Verified cross-service closure (18/07/2026 08:19 BRT)
+
+The reason Sonnet 1M appeared during this incident was narrow: it was the
+explicit selector used to prove and operate the temporary Z.AI recovery path
+while Anthropic rejected the affected sessions. It was never intended to
+remain the normal fleet default. The final state uses Claude Code's `default`
+selector, which currently resolves to Opus 4.8 with a 1M context window, plus
+ultracode effort.
+
+The model/effort return is now durable rather than a one-session command:
+
+- NixOS PR #1270 (`3ad67abd48cc58e3a5c26a9ac87163e475364174`)
+  prepends `--model default --settings ~/.claude/ultracode.json` to ordinary
+  launches while leaving explicit caller arguments last.
+- NixOS PR #1280 (`a06aa45f2a18ec1415c16eb8c38596206ebcb6a2`)
+  renders `{"env":{"CLAUDE_CODE_EFFORT_LEVEL":""},"ultracode":true}`. The
+  empty environment value neutralizes stale project-local `max` settings that
+  otherwise overrode ultracode. A preserved-session live test reproduced that
+  precedence conflict before the change and reported ultracode/xhigh after it.
+- The final Herdr census found 47 Claude panes. All 47 visible screens
+  contained both `Opus 4.8 (1M context)` and `ultracode`; all 47 process
+  environments used the normal local proxy on port 8765. Counts for port 8767,
+  direct Anthropic, and missing endpoints were all zero. The two other panes
+  were Codex and remained on their native `gpt-5.6-sol`/xhigh configuration.
+
+Both Nix hosts are activated at the merged head, with live and boot profiles
+matching:
+
+- desktop: `/nix/store/qsjzq8bwsfidy6x7bqs570xk4myj5ly2-nixos-system-desktop-26.11.20260716.6368bc9`
+- server: `/nix/store/4b1llc2xdz660c95qgzga34fz9k8bwac-nixos-system-server-26.11.20260715.753cc8a`
+
+The server activation completed in 138 seconds. NixOS PR #1280 also set
+`restartIfChanged=false` for the timer-driven self-hosted CI oneshot; its
+`ExecMainStartTimestampMonotonic` remained `1879628237130` before and after
+activation, proving activation did not restart the already-running full gate.
+The exact-head gate had already passed all 49 checks and built the server
+closure. PRs #1272 and #1276 also ratcheted dependency audits and made the
+quality-gate hooks follow their stable managed profile paths across
+activations.
+
+Dokku recovery is durable through NixOS PR #1274
+(`bc24ffb46a756c7c18441ab861ff1ad6f02e1f5a`) and the pure-build coverage in
+PR #1278 (`841277c63cbe8012bca65a65e12443cee64158e5`). On the Dokku VM,
+`dokku-proxy-resync.timer` is enabled/active, an explicit reconciliation ended
+with `repairs=0 failures=0`, `dokku-redeploy.service` is a oneshot, and nginx
+syntax passes. `anthropic-throttle`, `infisical`, `bridgeserver-dev`, and
+`delicasa-unified` each report deployed=true and running=true. Live checks
+returned 200 for central, Infisical, BridgeServer, and DeliCasa after its
+intentional login redirect. Desktop health reports `central_status=up`,
+`upstream_egress_ok=true`, zero inflight, and zero queued requests.
+
+The same recovery audit found that the PostgreSQL incident on 17/07/2026 had
+restored Nextcloud but left Dawarich freshly initialized. Dawarich was restored
+from `/var/backup/postgresql/dawarich.prev.sql.gz`; the empty pre-restore state
+is recoverable at
+`/var/backup/postgresql/dawarich.empty-before-restore-20260718-101832.sql.gz`.
+The live database contains 124,723 points and 5,631 visits, its API returns
+200 with the existing vault token, and both web and Sidekiq are active. PR
+#1278 adds an `ExecStartPre` guard that refuses backup rotation when the points
+table is empty; the deployed guard was executed as the PostgreSQL user and
+exited zero against the restored data.
+
 ### Reversal and recovery commands
 
 Code rollback is one revert PR:
 
 ```bash
 git revert 71d7f5596ad1668d22e4995375452f59cacf916b
+```
+
+The Nix-host changes are likewise one revert PR per merged slice; after merge,
+activate the resulting generation or use `nixos-rebuild switch --rollback` for
+an immediate host-generation rollback:
+
+```bash
+git revert a06aa45f2a18ec1415c16eb8c38596206ebcb6a2
+git revert 841277c63cbe8012bca65a65e12443cee64158e5
+git revert bc24ffb46a756c7c18441ab861ff1ad6f02e1f5a
 ```
 
 Dokku can return to the previous container with:
