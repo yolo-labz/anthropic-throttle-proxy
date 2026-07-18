@@ -2397,7 +2397,7 @@ message throttling:
 
 Client/UI verification: every visible Claude pane was normalized to the
 default Opus 4.8 1M route plus ultracode effort. Pearson verifier `w23:p2`
-made about 40 inference calls through `http://127.0.0.1:8765`, completed its
+made about 45 inference calls through `http://127.0.0.1:8765`, completed its
 interrupted create/check/merge workflow, and merged notes-work PR #93 at
 20:37:23 with GitGuardian green and no recurring temporary-limiting error.
 The final local sample contained 63 message 200s, 15 unrelated compressed-body
