@@ -89,9 +89,31 @@ The post-recovery fleet scan read all 47 Claude panes again and found no API,
 TLS, rate-limit, or context failure in the latest output. Recovered work also
 verified downstream progress: NextClient #337 and BridgeServer #258 merged,
 and NixOS #1266 was already merged. The recovery service remains transient
-across a user-manager reboot; relaunch it or return sessions to the normal
-Anthropic endpoint after a fresh one-token canary proves the upstream gate has
-cleared.
+across a user-manager reboot; the final return below retired it after the
+normal endpoint canary proved the upstream gate had cleared.
+
+### Final default-model return (18/07/2026)
+
+The explicit `sonnet[1m]` recovery selector was incident-only. NixOS PR #1270
+made every normal `claude` launch prepend `--model default --settings
+~/.claude/ultracode.json`; caller arguments remain last so an intentional
+one-off override still wins. The activated wrapper's real `execve` argv
+contained both arguments. In this release the default resolves to Opus 4.8
+with a 1M context window, and the settings file selects ultracode/xhigh effort.
+
+All eleven affected panes were cleanly exited and resumed with their preserved
+session UUIDs, without an explicit model argument and without the Z.AI endpoint
+or token. Their live environment now points at the normal desktop proxy on
+port 8765, and every status line reports Opus 4.8 (1M context) with
+ultracode/xhigh. Two panes still displayed a historical Z.AI 1211 unknown-model
+line in their scrollback; each returned `NORMAL_ENDPOINT_OK` through the normal
+endpoint after resume, proving that the current request path—not merely the
+status bar—works.
+
+A final process-environment scan covered all 47 Claude panes and found no
+remaining port-8767 or direct-Z.AI client. Desktop health then reported
+`central_status=up`, `upstream_egress_ok=true`, and an empty queue. The
+transient `zai-claude-throttle-proxy.service` was stopped; port 8767 is closed.
 
 ### Reversal and recovery commands
 
@@ -107,8 +129,8 @@ Dokku can return to the previous container with:
 ssh dokku@100.99.218.39 releases:rollback anthropic-throttle 1
 ```
 
-Check or stop the temporary fallback without touching the normal desktop
-proxy:
+The temporary fallback is stopped. If a future incident explicitly recreates
+it, check or stop it without touching the normal desktop proxy:
 
 ```bash
 curl -fsS http://127.0.0.1:8767/__throttle/health
