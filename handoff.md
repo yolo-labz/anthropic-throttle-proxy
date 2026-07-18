@@ -2376,10 +2376,19 @@ Deployment evidence on 18/07/2026:
 The controlled state diagnostic separated stale contamination from real
 message throttling:
 
-- Bearer B (`47f0b262`) remains preserved because its 20:23:49 event was a
-  real `POST /v1/messages` with `Retry-After=117371`. Restart restoration
-  bounded the persisted hold to the existing 900-second safety cap; it was not
-  manually cleared.
+- Bearer B (`47f0b262`) was preserved because its 20:23:49 event was a real
+  `POST /v1/messages` with `Retry-After=117371`, originally valid until
+  20/07/2026 05:00. Restart restoration bounded that persisted hold to the
+  existing 900-second safety cap, so it expired locally at 18/07/2026 20:43.
+  The boundary reprobe caused a bounded, user-visible burst: five queued B
+  requests returned central queue-wait `503` at 20:43:00-01; B then served
+  some `200` responses before four real message `429` responses at 20:43:08
+  and 20:43:17 with `Retry-After` about 116212 seconds. Those POST responses,
+  not telemetry, correctly re-persisted B to epoch `1784534400.56`
+  (20/07/2026 05:00). At 20:43:39 B had zero in-flight/queued requests and the
+  restored deadline remained live. The 900-second restore cap therefore does
+  not preserve a longer proven upstream cooldown across restart and can expose
+  this bounded reprobe error burst.
 - The pre-fix C (`666a53af`) residue was removed while the proxy, socket, and
   keepalive timer were stopped. After restart, a fresh telemetry
   `GET /api/oauth/usage` returned `429`, but C stayed at retry 0 with
@@ -2400,6 +2409,15 @@ default Opus 4.8 1M route plus ultracode effort. Pearson verifier `w23:p2`
 made about 45 inference calls through `http://127.0.0.1:8765`, completed its
 interrupted create/check/merge workflow, and merged notes-work PR #93 at
 20:37:23 with GitGuardian green and no recurring temporary-limiting error.
-The final local sample contained 63 message 200s, 15 unrelated compressed-body
-400s, two client-disconnect 499s, and no new message 429 or 503 after C's
-legitimate pause was recorded.
+The pre-B-boundary local sample contained 63 message 200s, 15 unrelated
+compressed-body 400s, two client-disconnect 499s, and no new message 429 or
+503 after C's legitimate pause was recorded.
+
+At the 20:43 B boundary, `w23:p2` displayed the expected temporary-limiting
+banner after a separate `gh` PR-create attempt had failed because it ran from
+a detached checkout. At 20:44 the pane resumed exactly once, created main-vault
+PR #635 with explicit repository/head arguments, and continued through healthy
+A without another admission error. Herdr's final scan showed `w23:p2` working;
+`w22:p2` was also working after its earlier recovery. The banner still visible
+in `w22:p3` was 2h44 old with no post-error work and was not part of this
+boundary event.
