@@ -212,6 +212,9 @@ def _reset_proxy_state() -> None:
             "central_last_check": 0,
             "central_consecutive_ok": 0,
             "central_consecutive_fail": 0,
+            "upstream_egress_ok": True,
+            "upstream_egress_error": "",
+            "upstream_egress_last_check": 0,
             "last_advisor": None,
         }
     )
@@ -268,12 +271,119 @@ async def test_health_returns_503_when_upstream_egress_probe_fails(
         return False, "gaierror(-3)"
 
     monkeypatch.setattr(proxy, "_check_upstream_egress", broken_egress)
+    await proxy._refresh_upstream_egress()
 
     resp = await client.get("/__throttle/health")
     assert resp.status == 503
     body = await resp.json()
     assert body["upstream_egress_ok"] is False
     assert body["upstream_egress_error"] == "gaierror(-3)"
+
+
+async def test_health_does_not_wait_for_slow_upstream_probe(
+    client: TestClient, monkeypatch
+) -> None:
+    release = asyncio.Event()
+
+    async def slow_egress() -> tuple[bool, str]:
+        await release.wait()
+        return True, ""
+
+    monkeypatch.setattr(proxy, "_check_upstream_egress", slow_egress)
+    refresh = asyncio.create_task(proxy._refresh_upstream_egress())
+    try:
+        resp = await asyncio.wait_for(client.get("/__throttle/health"), timeout=0.05)
+        assert resp.status == 200
+    finally:
+        release.set()
+        await refresh
+
+
+async def test_upstream_probe_timeout_becomes_unhealthy(monkeypatch) -> None:
+    async def timed_out_egress() -> tuple[bool, str]:
+        return False, "TimeoutError: "
+
+    monkeypatch.setattr(proxy, "_check_upstream_egress", timed_out_egress)
+    config.state["upstream_egress_ok"] = True
+
+    await proxy._refresh_upstream_egress()
+
+    assert config.state["upstream_egress_ok"] is False
+    assert config.state["upstream_egress_error"] == "TimeoutError: "
+    assert float(config.state["upstream_egress_last_check"]) > 0
+
+
+async def test_upstream_egress_context_cancels_probe_task(monkeypatch) -> None:
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def waiting_loop() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(proxy, "_upstream_egress_loop", waiting_loop)
+    context = proxy._upstream_egress_context(web.Application())
+
+    await anext(context)
+    await asyncio.wait_for(started.wait(), timeout=0.05)
+    with pytest.raises(StopAsyncIteration):
+        await anext(context)
+
+    assert stopped.is_set()
+
+
+async def test_upstream_egress_loop_recovers_after_exception(monkeypatch) -> None:
+    calls = 0
+    survived = asyncio.Event()
+    lines: list[str] = []
+    real_sleep = asyncio.sleep
+
+    async def flaky_refresh() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("probe exploded")
+        config.state["upstream_egress_ok"] = True
+        survived.set()
+
+    async def fast_sleep(_delay: float) -> None:
+        await real_sleep(0)
+
+    monkeypatch.setattr(proxy, "_refresh_upstream_egress", flaky_refresh)
+    monkeypatch.setattr(proxy.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(proxy, "log", lines.append)
+    task = asyncio.create_task(proxy._upstream_egress_loop())
+
+    await asyncio.wait_for(survived.wait(), timeout=0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert calls >= 2
+    assert lines == ["upstream egress probe error: RuntimeError('probe exploded')"]
+
+
+async def test_upstream_egress_loop_retries_failures_quickly(monkeypatch) -> None:
+    delays: list[float] = []
+
+    async def refresh() -> None:
+        config.state["upstream_egress_ok"] = bool(delays)
+
+    async def capture_sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(config, "UPSTREAM_HEALTH_INTERVAL", 30.0)
+    monkeypatch.setattr(proxy, "_refresh_upstream_egress", refresh)
+    monkeypatch.setattr(proxy.asyncio, "sleep", capture_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await proxy._upstream_egress_loop()
+
+    assert delays == [5.0, 30.0]
 
 
 async def test_metrics_endpoint_exposes_prometheus(client: TestClient) -> None:

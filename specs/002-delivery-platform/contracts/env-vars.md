@@ -18,6 +18,8 @@ would corrupt in-flight requests; the dashboard shows them as
 | Variable | Default | Effect |
 | --- | --- | --- |
 | `THROTTLE_UPSTREAM` | `https://api.anthropic.com` | Sole upstream redirect target. Constitution Principle V — only redirect mechanism. |
+| `THROTTLE_UPSTREAM_HEALTH_TIMEOUT` | `10` | Deadline for one background DNS egress probe. Health never waits for it; a timeout remains an authoritative egress failure. |
+| `THROTTLE_UPSTREAM_HEALTH_INTERVAL` | `30` | Seconds between healthy background egress probes. Failures retry within 5 seconds; the health route reads their cached result. |
 | `THROTTLE_HOST` | `127.0.0.1` | Bind address. Loopback for local tier; `0.0.0.0` for Dokku container (handled by Dokku-injected `PORT`). |
 | `THROTTLE_PORT` | `8765` | Bind port. |
 | `THROTTLE_QUEUE_MODE` | `off` | `off` / `observe` / `fair` / `reactive` (alias of `fair`). |

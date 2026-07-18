@@ -19,6 +19,9 @@ Authoritative shape of the health endpoint, sourced from
 | `queue_mode` | string | `config.QUEUE_MODE` | `off` / `observe` / `fair` (or `reactive`). |
 | `min_dispatch_gap_ms` | int | `config.MIN_DISPATCH_GAP_S * 1000` | Burst pacing gap. |
 | `upstream` | string | `config.UPSTREAM` | Configured upstream URL (constitution Principle V). |
+| `upstream_egress_ok` | bool | cached background probe | Last definitive DNS egress verdict. Starts optimistic, matching cold-start routing on every tier. |
+| `upstream_egress_error` | string | cached background probe | Latest probe diagnostic. A timeout sets `upstream_egress_ok=false`. |
+| `upstream_egress_last_check` | float | `state["upstream_egress_last_check"]` | Epoch seconds when the background probe last completed. `0` until the first result. |
 | `central_url` | string | `config.CENTRAL_URL` | Empty string when central tier is disabled. |
 | `central_status` | string | `state["central_status"]` | `up` / `down` / `unknown`. |
 | `central_last_check` | float | `state["central_last_check"]` | Epoch seconds of the last central health poll. `0` until first poll. |

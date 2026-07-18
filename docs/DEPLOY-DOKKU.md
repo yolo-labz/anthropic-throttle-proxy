@@ -27,6 +27,7 @@ dokku config:set anthropic-throttle \
   THROTTLE_QUEUE_MODE=fair \
   THROTTLE_MIN_DISPATCH_GAP_MS=50 \
   THROTTLE_MAX_HOLD_RETRY_AFTER_S=60 \
+  THROTTLE_UPSTREAM_HEALTH_TIMEOUT=10 \
   THROTTLE_HOST=0.0.0.0 \
   THROTTLE_PORT=8765
 dokku checks:enable anthropic-throttle
@@ -48,6 +49,15 @@ Dokku will:
 3. Run the startup healthcheck (`curl -fsS http://localhost:8765/__throttle/health`) up to 30 times with 5 s timeouts; if it doesn't pass, the deploy aborts.
 4. Switch traffic on the configured ports.
 5. Keep liveness-checking the same endpoint after the app is up.
+
+After deployment, verify the background egress probe is using the non-blocking
+deadline and advancing successfully:
+
+```sh
+dokku config:get anthropic-throttle THROTTLE_UPSTREAM_HEALTH_TIMEOUT  # 10
+curl -fsS https://anthropic-throttle.<host>/__throttle/health \
+  | jq '{upstream_egress_ok,upstream_egress_error,upstream_egress_last_check}'
+```
 
 ## Tailnet-only (no public exposure)
 

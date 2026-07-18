@@ -72,6 +72,8 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_HOST` | `127.0.0.1` | Listen address. Use `0.0.0.0` inside containers. |
 | `THROTTLE_PORT` | `8765` | TCP port. |
 | `THROTTLE_UPSTREAM` | `https://api.anthropic.com` | Upstream target. |
+| `THROTTLE_UPSTREAM_HEALTH_TIMEOUT` | `10` | Deadline for each background DNS egress probe. Health never waits for it; a timeout remains an authoritative egress failure. |
+| `THROTTLE_UPSTREAM_HEALTH_INTERVAL` | `30` | Seconds between healthy background upstream-egress probes. Failed probes retry within 5 seconds. Health serves the cached verdict and never waits for DNS. |
 | `THROTTLE_CENTRAL_URL` | *(unset)* | If set, the local proxy forwards each request to this URL first; on health-check failure it falls back direct-to-upstream. |
 | `THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT` | `2` | Local safety cap used only when `THROTTLE_CENTRAL_URL` is set and `THROTTLE_QUEUE_MODE=off`; prevents same-host Claude Code bursts from bypassing local admission before central/AIMD feedback arrives. |
 | `THROTTLE_AIMD_MIN` | `1` | Floor of the AIMD live ceiling. Must stay ≥ 1 so traffic never fully blocks. |

@@ -88,7 +88,8 @@ CENTRAL_HEALTH_PATH = "/__throttle/health"
 CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL", "30"))
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
 CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT", "10"))
-UPSTREAM_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_TIMEOUT", "1.5"))
+UPSTREAM_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_TIMEOUT", "10"))
+UPSTREAM_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_INTERVAL", "30"))
 # Central-health hysteresis: a single transient probe miss must NOT abandon
 # central — that flips the whole local fleet to direct fallback and risks an
 # unqueued firehose (the 25/05/2026 incident shape). Require FAIL_THRESHOLD
@@ -375,6 +376,13 @@ state: dict[str, object] = {
     # Consecutive same-result probe counters backing the health hysteresis above.
     "central_consecutive_ok": 0,
     "central_consecutive_fail": 0,
+    # Health serves this cached verdict; the DNS probe refreshes it in the
+    # background so a slow container resolver cannot block the control plane.
+    # Start optimistic until the first authoritative background result, matching
+    # central target selection's cold-start policy.
+    "upstream_egress_ok": True,
+    "upstream_egress_error": "",
+    "upstream_egress_last_check": 0,
     # last_advisor holds {"text", "ts", "trigger"} from the GROQ advisor.
     "last_advisor": None,
 }
