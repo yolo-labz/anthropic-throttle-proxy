@@ -6,6 +6,39 @@ host activation. Latest incident first.
 
 ---
 
+## 18/07/2026 - OAuth telemetry isolation and attributable upstream failures
+
+The remaining false-throttle path was in finalization, not admission. Requests
+to `/api/oauth/usage` already bypassed the message limiter, but a telemetry 429
+still fed its Retry-After/unified headers into bearer state and scheduled the
+Groq advisor. A dashboard poll could therefore pause or shrink real
+`POST /v1/messages` work and report a misleading concurrency diagnosis.
+
+Telemetry paths now have one explicit invariant: their response metadata never
+mutates message limiter state, AIMD, or the advisor. The advisor has the same
+path guard at its own boundary so a future caller cannot reintroduce the
+feedback loop. Normal message 429s still retain both AIMD and advisor behavior.
+
+Upstream 400 diagnostics now carry method, path, status, bearer/client hashes,
+route (`central`, `direct`, or `direct-fallback`), and model in both the reason
+and completion logs. Error type/message fields are bounded and redact quoted or
+unquoted Authorization, Basic/Bearer, API-key, OAuth-token, and known provider
+key formats before logging. Nested error envelopes retain per-field top-level
+fallbacks, central retryable-5xx errors no longer embed body snippets, and
+central-to-direct retries update the route attribution. Telemetry keeps the same
+relay-only behavior through direct fallback and body-bearing requests cannot
+enter the Messages-only SSE keepalive path. Client-controlled correlation
+fields are flattened and bounded before logging, preventing forged log lines.
+Credential assignments use separate scheme/plain linear regex passes so hostile
+whitespace cannot trigger polynomial backtracking.
+
+Validation on the final tree: `480 passed` with the two pre-existing aiohttp
+warnings, Ruff lint/format clean, `git diff --check` clean, and changed-file
+duplication checks clean. Regression coverage includes hostile telemetry 429
+headers, ordinary message-throttle advisor scheduling, 400 request attribution,
+direct-fallback attribution, nested envelope fallbacks, and reflected-secret
+forms including quoted API keys and Basic authentication.
+
 ## 17/07/2026-18/07/2026 - Central false-negative + 47-tab fleet recovery (issue #115, PR #114)
 
 ### Symptoms and verified split diagnosis

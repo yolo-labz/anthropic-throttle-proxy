@@ -42,6 +42,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import socket
 import time
 from typing import TYPE_CHECKING
@@ -1097,11 +1098,7 @@ def _account_routing_candidate_score(
     retry_after_remaining = _bearer_retry_after_remaining(bid)
     if retry_after_remaining > config.MAX_HOLD_RETRY_AFTER_S:
         return math.inf
-    lim = config.bearer_limiters.get(bid)
-    snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
-    queued = float(snap.get("queued_total") or 0)
-    priority_queued = float(snap.get("priority_queued") or 0)
-    inflight = float(snap.get("inflight") or 0)
+    load = _bearer_local_load_score(bid)
     # (util, reset-epoch|None, window-length) per observed budget window. Fed to
     # the budget_paced ranker below; least_loaded ignores it (uses max util only).
     windows: list[tuple[float, float | None, float]] = []
@@ -1178,7 +1175,6 @@ def _account_routing_candidate_score(
     # window: otherwise the -0.01 bonus lets a windowed incoming (even a
     # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
     stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
-    load = queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
     retry_after_surcharge = retry_after_remaining * _RETRY_AFTER_SURCHARGE_PER_S
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
@@ -1536,6 +1532,10 @@ def _retry_after_blocks_path(path: str) -> bool:
     return "v1/messages" in path
 
 
+def _retry_after_remaining_for_path(limiter: FairBearerLimiter, path: str) -> float:
+    return limiter.retry_after_remaining() if _retry_after_blocks_path(path) else 0.0
+
+
 def _attempt_for_request(
     request: web.Request, bid: str, cid: str, via: str, model_label: str
 ) -> _Attempt:
@@ -1598,9 +1598,13 @@ def _log_request_start(
     max_tokens: int | None = None,
     priority: bool = False,
 ) -> None:
+    safe_path = _bounded_error_field(path, 256)
+    safe_cid = _bounded_error_field(cid, 128)
+    safe_via = _bounded_error_field(via, 64)
+    safe_model = _bounded_error_field(model_label, 128)
     log(
-        f"start  method={request.method} path=/{path} bid={bid} cid={cid} "
-        f"via={via} model={model_label} max_tokens={max_tokens} "
+        f"start  method={request.method} path=/{safe_path} bid={bid} cid={safe_cid} "
+        f"via={safe_via} model={safe_model} max_tokens={max_tokens} "
         f"lane={'priority' if priority else 'normal'} "
         f"inflight={state['inflight']} queued={state['queued']}"
     )
@@ -1690,6 +1694,8 @@ async def _retry_direct_once(
         log(f"upstream-error path=/{path}: {first_exc!r} → retry direct once")
         retry_url, retry_timeout = url, client_timeout
         retry_where = "during upstream-retry"
+    if via == "central":
+        attempt.context["via"] = "direct-fallback"
     state["upstream_retries"] += 1
     M_UPSTREAM_RETRIES.inc()
 
@@ -1719,7 +1725,10 @@ async def _retry_direct_once(
         # Retry-After 429 instead of the 401 credential re-read nudge. Short
         # retry-afters fall through (fast-fail returns None) unchanged. ``bid``
         # is empty only in unit tests that bypass the nudge wiring.
-        if (ff := _maybe_fast_fail_throttle_direct(bid, path, response, attempt)) is not None:
+        if (
+            not _is_oauth_telemetry_path(path)
+            and (ff := _maybe_fast_fail_throttle_direct(bid, path, response, attempt)) is not None
+        ):
             return ff
         return response
     log(f"upstream-error final path=/{path}: {exc2!r}")
@@ -2361,12 +2370,14 @@ async def _forward_with_retry(
             and response is not None
             and not response.prepared
             and attempt.final_status in THROTTLE_STATUSES
+            and request.method == "POST"
+            and path == "v1/messages"
             and _is_streaming_body(body)
             and wait_deadline is not None
             and time.time() < wait_deadline
             and _is_transient_throttle(attempt.final_status, attempt.meta, bid, response)
         ):
-            _schedule_advisor(bid, attempt.final_status)
+            _schedule_advisor(bid, attempt.final_status, path)
             return await _keepalive_hold_and_retry(
                 request,
                 dict(headers),
@@ -2403,7 +2414,7 @@ async def _forward_with_retry(
             ) is not None:
                 return fast_fail
             await _aimd_feedback(bid, limiter, attempt)
-            _schedule_advisor(bid, attempt.final_status)
+            _schedule_advisor(bid, attempt.final_status, path)
             await limiter.wait_retry_after()
             continue
         return response
@@ -2682,6 +2693,47 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
         log(f"usage-parse-error path=/{path}: {ue!r}")
 
 
+_CREDENTIAL_LABEL_PATTERN = (
+    r"(authorization|proxy-authorization|x-api-key|api[-_]?key|access[-_]?token|"
+    r"refresh[-_]?token|oauth[-_]?token|client[-_]?secret|token)"
+)
+_SCHEME_CREDENTIAL_ASSIGNMENT_RE = re.compile(
+    rf"(?<![\w-])[\"']?{_CREDENTIAL_LABEL_PATTERN}[\"']? *[:=] *"
+    r"(?:bearer|basic) +[^ ,;\"']+",
+    re.IGNORECASE,
+)
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(
+    rf"(?<![\w-])[\"']?{_CREDENTIAL_LABEL_PATTERN}[\"']? *[:=] *"
+    r"(?:\"[^\"]*\"|'[^']*'|[^ ,;\"']+)",
+    re.IGNORECASE,
+)
+_AUTH_SCHEME_SECRET_RE = re.compile(
+    r"\b(bearer|basic) +(?:\"[^\"]*\"|'[^']*'|[^ ,;\"']+)", re.IGNORECASE
+)
+_PREFIXED_SECRET_RE = re.compile(r"\b(?:sk-ant-|sk-proj-|gsk_)[A-Za-z0-9._-]+", re.IGNORECASE)
+
+
+def _bounded_error_field(value: object, limit: int = 512) -> str:
+    text = " ".join(str(value).split())
+    text = _SCHEME_CREDENTIAL_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+    text = _CREDENTIAL_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+    text = _AUTH_SCHEME_SECRET_RE.sub(lambda match: f"{match.group(1)} <redacted>", text)
+    text = _PREFIXED_SECRET_RE.sub("<redacted>", text)
+    return text[:limit] or "<empty>"
+
+
+def _error_envelope_fields(captured: bytearray) -> tuple[str, str]:
+    payload = json.loads(bytes(captured[:65536]))
+    if not isinstance(payload, dict):
+        raise TypeError("error envelope is not an object")
+    nested = payload.get("error")
+    error = nested if isinstance(nested, dict) else {}
+    return (
+        _bounded_error_field(error.get("type") or payload.get("type") or "<no type>"),
+        _bounded_error_field(error.get("message") or payload.get("message") or "<no message>"),
+    )
+
+
 def _log_413_reason(bid: str, model_label: str, captured: bytearray | None) -> None:
     """Surface the actual Anthropic error reason on a 413 response.
 
@@ -2702,23 +2754,48 @@ def _log_413_reason(bid: str, model_label: str, captured: bytearray | None) -> N
     `empty_body` instead so the operator at least knows the upstream
     rejected without an error envelope.
     """
+    safe_model = _bounded_error_field(model_label, 128)
     if not captured:
-        log(f"upstream_413 bid={bid} model={model_label} reason=empty_body")
+        log(f"upstream_413 bid={bid} model={safe_model} reason=empty_body")
         return
-    raw = bytes(captured[:65536])
     try:
-        err = json.loads(raw)
-        outer_err = err.get("error") if isinstance(err.get("error"), dict) else {}
-        msg = outer_err.get("message") or err.get("message") or "<no message>"
-        etype = outer_err.get("type") or err.get("type") or "<no type>"
-        log(f"upstream_413 bid={bid} model={model_label} type={etype!r} message={msg!r}")
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        log(f"upstream_413 bid={bid} model={model_label} parse_error={exc!r} preview={raw[:200]!r}")
+        etype, msg = _error_envelope_fields(captured)
+        log(f"upstream_413 bid={bid} model={safe_model} type={etype!r} message={msg!r}")
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as exc:
+        raw = bytes(captured[:65536])
+        preview = _bounded_error_field(raw.decode("utf-8", "replace"), 200)
+        log(
+            f"upstream_413 bid={bid} model={safe_model} "
+            f"parse_error={type(exc).__name__} preview={preview!r}"
+        )
 
 
-def _schedule_advisor(bid: str, final_status: int) -> None:
+def _log_400_reason(path: str, attempt: _Attempt) -> None:
+    """Log a bounded Anthropic 400 reason with request correlation fields."""
+    parts = ["upstream_400", f"path=/{_bounded_error_field(path, 256)}"]
+    for key in ("method", "bid", "cid", "via", "model"):
+        parts.append(f"{key}={_bounded_error_field(attempt.context.get(key) or '?', 128)}")
+    if not attempt.captured:
+        parts.append("reason=empty_body")
+        log(" ".join(parts))
+        return
+    try:
+        etype, message = _error_envelope_fields(attempt.captured)
+        parts.extend((f"type={etype!r}", f"message={message!r}"))
+    except (json.JSONDecodeError, UnicodeDecodeError, TypeError) as exc:
+        parts.extend(
+            (
+                "reason=unparseable_body",
+                f"body_bytes={len(attempt.captured)}",
+                f"parse_error={type(exc).__name__}",
+            )
+        )
+    log(" ".join(parts))
+
+
+def _schedule_advisor(bid: str, final_status: int, path: str) -> None:
     """Fire the out-of-band GROQ advisor (debounced) on a throttle status."""
-    if ADVISOR_ENABLED and final_status in THROTTLE_STATUSES:
+    if ADVISOR_ENABLED and final_status in THROTTLE_STATUSES and not _is_oauth_telemetry_path(path):
         advisor_task = asyncio.create_task(_maybe_advise(bid, final_status))
         _background_tasks.add(advisor_task)
         advisor_task.add_done_callback(_background_tasks.discard)
@@ -2740,13 +2817,14 @@ async def _finalize(
     advisor, and usage parsing. Exactly mirrors the original inline block.
     """
     final_status = attempt.final_status
+    telemetry_path = _is_oauth_telemetry_path(path)
     counters.exit_inflight(final_status)
     M_REQUESTS.labels(method=request.method, status=str(final_status), model=model_label).inc()
     M_DURATION.labels(model=model_label).observe(time.time() - t0)
 
     # Capture upstream rate-limit headroom for this bearer.
     meta = attempt.meta
-    if meta:
+    if meta and not telemetry_path:
         bstate["last_ratelimit"] = meta
         _publish_ratelimit_gauges(bid, meta)
         try:
@@ -2759,13 +2837,13 @@ async def _finalize(
     # synthetic 503), wrongly shrink the bearer (invariants 7 + 9 — Codex BLOCKER).
     # OAuth telemetry 429s (usage/profile) are also exempt — their endpoint rate
     # limit is not a message-quota signal (13/07 incident; see _forward_with_retry).
-    if not attempt.aimd_owned and not _is_oauth_telemetry_path(path):
+    if not attempt.aimd_owned and not telemetry_path:
         try:
             await _aimd_feedback(bid, limiter, attempt)
         except Exception as aimde:
             log(f"aimd-error bid={bid}: {aimde!r}")
 
-    _schedule_advisor(bid, final_status)
+    _schedule_advisor(bid, final_status, path)
 
     if attempt.captured and request.method == "POST" and "v1/messages" in path:
         _record_usage(model, model_label, attempt.captured, path)
@@ -2780,8 +2858,17 @@ async def _finalize(
         # captured by logging `reason=empty_body`, so every 413 produces
         # at least one diagnostic line.
         _log_413_reason(bid, model_label, attempt.captured)
+    elif final_status == 400:
+        _log_400_reason(path, attempt)
+    elapsed_ms = int((time.time() - t0) * 1000)
+    safe_path = _bounded_error_field(path, 256)
+    safe_cid = _bounded_error_field(attempt.context.get("cid") or "?", 128)
+    safe_via = _bounded_error_field(attempt.context.get("via") or "?", 64)
+    safe_model = _bounded_error_field(model_label, 128)
     log(
-        f"done   path=/{path} model={model_label} inflight={counters.s['inflight']} "
+        f"done   method={request.method} path=/{safe_path} status={final_status} bid={bid} "
+        f"cid={safe_cid} via={safe_via} model={safe_model} elapsed_ms={elapsed_ms} "
+        f"inflight={counters.s['inflight']} "
         f"queued={counters.s['queued']} served={counters.s['served']} "
         f"disc={counters.s['client_disconnects']} retries={counters.s['upstream_retries']}"
     )
@@ -2903,29 +2990,33 @@ async def handler(request: web.Request) -> web.StreamResponse:
 
     wait_deadline = None if max_wait is None else handler_start + max_wait
     seen_retry_after_bids = {bid}
+
+    def try_retry_after_reroute(
+        current_bid: str, remaining: float, source: str
+    ) -> tuple[str, dict[str, str]] | None:
+        return _try_retry_after_reroute(
+            route_base_headers,
+            incoming_bid,
+            current_bid,
+            seen_retry_after_bids,
+            method=request.method,
+            path=path,
+            model=model,
+            max_tokens=req_max_tokens,
+            cid=cid,
+            retry_after_remaining=remaining,
+            source=source,
+        )
+
     while True:
         queue_mode, hard_max = _effective_admission(bid)
         # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
         # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
         # dispatched round-robin per client connection.
         limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
-        retry_after_remaining = (
-            limiter.retry_after_remaining() if _retry_after_blocks_path(path) else 0.0
-        )
+        retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
         if retry_after_remaining > 0:
-            rerouted = _try_retry_after_reroute(
-                route_base_headers,
-                incoming_bid,
-                bid,
-                seen_retry_after_bids,
-                method=request.method,
-                path=path,
-                model=model,
-                max_tokens=req_max_tokens,
-                cid=cid,
-                retry_after_remaining=retry_after_remaining,
-                source="pre-dispatch",
-            )
+            rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
             if rerouted is not None:
                 bid, headers = rerouted
                 continue
@@ -2972,23 +3063,9 @@ async def handler(request: web.Request) -> web.StreamResponse:
                     # A bearer can cross its 5h/7d target while this request is
                     # parked in its local fair queue. Re-run account routing from
                     # the original auth headers before surfacing a stale 429.
-                    retry_after_remaining = (
-                        limiter.retry_after_remaining() if _retry_after_blocks_path(path) else 0.0
-                    )
+                    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
                     if retry_after_remaining > 0:
-                        rerouted = _try_retry_after_reroute(
-                            route_base_headers,
-                            incoming_bid,
-                            bid,
-                            seen_retry_after_bids,
-                            method=request.method,
-                            path=path,
-                            model=model,
-                            max_tokens=req_max_tokens,
-                            cid=cid,
-                            retry_after_remaining=retry_after_remaining,
-                            source="post-slot",
-                        )
+                        rerouted = try_retry_after_reroute(bid, retry_after_remaining, "post-slot")
                         if rerouted is not None:
                             counters.exit_inflight(0)
                             bid, headers = rerouted

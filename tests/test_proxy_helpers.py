@@ -73,6 +73,17 @@ def test_log_413_reason_error_envelope_dict(monkeypatch) -> None:
     assert "message='prompt is too long'" in lines[0]
 
 
+def test_log_413_reason_nested_fields_fall_back_individually(monkeypatch) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    body = bytearray(b'{"type":"top_type","message":"top message","error":{"type":"nested_type"}}')
+
+    proxy._log_413_reason("abcd1234", "claude-opus-4-8", body)
+
+    assert "type='nested_type'" in lines[0]
+    assert "message='top message'" in lines[0]
+
+
 def test_log_413_reason_falls_back_to_top_level(monkeypatch) -> None:
     """When ``error`` key is absent, fall back to top-level ``type``/``message``."""
     lines: list[str] = []
@@ -81,6 +92,52 @@ def test_log_413_reason_falls_back_to_top_level(monkeypatch) -> None:
     proxy._log_413_reason("abcd1234", "claude-opus-4-8", body)
     assert "type='flat_top'" in lines[0]
     assert "message='top-level reason'" in lines[0]
+
+
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    [
+        ("x-api-key: 'opaque-secret-123'", "opaque-secret-123"),
+        ('authorization="opaque-secret-456"', "opaque-secret-456"),
+        ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+        ('Bearer "quoted-bearer-secret"', "quoted-bearer-secret"),
+        ("api_key=plain-api-secret", "plain-api-secret"),
+        ("oauth-token: oauth-secret", "oauth-secret"),
+        ('{"x-api-key":"json-api-secret"}', "json-api-secret"),
+        ("{'api_key': 'python-api-secret'}", "python-api-secret"),
+        ("key gsk_reflected_test_secret", "gsk_reflected_test_secret"),
+    ],
+)
+def test_bounded_error_field_redacts_reflected_credentials(raw: str, secret: str) -> None:
+    rendered = proxy._bounded_error_field(raw)
+
+    assert secret not in rendered
+    assert "<redacted>" in rendered
+
+
+def test_request_start_log_flattens_client_controlled_fields(monkeypatch) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    fake_request = cast(Any, type("R", (), {"method": "POST"})())
+
+    proxy._log_request_start(
+        fake_request,
+        "v1/messages\nforged-path=true",
+        "deadbeef",
+        "client-1\nforged-cid=true",
+        "direct\nforged-via=true",
+        "claude-opus-4-8\nforged-model=true",
+    )
+
+    assert len(lines) == 1
+    assert "\n" not in lines[0]
+    assert "forged-cid=true" in lines[0]
+
+
+def test_bounded_error_field_handles_long_assignment_whitespace() -> None:
+    rendered = proxy._bounded_error_field("token:" + (" " * 100_000) + "opaque-value")
+
+    assert rendered == "token=<redacted>"
 
 
 def test_log_413_reason_error_field_not_dict_uses_no_message(monkeypatch) -> None:
@@ -120,6 +177,33 @@ def test_log_413_reason_non_json_logs_parse_error(monkeypatch) -> None:
     assert "JSONDecodeError" in lines[0]
     # 200-byte preview gets emitted so the operator can eyeball the body shape.
     assert "preview=" in lines[0]
+
+
+@pytest.mark.parametrize(("status", "logger"), [(400, proxy._log_400_reason), (413, None)])
+def test_invalid_utf8_error_diagnostics_do_not_reflect_credentials(
+    status: int, logger: Any, monkeypatch
+) -> None:
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    sensitive_marker = "reflected-secret-123"
+    captured = bytearray(b'{"error":{"message":"Authorization: Bearer reflected-secret-123\xff"}}')
+
+    if status == 400:
+        attempt = proxy._Attempt()
+        attempt.context = {
+            "method": "POST",
+            "bid": "deadbeef",
+            "cid": "client-1",
+            "via": "direct",
+            "model": "claude-opus-4-8",
+        }
+        attempt.captured = captured
+        logger("v1/messages", attempt)
+    else:
+        proxy._log_413_reason("deadbeef", "claude-opus-4-8", captured)
+
+    assert sensitive_marker not in lines[0]
+    assert "UnicodeDecodeError" in lines[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1381,6 +1465,88 @@ async def test_retry_direct_once_nudges_swapped_account(
     assert "authentication_error" in resp.text
 
 
+async def test_retry_direct_once_attributes_response_to_direct_fallback(monkeypatch) -> None:
+    monkeypatch.setattr(config, "CENTRAL_URL", "")
+    monkeypatch.setattr(config, "UPSTREAM", "http://direct.example")
+    config.state["central_status"] = "up"
+
+    async def stub(*args: Any, **_kw: Any) -> tuple[Any, None]:
+        att = args[5]
+        att.final_status = 400
+        att.captured = bytearray(
+            b'{"error":{"type":"invalid_request_error","message":"bad request"}}'
+        )
+        att.response = proxy.web.Response(status=400)
+        return att.response, None
+
+    monkeypatch.setattr(proxy, "_try_forward", stub)
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    attempt = proxy._Attempt()
+    attempt.context = {
+        "method": "POST",
+        "bid": "deadbeef",
+        "cid": "client-1\nforged-cid=true",
+        "via": "central",
+        "model": "claude-opus-4-8\nforged-model=true",
+    }
+
+    response = await proxy._retry_direct_once(
+        fake_request,
+        {},
+        None,
+        "v1/messages",
+        "central",
+        "http://central.example/v1/messages",
+        proxy.aiohttp.ClientTimeout(total=1),
+        RuntimeError("central down"),
+        attempt,
+        "deadbeef",
+    )
+    proxy._log_400_reason("v1/messages", attempt)
+
+    assert response.status == 400
+    assert attempt.context["via"] == "direct-fallback"
+    assert "via=direct-fallback" in lines[-1]
+    assert "\n" not in lines[-1]
+
+
+async def test_retry_direct_once_relays_telemetry_throttle_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(config, "CENTRAL_URL", "")
+    monkeypatch.setattr(config, "UPSTREAM", "http://direct.example")
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 15.0)
+    config.state["central_status"] = "up"
+    upstream_response = proxy.web.Response(status=429, text="telemetry rate limited")
+
+    async def stub(*args: Any, **_kw: Any) -> tuple[Any, None]:
+        attempt = args[5]
+        attempt.final_status = 429
+        attempt.meta = {"retry-after": "88888"}
+        attempt.response = upstream_response
+        return upstream_response, None
+
+    monkeypatch.setattr(proxy, "_try_forward", stub)
+    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+
+    response = await proxy._retry_direct_once(
+        fake_request,
+        {},
+        b'{"stream":true}',
+        "api/oauth/usage",
+        "central",
+        "http://central.example/api/oauth/usage",
+        proxy.aiohttp.ClientTimeout(total=1),
+        RuntimeError("central down"),
+        proxy._Attempt(),
+        "deadbeef",
+    )
+
+    assert response is upstream_response
+    assert response.status == 429
+    assert response.text == "telemetry rate limited"
+
+
 # ---------------------------------------------------------------------------
 # _route_account_if_enabled — FR-019 pure-OAuth-Bearer passthrough lock
 # ---------------------------------------------------------------------------
@@ -1640,15 +1806,20 @@ async def test_spawn_identity_verification_pop_race(monkeypatch) -> None:
     assert key not in proxy._identity_verify_tasks
 
 
-async def test_retry_after_state_restored_for_new_limiter(tmp_path, monkeypatch) -> None:
-    # Hotfix service restarts must not forget a known upstream Retry-After and
-    # rediscover the same window with one fresh 429 on the first request.
+def _reset_retry_after_registry(tmp_path, monkeypatch):
     state_file = tmp_path / "retry-after.json"
     monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
     monkeypatch.setattr(limiter, "_retry_after_state", None)
     limiter.set_lock(asyncio.Lock())
     config.bearer_limiters.clear()
     config.bearer_state.clear()
+    return state_file
+
+
+async def test_retry_after_state_restored_for_new_limiter(tmp_path, monkeypatch) -> None:
+    # Hotfix service restarts must not forget a known upstream Retry-After and
+    # rediscover the same window with one fresh 429 on the first request.
+    _reset_retry_after_registry(tmp_path, monkeypatch)
 
     lim = await proxy._get_bearer_limiter("bid1", "fair", 3)
     lim.note_retry_after(60)
@@ -1667,14 +1838,9 @@ async def test_retry_after_restore_capped(tmp_path, monkeypatch) -> None:
     # restart resurrected the full ~58 h window from disk and re-blocked an
     # account that was back at 91-92%. A restored window is hearsay — cap it;
     # a genuinely exhausted account re-notes the honest window with one 429.
-    state_file = tmp_path / "retry-after.json"
+    state_file = _reset_retry_after_registry(tmp_path, monkeypatch)
     state_file.write_text(json.dumps({"bid1": time.time() + 210_000}))
-    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
     monkeypatch.setattr(config, "RETRY_AFTER_RESTORE_CAP_S", 900.0)
-    monkeypatch.setattr(limiter, "_retry_after_state", None)
-    limiter.set_lock(asyncio.Lock())
-    config.bearer_limiters.clear()
-    config.bearer_state.clear()
 
     restored = await proxy._get_bearer_limiter("bid1", "fair", 3)
 
@@ -1682,14 +1848,9 @@ async def test_retry_after_restore_capped(tmp_path, monkeypatch) -> None:
 
 
 async def test_retry_after_restore_uncapped_when_knob_zero(tmp_path, monkeypatch) -> None:
-    state_file = tmp_path / "retry-after.json"
+    state_file = _reset_retry_after_registry(tmp_path, monkeypatch)
     state_file.write_text(json.dumps({"bid1": time.time() + 210_000}))
-    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
     monkeypatch.setattr(config, "RETRY_AFTER_RESTORE_CAP_S", 0.0)
-    monkeypatch.setattr(limiter, "_retry_after_state", None)
-    limiter.set_lock(asyncio.Lock())
-    config.bearer_limiters.clear()
-    config.bearer_state.clear()
 
     restored = await proxy._get_bearer_limiter("bid1", "fair", 3)
 
@@ -1697,12 +1858,7 @@ async def test_retry_after_restore_uncapped_when_knob_zero(tmp_path, monkeypatch
 
 
 async def test_clear_retry_after_drops_live_and_persisted_window(tmp_path, monkeypatch) -> None:
-    state_file = tmp_path / "retry-after.json"
-    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
-    monkeypatch.setattr(limiter, "_retry_after_state", None)
-    limiter.set_lock(asyncio.Lock())
-    config.bearer_limiters.clear()
-    config.bearer_state.clear()
+    state_file = _reset_retry_after_registry(tmp_path, monkeypatch)
 
     lim = await proxy._get_bearer_limiter("bid1", "fair", 3)
     lim.note_retry_after(50_000)
@@ -1720,14 +1876,9 @@ async def test_retry_after_restore_cap_is_persisted(tmp_path, monkeypatch) -> No
     # Codex MAJOR: capping was in-memory only, so the raw multi-day deadline
     # stayed on disk and every restart re-granted a fresh 900 s stale window.
     # The cap must be written back so subsequent loads see the capped deadline.
-    state_file = tmp_path / "retry-after.json"
+    state_file = _reset_retry_after_registry(tmp_path, monkeypatch)
     state_file.write_text(json.dumps({"bid1": time.time() + 210_000}))
-    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(state_file))
     monkeypatch.setattr(config, "RETRY_AFTER_RESTORE_CAP_S", 900.0)
-    monkeypatch.setattr(limiter, "_retry_after_state", None)
-    limiter.set_lock(asyncio.Lock())
-    config.bearer_limiters.clear()
-    config.bearer_state.clear()
 
     await proxy._get_bearer_limiter("bid1", "fair", 3)  # triggers cap + persist
 

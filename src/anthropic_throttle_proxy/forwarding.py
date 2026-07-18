@@ -237,13 +237,12 @@ async def _forward_once(
             ) as upstream:
                 if retryable_statuses and upstream.status in retryable_statuses:
                     payload = await upstream.read()
-                    snippet = payload[:500].decode("utf-8", "replace").strip()
                     return (
                         None,
                         upstream.status,
                         bytearray(payload[: 1024 * 1024]),
                         RetryableStatusError(
-                            f"retryable upstream status {upstream.status}: {snippet}",
+                            f"retryable upstream status {upstream.status}",
                             proxy_served=config.MARKER_HEADER in upstream.headers,
                         ),
                         _extract_ratelimit(upstream.headers),
