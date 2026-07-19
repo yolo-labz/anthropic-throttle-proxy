@@ -205,12 +205,15 @@
       </td>
       <td>
         {% if b.unified and b.unified.util_5h is not none %}
+          {% if b.unified_5h_stale %}<span class="muted" title="Last reading predates this window's reset — effectively 0%">0% · reset</span>
+          {% else %}
           {% set pct = (b.unified.util_5h * 100) | round(0) | int %}{% set rejected = b.unified.status == "rejected" %}
           <span class="util" title="5h unified-window utilisation">
             <span class="bar"><i class="{% if rejected or pct >= 90 %}crit{% elif pct >= 75 %}warn{% endif %}" style="width: {{ [pct, 100] | min }}%"></i></span>
             <span class="pct">{{ pct }}%</span>
             {% if rejected %}<span class="tag-rejected">rejected</span>{% endif %}
           </span>
+          {% endif %}
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="num">{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
