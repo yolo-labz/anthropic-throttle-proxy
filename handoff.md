@@ -2516,6 +2516,15 @@ Operator note: the `retry_probe_*` fields live under `.bearers[<bid>].limiter`
 bearer top level returns `null` and falsely mimics the pre-#123 signature —
 check the nested path before diagnosing a runtime regression.
 
-Owed: one cross-family (Codex) adversarial review pass on #123/#124 when its
-quota resets on 25/07/2026 20:22. The review gate was substituted this round
-by the source-level causal proof plus the runtime falsification above.
+The cross-family adversarial gate on #123/#124 was discharged later the same
+morning by GLM-5.2 (z.ai) through opencode — family-diverse per the routing
+policy, source-grounded — replacing the originally owed Codex pass (its quota
+resets 25/07/2026 20:22). Verdict: PASS on four dimensions: starvation-free
+(the `finally` release plus the task done-callback safety net), no inflight
+leak (the probe claim is synchronous and the done-callback is registered with
+zero awaits in between, so cancellation cannot land inside a window that
+leaks the lease), half-open dispatch blocked while a probe is inflight, and
+no lost wakeup (a fresh `asyncio.Event` is swapped in on probe begin and set
+on finish, so waiters never park on a stale already-set event). All four line
+claims were re-verified against `main` at `326558a` before this record was
+written. The owed-Codex caveat is withdrawn; #123 is fully closed.
