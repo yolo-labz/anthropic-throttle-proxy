@@ -2421,3 +2421,62 @@ A without another admission error. Herdr's final scan showed `w23:p2` working;
 `w22:p2` was also working after its earlier recovery. The banner still visible
 in `w22:p3` was 2h44 old with no post-error work and was not part of this
 boundary event.
+
+## 18/07/2026 — single-flight boundary revalidation, live closure
+
+The 20:43 B event proved the remaining mechanism: after a restored or long
+Retry-After deadline expired, multiple waiting requests could select the same
+bearer before any one request revalidated it. Proxy PR #123 (squash
+`e16d15900f73e9f82c1714738368f5db3f21cfd0`) adds a per-bearer half-open gate.
+Exactly one message request owns the probe; sibling requests use a healthy
+bearer or wait. A successful response opens the gate as soon as its 2xx headers
+arrive, before SSE EOF. A 429 restores the deadline. OAuth telemetry never
+participates in this message gate. The full suite passed `488` tests, Ruff,
+mypy, CodeQL, the repository quality gates, and an independent cross-family
+review.
+
+NixOS PR #1296 (squash `02440207c32dee4a148b2a0f95a861d1548173a3`)
+pins that revision with SRI
+`sha256-kE5QPvSKYCWRcZFISqxeo9JMEoaM3TNrgZL86u26e5M=`. Its 57 checks plus
+server closure passed. Desktop runs store path
+`/nix/store/j89ax3x3km3zh3x48hk2g2fg6rrwxz62-anthropic-throttle-proxy-0.1.0`
+as PID `3154589`; the live and boot closures both contain that package. The old
+PID's final 56.9-second POST completed with status 200 at 22:05:42 before the
+new PID started, so the service handoff dropped no request.
+
+Central was deployed only after the 22:14:19 preflight simultaneously recorded
+`inflight=0`, `queued=0`, and zero other Dokku deploy processes. Dokku advanced
+from `7b48c34` to `e16d159` and runs CID `258003f5d6f`. Its first authenticated
+A request produced exactly one `retry-probe-begin`, opened at 22:15:14 before
+EOF, and completed with status 200. The live health payload exposes real
+boolean `retry_probe_required`, `retry_probe_inflight`, and
+`retry_probe_blocks_routing` fields; #121 returned no such fields.
+
+The exact previously failing C boundary was then observed end to end:
+
+- local: one C probe began at 22:20:03, opened at 22:20:09, and returned 200 at
+  22:20:20;
+- central: one C probe began at 22:20:04, opened at 22:20:09, and returned 200
+  at 22:20:20;
+- no second C request started before either gate opened; sampled queues stayed
+  at zero, then ordinary C traffic continued with status 200;
+- B later received one 200 probe, after which central budget pacing correctly
+  re-armed its 7-day pause at 90% utilization until 20/07/2026 05:00.
+
+The closing aggregate was local `120x 200, 0x 429, 0x 503` and central
+`22x 200, 0x 429, 0x 503`. The single local 499 was an intentional manual
+interruption of an unrelated Claude turn to obtain the pre-deploy drain; it was
+not caused by the service handoff or upstream. This makes the incident fix
+verified, including the literal reset boundary, rather than inferred from unit
+tests or a quiet-period sample.
+
+Reversal remains one code revert plus one Nix pin revert, each through its
+normal protected-branch PR:
+
+```bash
+git revert e16d15900f73e9f82c1714738368f5db3f21cfd0
+git revert 02440207c32dee4a148b2a0f95a861d1548173a3
+```
+
+For an immediate central-only runtime rollback, Dokku retains the previous
+release: `dokku releases:rollback anthropic-throttle 1`.
