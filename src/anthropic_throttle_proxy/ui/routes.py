@@ -71,6 +71,39 @@ def _bearer_pacing_state(b: dict) -> tuple[str | None, float | None, object]:
     return None, util_5h, retry_after
 
 
+def _window_stale(unified: dict | None, rkey: str, now: float) -> bool:
+    """True when a unified window's last reading predates its own reset epoch.
+
+    A stale reading is effectively 0% — the window rolled over since the header
+    was captured, so surfacing the frozen utilisation would misreport a cleared
+    window as still-loaded (the account panel already treats this as "0% · reset").
+    """
+    reset = (unified or {}).get(rkey)
+    return reset is not None and now >= reset
+
+
+# (util, reset) key pairs per unified window, for the stale-strip pass.
+_UNIFIED_WINDOWS = (("util_5h", "reset_5h"), ("util_7d", "reset_7d"))
+
+
+def _live_unified(unified: dict | None, now: float) -> dict:
+    """Copy of ``unified`` with any stale window's utilisation dropped.
+
+    Feeds the canonical ``_binding_window`` / ``_binding_utilization`` selectors so
+    the status strip names the window actually holding the fleet back — a window
+    whose reset already elapsed carries a frozen reading and must not win binding
+    (it drops to the other live window, or None), instead of the old hardcoded
+    "5h" label reporting a reset window's stale value.
+    """
+    if not unified:
+        return {}
+    live = dict(unified)
+    for ukey, rkey in _UNIFIED_WINDOWS:
+        if _window_stale(unified, rkey, now):
+            live.pop(ukey, None)
+    return live
+
+
 def _fleet_verdict(n: int, throttled: int, pacing: int) -> tuple[str, str, str]:
     """Worst-wins ``(level, verdict, detail-prefix)`` for ``n`` bearers."""
     plural = "s" if n != 1 else ""
@@ -81,13 +114,18 @@ def _fleet_verdict(n: int, throttled: int, pacing: int) -> tuple[str, str, str]:
     return "healthy", "HEALTHY", f"all {n} bearer{plural} clear"
 
 
-def _compute_status(bearers: list[dict], queue_mode: str) -> dict[str, object]:
+def _compute_status(
+    bearers: list[dict], queue_mode: str, now: float | None = None
+) -> dict[str, object]:
     """Derive one fleet-wide verdict from the live snapshot (drives the status strip).
 
     Worst-wins across bearers: ``throttled`` > ``pacing`` > ``healthy``. The
     ``binding`` line names the most-constrained bearer so the operator sees the
-    single thing holding the fleet back without scanning the table.
+    single thing holding the fleet back without scanning the table. ``now`` (unix
+    seconds) gates stale-window dropping; defaults to the current time.
     """
+    if now is None:
+        now = time.time()
     if not bearers:
         return {
             "level": "idle",
@@ -97,21 +135,24 @@ def _compute_status(bearers: list[dict], queue_mode: str) -> dict[str, object]:
 
     throttled: list[str] = []
     pacing: list[str] = []
-    binding: tuple[float, str, object] | None = None  # (util_5h, bearer_id, retry_after)
+    binding: tuple[float, str, str, object] | None = None  # (util, label, bearer_id, retry_after)
     for b in bearers:
-        state, util_5h, retry_after = _bearer_pacing_state(b)
+        state, _util_5h, retry_after = _bearer_pacing_state(b)
         if state == "throttled":
             throttled.append(b["bearer_id"])
         elif state == "pacing":
             pacing.append(b["bearer_id"])
-        if util_5h is not None and (binding is None or util_5h > binding[0]):
-            binding = (util_5h, b["bearer_id"], retry_after)
+        live = _live_unified(b.get("unified"), now)
+        util = _proxy._binding_utilization(live)
+        label = _proxy._binding_window(live)
+        if util is not None and label is not None and (binding is None or util > binding[0]):
+            binding = (util, label, b["bearer_id"], retry_after)
 
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
     if binding is not None:
-        detail += f" · binding: 5h window {round(binding[0] * 100)}% on {binding[1]}"
-        if binding[2]:
-            detail += f" · retry-after {binding[2]}"
+        detail += f" · binding: {binding[1]} window {round(binding[0] * 100)}% on {binding[2]}"
+        if binding[3]:
+            detail += f" · retry-after {binding[3]}"
     if queue_mode == "off":
         detail += " · queue off (passthrough)"
     return {"level": level, "verdict": verdict, "detail": detail}
@@ -172,9 +213,11 @@ async def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
     labels = _accounts.bearer_labels()
+    now = time.time()
     bearers = []
     for bid, bstate in _proxy.bearer_state.items():
         lim = _proxy.bearer_limiters.get(bid)
+        unified = bstate.get("unified")
         bearers.append(
             {
                 "bearer_id": bid,
@@ -183,11 +226,13 @@ async def _collect_view() -> dict[str, object]:
                 "queued": bstate.get("queued", 0),
                 "served": bstate.get("served", 0),
                 "last_ratelimit": bstate.get("last_ratelimit"),
-                "unified": bstate.get("unified"),
+                "unified": unified,
+                # 5h reading frozen from before its own reset — render as
+                # "0% · reset" so the bearer column matches the accounts panel.
+                "unified_5h_stale": _window_stale(unified, "reset_5h", now),
                 "limiter": lim.snapshot() if lim is not None else None,
             }
         )
-    now = time.time()
     endpoint = await _accounts.refresh_endpoint(now)
     accounts_view = _accounts.account_view(bearers, now, endpoint)
     identity = _accounts.identity_state(accounts_view)
@@ -207,7 +252,7 @@ async def _collect_view() -> dict[str, object]:
         "identity": identity,
         "fleet": fleet_view,
         "copilot": copilot_view,
-        "status": _compute_status(bearers, _proxy.QUEUE_MODE),
+        "status": _compute_status(bearers, _proxy.QUEUE_MODE, now),
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
         "served": _proxy.state["served"],
