@@ -17,6 +17,7 @@ isolate one branch per case. Pacing/forwarding/integration paths live in
 from __future__ import annotations
 
 import asyncio
+import collections
 import hashlib
 import json
 import math
@@ -874,6 +875,99 @@ def test_clean_sibling_still_beats_short_retry_after(
 
     assert selected == bid_b
     assert label == "B"
+
+
+def test_long_window_revalidation_routes_only_one_probe_to_unknown_bearer(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A restored/cleared long window must reopen through one half-open probe.
+
+    Live regression, 18/07/2026 20:42: B still had 31 seconds of a restored
+    hold, but ordinary routing selected it repeatedly. Those requests waited
+    together and dispatched as a herd at expiry. A is deliberately
+    ``allowed_warning`` here while B usage is unknown, matching the production
+    ranking that made B attractive.
+    """
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    config.bearer_state[bid_a] = {
+        "unified": {
+            "status": "allowed_warning",
+            "status_5h": "allowed",
+            "status_7d": "allowed_warning",
+            "util_5h": 0.39,
+            "util_7d": 0.78,
+        }
+    }
+    config.bearer_state[bid_b] = {"unified": None}
+    a_limiter = FairBearerLimiter(6, "fair", bearer_id=bid_a)
+    a_limiter.inflight = 6
+    # Production A was saturated with queued traffic. The queue term is what
+    # made still-windowed B look cheaper despite B's Retry-After surcharge.
+    monkeypatch.setattr(
+        a_limiter,
+        "_queues",
+        {"busy-a": collections.deque([object(), object(), object()])},
+    )
+    config.bearer_limiters[bid_a] = a_limiter
+    assert a_limiter.try_begin_retry_probe() is True
+    assert a_limiter.finish_retry_probe(success=True) is True
+    b_limiter = FairBearerLimiter(6, "fair", bearer_id=bid_b)
+    b_limiter.note_retry_after(116_212)
+    monkeypatch.setattr(b_limiter, "_retry_after_until", time.time() + 31)
+    config.bearer_limiters[bid_b] = b_limiter
+
+    def route() -> tuple[str, str | None, bool]:
+        headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+        return proxy._route_account_and_claim_retry_probe(
+            headers, bid_a, method="POST", path="v1/messages", model="claude-opus-4-8"
+        )
+
+    # While the restored hold is active, every request stays on usable A.
+    for _ in range(8):
+        selected, _, claimed = route()
+        assert selected == bid_a
+        assert claimed is False
+        assert a_limiter.retry_probe_required() is False
+
+    # At expiry exactly one request may select B and atomically claim its probe.
+    monkeypatch.setattr(b_limiter, "_retry_after_until", time.time() - 1)
+    selected, _, claimed = route()
+    assert selected == bid_b
+    assert claimed is True
+
+    # Until that probe resolves, the remaining burst routes to A, never B.
+    for _ in range(8):
+        selected, _, claimed = route()
+        assert selected == bid_a
+        assert claimed is False
+        assert a_limiter.retry_probe_required() is False
+
+
+def test_wrapper_never_grants_second_lease_to_half_open_fallback(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """An empty-candidate fallback may name B, but cannot authorize dispatch."""
+    _, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    b_limiter = FairBearerLimiter(6, "fair", bearer_id=bid_b)
+    config.bearer_limiters[bid_b] = b_limiter
+    headers = {"Authorization": "Bearer sk-ant-oat01-SIM-B"}
+
+    results = [
+        proxy._route_account_and_claim_retry_probe(
+            dict(headers), bid_b, method="POST", path="v1/messages"
+        )
+        for _ in range(2)
+    ]
+
+    assert [(selected, claimed) for selected, _, claimed in results] == [
+        (bid_b, True),
+        (bid_b, False),
+    ]
+    assert b_limiter.retry_probe_required() is True
+    assert b_limiter.retry_probe_inflight() is True
 
 
 def test_reroute_refuses_hop_to_longer_window_configured_bearer(
@@ -1845,6 +1939,31 @@ async def test_retry_after_restore_capped(tmp_path, monkeypatch) -> None:
     restored = await proxy._get_bearer_limiter("bid1", "fair", 3)
 
     assert 0 < restored.retry_after_remaining() <= 900
+
+
+async def test_retry_probe_probation_survives_restart_near_or_after_expiry(
+    tmp_path, monkeypatch
+) -> None:
+    """Cold-start probation must not depend on a long deadline surviving JSON."""
+    state_file = _reset_retry_after_registry(tmp_path, monkeypatch)
+    state_file.write_text(json.dumps({"bid1": time.time() + 31}))
+
+    near_expiry = await proxy._get_bearer_limiter("bid1", "fair", 3)
+    assert near_expiry.retry_after_remaining() > 25
+    assert near_expiry.retry_probe_required() is True
+
+    # A later restart may see the deadline already pruned from disk. The new
+    # named limiter must still start half-open and admit exactly one probe.
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+    state_file.write_text("{}")
+
+    after_expiry = await proxy._get_bearer_limiter("bid1", "fair", 3)
+    assert after_expiry.retry_after_remaining() == 0
+    assert after_expiry.retry_probe_required() is True
+    assert after_expiry.try_begin_retry_probe() is True
+    assert after_expiry.try_begin_retry_probe() is False
 
 
 async def test_retry_after_restore_uncapped_when_knob_zero(tmp_path, monkeypatch) -> None:

@@ -24,6 +24,94 @@ bearer_limiter_lock: asyncio.Lock | None = None
 _retry_after_state: dict[str, float] | None = None
 
 
+class _RetryProbeGate:
+    """Event-loop-local half-open gate for one bearer's long retry window."""
+
+    __slots__ = ("block_while_retry", "event", "inflight", "required")
+
+    def __init__(self, *, block_while_retry: bool) -> None:
+        self.required = True
+        self.inflight = False
+        self.block_while_retry = block_while_retry
+        self.event: asyncio.Event | None = None
+
+
+# Synchronous on purpose: handler routing and probe claim run without an await
+# between them, so one event-loop task wins the half-open lease atomically.
+_retry_probe_gates: dict[str, _RetryProbeGate] = {}
+
+
+def require_retry_probe(bid: str, *, block_while_retry: bool = False) -> None:
+    if not bid:
+        return
+    gate = _retry_probe_gates.get(bid)
+    if gate is None:
+        _retry_probe_gates[bid] = _RetryProbeGate(block_while_retry=block_while_retry)
+    else:
+        if gate.required:
+            gate.block_while_retry = gate.block_while_retry or block_while_retry
+        else:
+            gate.block_while_retry = block_while_retry
+        gate.required = True
+
+
+def retry_probe_required(bid: str) -> bool:
+    gate = _retry_probe_gates.get(bid)
+    return bool(gate and gate.required)
+
+
+def retry_probe_inflight(bid: str) -> bool:
+    gate = _retry_probe_gates.get(bid)
+    return bool(gate and gate.required and gate.inflight)
+
+
+def retry_probe_blocks_routing(bid: str) -> bool:
+    gate = _retry_probe_gates.get(bid)
+    return bool(gate and gate.required and gate.block_while_retry)
+
+
+def try_begin_retry_probe(bid: str) -> bool:
+    gate = _retry_probe_gates.get(bid)
+    if gate is None or not gate.required or gate.inflight:
+        return False
+    gate.inflight = True
+    if gate.event is None or gate.event.is_set():
+        gate.event = asyncio.Event()
+    log(f"retry-probe-begin bid={bid}")
+    return True
+
+
+async def wait_retry_probe(bid: str) -> None:
+    """Wait until the current half-open probe resolves, if one is active."""
+    while True:
+        gate = _retry_probe_gates.get(bid)
+        if gate is None or not gate.required or not gate.inflight:
+            return
+        if gate.event is None:
+            gate.event = asyncio.Event()
+        await gate.event.wait()
+
+
+def finish_retry_probe(bid: str, *, success: bool) -> bool:
+    """Release a probe lease; only a successful message response reopens."""
+    gate = _retry_probe_gates.get(bid)
+    if gate is None or not gate.inflight:
+        return False
+    gate.inflight = False
+    if success:
+        gate.required = False
+        gate.block_while_retry = False
+    if gate.event is not None:
+        gate.event.set()
+    log(f"retry-probe-finish bid={bid} result={'open' if success else 'closed'}")
+    return True
+
+
+def _reset_retry_probe_gates() -> None:
+    """Test-only registry reset alongside the other process-global state."""
+    _retry_probe_gates.clear()
+
+
 def set_lock(lock: asyncio.Lock) -> None:
     """Bind the registry lock (called once from ``main()`` on the running loop)."""
     global bearer_limiter_lock
@@ -111,6 +199,7 @@ def _restore_retry_after(lim: FairBearerLimiter, bid: str) -> None:
     if until <= time.time():
         return
     lim._retry_after_until = until
+    lim.require_retry_probe(block_while_retry=True)
     lim._last_throttle_at = max(lim._last_throttle_at, time.time())
     log(f"bearer-retry-after-restore bid={bid} remaining={int(until - time.time())}s")
 
@@ -134,6 +223,11 @@ def clear_retry_after(bid: str) -> float:
         lim._retry_after_until = 0.0
     if until <= now:
         return 0.0
+    if until - now > config.MAX_HOLD_RETRY_AFTER_S:
+        if lim is None:
+            require_retry_probe(bid, block_while_retry=True)
+        else:
+            lim.require_retry_probe(block_while_retry=True)
     _persist_retry_after_state()
     return until - now
 
@@ -250,6 +344,12 @@ class FairBearerLimiter:
         self._last_throttle_at = 0.0
         self._successes_since_throttle = 0
         self._retry_after_until = 0.0
+        # Cold-start probation is deliberately independent of persisted
+        # Retry-After state. A restart in the final seconds of a window (or
+        # after its JSON entry was pruned) must still reopen this bearer through
+        # one message probe instead of releasing every waiter as a herd.
+        if bearer_id:
+            require_retry_probe(bearer_id)
         # PR #53: adaptive ramp — sliding window of recent shrink timestamps.
         # _effective_ramp_after() uses this to pick FAST (isolated transient)
         # vs SLOW (sustained storm) additive-increase. ``maxlen`` is sized to
@@ -413,6 +513,8 @@ class FairBearerLimiter:
         """
         if seconds <= 0:
             return self._retry_after_until
+        if seconds > config.MAX_HOLD_RETRY_AFTER_S:
+            self.require_retry_probe(block_while_retry=True)
         until = time.time() + seconds
         if until > self._retry_after_until:
             self._retry_after_until = until
@@ -423,6 +525,30 @@ class FairBearerLimiter:
     def retry_after_remaining(self) -> float:
         """Seconds left in the current Retry-After window, or 0 when clear."""
         return max(0.0, self._retry_after_until - time.time())
+
+    def require_retry_probe(self, *, block_while_retry: bool = False) -> None:
+        """Require single-flight message revalidation after this window clears."""
+        require_retry_probe(self.bearer_id, block_while_retry=block_while_retry)
+
+    def retry_probe_required(self) -> bool:
+        return retry_probe_required(self.bearer_id)
+
+    def retry_probe_inflight(self) -> bool:
+        return retry_probe_inflight(self.bearer_id)
+
+    def retry_probe_blocks_routing(self) -> bool:
+        return retry_probe_blocks_routing(self.bearer_id)
+
+    def try_begin_retry_probe(self) -> bool:
+        if self.retry_after_remaining() > 0:
+            return False
+        return try_begin_retry_probe(self.bearer_id)
+
+    async def wait_retry_probe(self) -> None:
+        await wait_retry_probe(self.bearer_id)
+
+    def finish_retry_probe(self, *, success: bool) -> bool:
+        return finish_retry_probe(self.bearer_id, success=success)
 
     async def wait_retry_after(self) -> None:
         """Sleep until any outstanding Retry-After window has elapsed.
@@ -630,6 +756,9 @@ class FairBearerLimiter:
             "last_throttle_at": self._last_throttle_at,
             "successes_since_throttle": self._successes_since_throttle,
             "retry_after_until": self._retry_after_until,
+            "retry_probe_required": self.retry_probe_required(),
+            "retry_probe_inflight": self.retry_probe_inflight(),
+            "retry_probe_blocks_routing": self.retry_probe_blocks_routing(),
             "queued_total": sum(len(q) for q in self._queues.values()),
             "priority_inflight": self.priority_inflight,
             "priority_queued": sum(len(q) for q in self._priority_queues.values()),

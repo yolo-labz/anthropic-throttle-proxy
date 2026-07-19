@@ -364,6 +364,8 @@ async def test_keepalive_not_interleaved_into_slow_stream(monkeypatch) -> None:
     chunk_a = full_frame[:35]
     chunk_b = full_frame[35:]
     calls = [0]
+    held_headers = asyncio.Event()
+    release_held_eof = asyncio.Event()
 
     async def messages(request: web.Request) -> web.StreamResponse:
         await request.read()
@@ -380,10 +382,13 @@ async def test_keepalive_not_interleaved_into_slow_stream(monkeypatch) -> None:
             status=200, headers={"content-type": "text/event-stream", **_PROXY_MARKER}
         )
         await resp.prepare(request)
+        if calls[0] > 2:
+            await resp.write(_SSE_BODY)
+            await resp.write_eof()
+            return resp
+        held_headers.set()
         await resp.write(chunk_a)
-        # > the 500 ms keepalive floor: pre-fix at least one comment fires HERE,
-        # between the two body chunks, corrupting the frame.
-        await asyncio.sleep(0.8)
+        await release_held_eof.wait()
         await resp.write(chunk_b)
         await resp.write_eof()
         return resp
@@ -393,14 +398,36 @@ async def test_keepalive_not_interleaved_into_slow_stream(monkeypatch) -> None:
     test_client, upstream_server = await _make_client_with_upstream(
         monkeypatch, app, keepalive_interval_ms=50, queue_max_wait_s=10.0
     )
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 0.0)
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        auth = {"Content-Type": "application/json", "Authorization": "Bearer test-slow"}
         resp = await test_client.post(
             "/v1/messages",
             data=body,
-            headers={"Content-Type": "application/json", "Authorization": "Bearer test-slow"},
+            headers=auth,
         )
         assert resp.status == 200
+        await asyncio.wait_for(held_headers.wait(), timeout=1)
+        bid = proxy._bearer_id(auth)
+        lim = config.bearer_limiters[bid]
+        for _ in range(20):
+            if not lim.retry_probe_required():
+                break
+            await asyncio.sleep(0)
+        assert lim.retry_probe_required() is False
+
+        # The held 2xx has sent headers but is still blocked before EOF. A
+        # second message must dispatch now, not wait for the long Opus stream.
+        await asyncio.sleep(0.6)
+        second = await asyncio.wait_for(
+            test_client.post("/v1/messages", data=body, headers=auth), timeout=1
+        )
+        await asyncio.wait_for(second.read(), timeout=1)
+        assert second.status == 200
+        assert calls[0] == 3
+
+        release_held_eof.set()
         raw = await resp.read()
         # The real body must arrive CONTIGUOUS — a keepalive spliced between the
         # two upstream chunks would break this substring and corrupt SSE framing.
@@ -414,6 +441,7 @@ async def test_keepalive_not_interleaved_into_slow_stream(monkeypatch) -> None:
         for _ in range(10):
             await asyncio.sleep(0)
     finally:
+        release_held_eof.set()
         await test_client.close()
         await upstream_server.close()
 
