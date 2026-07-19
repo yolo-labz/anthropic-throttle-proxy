@@ -20,7 +20,7 @@ from .pacing import _pace_dispatch
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
 # Result of a single forward attempt: (response, status, captured, exc, meta).
 ForwardResult = tuple[
@@ -30,6 +30,21 @@ ForwardResult = tuple[
     "Exception | None",
     "dict[str, str] | None",
 ]
+
+_SUCCESS_HEADERS_CALLBACK_KEY = "anthropic_throttle_proxy.success_headers_callback"
+
+
+def set_success_headers_callback(request: web.Request, callback: Callable[[], None]) -> None:
+    """Run ``callback`` once when this request receives upstream 2xx headers."""
+    request[_SUCCESS_HEADERS_CALLBACK_KEY] = callback
+
+
+def notify_success_headers(request: web.Request, status: int) -> None:
+    if not 200 <= status < 300:
+        return
+    callback = request.pop(_SUCCESS_HEADERS_CALLBACK_KEY, None)
+    if callable(callback):
+        callback()
 
 
 class RetryableStatusError(RuntimeError):
@@ -185,6 +200,7 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
             None,
             meta,
         )
+    notify_success_headers(request, upstream.status)
     response = web.StreamResponse(status=upstream.status, headers=resp_headers)
     await response.prepare(request)
     captured = bytearray()

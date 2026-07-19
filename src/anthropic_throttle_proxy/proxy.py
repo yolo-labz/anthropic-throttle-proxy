@@ -95,7 +95,9 @@ from .forwarding import (
     _forward_once,
     central_health_loop,
     direct_target,
+    notify_success_headers,
     pick_target,
+    set_success_headers_callback,
     stamp_proxy_marker,
 )
 from .limiter import FairBearerLimiter, QueueWaitTimeout, _get_bearer_limiter
@@ -1073,6 +1075,7 @@ def _account_routing_candidate_score(
     *,
     allow_pressure: bool = False,
     allow_target_spillover: bool = False,
+    allow_retry_probe: bool = False,
     model: str = "",
     max_tokens: int | None = None,
     now: float | None = None,
@@ -1096,6 +1099,12 @@ def _account_routing_candidate_score(
     if not isinstance(bid, str) or not bid:
         return math.inf
     retry_after_remaining = _bearer_retry_after_remaining(bid)
+    if _limiter.retry_probe_required(bid) and (
+        _limiter.retry_probe_inflight(bid)
+        or not allow_retry_probe
+        or (retry_after_remaining > 0 and _limiter.retry_probe_blocks_routing(bid))
+    ):
+        return math.inf
     if retry_after_remaining > config.MAX_HOLD_RETRY_AFTER_S:
         return math.inf
     load = _bearer_local_load_score(bid)
@@ -1266,6 +1275,7 @@ def _route_account_if_enabled(
     path: str,
     model: str = "",
     max_tokens: int | None = None,
+    allow_retry_probe: bool = False,
 ) -> tuple[str, str | None]:
     """Optionally rewrite upstream Authorization to a configured account.
 
@@ -1297,13 +1307,25 @@ def _route_account_if_enabled(
         for acct in snapshot
         if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
     }
+    if allow_retry_probe:
+        # Routing runs before limiter allocation. Seed probation for configured
+        # cold-start accounts here so selection and the winning probe claim can
+        # remain synchronous (no first-await race).
+        for configured_bid in configured_bids:
+            if configured_bid not in config.bearer_limiters:
+                _limiter.require_retry_probe(configured_bid)
     strict_candidates = [
         acct
         for acct in snapshot
         if isinstance(acct.get("token"), str)
         and isinstance(acct.get("bearer_id"), str)
         and _account_routing_candidate_score(
-            acct, incoming_bid, model=model, max_tokens=max_tokens, now=now
+            acct,
+            incoming_bid,
+            allow_retry_probe=allow_retry_probe,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
         )
         < math.inf
     ]
@@ -1327,6 +1349,7 @@ def _route_account_if_enabled(
             incoming_bid,
             allow_pressure=True,
             allow_target_spillover=allow_target_spillover,
+            allow_retry_probe=allow_retry_probe,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -1342,6 +1365,7 @@ def _route_account_if_enabled(
                 incoming_bid,
                 allow_pressure=True,
                 allow_target_spillover=allow_target_spillover,
+                allow_retry_probe=allow_retry_probe,
                 model=model,
                 max_tokens=max_tokens,
                 now=now,
@@ -1354,6 +1378,7 @@ def _route_account_if_enabled(
                 incoming_bid,
                 allow_pressure=True,
                 allow_target_spillover=allow_target_spillover,
+                allow_retry_probe=allow_retry_probe,
                 model=model,
                 max_tokens=max_tokens,
                 now=now,
@@ -1364,6 +1389,7 @@ def _route_account_if_enabled(
             incoming_bid,
             allow_pressure=True,
             allow_target_spillover=allow_target_spillover,
+            allow_retry_probe=allow_retry_probe,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -1373,6 +1399,7 @@ def _route_account_if_enabled(
             incoming_bid,
             allow_pressure=True,
             allow_target_spillover=allow_target_spillover,
+            allow_retry_probe=allow_retry_probe,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -1397,6 +1424,7 @@ def _route_account_if_enabled(
                 incoming_bid,
                 allow_pressure=True,
                 allow_target_spillover=True,
+                allow_retry_probe=allow_retry_probe,
                 model=model,
                 max_tokens=max_tokens,
                 now=now,
@@ -1424,12 +1452,46 @@ def _route_account_if_enabled(
             incoming_bid,
             allow_pressure=True,
             allow_target_spillover=allow_target_spillover,
+            allow_retry_probe=allow_retry_probe,
             model=model,
             max_tokens=max_tokens,
             now=now,
         ),
     )
     return _route_to_selected_auth(headers, incoming_bid, selected)
+
+
+def _route_account_and_claim_retry_probe(
+    headers: dict[str, str],
+    incoming_bid: str,
+    *,
+    method: str,
+    path: str,
+    model: str = "",
+    max_tokens: int | None = None,
+) -> tuple[str, str | None, bool]:
+    """Select an account and atomically claim its half-open message probe.
+
+    This function is synchronous by design: no request task can select the
+    same half-open bearer between selection and ``try_begin_retry_probe``.
+    """
+    bid, label = _route_account_if_enabled(
+        headers,
+        incoming_bid,
+        method=method,
+        path=path,
+        model=model,
+        max_tokens=max_tokens,
+        allow_retry_probe=True,
+    )
+    if method != "POST" or "v1/messages" not in path or not bid:
+        return bid, label, False
+    if bid not in config.bearer_limiters:
+        _limiter.require_retry_probe(bid)
+    if _bearer_retry_after_remaining(bid) > 0:
+        return bid, label, False
+    claimed = _limiter.try_begin_retry_probe(bid)
+    return bid, label, claimed
 
 
 def _retry_after_reroute_headers(
@@ -2073,6 +2135,7 @@ async def _forward_once_into_sse(
                     # 2xx: stop the keepalive emitter BEFORE the first body byte
                     # so it can never interleave a `: keepalive` comment into the
                     # real SSE frames, then pipe chunks into the prepared sse_resp.
+                    notify_success_headers(request, upstream.status)
                     if cancel_keepalive is not None:
                         await cancel_keepalive()
                     captured = bytearray()
@@ -2315,6 +2378,7 @@ async def _forward_with_retry(
     bid: str,
     limiter: FairBearerLimiter,
     wait_deadline: float | None = None,
+    on_success_headers: Callable[[], None] | None = None,
 ) -> web.StreamResponse | web.Response:
     """Forward once, then retry direct on upstream error. Behavior-identical to
     the original inline chain: a central failure marks central DOWN and retries
@@ -2327,6 +2391,8 @@ async def _forward_with_retry(
     silence (Codex round-2 BLOCKER on PR #83). Direct sends to the raw
     upstream never carry the proxy-private header.
     """
+    if on_success_headers is not None:
+        set_success_headers_callback(request, on_success_headers)
     pushback_retries = 0
     while True:
         send_headers = headers
@@ -2973,7 +3039,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
 
     incoming_bid = bid
     route_base_headers = dict(headers)
-    bid, _account_label = _route_account_if_enabled(
+    bid, _account_label, probe_claimed = _route_account_and_claim_retry_probe(
         headers,
         incoming_bid,
         method=request.method,
@@ -2981,11 +3047,53 @@ async def handler(request: web.Request) -> web.StreamResponse:
         model=model,
         max_tokens=req_max_tokens,
     )
+    probe_lease = {"bid": bid if probe_claimed else ""}
+
+    def finish_probe(*, success: bool) -> None:
+        lease_bid = probe_lease["bid"]
+        if lease_bid:
+            _limiter.finish_retry_probe(lease_bid, success=success)
+            probe_lease["bid"] = ""
+
+    # Cancellation can land at any await after the synchronous route+claim.
+    # The task callback is a final safety net; normal exits release eagerly.
+    handler_task = asyncio.current_task()
+    if handler_task is not None:
+        handler_task.add_done_callback(lambda _task: finish_probe(success=False))
+
+    async def wait_for_revalidation(waiter: Callable[[], Awaitable[None]]) -> bool:
+        wait = None if wait_deadline is None else wait_deadline - time.time()
+        if wait is not None and wait <= 0:
+            return False
+        try:
+            if wait is None:
+                await waiter()
+            else:
+                await asyncio.wait_for(waiter(), timeout=wait)
+        except TimeoutError:
+            return False
+        return True
+
+    def reroute_after_revalidation() -> None:
+        nonlocal bid, headers
+        headers = dict(route_base_headers)
+        bid, _, claimed = _route_account_and_claim_retry_probe(
+            headers,
+            incoming_bid,
+            method=request.method,
+            path=path,
+            model=model,
+            max_tokens=req_max_tokens,
+        )
+        probe_lease["bid"] = bid if claimed else ""
+        seen_retry_after_bids.add(bid)
+
     max_wait = _effective_queue_max_wait(request.headers)
     if max_wait is not None and max_wait <= 0.0:
         # The upstream tier already spent the whole wait budget; don't park.
         queue_mode, hard_max = _effective_admission(bid)
         limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+        finish_probe(success=False)
         return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait)
 
     wait_deadline = None if max_wait is None else handler_start + max_wait
@@ -3015,9 +3123,42 @@ async def handler(request: web.Request) -> web.StreamResponse:
         # dispatched round-robin per client connection.
         limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
         retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
+        if (
+            _retry_after_blocks_path(path)
+            and limiter.retry_probe_required()
+            and probe_lease["bid"] != bid
+        ):
+            if retry_after_remaining > 0:
+                rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
+                if rerouted is not None:
+                    bid, headers = rerouted
+                    continue
+                if (
+                    fast_fail := _retry_after_fast_fail_response(
+                        bid, path, retry_after_remaining, source="pre-dispatch"
+                    )
+                ) is not None:
+                    finish_probe(success=False)
+                    return fast_fail
+                if not await wait_for_revalidation(limiter.wait_retry_after):
+                    return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
+                reroute_after_revalidation()
+                continue
+            if limiter.try_begin_retry_probe():
+                probe_lease["bid"] = bid
+            elif limiter.retry_probe_required():
+                if not limiter.retry_probe_inflight():
+                    # The deadline may have changed between the checks; retry
+                    # routing instead of dispatching without a lease.
+                    continue
+                if not await wait_for_revalidation(limiter.wait_retry_probe):
+                    return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
+                reroute_after_revalidation()
+                continue
         if retry_after_remaining > 0:
             rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
             if rerouted is not None:
+                finish_probe(success=False)
                 bid, headers = rerouted
                 continue
             if (
@@ -3034,6 +3175,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
         if wait_deadline is not None:
             slot_max_wait = wait_deadline - time.time()
             if slot_max_wait <= 0.0:
+                finish_probe(success=False)
                 return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
 
         if limiter.queue_enabled:
@@ -3080,6 +3222,17 @@ async def handler(request: web.Request) -> web.StreamResponse:
                         ) is not None:
                             attempt.final_status = fast_fail.status
                             return fast_fail
+                    if (
+                        _retry_after_blocks_path(path)
+                        and limiter.retry_probe_required()
+                        and probe_lease["bid"] != bid
+                    ):
+                        # State changed while this request was queued. Give the
+                        # slot back and re-enter the pre-queue gate; never wait
+                        # on or dispatch a half-open bearer from inside a slot.
+                        counters.exit_inflight(0)
+                        rerouted = (bid, headers)
+                        continue
                     if _retry_after_blocks_path(path):
                         await limiter.wait_retry_after()
                     if _request_disconnected(request):
@@ -3100,26 +3253,36 @@ async def handler(request: web.Request) -> web.StreamResponse:
                         # keep eating it instead of re-granting central a full
                         # window (Codex round-2 BLOCKER on PR #83).
                         wait_deadline=wait_deadline,
+                        on_success_headers=(
+                            (lambda: finish_probe(success=True))
+                            if probe_lease["bid"] == bid
+                            else None
+                        ),
                     )
                 finally:
                     if rerouted is None:
-                        await _finalize(
-                            counters,
-                            bid,
-                            limiter,
-                            bstate,
-                            attempt,
-                            t0,
-                            model,
-                            model_label,
-                            request,
-                            path,
-                        )
+                        try:
+                            await _finalize(
+                                counters,
+                                bid,
+                                limiter,
+                                bstate,
+                                attempt,
+                                t0,
+                                model,
+                                model_label,
+                                request,
+                                path,
+                            )
+                        finally:
+                            if probe_lease["bid"] == bid:
+                                finish_probe(success=200 <= attempt.final_status < 300)
         except QueueWaitTimeout:
             # No slot within the wait bound: answer 503 while the client's
             # transport is still open (the limiter already rolled its queue entry
             # back via acquire's cancellation path; no release is owed).
             counters.dequeue()
+            finish_probe(success=False)
             return _queue_wait_timeout_response(bid, cid, path, limiter, slot_max_wait or 0.0)
         finally:
             # PR #575 B1 fix: if we got cancelled between incrementing `queued`
@@ -3129,6 +3292,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             if counters.queued_incremented:
                 counters.dequeue()
                 log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
+            finish_probe(success=False)
 
 
 async def _check_upstream_egress() -> tuple[bool, str]:

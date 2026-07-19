@@ -78,6 +78,38 @@ def test_ctor_sets_observe_and_queue_flags_for_each_mode() -> None:
     assert (rea.queue_enabled, rea.observe_enabled) == (True, True)
 
 
+def test_retry_probe_429_restores_deadline_and_keeps_gate_closed() -> None:
+    lim = limiter.FairBearerLimiter(8, "fair", bearer_id="bid-probe")
+    assert lim.try_begin_retry_probe() is True
+
+    lim.note_retry_after(3600)
+    assert lim.finish_retry_probe(success=False) is True
+
+    assert lim.retry_after_remaining() > 3500
+    assert lim.retry_probe_required() is True
+    assert lim.retry_probe_inflight() is False
+    assert lim.try_begin_retry_probe() is False
+
+
+def test_retry_probe_2xx_reopens_bearer() -> None:
+    lim = limiter.FairBearerLimiter(8, "fair", bearer_id="bid-probe")
+    assert lim.try_begin_retry_probe() is True
+    assert lim.finish_retry_probe(success=True) is True
+    assert lim.retry_probe_required() is False
+    assert lim.retry_probe_inflight() is False
+
+
+def test_abandoned_retry_probe_releases_lease_but_requires_next_probe() -> None:
+    lim = limiter.FairBearerLimiter(8, "fair", bearer_id="bid-probe")
+    assert lim.try_begin_retry_probe() is True
+
+    assert lim.finish_retry_probe(success=False) is True
+
+    assert lim.retry_probe_required() is True
+    assert lim.retry_probe_inflight() is False
+    assert lim.try_begin_retry_probe() is True
+
+
 # ---------------------------------------------------------------------------
 # set_queue_mode (lines 117-119)
 # ---------------------------------------------------------------------------

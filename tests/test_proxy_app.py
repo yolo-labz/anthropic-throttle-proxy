@@ -63,11 +63,33 @@ def _make_upstream() -> web.Application:
     single server can return 200 / 429 / 529 / unified depending on the test."""
 
     seen_429_once = 0
+    probe_state = {
+        "attempts": {},
+        "b_started": asyncio.Event(),
+        "release_b_headers": asyncio.Event(),
+        "slow_headers": asyncio.Event(),
+        "release_slow_eof": asyncio.Event(),
+    }
 
     async def messages(request: web.Request) -> web.StreamResponse:
         nonlocal seen_429_once
         await request.read()
         mode = request.headers.get("X-Stub-Mode", "ok")
+        authorization = request.headers.get("Authorization", "")
+        attempts = probe_state["attempts"]
+        attempts[authorization] = attempts.get(authorization, 0) + 1
+        attempt_number = attempts[authorization]
+        if mode == "probe-block-headers" and authorization.endswith("PROBE-B"):
+            probe_state["b_started"].set()
+            await probe_state["release_b_headers"].wait()
+        if mode == "probe-slow-eof" and attempt_number == 1:
+            response = web.StreamResponse(status=200, headers=_RATELIMIT_HEADERS)
+            await response.prepare(request)
+            probe_state["slow_headers"].set()
+            await probe_state["release_slow_eof"].wait()
+            await response.write(_SSE_BODY)
+            await response.write_eof()
+            return response
         if mode == "429":
             return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
         if mode == "429-long-retry-after":
@@ -178,6 +200,7 @@ def _make_upstream() -> web.Application:
     app.router.add_route("*", "/{prefix:.*}v1/messages", messages)
     app.router.add_route("*", "/v1/messages", messages)
     app.router.add_route("*", "/{path:.*}", passthrough)
+    app.probe_state = probe_state
     return app
 
 
@@ -268,6 +291,7 @@ async def client(monkeypatch) -> TestClient:
 
     proxy_server = TestServer(app)
     test_client = TestClient(proxy_server)
+    test_client.probe_state = upstream_server.app.probe_state
     await test_client.start_server()
     try:
         yield test_client
@@ -463,6 +487,105 @@ async def test_post_messages_streams_and_mints_bearer(client: TestClient) -> Non
     bid = next(iter(config.bearer_state))
     assert bid != "_anon"
     assert len(bid) == 8
+
+
+async def test_expiry_burst_makes_exactly_one_half_open_b_attempt(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    cred_a = tmp_path / "a.json"
+    cred_b = tmp_path / "b.json"
+    raw_a = "sk-ant-oat01-PROBE-A"
+    raw_b = "sk-ant-oat01-PROBE-B"
+    cred_a.write_text(json.dumps({"claudeAiOauth": {"accessToken": raw_a}}))
+    cred_b.write_text(json.dumps({"claudeAiOauth": {"accessToken": raw_b}}))
+    accounts._cache.clear()
+    accounts._endpoint_cache.clear()
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred_a},B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(tmp_path / "retry-after.json"))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    lim_a = await proxy._get_bearer_limiter(bid_a, "off", 6)
+    assert lim_a.try_begin_retry_probe() is True
+    assert lim_a.finish_retry_probe(success=True) is True
+    lim_a.inflight = 6
+    config.bearer_state[bid_a]["unified"] = {
+        "status": "allowed_warning",
+        "status_5h": "allowed",
+        "status_7d": "allowed_warning",
+        "util_5h": 0.39,
+        "util_7d": 0.78,
+    }
+    lim_b = await proxy._get_bearer_limiter(bid_b, "off", 6)
+    lim_b.note_retry_after(116_212)
+    monkeypatch.setattr(lim_b, "_retry_after_until", time.time() - 1)
+
+    probe_state = client.probe_state
+    headers = {
+        "Authorization": f"Bearer {raw_a}",
+        "X-Stub-Mode": "probe-block-headers",
+    }
+    body = {"model": "claude-opus-4-8", "max_tokens": 1024, "messages": []}
+    requests = [
+        asyncio.create_task(client.post("/v1/messages", headers=headers, json=body))
+        for _ in range(9)
+    ]
+    await asyncio.wait_for(probe_state["b_started"].wait(), timeout=1)
+    await asyncio.sleep(0.05)
+
+    attempts = probe_state["attempts"]
+    assert attempts[f"Bearer {raw_b}"] == 1
+    probe_state["release_b_headers"].set()
+    responses = await asyncio.gather(*requests)
+    await asyncio.gather(*(response.read() for response in responses))
+
+    assert {response.status for response in responses} == {200}
+    assert attempts == {f"Bearer {raw_a}": 8, f"Bearer {raw_b}": 1}
+
+
+async def test_success_headers_open_probe_before_slow_stream_eof(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    cred_b = tmp_path / "b.json"
+    raw_b = "sk-ant-oat01-SLOW-PROBE-B"
+    cred_b.write_text(json.dumps({"claudeAiOauth": {"accessToken": raw_b}}))
+    accounts._cache.clear()
+    accounts._endpoint_cache.clear()
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{cred_b}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "QUEUE_MODE", "off")
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(tmp_path / "retry-after.json"))
+    monkeypatch.setattr(limiter, "_retry_after_state", None)
+
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    lim_b = await proxy._get_bearer_limiter(bid_b, "off", 6)
+    lim_b.note_retry_after(3600)
+    monkeypatch.setattr(lim_b, "_retry_after_until", time.time() - 1)
+    probe_state = client.probe_state
+    headers = {
+        "Authorization": f"Bearer {raw_b}",
+        "X-Stub-Mode": "probe-slow-eof",
+    }
+    body = {"model": "claude-opus-4-8", "max_tokens": 1024, "messages": []}
+
+    first_request = asyncio.create_task(client.post("/v1/messages", headers=headers, json=body))
+    await asyncio.wait_for(probe_state["slow_headers"].wait(), timeout=1)
+    first_response = await asyncio.wait_for(first_request, timeout=1)
+    assert lim_b.retry_probe_required() is False
+    assert probe_state["release_slow_eof"].is_set() is False
+
+    second_response = await asyncio.wait_for(
+        client.post("/v1/messages", headers=headers, json=body), timeout=1
+    )
+    await asyncio.wait_for(second_response.read(), timeout=1)
+    assert second_response.status == 200
+    assert probe_state["attempts"][f"Bearer {raw_b}"] == 2
+
+    probe_state["release_slow_eof"].set()
+    await asyncio.wait_for(first_response.read(), timeout=1)
 
 
 def _tiny_probe_payload(content: object = "") -> dict[str, object]:
@@ -1547,5 +1670,11 @@ async def test_handler_drops_client_disconnects_before_upstream(
             auth = {"Authorization": f"Bearer {bearer}"}
             response = await client.post("/v1/messages", data=payload, headers=auth)
             assert response.status == 499
+            if bearer == "closed-before-forward":
+                bid = proxy._bearer_id(auth)
+                lim = config.bearer_limiters[bid]
+                assert lim.retry_probe_required() is True
+                assert lim.retry_probe_inflight() is False
+                assert lim.try_begin_retry_probe() is True
         assert [config.state[key] for key in keys] == [1, 0, 0, 0, 0]
         assert _disconnect_request_count(metric_model) == previous_total + 1
