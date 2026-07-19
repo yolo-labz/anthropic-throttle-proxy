@@ -2480,3 +2480,42 @@ git revert 02440207c32dee4a148b2a0f95a861d1548173a3
 
 For an immediate central-only runtime rollback, Dokku retains the previous
 release: `dokku releases:rollback anthropic-throttle 1`.
+
+## 19/07/2026 — independent post-cutover proof, recorded durably
+
+The central cutover owner ran an independent proof pass after closure and
+delivered it to the release aggregator as an ephemeral `mktemp` brief that was
+deleted after sending. The aggregator session then exhausted its provider
+quota, so the brief is recorded here from its authoring transcript instead.
+
+Source-level causal proof of the single-flight gate: `try_begin_retry_probe`
+returns `False` when the probe inflight flag is already set, so exactly one
+task wins the lease, and the claim is synchronous and race-free. The next
+request on an elapsed window claims the probe, dispatches, and
+`finish_retry_probe(success)` opens the gate for all waiters; with no traffic
+the gate stays armed harmlessly. `finish` also runs as a task done-callback,
+so a crashed or cancelled probe still releases the inflight flag and a dead
+holder cannot freeze the gate. Waiters are bounded by
+`asyncio.wait_for(wait_deadline)` and fail as a clean 503, never infinitely.
+
+Runtime falsification (wedge-versus-armed) on the paused C bearer: a wedge
+would show queued requests while `retry_probe_inflight` stays false — requests
+starving with no probe firing. Observed instead: zero queued, zero inflight,
+gate armed. Nothing starves; this is a healthy lazy-armed half-open, not a
+deadlock.
+
+Next-morning re-verification (09:47): CID `258003f5d6f` still running with an
+unbroken `served` counter (~9.7k requests overnight, no restart), 114 of 114
+central bearers expose boolean `retry_probe_*` fields, C remains
+`required=true blocks_routing=true inflight=false queued_total=0` with
+`retry_after_until` equal to its 7-day reset, and A is open. Both tiers show
+zero message 429/503 since cutover.
+
+Operator note: the `retry_probe_*` fields live under `.bearers[<bid>].limiter`
+(PR #573 zips the limiter snapshot into the bearer view). Querying them at the
+bearer top level returns `null` and falsely mimics the pre-#123 signature —
+check the nested path before diagnosing a runtime regression.
+
+Owed: one cross-family (Codex) adversarial review pass on #123/#124 when its
+quota resets on 25/07/2026 20:22. The review gate was substituted this round
+by the source-level causal proof plus the runtime falsification above.
