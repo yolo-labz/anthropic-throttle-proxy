@@ -300,6 +300,50 @@ def _fields_from_proxy_headers(bearer: dict[str, Any] | None, now: float) -> dic
     }
 
 
+def _fields_from_cache_usage(usage: dict[str, Any], now: float) -> dict[str, Any]:
+    """Build display fields from an AGED persisted /api/oauth/usage reading.
+
+    Mirrors ``_fields_from_endpoint_usage`` but stamps ``src="cache"`` — the
+    lowest-precedence tier that unblanks a budget-locked, un-routed account
+    after a proxy restart wiped the in-memory endpoint cache (#128). Every
+    window still routes through ``_window_view``, so a rolled-over window
+    renders "0% · reset" (honest) while an open one shows real aged util +
+    true reset. ``_fields_from_endpoint_usage`` is not reused directly only
+    because it hard-codes ``src="endpoint"``.
+    """
+    fields = _fields_from_endpoint_usage(usage, now)
+    fields["src"] = "cache"
+    return fields
+
+
+def _bearer_uncapped_retry_after(bearer: dict[str, Any] | None, now: float) -> float:
+    """Remaining seconds on the bearer's UNCAPPED live Retry-After window.
+
+    Reads the raw ``anthropic-ratelimit`` ``retry-after`` captured verbatim into
+    ``last_ratelimit`` (e.g. 201223 s for a budget lock) — NOT the 900 s-capped
+    persisted limiter state ``_retry_after_remaining_for_token`` reads, which
+    would expire ~15 min after a restart and leave a still-locked account blank.
+    """
+    lr = (bearer or {}).get("last_ratelimit")
+    ra = _parse_retry_after(lr.get("retry-after")) if isinstance(lr, dict) else None
+    return ra if ra is not None else 0.0
+
+
+def _locked_in(fields: dict[str, Any], bearer: dict[str, Any] | None, now: float) -> str | None:
+    """Duration string a budget-locked account is locked FOR, or None.
+
+    A budget-locked account with no usable usage must still show it IS locked
+    (not six "—"). Source priority: the persisted/endpoint 7d reset (``win7``
+    ``reset_in``) when present, ELSE the bearer's uncapped live Retry-After — a
+    DURATION STRING, never a percentage.
+    """
+    win7 = fields.get("win7")
+    if isinstance(win7, dict) and win7.get("reset_in"):
+        return win7["reset_in"]
+    remaining = _bearer_uncapped_retry_after(bearer, now)
+    return _fmt_duration(remaining) if remaining > 0 else None
+
+
 def account_view(
     bearers: list[dict[str, Any]],
     now: float,
@@ -311,19 +355,31 @@ def account_view(
     ``endpoint`` — fresh ``/api/oauth/usage`` reading (account-scoped server
     truth; immune to idle-account staleness and token rotation) →
     ``proxy`` — this proxy's last-seen unified headers for the account's
-    current bearer → ``none``. Accounts whose current bearer the proxy has
-    not seen still render — "B invisible" was exactly the 10/06 blind spot.
+    current bearer → ``cache`` — an AGED persisted endpoint reading (survives a
+    restart that wiped the in-memory cache; #128) → ``none``. Accounts whose
+    current bearer the proxy has not seen still render — "B invisible" was
+    exactly the 10/06 blind spot, and a budget-locked un-routed account after a
+    restart is the #128 blind spot (six "—" + a cold-poll 429 note).
     """
     by_id = {b["bearer_id"]: b for b in bearers}
     out: list[dict[str, Any]] = []
     for acct in account_snapshot():
         bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
         usage, endpoint_err = _endpoint_usage(endpoint, acct["path"], now)
-        fields = (
-            _fields_from_endpoint_usage(usage, now)
-            if usage is not None
-            else _fields_from_proxy_headers(bearer, now)
-        )
+        if usage is not None:
+            fields = _fields_from_endpoint_usage(usage, now)
+        else:
+            fields = _fields_from_proxy_headers(bearer, now)
+            if fields["src"] == "none":
+                # No fresh endpoint, no unified header — fall back to the AGED
+                # persisted reading so a restart-blanked account still renders.
+                cached = _endpoint_cache.get(acct["path"])
+                cached_usage = cached.get("usage") if isinstance(cached, dict) else None
+                if isinstance(cached_usage, dict):
+                    fields = _fields_from_cache_usage(cached_usage, now)
+                    fetched = cached.get("fetched")
+                    if isinstance(fetched, (int, float)):
+                        fields["cache_age"] = _fmt_duration(now - fetched)
         email, email_verified = guard_email(acct["path"])
         out.append(
             {
@@ -338,6 +394,7 @@ def account_view(
                 "endpoint_err": endpoint_err,
                 "token": _token_view(acct["expires_at"], now),
                 "pace_warn": fields["pace"] is not None and fields["pace"] >= PACE_WARN,
+                "locked_in": _locked_in(fields, bearer, now),
                 **fields,
             }
         )
@@ -395,6 +452,10 @@ _FETCH_TIMEOUT_S = 6.0
 
 # path -> {"fetched": epoch, "usage": parsed|None, "err": str|None}
 _endpoint_cache: dict[str, dict[str, Any]] = {}
+# Seeded from disk once so a just-restarted proxy has an AGED usage reading to
+# fall back on for a budget-locked, un-routed account (otherwise the cold 429
+# poll blanks the panel — issue #128). Set True after the first load attempt.
+_endpoint_cache_loaded = False
 # path -> earliest-next-poll epoch. Set after a FAILED usage poll so a
 # throttled/dead account is not re-polled on every dashboard render. Without
 # it, the failure branch below leaves ``fetched`` stale, the TTL gate never
@@ -427,6 +488,53 @@ _endpoint_locks: dict[str, asyncio.Lock] = {}
 _verify_locks: dict[str, asyncio.Lock] = {}
 
 JsonResult = tuple[int, dict[str, Any] | None] | tuple[int, dict[str, Any] | None, float | None]
+
+
+def _load_endpoint_cache() -> None:
+    """Seed ``_endpoint_cache`` from disk once. Never raises into callers.
+
+    Mirrors ``limiter._load_retry_after_state``: a corrupt/missing file is a
+    no-op (empty seed). Only ``{path: {"fetched", "usage"}}`` is restored —
+    "err" is transient and a token was never persisted (invariant #2). Aged
+    entries seed ``account_view``'s cache tier; the endpoint-fresh gate
+    (``_fresh_endpoint_entry``) still ages them out of the endpoint tier.
+    """
+    global _endpoint_cache_loaded
+    _endpoint_cache_loaded = True
+    try:
+        raw = json.loads(config.ENDPOINT_CACHE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(raw, dict):
+        return
+    for path, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        fetched, usage = entry.get("fetched"), entry.get("usage")
+        if isinstance(fetched, (int, float)) and isinstance(usage, dict):
+            _endpoint_cache.setdefault(str(path), {"fetched": float(fetched), "usage": usage})
+
+
+def _persist_endpoint_cache() -> None:
+    """Atomically persist the endpoint cache. Never raises into callers.
+
+    Copies ``limiter._persist_retry_after_state``'s tmp-write + ``os.replace``.
+    Persists ONLY ``{path: {"fetched", "usage"}}`` — "err" is transient and the
+    token is never written (usage numbers only, keyed by cred PATH).
+    """
+    try:
+        live = {
+            p: {"fetched": e["fetched"], "usage": e["usage"]}
+            for p, e in _endpoint_cache.items()
+            if isinstance(e.get("usage"), dict) and isinstance(e.get("fetched"), (int, float))
+        }
+        path = config.ENDPOINT_CACHE_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(json.dumps(live, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+    except (OSError, ValueError) as exc:
+        config.log(f"endpoint-cache-write-error path={config.ENDPOINT_CACHE_FILE} err={exc!r}")
 
 
 def _iso_epoch(value: Any) -> int | None:
@@ -682,6 +790,8 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
 
 async def _refresh_one(path: str, now: float) -> None:
     """TTL-gated, single-flight refresh of one account's endpoint entry."""
+    if not _endpoint_cache_loaded:
+        _load_endpoint_cache()  # seed aged readings before the first cold poll
     entry = _endpoint_cache.get(path)
     if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
         return
@@ -708,6 +818,7 @@ async def _refresh_one(path: str, now: float) -> None:
         if status == 200 and body is not None:
             usage = _parse_usage(body)
             _endpoint_cache[path] = {"fetched": now, "usage": usage, "err": None}
+            _persist_endpoint_cache()  # aged fallback survives a restart (#128)
             if retry_after_remaining > 0:
                 # Messages window active on this bearer: poll anyway (separate
                 # rate-limit domain, and the only evidence that can contradict
@@ -729,6 +840,8 @@ async def _refresh_one(path: str, now: float) -> None:
                 "usage": None,
                 "err": "credential rejected (401) — refresh pipeline?",
             }
+            _persist_endpoint_cache()  # tombstone: a dead cred cannot re-seed
+            # aged numbers after a restart (persist drops the usage-less entry)
             _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
         elif entry is not None:
             # 429/5xx/timeout: keep serving the stale entry (the panel ages

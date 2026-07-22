@@ -41,6 +41,7 @@ def _clear_account_module_state() -> None:
     accounts._endpoint_locks.clear()
     accounts._verify_locks.clear()
     accounts._endpoint_backoff.clear()
+    accounts._endpoint_cache_loaded = False
     limiter._retry_after_state = None
 
 
@@ -49,6 +50,13 @@ def _clean_cache():
     _clear_account_module_state()
     yield
     _clear_account_module_state()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_endpoint_cache_file(tmp_path, monkeypatch):
+    """Point the persisted endpoint cache at a per-test tmp file so a lazy seed
+    never reads the host's real ``$XDG_STATE_HOME`` copy (would poison tests)."""
+    monkeypatch.setattr(config, "ENDPOINT_CACHE_FILE", tmp_path / "endpoint-cache.json")
 
 
 def _write_account(base, sub: str, token: str, email: str | None, expires_at_ms=None):
@@ -1076,3 +1084,123 @@ def test_scoped_gauge_drops_stale_model_series_on_flip(monkeypatch):
     )
     assert sample("Sonnet") == 0.4
     assert sample("Fable") is None  # stale series removed on flip
+
+
+# ── #128: persisted endpoint cache survives restart → unblanks the panel ────
+
+
+def test_endpoint_cache_persists_and_reloads(tmp_path, monkeypatch):
+    # Round-trip through disk, and PROVE no token/accessToken ever lands there.
+    monkeypatch.setattr(config, "ENDPOINT_CACHE_FILE", tmp_path / "endpoint-cache.json")
+    usage = accounts._parse_usage(_usage_body(u5=40.0, u7=84.0))
+    accounts._endpoint_cache["/home/u/.claude/.credentials.json"] = {
+        "fetched": NOW - 3600,
+        "usage": usage,
+        "err": None,
+    }
+    accounts._persist_endpoint_cache()
+
+    text = (tmp_path / "endpoint-cache.json").read_text()
+    assert "token" not in text and "accessToken" not in text  # invariant #2
+
+    accounts._endpoint_cache.clear()
+    accounts._load_endpoint_cache()
+    entry = accounts._endpoint_cache["/home/u/.claude/.credentials.json"]
+    assert entry["usage"]["util_7d"] == pytest.approx(0.84)
+    assert entry["fetched"] == NOW - 3600
+    assert "err" not in entry  # transient — dropped, not persisted
+
+
+async def test_cold_restart_429_keeps_persisted_entry(tmp_path, monkeypatch):
+    # An aged 200 entry seeded from disk must be RETAINED through a cold 429
+    # poll (stale-keep branch), not overwritten by a cold-blank.
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+    monkeypatch.setattr(config, "ENDPOINT_CACHE_FILE", tmp_path / "endpoint-cache.json")
+
+    # Seed disk with an aged reading, then reload (simulating the restart seed).
+    aged = accounts._parse_usage(_usage_body(u5=40.0, u7=84.0))
+    (tmp_path / "endpoint-cache.json").write_text(
+        json.dumps({str(cred): {"fetched": NOW - 3 * 3600, "usage": aged}})
+    )
+
+    async def _stub_429(_url, _token):
+        return 429, None, None
+
+    monkeypatch.setattr(accounts, "_get_json", _stub_429)
+    # fetched aged past the TTL so the poll actually fires and 429s.
+    await accounts.refresh_endpoint(NOW)
+
+    entry = accounts._endpoint_cache[str(cred)]
+    assert entry["usage"] is not None  # stale-keep branch, NOT cold-blank
+    assert entry["usage"]["util_7d"] == pytest.approx(0.84)
+    assert "unavailable" in entry["err"]  # failure marked
+
+
+def test_account_view_cache_tier_unblanks(tmp_path, monkeypatch):
+    # Aged persisted usage, no proxy-unified, 7d open (future reset), 5h rolled
+    # over (past reset) → cache tier renders real aged 7d + stale 5h.
+    cred = tmp_path / "a.json"
+    _write_cred(cred, "tok-a", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    accounts._endpoint_cache[str(cred)] = {
+        "fetched": NOW - 3 * 3600,  # ~3h old
+        "usage": accounts._parse_usage(
+            _usage_body(u5=95.0, u7=84.0, r5=NOW - 100, r7=NOW + 2 * DAY)
+        ),
+        "err": None,
+    }
+
+    # No bearers → no proxy-unified fallback; endpoint arg is None (not fresh).
+    (view,) = accounts.account_view([], NOW, None)
+    assert view["src"] == "cache"
+    assert view["cache_age"]  # non-empty age string
+    assert view["win7"]["pct"] == 84 and view["win7"]["stale"] is False
+    assert view["win7"]["reset_in"]  # real aged reset shown
+    assert view["win5"]["stale"] is True and view["win5"]["pct"] == 0  # rolled over
+
+
+def test_locked_note_from_uncapped_last_ratelimit(tmp_path, monkeypatch):
+    # A never-read, budget-locked account with usage NOWHERE must still show a
+    # locked marker sourced from the bearer's UNCAPPED live Retry-After — not
+    # the 900s-capped persisted state (which expires ~15min post-restart).
+    token = "tok-locked"  # noqa: S105 — test fixture, not a real credential
+    cred = tmp_path / "a.json"
+    _write_cred(cred, token, expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+
+    bid = _expected_bid(token)
+    bearers = [{"bearer_id": bid, "last_ratelimit": {"retry-after": "201223"}}]
+    (view,) = accounts.account_view(bearers, NOW)
+
+    assert view["src"] == "none"  # no usage reading anywhere
+    assert view["win7"] is None
+    assert view["locked_in"]  # non-empty duration string, not a percentage
+    assert "%" not in view["locked_in"]
+    assert view["locked_in"] == accounts._fmt_duration(201223)  # 2d 07h
+
+
+async def test_401_tombstones_disk_entry(tmp_path, monkeypatch):
+    # A dead credential (401) must REMOVE the on-disk entry so it cannot re-seed
+    # aged numbers after a restart.
+    cred = tmp_path / "a.json"
+    _write_cred(cred, "tok-dead", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+    cache_file = tmp_path / "endpoint-cache.json"
+    monkeypatch.setattr(config, "ENDPOINT_CACHE_FILE", cache_file)
+
+    # Seed disk with a healthy 200 entry first.
+    cache_file.write_text(
+        json.dumps({str(cred): {"fetched": NOW, "usage": accounts._parse_usage(_usage_body())}})
+    )
+
+    async def _stub_401(_url, _token):
+        return 401, None, None
+
+    monkeypatch.setattr(accounts, "_get_json", _stub_401)
+    await accounts.refresh_endpoint(NOW + accounts.ENDPOINT_TTL_S + 1)
+
+    assert str(cred) not in json.loads(cache_file.read_text())  # tombstoned on disk
