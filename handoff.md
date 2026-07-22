@@ -6,6 +6,73 @@ host activation. Latest incident first.
 
 ---
 
+## 22/07/2026 - Soft utilization glide + display-only usage-lock evidence (PR #129)
+
+### Corrected diagnosis
+
+The 1,004-second B window observed after the 17:43:16 dispatch was created by
+the proxy itself after a successful upstream 200 reported utilization 0.90.
+`_maybe_pause_at_target()` used the same `THROTTLE_UTILIZATION_TARGET=0.9`
+value as reset-aware routing and `_maybe_glide()`, but called
+`limiter.note_retry_after(reset-now)`. A soft preservation target therefore
+became a hard until-reset admission lock. This was not evidence that Anthropic
+had exhausted the account; A/C multi-day windows with the same log shape may
+have had the same local-policy cause.
+
+A second race amplified any hard Retry-After, regardless of source. A request
+could acquire its bearer slot, then observe a deadline armed by a concurrent
+response only inside an unconditional `await limiter.wait_retry_after()`.
+That sleep retained the inflight slot and bypassed the original 25-second queue
+deadline. The captured request finally relayed 503 after 1,004.484 seconds.
+
+The account panel had a separate evidence gap. OAuth telemetry 429 metadata is
+intentionally excluded from `bearer_state.last_ratelimit` so dashboard polling
+cannot shrink or pause Messages traffic. A cold, un-routed account therefore
+had no reset marker even when that same telemetry response proved a rejected
+usage window. Treating every usage-endpoint 429 as an account lock would be
+wrong because the endpoint can self-throttle while Messages traffic remains
+usable.
+
+### Fix and invariants
+
+- `THROTTLE_UTILIZATION_TARGET` remains a soft routing/glide threshold. Crossing
+  it performs the existing once-per-reset AIMD shrink and never writes
+  Retry-After. Hard admission remains reserved for real Retry-After or unified
+  `rejected` evidence.
+- A deadline armed after slot acquisition makes the request give back its
+  inflight slot and re-enter the original deadline-bounded routing/probe gate.
+  It cannot sleep inside the slot, reset the queue deadline, or dispatch
+  upstream first.
+- The usage poller records `locked_until` only in its endpoint cache and only
+  when the same 429 carries unified `rejected` plus Retry-After. A plain poll
+  429 backs off polling but does not render an account lock. Neither path writes
+  message limiter state, AIMD state, or `last_ratelimit`.
+- The account panel says `usage locked · resets ...`, with a tooltip explicitly
+  distinguishing the state from authentication failure. A future allowed
+  window reset alone is no longer treated as lock evidence.
+
+### Verification and remaining activation work
+
+The deterministic post-slot race arms a 1,004-second deadline on the final
+in-slot admission check and requires a response inside the harness bound, zero
+upstream attempts, and zero queued/inflight leakage. The loopback telemetry
+test drives two real proxy GETs with equal Retry-After values: only the
+same-response rejected account renders locked, while both message limiters
+remain at their initial caps with zero Retry-After and null `last_ratelimit`.
+Targeted tests passed; all 501 tests passed both in a full all-core module shard
+and a full sequential run; Ruff lint/format and `git diff --check` are clean.
+The final GLM-5.2 different-family review returned `VERDICT: PASS` with no
+BLOCKER or MAJOR finding after explicitly auditing the loopback state creation,
+probe release, and original wait-deadline reuse.
+
+After merge, the Prompts Codex tab owns the NixOS source/hash pin and guarded
+desktop activation. Keep the temporary desktop `utilizationTarget=0` until the
+new package is active. Runtime closure requires a fresh allowed 0.90 sample to
+show glide without Retry-After, plus a fresh rejected telemetry 429 to show the
+usage-lock marker; if the live row still lacks that marker, this fix is wrong.
+
+---
+
 ## 18/07/2026 - OAuth telemetry isolation and attributable upstream failures
 
 The remaining false-throttle path was in finalization, not admission. Requests

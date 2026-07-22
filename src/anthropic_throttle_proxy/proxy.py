@@ -479,7 +479,7 @@ def _publish_unified_gauges(bid: str, unified: Mapping[str, object]) -> None:
 
 
 def _budget_pacing_target() -> float:
-    """Utilization ceiling used by reset-aware routing and local budget pauses."""
+    """Soft utilization target used by reset-aware account routing."""
     if UTILIZATION_TARGET > 0:
         return min(max(UTILIZATION_TARGET, 0.0), 1.0)
     return 1.0
@@ -512,47 +512,6 @@ def _maybe_pause_rejected(
     if pause > 0:
         limiter.note_retry_after(pause)
         log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
-    return True
-
-
-def _binding_reset(unified: Mapping[str, object]) -> int | None:
-    window = _binding_window(unified)
-    reset = unified.get(f"reset_{window}") if window else None
-    if reset is None:
-        reset = unified.get("reset")
-    return int(reset) if isinstance(reset, int) else None
-
-
-def _maybe_pause_at_target(
-    bid: str,
-    limiter: FairBearerLimiter,
-    unified: Mapping[str, object],
-) -> bool:
-    """Pause future dispatch when a binding window reaches the pacing target.
-
-    This is the predictive counterpart to ``_maybe_pause_rejected``: once the
-    headers say a bearer has already spent the configured target fraction, keep
-    local admission off that bearer until reset instead of waiting for the next
-    request to discover the budget wall with a 429.
-    """
-    target = _budget_pacing_target()
-    if target >= 1.0:
-        return False
-    binding = _binding_utilization(unified)
-    if binding is None or binding < target:
-        return False
-    reset = _binding_reset(unified)
-    if reset is None:
-        return False
-    pause = reset - time.time()
-    if pause <= 0:
-        return False
-    limiter.note_retry_after(pause)
-    window = _binding_window(unified) or "?"
-    log(
-        f"budget-target-pause bid={bid} window={window} "
-        f"util={binding:.2f}>={target:.2f} pause={int(pause)}s until reset"
-    )
     return True
 
 
@@ -602,7 +561,8 @@ async def _apply_unified(
        "rejected"; preempts the 429 + ClientConnectionReset storm.
     2b. ``_maybe_warn_unified`` — log one early-warning per window before the
         cap (observability only, never shrinks).
-    3. ``_maybe_glide`` — opt-in proactive shrink near the cap
+    3. ``_maybe_glide`` — opt-in proactive shrink near the cap; unlike a real
+       rejected window, crossing this soft target never creates Retry-After
        (``UTILIZATION_TARGET > 0``, default off).
 
     Never raises into the hot path (caller wraps in try/except).
@@ -624,8 +584,6 @@ async def _apply_unified(
         _note_brake_disabled_hot(bid, bstate, unified)
         return
     _maybe_warn_unified(bid, bstate, unified)
-    if _maybe_pause_at_target(bid, limiter, unified):
-        return
     await _maybe_glide(bid, bstate, limiter, unified)
 
 
@@ -3233,8 +3191,15 @@ async def handler(request: web.Request) -> web.StreamResponse:
                         counters.exit_inflight(0)
                         rerouted = (bid, headers)
                         continue
-                    if _retry_after_blocks_path(path):
-                        await limiter.wait_retry_after()
+                    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
+                    if retry_after_remaining > 0:
+                        # A concurrent response can arm Retry-After after the
+                        # post-slot snapshot above. Give this slot back and
+                        # re-enter the deadline-bounded routing/probe gate;
+                        # never sleep on Retry-After while counted inflight.
+                        counters.exit_inflight(0)
+                        rerouted = (bid, headers)
+                        continue
                     if _request_disconnected(request):
                         return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
                     return await _forward_with_retry(
