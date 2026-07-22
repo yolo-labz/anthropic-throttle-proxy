@@ -459,6 +459,19 @@ def _state_dir() -> _Path:
 
 OVERRIDES_FILE = _state_dir() / "overrides.json"
 
+# Persisted /api/oauth/usage cache (UI accounts panel). In-memory only, a proxy
+# restart wipes it — so a just-restarted proxy whose account is budget-locked
+# and un-routed cold-polls usage, 429s, and renders the account fully blank
+# (no fresh endpoint reading, no proxy-unified fallback). Persisting the last
+# usage numbers keyed by credential PATH (never the token — invariant #2) lets
+# the panel fall back to an AGED reading across restarts. Zero-config default;
+# an override mirrors RETRY_AFTER_STATE_FILE for hosts that pin an XDG path.
+ENDPOINT_CACHE_FILE = (
+    _Path(os.path.expanduser(os.environ.get("THROTTLE_ENDPOINT_CACHE_FILE", "").strip()))
+    if os.environ.get("THROTTLE_ENDPOINT_CACHE_FILE", "").strip()
+    else _state_dir() / "endpoint-cache.json"
+)
+
 # ENV_DEFAULTS snapshots the env-derived value of every editable knob at
 # import time so the UI can show "ENV default vs runtime override" and offer
 # a reset button. Populated below after the knob schema is declared.

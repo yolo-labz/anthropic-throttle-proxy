@@ -441,5 +441,7 @@ footer a:hover { color: var(--info); text-decoration: underline; }
 .src { font-size: 0.68rem; padding: 0.06rem 0.36rem; border-radius: var(--radius-sm); background: var(--ctp-surface0); color: var(--ctp-subtext0); }
 .src-endpoint { color: var(--info); }
 .src-proxy { color: var(--accent); }
+.src-cache { color: var(--ctp-subtext1); }
 .src-none { color: var(--muted); }
+.locked-note { color: var(--warn); }
 .endpoint-err { display: inline; margin-left: 0.3rem; cursor: help; }
