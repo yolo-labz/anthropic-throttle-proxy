@@ -490,6 +490,13 @@ _verify_locks: dict[str, asyncio.Lock] = {}
 JsonResult = tuple[int, dict[str, Any] | None] | tuple[int, dict[str, Any] | None, float | None]
 
 
+# Keys ``_fields_from_endpoint_usage`` subscripts — a persisted ``usage`` dict is
+# only restorable if it carries all of them (see ``_load_endpoint_cache``).
+_REQUIRED_USAGE_KEYS = frozenset(
+    {"util_5h", "util_7d", "reset_5h", "reset_7d", "sonnet", "opus", "extra"}
+)
+
+
 def _load_endpoint_cache() -> None:
     """Seed ``_endpoint_cache`` from disk once. Never raises into callers.
 
@@ -498,6 +505,11 @@ def _load_endpoint_cache() -> None:
     "err" is transient and a token was never persisted (invariant #2). Aged
     entries seed ``account_view``'s cache tier; the endpoint-fresh gate
     (``_fresh_endpoint_entry``) still ages them out of the endpoint tier.
+
+    A restored ``usage`` dict is shape-validated at this trust boundary: the
+    cache tier feeds it straight to ``_fields_from_endpoint_usage``, which
+    subscripts fixed keys, so a hand-edited/partial file missing any of them
+    would otherwise KeyError inside ``account_view`` and 500 the panel.
     """
     global _endpoint_cache_loaded
     _endpoint_cache_loaded = True
@@ -511,7 +523,11 @@ def _load_endpoint_cache() -> None:
         if not isinstance(entry, dict):
             continue
         fetched, usage = entry.get("fetched"), entry.get("usage")
-        if isinstance(fetched, (int, float)) and isinstance(usage, dict):
+        if (
+            isinstance(fetched, (int, float))
+            and isinstance(usage, dict)
+            and _REQUIRED_USAGE_KEYS <= usage.keys()
+        ):
             _endpoint_cache.setdefault(str(path), {"fetched": float(fetched), "usage": usage})
 
 

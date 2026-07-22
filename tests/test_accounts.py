@@ -1111,6 +1111,31 @@ def test_endpoint_cache_persists_and_reloads(tmp_path, monkeypatch):
     assert "err" not in entry  # transient — dropped, not persisted
 
 
+def test_load_drops_partial_usage_shape(tmp_path, monkeypatch):
+    # GLM BLOCK: a hand-edited/corrupt persisted usage dict missing keys that
+    # _fields_from_endpoint_usage subscripts must be DROPPED on load, so the
+    # cache tier can never KeyError and 500 the /ui panel.
+    monkeypatch.setattr(config, "ENDPOINT_CACHE_FILE", tmp_path / "endpoint-cache.json")
+    (tmp_path / "endpoint-cache.json").write_text(
+        '{"/home/u/.claude/.credentials.json": {"fetched": 1.0, "usage": {"util_5h": 0.4}}}'
+    )
+    accounts._endpoint_cache.clear()
+    accounts._load_endpoint_cache()
+    assert "/home/u/.claude/.credentials.json" not in accounts._endpoint_cache
+
+    # A well-shaped full entry still round-trips (the guard is not over-broad).
+    accounts._endpoint_cache.clear()
+    accounts._endpoint_cache["/home/u/.claude/.credentials.json"] = {
+        "fetched": NOW - 60,
+        "usage": accounts._parse_usage(_usage_body(u5=40.0, u7=84.0)),
+        "err": None,
+    }
+    accounts._persist_endpoint_cache()
+    accounts._endpoint_cache.clear()
+    accounts._load_endpoint_cache()
+    assert "/home/u/.claude/.credentials.json" in accounts._endpoint_cache
+
+
 async def test_cold_restart_429_keeps_persisted_entry(tmp_path, monkeypatch):
     # An aged 200 entry seeded from disk must be RETAINED through a cold 429
     # poll (stale-keep branch), not overwritten by a cold-blank.
