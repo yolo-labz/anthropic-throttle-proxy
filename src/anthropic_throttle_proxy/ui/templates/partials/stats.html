@@ -80,7 +80,7 @@
       <td>
         <span class="src src-{{ a.src }}">{{ a.src }}</span>
         {% if a.src == "cache" and a.cache_age %}<span class="reset-in" title="Aged reading persisted across the last proxy restart — no fresh usage endpoint or unified header">{{ a.cache_age }} old</span>{% endif %}
-        {% if a.locked_in %}<span class="reset-in locked-note" title="Budget-locked: no usable usage reading, but the account's rate-limit window is still cooling down">locked · resets {{ a.locked_in }}</span>{% endif %}
+        {% if a.locked_in %}<span class="reset-in locked-note" title="Usage-capacity lock (not authentication): a rejected usage window is cooling down">usage locked · resets {{ a.locked_in }}</span>{% endif %}
         {% if a.endpoint_err %}<div class="warn-text endpoint-err" title="{{ a.endpoint_err }}">⚠</div>{% endif %}
       </td>
       <td>

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -329,17 +330,27 @@ def _bearer_uncapped_retry_after(bearer: dict[str, Any] | None, now: float) -> f
     return ra if ra is not None else 0.0
 
 
-def _locked_in(fields: dict[str, Any], bearer: dict[str, Any] | None, now: float) -> str | None:
+def _locked_in(
+    fields: dict[str, Any],
+    bearer: dict[str, Any] | None,
+    endpoint_entry: dict[str, Any] | None,
+    now: float,
+) -> str | None:
     """Duration string a budget-locked account is locked FOR, or None.
 
     A budget-locked account with no usable usage must still show it IS locked
-    (not six "—"). Source priority: the persisted/endpoint 7d reset (``win7``
-    ``reset_in``) when present, ELSE the bearer's uncapped live Retry-After — a
-    DURATION STRING, never a percentage.
+    (not six "—"). Source priority: a REJECTED usage window's reset, then a
+    budget-classified telemetry 429 deadline, then the bearer's uncapped live
+    Retry-After — a DURATION STRING, never a percentage. A future reset on an
+    allowed window is not lock evidence.
     """
-    win7 = fields.get("win7")
-    if isinstance(win7, dict) and win7.get("reset_in"):
-        return win7["reset_in"]
+    for name in ("win7", "win5"):
+        window = fields.get(name)
+        if isinstance(window, dict) and window.get("rejected") and window.get("reset_in"):
+            return window["reset_in"]
+    locked_until = (endpoint_entry or {}).get("locked_until")
+    if isinstance(locked_until, (int, float)) and locked_until > now:
+        return _fmt_duration(locked_until - now)
     remaining = _bearer_uncapped_retry_after(bearer, now)
     return _fmt_duration(remaining) if remaining > 0 else None
 
@@ -365,6 +376,7 @@ def account_view(
     out: list[dict[str, Any]] = []
     for acct in account_snapshot():
         bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
+        endpoint_entry = _endpoint_cache.get(acct["path"]) or (endpoint or {}).get(acct["path"])
         usage, endpoint_err = _endpoint_usage(endpoint, acct["path"], now)
         if usage is not None:
             fields = _fields_from_endpoint_usage(usage, now)
@@ -394,7 +406,7 @@ def account_view(
                 "endpoint_err": endpoint_err,
                 "token": _token_view(acct["expires_at"], now),
                 "pace_warn": fields["pace"] is not None and fields["pace"] >= PACE_WARN,
-                "locked_in": _locked_in(fields, bearer, now),
+                "locked_in": _locked_in(fields, bearer, endpoint_entry, now),
                 **fields,
             }
         )
@@ -487,7 +499,11 @@ _endpoint_locks: dict[str, asyncio.Lock] = {}
 # concurrently through the loopback (the #87 self-429 class — Codex MAJOR).
 _verify_locks: dict[str, asyncio.Lock] = {}
 
-JsonResult = tuple[int, dict[str, Any] | None] | tuple[int, dict[str, Any] | None, float | None]
+JsonResult = (
+    tuple[int, dict[str, Any] | None]
+    | tuple[int, dict[str, Any] | None, float | None]
+    | tuple[int, dict[str, Any] | None, float | None, float | None]
+)
 
 
 # Keys ``_fields_from_endpoint_usage`` subscripts — a persisted ``usage`` dict is
@@ -687,11 +703,32 @@ def _parse_retry_after(value: str | None) -> float | None:
         return max(0.0, parsed.timestamp() - datetime.now(tz=UTC).timestamp())
 
 
-def _json_result_parts(result: JsonResult) -> tuple[int, dict[str, Any] | None, float | None]:
-    """Accept old 2-tuples from tests and new 3-tuples from real HTTP."""
+def _budget_lock_retry_after(headers: Mapping[str, str]) -> float | None:
+    """Retry-After only when this same response proves a rejected budget.
+
+    A plain telemetry 429 is the usage endpoint's own rate limit and must never
+    look like an account lock. Unified ``rejected`` status is the account-budget
+    discriminator already used on the message path; forwarded loopback headers
+    let the UI poller consume it without writing anything into limiter state.
+    """
+    statuses = (
+        headers.get("anthropic-ratelimit-unified-status"),
+        headers.get("anthropic-ratelimit-unified-5h-status"),
+        headers.get("anthropic-ratelimit-unified-7d-status"),
+    )
+    if not any(isinstance(status, str) and status.lower() == "rejected" for status in statuses):
+        return None
+    return _parse_retry_after(headers.get("retry-after"))
+
+
+def _json_result_parts(
+    result: JsonResult,
+) -> tuple[int, dict[str, Any] | None, float | None, float | None]:
+    """Accept legacy test tuples plus display-only budget-lock evidence."""
     status, body = result[0], result[1]
     retry_after = result[2] if len(result) >= 3 else None
-    return status, body, retry_after
+    budget_lock_retry_after = result[3] if len(result) >= 4 else None
+    return status, body, retry_after, budget_lock_retry_after
 
 
 def _failed_poll_backoff_until(now: float, retry_after: float | None) -> float:
@@ -765,7 +802,8 @@ async def _get_json(url: str, token: str) -> JsonResult:
             session.get(url, headers=headers) as resp,
         ):
             if resp.status != 200:
-                return resp.status, None, _parse_retry_after(resp.headers.get("retry-after"))
+                retry_after = _parse_retry_after(resp.headers.get("retry-after"))
+                return resp.status, None, retry_after, _budget_lock_retry_after(resp.headers)
             body = await resp.json(content_type=None)
             return 200, body if isinstance(body, dict) else None, None
     except (TimeoutError, aiohttp.ClientError):
@@ -790,7 +828,7 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
     cached = _email_cache.get(path)
     if cached is not None and cached[0] == mtime:
         return
-    status, body, _retry_after = _json_result_parts(
+    status, body, _retry_after, _budget_lock_retry_after_s = _json_result_parts(
         await _get_json(_oauth_base() + _PROFILE_PATH, token)
     )
     if status == 200 and body:
@@ -828,7 +866,7 @@ async def _refresh_one(path: str, now: float) -> None:
         if token is None:
             return
         retry_after_remaining = _retry_after_remaining_for_token(token, now)
-        status, body, retry_after = _json_result_parts(
+        status, body, retry_after, budget_lock_retry_after = _json_result_parts(
             await _get_json(_oauth_base() + _USAGE_PATH, token)
         )
         if status == 200 and body is not None:
@@ -875,6 +913,10 @@ async def _refresh_one(path: str, now: float) -> None:
                 "err": f"usage endpoint unavailable ({status or 'timeout'})",
             }
             _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
+        if status not in (200, 401) and budget_lock_retry_after:
+            # Display-only evidence. Do NOT call limiter.note_retry_after or
+            # write bearer_state: telemetry remains isolated from message AIMD.
+            _endpoint_cache[path]["locked_until"] = now + budget_lock_retry_after
 
 
 async def refresh_endpoint(now: float) -> dict[str, dict[str, Any]]:

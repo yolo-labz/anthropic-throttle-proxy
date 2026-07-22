@@ -69,16 +69,16 @@ async def test_apply_unified_pauses_when_rejected():
     assert lim._retry_after_until > time.time() + 250
 
 
-async def test_apply_unified_pauses_when_target_crossed(monkeypatch):
+async def test_apply_unified_glides_without_hard_lock_when_target_crossed(monkeypatch):
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.85)
     lim = FairBearerLimiter(32, "fair")
     lim.max_concurrent = lim.hard_max
     await proxy._apply_unified("bid1", {}, lim, _oauth_meta(util_5h="0.9"))
-    assert lim.retry_after_remaining() > 250
-    assert lim.max_concurrent == 32  # local pause replaces speculative CUBIC shrink
+    assert lim.retry_after_remaining() == 0
+    assert lim.max_concurrent < 32
 
 
-async def test_apply_unified_target_pause_once_per_reset_window(monkeypatch):
+async def test_apply_unified_target_glide_once_per_reset_window(monkeypatch):
     monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.85)
     lim = FairBearerLimiter(32, "fair")
     lim.max_concurrent = lim.hard_max
@@ -86,11 +86,13 @@ async def test_apply_unified_target_pause_once_per_reset_window(monkeypatch):
     reset = int(time.time()) + 300
 
     await proxy._apply_unified("bid1", bstate, lim, _oauth_meta(util_5h="0.9", reset=reset))
-    assert lim.retry_after_remaining() > 250
-    assert lim.max_concurrent == 32
+    assert lim.retry_after_remaining() == 0
+    first_max = lim.max_concurrent
+    assert first_max < 32
 
     await proxy._apply_unified("bid1", bstate, lim, _oauth_meta(util_5h="0.91", reset=reset))
-    assert lim.max_concurrent == 32
+    assert lim.retry_after_remaining() == 0
+    assert lim.max_concurrent == first_max
 
 
 async def test_apply_unified_no_shrink_below_target(monkeypatch):

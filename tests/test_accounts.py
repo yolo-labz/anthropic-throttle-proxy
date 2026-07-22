@@ -374,7 +374,7 @@ async def test_ui_stats_renders_accounts_panel(tmp_path, monkeypatch):
         "unified": {
             "util_5h": 0.62,
             "reset_5h": int(now + 4000),
-            "status_5h": "allowed",
+            "status_5h": "rejected",
             "util_7d": 0.31,
             "reset_7d": int(now + 3 * DAY),
             "status_7d": "allowed",
@@ -390,6 +390,9 @@ async def test_ui_stats_renders_accounts_panel(tmp_path, monkeypatch):
     assert html.count(bid) >= 2  # accounts row + labelled bearer row
     assert ">A</span>" in html  # account label chip in both tables
     assert "62%" in html
+    assert "usage locked · resets" in html
+    assert "authentication" in html
+    assert ">locked · resets" not in html
     assert token not in html  # raw token must never reach the page
 
 
@@ -1185,6 +1188,7 @@ def test_account_view_cache_tier_unblanks(tmp_path, monkeypatch):
     assert view["win7"]["pct"] == 84 and view["win7"]["stale"] is False
     assert view["win7"]["reset_in"]  # real aged reset shown
     assert view["win5"]["stale"] is True and view["win5"]["pct"] == 0  # rolled over
+    assert view["locked_in"] is None  # a future reset alone is not a lock
 
 
 def test_locked_note_from_uncapped_last_ratelimit(tmp_path, monkeypatch):

@@ -180,6 +180,25 @@ def _make_upstream() -> web.Application:
 
     async def passthrough(request: web.Request) -> web.Response:
         await request.read()
+        authorization = request.headers.get("Authorization", "")
+        if authorization.endswith("usage-budget-locked"):
+            reset = str(int(time.time()) + 3600)
+            return web.Response(
+                status=429,
+                headers={
+                    "retry-after": "3600",
+                    **_UNIFIED_REJECTED_HEADERS,
+                    "anthropic-ratelimit-unified-reset": reset,
+                    "anthropic-ratelimit-unified-5h-reset": reset,
+                },
+                text="budget locked",
+            )
+        if authorization.endswith("usage-poll-limited"):
+            return web.Response(
+                status=429,
+                headers={"retry-after": "3600"},
+                text="usage endpoint rate limited",
+            )
         if request.headers.get("X-Stub-Mode") == "oauth-usage-429":
             reset = str(int(time.time()) + 3600)
             return web.Response(
@@ -246,6 +265,11 @@ def _force_single_slot_fair_queue(monkeypatch) -> None:
 
 def _reset_proxy_state() -> None:
     """Clear the process-global registries so each test starts clean."""
+    accounts._cache.clear()
+    accounts._endpoint_cache.clear()
+    accounts._endpoint_backoff.clear()
+    accounts._endpoint_locks.clear()
+    accounts._endpoint_cache_loaded = False
     config.bearer_limiters.clear()
     config.bearer_state.clear()
     config.state.update(
@@ -1019,6 +1043,56 @@ async def test_oauth_usage_429_does_not_poison_message_limiter(
     assert config.bearer_state[bid]["last_ratelimit"] is None
 
 
+async def test_usage_poller_marks_only_budget_rejected_429_as_locked(
+    client: TestClient, monkeypatch, tmp_path
+) -> None:
+    """Telemetry lock evidence stays display-only and budget-classified.
+
+    Both responses carry the same long Retry-After. Only the 429 whose same
+    response says the unified budget is rejected may render as account-locked;
+    the usage endpoint's own rate limit must only back its poller off. Neither
+    response may contaminate message AIMD or message Retry-After state.
+    """
+    budget_token = "usage-" + "budget-locked"
+    poll_token = "usage-" + "poll-limited"
+    now = time.time()
+    creds: list[tuple[str, object, str]] = []
+    for label, token in (("A", budget_token), ("B", poll_token)):
+        path = tmp_path / f"{label.lower()}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": token,
+                        "expiresAt": int((now + 3600) * 1000),
+                    }
+                }
+            )
+        )
+        creds.append((label, path, token))
+
+    monkeypatch.setattr(
+        config, "ACCOUNT_CRED_PATHS", ",".join(f"{label}:{path}" for label, path, _ in creds)
+    )
+    monkeypatch.setattr(config, "ENDPOINT_CACHE_FILE", tmp_path / "endpoint-cache.json")
+    monkeypatch.setattr(accounts, "_oauth_base", lambda: str(client.make_url("/")).rstrip("/"))
+
+    endpoint = await accounts.refresh_endpoint(now)
+    bearers = [{"bearer_id": bid, **state} for bid, state in config.bearer_state.items()]
+    view = {row["label"]: row for row in accounts.account_view(bearers, now, endpoint)}
+
+    assert view["A"]["locked_in"] == accounts._fmt_duration(3600)
+    assert view["B"]["locked_in"] is None
+    for _label, _path, token in creds:
+        bid = proxy._bearer_id({"Authorization": f"Bearer {token}"})
+        # The real loopback GET traverses proxy.handler, which creates neutral
+        # per-bearer state; telemetry isolation means that state stays neutral.
+        lim = config.bearer_limiters[bid]
+        assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
+        assert lim.retry_after_remaining() == 0.0
+        assert config.bearer_state[bid]["last_ratelimit"] is None
+
+
 async def test_upstream_400_log_identifies_request_without_bearer_secret(
     client: TestClient, monkeypatch
 ) -> None:
@@ -1143,6 +1217,56 @@ async def test_active_long_retry_after_window_fails_fast_after_queue(
 
     assert status == 429
     assert b"holding the local gateway request" in streamed
+    assert config.state["queued"] == 0
+    assert config.state["inflight"] == 0
+    snap = lim.snapshot()
+    assert snap["queued_total"] == 0
+    assert snap["inflight"] == 0
+
+
+async def test_retry_after_armed_post_slot_reenters_without_holding_slot(
+    client: TestClient, monkeypatch
+) -> None:
+    """A concurrent hard Retry-After must not sleep inside an inflight slot.
+
+    Reproduce the narrow race after the queued request has acquired its slot
+    and completed the first two admission checks. The third path check arms a
+    long window, exactly where the old unconditional ``wait_retry_after`` then
+    slept until reset. The request must instead return inside the queue budget,
+    without upstream dispatch or leaked accounting.
+    """
+    _force_single_slot_fair_queue(monkeypatch)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.2)
+    raw_bearer = "post-slot-race"
+    authorization = f"Bearer {raw_bearer}"
+    bid = proxy._bearer_id({"authorization": authorization})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    real_blocks_path = proxy._retry_after_blocks_path
+    in_slot_checks = 0
+
+    def arm_on_final_admission_check(path: str) -> bool:
+        nonlocal in_slot_checks
+        if config.state["inflight"]:
+            in_slot_checks += 1
+            if in_slot_checks == 3:
+                lim.note_retry_after(1004)
+        return real_blocks_path(path)
+
+    monkeypatch.setattr(proxy, "_retry_after_blocks_path", arm_on_final_admission_check)
+    started = time.monotonic()
+    status, streamed = await asyncio.wait_for(
+        _post_and_settle(
+            client,
+            data=b'{"model":"claude-sonnet-4-6"}',
+            headers={"Authorization": authorization},
+        ),
+        timeout=1.0,
+    )
+
+    assert time.monotonic() - started < 1.0
+    assert status == 429
+    assert b"holding the local gateway request" in streamed
+    assert client.probe_state["attempts"].get(authorization, 0) == 0
     assert config.state["queued"] == 0
     assert config.state["inflight"] == 0
     snap = lim.snapshot()
@@ -1412,6 +1536,7 @@ async def test_unified_proactive_shrink_fires_via_http(client: TestClient, monke
     bid, lim = await _post_unified_high(client, "oauth-util-high")
     assert config.bearer_state[bid]["unified"]["util_5h"] == 0.92
     assert lim.max_concurrent < lim.hard_max
+    assert lim.retry_after_remaining() == 0
 
 
 async def test_unified_no_shrink_when_target_off_via_http(client: TestClient, monkeypatch) -> None:
