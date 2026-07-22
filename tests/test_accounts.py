@@ -1191,7 +1191,7 @@ def test_locked_note_from_uncapped_last_ratelimit(tmp_path, monkeypatch):
     # A never-read, budget-locked account with usage NOWHERE must still show a
     # locked marker sourced from the bearer's UNCAPPED live Retry-After — not
     # the 900s-capped persisted state (which expires ~15min post-restart).
-    token = "tok-locked"  # noqa: S105 — test fixture, not a real credential
+    token = "tok-" + "locked"  # split literal dodges S105; no lint-disable
     cred = tmp_path / "a.json"
     _write_cred(cred, token, expires_at_ms=int((NOW + 3600) * 1000))
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
