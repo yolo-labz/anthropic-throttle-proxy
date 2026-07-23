@@ -18,6 +18,9 @@ dependencies = [
 # the `python -m anthropic_throttle_proxy` path in Procfile/Dockerfile still works).
 [project.scripts]
 anthropic-throttle-proxy = "anthropic_throttle_proxy.proxy:main"
+# Spec 093 unified :8760 ingress router. Separate process from the per-lane
+# proxy; the Nix module (S7) starts it on its own port.
+anthropic-throttle-ingress = "anthropic_throttle_proxy.ingress:main"
 
 [dependency-groups]
 dev = [
