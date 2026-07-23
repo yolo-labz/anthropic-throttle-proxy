@@ -9,10 +9,20 @@ slot (``claude-sonnet-4-6``) routes to bulk. Covers the model-tier table in
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
-from anthropic_throttle_proxy.routing import ROLES, infer_role, infer_role_from_body
+from anthropic_throttle_proxy.routing import (
+    ROLE_CHAINS,
+    ROLES,
+    LaneState,
+    bearer_usable,
+    infer_role,
+    infer_role_from_body,
+    lane_usable,
+    select_lane,
+)
 
 
 @pytest.mark.parametrize(
@@ -136,3 +146,140 @@ def test_infer_role_from_body_empty_defaults_to_generate() -> None:
 
 def test_infer_role_from_body_non_object_defaults_to_generate() -> None:
     assert infer_role_from_body(b"[1, 2, 3]") == "generate"
+
+
+# ─── Spec 093 S3 — gauge-driven lane selection ──────────────────────────────
+
+
+def _st(open_: bool) -> LaneState:
+    return LaneState(open_, time.time(), "test")
+
+
+def test_select_lane_generate_prefers_anthropic_then_kimi_then_glm() -> None:
+    """generate chain = anthropic→kimi→glm; first open wins."""
+    assert (
+        select_lane("generate", {"anthropic": _st(True), "kimi": _st(True), "glm": _st(True)})
+        == "anthropic"
+    )
+    # anthropic closed → kimi
+    assert (
+        select_lane("generate", {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)})
+        == "kimi"
+    )
+    # anthropic+kimi closed → glm (the floor)
+    assert (
+        select_lane("generate", {"anthropic": _st(False), "kimi": _st(False), "glm": _st(True)})
+        == "glm"
+    )
+
+
+def test_select_lane_bulk_never_returns_anthropic_invariant_2() -> None:
+    """Invariant 2: a bulk request NEVER routes to Anthropic, even when Anthropic
+    is the only open lane (it's structurally absent from the bulk chain)."""
+    # Anthropic wide open, Kimi/GLM closed → bulk still refuses Anthropic → None.
+    assert (
+        select_lane("bulk", {"anthropic": _st(True), "kimi": _st(False), "glm": _st(False)}) is None
+    )
+    # bulk prefers Kimi, then GLM
+    assert select_lane("bulk", {"kimi": _st(True), "glm": _st(True)}) == "kimi"
+    assert select_lane("bulk", {"kimi": _st(False), "glm": _st(True)}) == "glm"
+
+
+def test_select_lane_lock_skips_to_next_open_invariant_3() -> None:
+    """Invariant 3: a lane going closed mid-fleet → the next request auto-advances."""
+    state = {"anthropic": _st(True), "kimi": _st(True), "glm": _st(True)}
+    assert select_lane("generate", state) == "anthropic"
+    # Anthropic account locks (all bearers capped) → next generate advances to Kimi
+    state["anthropic"] = _st(False)
+    assert select_lane("generate", state) == "kimi"
+
+
+def test_select_lane_all_capped_returns_none_hold() -> None:
+    """Every lane for the role closed → None (the caller HOLDs / 503s)."""
+    assert (
+        select_lane("generate", {"anthropic": _st(False), "kimi": _st(False), "glm": _st(False)})
+        is None
+    )
+    assert select_lane("bulk", {"kimi": _st(False), "glm": _st(False)}) is None
+
+
+def test_select_lane_unknown_role_uses_generate_chain() -> None:
+    assert select_lane("???", {"anthropic": _st(True)}) == "anthropic"
+
+
+def test_select_lane_missing_state_entry_is_skipped() -> None:
+    """A lane never polled (absent from state) is skipped, not assumed open."""
+    assert select_lane("generate", {"kimi": _st(True)}) == "kimi"
+    assert select_lane("generate", {}) is None
+
+
+def test_role_chains_anthropic_absent_from_bulk() -> None:
+    """Structural guard: Anthropic must not appear in the bulk chain; GLM (the
+    floor) is present in every chain so there's always a cheap fallback."""
+    assert "anthropic" not in ROLE_CHAINS["bulk"]
+    assert "anthropic" in ROLE_CHAINS["generate"]
+    assert "anthropic" in ROLE_CHAINS["judge"]
+    for role in ROLES:
+        assert "glm" in ROLE_CHAINS[role]
+
+
+# ─── gauge logic: bearer_usable / lane_usable ───────────────────────────────
+
+
+def test_bearer_usable_clean_bearer_is_usable() -> None:
+    assert bearer_usable(
+        {
+            "limiter": {"retry_after_until": 0},
+            "unified": {"status_5h": "allowed", "status_7d": "allowed"},
+        }
+    )
+
+
+def test_bearer_usable_retry_after_in_future_is_locked() -> None:
+    future = time.time() + 600
+    assert not bearer_usable({"limiter": {"retry_after_until": future}}, now=time.time())
+
+
+def test_bearer_usable_rejected_window_is_locked() -> None:
+    """A unified ``rejected`` window (5h or 7d) = budget exhausted = locked."""
+    assert not bearer_usable({"limiter": {}, "unified": {"status_7d": "rejected"}})
+    assert not bearer_usable({"limiter": {}, "unified": {"status_5h": "rejected"}})
+
+
+def test_bearer_usable_lanes_without_unified_gauges_default_usable() -> None:
+    """Kimi/GLM bearers carry no Anthropic unified gauges; absent ≠ locked."""
+    assert bearer_usable({"limiter": {"retry_after_until": 0}})
+    assert bearer_usable({})
+
+
+def test_bearer_usable_malformed_retry_after_does_not_crash() -> None:
+    """A non-numeric ``retry_after_until`` must not raise (gate MINOR): treat as
+    not-set so a malformed lane health body never aborts request handling."""
+    assert bearer_usable({"limiter": {"retry_after_until": "none"}})
+    assert bearer_usable({"limiter": {"retry_after_until": [1, 2, 3]}})
+
+
+def test_lane_usable_requires_upstream_egress_ok() -> None:
+    ok_bearer = {"limiter": {"retry_after_until": 0}, "unified": {"status_7d": "allowed"}}
+    assert lane_usable({"upstream_egress_ok": True, "bearers": {"b": ok_bearer}})[0]
+    open_, detail = lane_usable({"upstream_egress_ok": False, "bearers": {"b": ok_bearer}})
+    assert open_ is False and detail == "upstream-egress-down"
+
+
+def test_lane_usable_no_bearers_is_closed() -> None:
+    open_, detail = lane_usable({"upstream_egress_ok": True, "bearers": {}})
+    assert open_ is False and detail == "no-bearers"
+
+
+def test_lane_usable_all_bearers_locked_is_closed() -> None:
+    """Invariant 3 detection: every bearer retry-aftered/rejected → lane closed."""
+    future = time.time() + 600
+    health = {
+        "upstream_egress_ok": True,
+        "bearers": {
+            "a": {"limiter": {"retry_after_until": future}},
+            "b": {"limiter": {}, "unified": {"status_7d": "rejected"}},
+        },
+    }
+    open_, detail = lane_usable(health)
+    assert open_ is False and detail == "no-usable-bearer"

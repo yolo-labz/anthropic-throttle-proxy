@@ -20,6 +20,8 @@ the SPOF fallback if this router dies.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 import time
 from collections.abc import AsyncIterator
@@ -28,7 +30,14 @@ from typing import Final
 import aiohttp
 from aiohttp import web
 
-from .routing import infer_role_from_body
+from .routing import (
+    Lane,
+    LaneState,
+    default_lanes,
+    infer_role_from_body,
+    lane_usable,
+    select_lane,
+)
 
 # --- config (env-derived, read once at import like config.py) ----------------
 # The ingress listens on its own port; 127.0.0.1 keeps it host-local (the fleet
@@ -67,6 +76,30 @@ MARKER_HEADER: Final[str] = "x-anthropic-throttle-ingress"
 # observability. S6 surfaces per-(role→lane) decision counts.
 ROLE_HEADER: Final[str] = "x-anthropic-throttle-role"
 
+# S2: the lane id the ingress routed to, stamped on served responses.
+LANE_HEADER: Final[str] = "x-anthropic-throttle-lane"
+
+# --- S3: lane registry + gauge polling --------------------------------------
+# The three-lane fleet (Spec 093). Built once at import from env-overridable URLs.
+LANES: dict[str, Lane] = default_lanes()
+
+# Per-lane cached gauge verdict, updated by ``_lane_health_loop``. Read by
+# ``select_lane`` (pure) on each forward. A lane missing from here is treated as
+# not-yet-known → ``select_lane`` skips it (so cold-start forwards only after the
+# initial poll completes in the cleanup_ctx, avoiding a 503 storm).
+lane_state: dict[str, LaneState] = {}
+
+# Poll cadence + probe timeout for the background lane-health loop. Mirrors the
+# per-lane proxy's central_health_loop pattern (every Ns; short timeout).
+LANE_HEALTH_INTERVAL_S: Final[float] = float(os.environ.get("INGRESS_LANE_HEALTH_INTERVAL_S", "5"))
+LANE_HEALTH_TIMEOUT_S: Final[float] = float(os.environ.get("INGRESS_LANE_HEALTH_TIMEOUT_S", "2"))
+# Cap on a lane's /__throttle/health body before parsing (gate MAJOR: a
+# misconfigured/compromised lane returning a huge JSON could exhaust memory).
+# Lane URLs are config-only (no SSRF), but the parse is still bounded defensively.
+LANE_HEALTH_MAX_BYTES: Final[int] = int(
+    os.environ.get("INGRESS_LANE_HEALTH_MAX_BYTES", str(1024 * 1024))
+)
+
 # Hop-by-hop headers (RFC 7230 §6.1) — must not be forwarded verbatim; aiohttp
 # also manages Content-Length / Transfer-Encoding on the rebuilt request.
 _HOP_BY_HOP: Final[frozenset[str]] = frozenset(
@@ -99,16 +132,17 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
 
 
 async def _forward(request: web.Request) -> web.StreamResponse:
-    """Forward one request to the default lane, path-preservingly.
+    """Forward one request to the selected lane, path-preservingly.
 
-    Path + query string are preserved verbatim (``request.path_qs``), the body
-    is streamed (or buffered for ``POST /v1/messages`` so S2 can read the
-    model), and the upstream response is streamed back byte-identical. S1 made
-    this a pure passthrough; S2 adds role inference (stamped on the response for
-    observability, no routing change — S3 selects the lane).
+    Path + query string are preserved verbatim, the body is streamed (or buffered
+    for ``POST /v1/messages`` so S2 can read the model), and the upstream
+    response is streamed back byte-identical. S2 infers the role; **S3 selects
+    the lane** by walking the role's chain over the cached gauge verdicts
+    (``select_lane``) and forwards to that lane's URL. If every lane for the role
+    is capped, the request is held with a 503 (S5 refines the HOLD+flag policy;
+    S3's bar is the basic all-capped 503).
     """
     session: aiohttp.ClientSession = request.app[_SESSION_KEY]
-    target = f"{DEFAULT_LANE_URL}{request.path_qs}"
     timeout = aiohttp.ClientTimeout(total=FORWARD_TIMEOUT_S or None)
 
     # S2: infer the role from the model on POST /v1/messages only. Other paths
@@ -141,6 +175,19 @@ async def _forward(request: web.Request) -> web.StreamResponse:
 
             body_data = _chained_body()
 
+    # S3: pick the lane for this role from the cached gauge verdicts. If every
+    # lane in the role's chain is capped, HOLD (503) — S5 refines the
+    # don't-silently-downgrade policy; S3's bar is the basic all-capped hold.
+    lane_id = select_lane(role, lane_state)
+    if lane_id is None:
+        return web.json_response({"error": "ingress-all-lanes-capped", "role": role}, status=503)
+    lane = LANES.get(lane_id)
+    if lane is None:  # defensive: chain named a lane not in the registry
+        return web.json_response(
+            {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
+        )
+    target = f"{lane.url}{request.path_qs}"
+
     upstream: aiohttp.ClientResponse | None = None
     try:
         upstream = await session.request(
@@ -168,6 +215,7 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         resp = web.StreamResponse(status=upstream.status, headers=out_headers)
         resp.headers[MARKER_HEADER] = "1"
         resp.headers[ROLE_HEADER] = role  # S2 observability (S6 surfaces counts)
+        resp.headers[LANE_HEADER] = lane_id  # S3: which lane served the role
         await resp.prepare(request)
         async for chunk in upstream.content.iter_any():
             if not chunk:
@@ -198,6 +246,16 @@ async def _health(_request: web.Request) -> web.Response:
             "port": INGRESS_PORT,
             "served": _served,
             "uptime_s": round(time.time() - _start_time, 1),
+            # S3: the cached per-lane gauge verdicts so fleet state is visible
+            # in one place (read-only snapshot of the in-memory cache, no I/O).
+            "lanes": {
+                lid: {
+                    "open": st.open,
+                    "detail": st.detail,
+                    "checked_ago_s": round(time.time() - st.checked_at, 1),
+                }
+                for lid, st in list(lane_state.items())
+            },
         }
     )
 
@@ -215,6 +273,70 @@ async def _count_served(request: web.Request, handler):
     return resp
 
 
+async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
+    """One health probe of one lane; updates ``lane_state`` in place."""
+    now = time.time()
+    try:
+        async with session.get(
+            lane.health_url, timeout=aiohttp.ClientTimeout(total=LANE_HEALTH_TIMEOUT_S)
+        ) as resp:
+            if resp.status != 200:
+                lane_state[lane.id] = LaneState(False, now, f"health-{resp.status}")
+                return
+            # Bound the parse (gate MAJOR): reject an oversized health body rather
+            # than loading it. content_length is None for chunked; fall through to
+            # the bounded read in that case.
+            if resp.content_length is not None and resp.content_length > LANE_HEALTH_MAX_BYTES:
+                lane_state[lane.id] = LaneState(False, now, "health-oversized")
+                return
+            body = await resp.json(content_type=None)
+    except aiohttp.ClientError:
+        lane_state[lane.id] = LaneState(False, now, "unreachable")
+        return
+    except TimeoutError:
+        lane_state[lane.id] = LaneState(False, now, "health-timeout")
+        return
+    open_, detail = lane_usable(body, now)
+    lane_state[lane.id] = LaneState(open_, now, detail)
+
+
+async def _poll_lanes_once(session: aiohttp.ClientSession) -> None:
+    """Probe every configured lane concurrently so one slow lane can't stall the rest."""
+    await asyncio.gather(*(_poll_one_lane(session, lane) for lane in LANES.values()))
+
+
+async def _lane_health_context(app: web.Application):
+    """S3: background lane-health poll. Does one synchronous poll at startup so
+    ``lane_state`` is populated before the first forward (no cold-start 503
+    storm), then re-polls every ``LANE_HEALTH_INTERVAL_S``.
+
+    Disabled (no initial poll, no loop) when ``LANE_HEALTH_INTERVAL_S <= 0`` —
+    lets an operator pin ``lane_state`` manually and keeps the test-suite
+    deterministic (it sets ``lane_state`` directly instead of racing the loop).
+    """
+    if LANE_HEALTH_INTERVAL_S <= 0:
+        yield
+        return
+    session = app[_SESSION_KEY]
+    await _poll_lanes_once(session)  # initial poll before serving
+    task = asyncio.create_task(_lane_health_loop(session))
+    try:
+        yield
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _lane_health_loop(session: aiohttp.ClientSession) -> None:
+    """Re-probe lane health on a fixed cadence until shutdown."""
+    while True:
+        await asyncio.sleep(LANE_HEALTH_INTERVAL_S)
+        # Never let the poll loop die — health is load-bearing and a transient
+        # error in one cycle must not stop future probes.
+        with contextlib.suppress(Exception):
+            await _poll_lanes_once(session)
+
+
 async def _session_context(app: web.Application):
     """Lifecycle-managed ClientSession: one pool for all forwards, cleaned up."""
     session = aiohttp.ClientSession(headers={"User-Agent": "anthropic-throttle-ingress/0.1"})
@@ -229,6 +351,7 @@ def build_app() -> web.Application:
     """Wire the ingress aiohttp app (route table + lifecycle hooks)."""
     app = web.Application(client_max_size=128 * 1024 * 1024, middlewares=[_count_served])
     app.cleanup_ctx.append(_session_context)
+    app.cleanup_ctx.append(_lane_health_context)  # S3: depends on the session existing
     app.router.add_get("/", _root_probe)
     app.router.add_get("/__throttle/health", _health)
     app.router.add_route("*", "/{path:.*}", _forward)

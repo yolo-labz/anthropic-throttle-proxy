@@ -30,11 +30,150 @@ the fleet served regardless; S7 reconciles the model the fleet actually sends.
 from __future__ import annotations
 
 import json
+import os
 import re
+import time
+from dataclasses import dataclass
 
-__all__ = ["ROLES", "infer_role", "infer_role_from_body"]
+__all__ = [
+    "ROLES",
+    "ROLE_CHAINS",
+    "Lane",
+    "LaneState",
+    "default_lanes",
+    "infer_role",
+    "infer_role_from_body",
+    "bearer_usable",
+    "lane_usable",
+    "select_lane",
+]
 
 ROLES = ("generate", "judge", "bulk")
+
+# Spec 093 S3: per-role ordered lane chain. Walked first→last; the first OPEN
+# lane serves the request. GLM is the floor (cheap, flat) so it closes every
+# chain; Anthropic is RESERVED for premium generate + judge and NEVER appears in
+# the bulk chain (invariant 2: bulk never touches Anthropic).
+ROLE_CHAINS: dict[str, tuple[str, ...]] = {
+    "generate": ("anthropic", "kimi", "glm"),
+    "judge": ("anthropic", "glm", "kimi"),
+    "bulk": ("kimi", "glm"),  # Anthropic deliberately absent
+}
+
+
+@dataclass(frozen=True)
+class Lane:
+    """A per-lane throttle the ingress can route to.
+
+    ``url`` is the lane's base URL (requests forward to ``url + path_qs``);
+    ``health_url`` defaults to ``url + /__throttle/health``.
+    """
+
+    id: str
+    url: str
+    roles: frozenset[str]
+    health_url: str = ""  # filled by default_lanes
+
+    def __post_init__(self) -> None:
+        if not self.health_url:
+            object.__setattr__(self, "health_url", f"{self.url.rstrip('/')}/__throttle/health")
+
+
+@dataclass
+class LaneState:
+    """Cached gauge verdict for a lane, updated by the background poll loop."""
+
+    open: bool
+    checked_at: float
+    detail: str = ""
+
+
+def default_lanes() -> dict[str, Lane]:
+    """The three-lane fleet (Spec 093). URLs env-overridable for test/non-local deploys."""
+    return {
+        "anthropic": Lane(
+            "anthropic",
+            os.environ.get("INGRESS_ANTHROPIC_LANE_URL", "http://127.0.0.1:8765"),
+            frozenset({"generate", "judge"}),
+        ),
+        "kimi": Lane(
+            "kimi",
+            os.environ.get("INGRESS_KIMI_LANE_URL", "http://127.0.0.1:8767"),
+            frozenset({"generate", "bulk"}),
+        ),
+        "glm": Lane(
+            "glm",
+            os.environ.get("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766"),
+            frozenset({"generate", "judge", "bulk"}),
+        ),
+    }
+
+
+def bearer_usable(bearer: dict, now: float | None = None) -> bool:
+    """Is one bearer usable right now? Uniform across the three lanes (same proxy schema).
+
+    A bearer is usable unless it carries a hard lock signal:
+    - ``limiter.retry_after_until`` in the future (Retry-After active), OR
+    - a unified window in ``rejected`` status (budget exhausted).
+
+    Lanes without Anthropic-style unified gauges (Kimi/GLM) simply have no
+    ``rejected`` field, so a reachable bearer with no retry-after is usable —
+    the lane's own AIMD handles its internal pressure.
+    """
+    now = time.time() if now is None else now
+    limiter = bearer.get("limiter") or {}
+    # Defensive parse: a malformed (non-numeric) ``retry_after_until`` must not
+    # crash request handling — treat unparseable as "not set" (0 = not paused).
+    try:
+        retry_after_until = float(limiter.get("retry_after_until", 0) or 0)
+    except (TypeError, ValueError):
+        retry_after_until = 0.0
+    if retry_after_until > now:
+        return False
+    unified = bearer.get("unified") or {}
+    if unified.get("status_5h") == "rejected" or unified.get("status_7d") == "rejected":
+        return False
+    return True
+
+
+def lane_usable(health_json: dict, now: float | None = None) -> tuple[bool, str]:
+    """Lane-level verdict from a ``/__throttle/health`` body.
+
+    Returns ``(open, detail)``. Open requires the lane can reach its upstream
+    AND at least one bearer is usable right now. This is the uniform gauge the
+    ingress walks the role chain on (Spec 093 S3, invariant 3: a locked lane
+    is skipped → the next request auto-advances).
+    """
+    if not health_json.get("upstream_egress_ok", False):
+        return False, "upstream-egress-down"
+    bearers = health_json.get("bearers") or {}
+    if not bearers:
+        return False, "no-bearers"
+    now = time.time() if now is None else now
+    for bearer in bearers.values():
+        if bearer_usable(bearer, now):
+            return True, "ok"
+    return False, "no-usable-bearer"
+
+
+def select_lane(
+    role: str,
+    state: dict[str, LaneState],
+    chains: dict[str, tuple[str, ...]] | None = None,
+) -> str | None:
+    """Pick the first OPEN lane for the role, walking its chain. None = all capped (HOLD).
+
+    Pure (no I/O) so it's testable directly by populating ``state``. Unknown
+    role → generate chain. Bulk never returns ``anthropic`` (structurally — it's
+    not in the bulk chain, invariant 2).
+    """
+    chain = (chains or ROLE_CHAINS).get(role, ROLE_CHAINS["generate"])
+    for lane_id in chain:
+        st = state.get(lane_id)
+        if st is not None and st.open:
+            return lane_id
+    return None
+
 
 # Context-size suffix on a model id, e.g. "claude-opus-4-8[1m]". Stripped
 # before tier matching so a 1M-context opus is still "generate". No leading/

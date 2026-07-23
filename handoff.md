@@ -6,6 +6,69 @@ host activation. Latest incident first.
 
 ---
 
+## 23/07/2026 - Spec 093 unified `:8760` ingress — S1 + S2 merged (build in progress)
+
+The "never run out of AI" router (Spec 093, `specs/093-predictive-glide-spillover/`).
+Pedro authorized starting ahead of the 28/07 gate (kimi-k3 GA 27/07 + codex
+recovery 28/07): the router logic doesn't need either — pre-kimi-k3, invariant
+6 is HOLD+flag (S5), and the cross-family gate used the GROQ fallback (#130
+precedent) since codex is quota-dead and the Anthropic lane is degraded (2/3
+accounts hard-capped). The Nix tab (`w1W:p2`) owns the **interim manual
+switching** question (NixOS repo); S1–S6 are proxy-only, S7 is the Nix
+wire-through (coordinate with the Nix tab there).
+
+### Lanes verified live (23/07, the prerequisites)
+- Anthropic `:8765` — `central_status=up`, 1/3 accounts open, 2 hard-capped.
+- GLM `:8766` — client-provides-key, path `/api/anthropic`, healthy.
+- Kimi `:8767` — concurrency-6, healthy.
+- NixOS prereqs all merged: Kimi (#1326/#1328/#1329/#1333), z.ai (#1084),
+  sock-read knobs (#1327 = the proxy #130 follow-up), routing canon #647
+  rendered (#1330).
+
+### S1 — ingress skeleton + no-op-when-unset (#132, merged)
+New `ingress.py` — a separate-process aiohttp server on `:8760` that forwards
+to a default lane (`:8765`) path-preservingly, client-visible-response
+byte-identical. Opt-in (`INGRESS_HOST:INGRESS_PORT`); unset = clients hit
+`:8765` unchanged (invariant 5). Local `/` probe, <50ms `/__throttle/health`,
+hop-by-hop stripped both directions, `ClientError`→generic 503 (no detail
+leak), `x-anthropic-throttle-ingress: 1` marker. Entry point
+`anthropic-throttle-ingress`. GROQ gate ALLOW (no BLOCKER); self-repaired the
+503-leak [MAJOR].
+
+### S2 — role inference from the request model (#133, merged)
+New `routing.py::infer_role(model)` → `generate`/`judge`/`bulk` (fable/opus →
+generate; sonnet-5 → judge; sonnet-4-6/haiku → bulk). `ingress._forward`
+buffers `POST /v1/messages` only (bounded read `ROLE_BODY_READ_LIMIT` 64 KiB —
+larger bodies default role + stream through byte-complete) and stamps
+`x-anthropic-throttle-role` on the response. **No routing change yet** (S3
+selects the lane). Known drift documented: deployed subagent slot is
+`claude-opus-4-8[1m]` (Issue #1281), not `claude-sonnet-4-6`, so model-tier
+inference maps both opus uses to `generate` — S7 reconciles.
+
+### Gate calibration — IMPORTANT for the remaining slices
+The GROQ `openai/gpt-oss-120b` cross-family gate (round 2, ALLOW) **missed a
+real ReDoS** (`\s*\[\d+[mk]\]\s*` on user-controlled model string) that
+**CodeQL caught as high-severity**. Fixed (`\s*` anchors dropped — redundant
+with the surrounding `.strip()`). GROQ is a weaker reviewer than codex/claude;
+the #130 precedent was a default-no-op knob. **S3–S5 (lane selection +
+never-hard-fail guards) are higher-stakes** — lean on CodeQL + rigor, and
+flag S1–S2 for the mandatory codex re-review when it recovers (28/07).
+
+### Remaining slices
+- **S3** gauge-driven lane selection (the ingress polls each lane's
+  `/__throttle/health` + unified gauges; walks the role's chain; picks the
+  first open+under-threshold lane). — next
+- **S4** model-remap on egress (`claude-*` → lane's id) + session stickiness.
+- **S5** never-hard-fail + don't-silently-downgrade (HOLD+flag pre-kimi-k3).
+- **S6** observability (per role→lane counters, Kimi low-balance gauge).
+- **S7** Nix wire-through (`unified-throttle-ingress` HM module; flip the
+  fleet's `ANTHROPIC_BASE_URL` to `:8760`; coordinate with the Nix tab).
+
+Reversal: one `git revert` per slice (all default-no-op until an operator
+starts the `:8760` process + points a tab at it).
+
+---
+
 ## 22/07/2026 - Soft utilization glide + display-only usage-lock evidence (PR #129)
 
 ### Corrected diagnosis
