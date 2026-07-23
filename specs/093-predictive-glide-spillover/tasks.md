@@ -1,52 +1,58 @@
-# Spec 093 — tasks
+# Spec 093 — tasks (v2: unified :8760 ingress)
 
 One slice per row, smallest correct diff, each lands with its acceptance test
-green + the full suite + ruff. Throttle-path → the speckit-make cross-family
+green + full suite + ruff. Throttle-path → the speckit-make cross-family
 adversarial panel (codex + Opus) must ALLOW each slice before merge. Execute
-on/after 28/07 (kimi-k3 GA + codex recovery).
+on/after 28/07 (kimi-k3 GA + codex recovery). The per-lane throttles
+(:8765/:8766/:8767) are prerequisites already live/landed; this builds ONLY the
+router in front of them.
 
-- [ ] **S1 — config knobs + no-op-when-unset invariant.** Add
-      `THROTTLE_SPILLOVER_UPSTREAM` (default `""`), `THROTTLE_SPILLOVER_MODEL_MAP`
-      (default `""`), `THROTTLE_SPILLOVER_GLIDE_THRESHOLD` (default = the
-      `allowed_warning` line). Acceptance: with the upstream empty, the full
-      existing suite passes byte-identical (invariant 4). No behavior change.
-- [ ] **S2 — glide-saturation predicate.** A helper `_all_accounts_glide_saturated()`:
-      true iff every configured account's binding window is `allowed_warning`+
-      (or binding util ≥ threshold). Reads the unified state already in
-      `bearer_state`. Acceptance test: a fleet with all accounts
-      `allowed_warning` → true; one account `allowed` → false; accounts at 0.80
-      with default threshold → false (invariants 1, 2).
-- [ ] **S3 — spillover forward + model-remap (only-on-spillover).** In the
-      account-selection path: when S2 is true AND `THROTTLE_SPILLOVER_UPSTREAM`
-      is set, forward to the spillover origin path-preservingly with the request
-      body's model rewritten via `THROTTLE_SPILLOVER_MODEL_MAP`. The `:8767`
-      proxy stamps the Moonshot Bearer itself. Acceptance tests: spillover
-      forward body model == mapped id; an Anthropic-bound (non-saturated)
-      request keeps its original `claude-*` id (invariant 3); the never-trip
-      test — all accounts `allowed_warning` → every new request routes to
-      spillover, zero reach Anthropic `rejected` (invariant 1).
-- [ ] **S4 — spillover-lane-down fallback.** Reuse the `fleetHealthUrls`/
-      central-style probe: if the spillover lane is unhealthy, fall back to the
-      existing least-bad Anthropic queue (rule 3) — never fail the request.
-      Acceptance test: spillover upstream down + all accounts saturated →
-      request routes to the Anthropic queue (not a hard fail) (invariant 5).
-- [ ] **S5 — observability + end-to-end acceptance.** Counter
-      `anthropic_spillover_total{to=kimi}` + one log line per spillover
-      decision (which account states triggered it). End-to-end: a simulated
-      fleet that drives accounts into `allowed_warning` under sustained load
-      reaches ≥0.95 binding utilization with zero `rejected` trips, the
-      residual served by spillover (invariant 6 + the goal bar).
-- [ ] **S6 — Nix wire-through.** Expose the three knobs in the
-      `lib/throttle-proxy-instance.nix` factory + the Anthropic HM module, set
-      them on the desktop `:8765` instance (`THROTTLE_SPILLOVER_UPSTREAM=
-      http://127.0.0.1:8767`, the model map). Default null elsewhere = no-op.
-      Acceptance: `:8765` config evaluates; the `:8765/ui` Fleet panel shows the
-      spillover lane.
+- [ ] **S1 — ingress skeleton + no-op-when-unset.** A new Anthropic-shape
+      aiohttp server on `:8760` that forwards a request to a configured
+      default lane (`:8765`) path-preservingly, identical to pointing at the
+      lane directly. With the ingress disabled, claude-code points at `:8765`
+      as today (invariant 5). Acceptance: ingress passes through to `:8765`
+      byte-identical; a probe `:8760/v1/messages` → same as `:8765`.
+- [ ] **S2 — role inference from the request model (no new header).** Parse the
+      request body model → tier: `opus`/`fable`→generate, `sonnet-5`→judge,
+      `sonnet-4-6`/`haiku`-slot→bulk/subagent. Acceptance tests per tier; the
+      subagent slot (`claude-sonnet-4-6`, PR #1183) routes to bulk.
+- [ ] **S3 — gauge-driven lane selection.** Read each lane's retry-after / 5h/7d
+      window state (the proxies already expose `/__throttle/health` + the
+      Anthropic/z.ai unified gauges): for the request's role, walk the role's
+      chain (generate: Anthropic→Kimi→GLM→HOLD; bulk: Kimi/GLM first) and pick
+      the first lane whose account is open + under threshold. Acceptance:
+      simulate an account lock → next request auto-advances (invariant 3);
+      bulk never selects Anthropic (invariant 2).
+- [ ] **S4 — model-remap on egress + session stickiness.** Remap `claude-*` →
+      the chosen lane's id on the forward body; keep the client-facing id. Pin
+      a session to its lane unless it hard-locks (cache economics — spill at
+      session boundaries, not per-request). Acceptance: egress body model ==
+      mapped id, client id unchanged (invariant 4); a session stays on its
+      lane across requests until the lane locks.
+- [ ] **S5 — never-hard-fail + don't-silently-downgrade guards.** If any lane
+      can serve the role, serve it (invariant 1); fail only when ALL lanes for
+      the role are capped. Before 27/07 (no kimi-k3), a generate-role demand
+      under full Anthropic cap HOLDS + flags, not a silent kimi-k2.6/GLM 200
+      (invariant 6). Acceptance: all-Anthropic-capped + bulk role → served via
+      Kimi/GLM; all-capped + generate + pre-kimi-k3 → HOLD/flag.
+- [ ] **S6 — observability.** Counters per (role→lane) decision; a Kimi
+      **low-balance gauge** (poll the Moonshot balance, alert <$5); surface
+      GLM/Anthropic window gauges at `:8760` so spillover + fleet state are
+      visible in one place (invariant 7). Acceptance: a `/metrics` scrape shows
+      the per-lane decision counts + the Kimi balance.
+- [ ] **S7 — Nix wire-through.** A `unified-throttle-ingress` HM module
+      (`:8760`) pointing at the three lanes; flip the fleet's claude-code
+      `ANTHROPIC_BASE_URL` to `:8760`. Per-lane proxies stay individually
+      reachable as the SPOF fallback. Acceptance: desktop config evaluates;
+      a claude-code tab against `:8760` routes per the chain under a simulated
+      Anthropic cap.
 
 ## Verification bar (the done-state, externalized)
-- `uv run pytest` green (incl. the new invariant tests S1–S5); `ruff` clean.
+- `uv run pytest` green (incl. the new invariant tests S1–S6); `ruff` clean.
 - speckit-make cross-family panel (codex reward-hacking + Opus correctness +
   codex security) all ALLOW each slice.
-- A live or simulated run showing ≥0.95 binding utilization + zero `rejected`
-  on the desktop fleet before declaring the objective met (invariant 1 is the
-  hard floor; "exactly 100%" is not the bar — see the spec's honest limit).
+- A live or simulated run: with 2 of 3 Anthropic accounts 7d-capped, the
+  fleet still serves every role (bulk on Kimi/GLM, generate on the open
+  account, overflow generate to Kimi-k3 post-27/07) with zero hard-fails +
+  zero `rejected` trips on the open Anthropic account (invariants 1, 2, 6).
