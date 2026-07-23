@@ -15,12 +15,38 @@ without changing the forward shape asserted here.
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from anthropic_throttle_proxy import ingress
+from anthropic_throttle_proxy.routing import Lane, LaneState
+
+
+def _route_all_lanes_to(monkeypatch, lane_url: str) -> None:
+    """S3: point every lane id at ``lane_url`` + mark all OPEN, so a test's fake
+    lane serves any role. Disables the background health poll
+    (``LANE_HEALTH_INTERVAL_S=0``) so the test owns ``lane_state`` deterministically
+    instead of racing the loop / needing a health endpoint on the fake lane."""
+    url = lane_url.rstrip("/")
+    monkeypatch.setattr(
+        ingress,
+        "LANES",
+        {
+            "anthropic": Lane("anthropic", url, frozenset({"generate", "judge"})),
+            "kimi": Lane("kimi", url, frozenset({"generate", "bulk"})),
+            "glm": Lane("glm", url, frozenset({"generate", "judge", "bulk"})),
+        },
+    )
+    now = time.time()
+    monkeypatch.setattr(
+        ingress,
+        "lane_state",
+        {lid: LaneState(True, now, "test") for lid in ("anthropic", "kimi", "glm")},
+    )
+    monkeypatch.setattr(ingress, "LANE_HEALTH_INTERVAL_S", 0.0)
 
 
 def _echo_lane() -> web.Application:
@@ -92,7 +118,7 @@ async def ingress_factory(monkeypatch):
     async def _make(lane_app: web.Application) -> tuple[TestClient, TestClient]:
         lane = TestClient(TestServer(lane_app))
         await lane.start_server()
-        monkeypatch.setattr(ingress, "DEFAULT_LANE_URL", str(lane.make_url("")).rstrip("/"))
+        _route_all_lanes_to(monkeypatch, str(lane.make_url("")))
         ing = TestClient(TestServer(ingress.build_app()))
         await ing.start_server()
         created.append((ing, lane))
@@ -106,10 +132,8 @@ async def ingress_factory(monkeypatch):
 
 @pytest.fixture
 async def ingress_client(lane_client: TestClient, monkeypatch) -> TestClient:
-    """The ingress app pointed at the running fake lane."""
-    lane_url = str(lane_client.make_url("")).rstrip("/")
-    # ingress.DEFAULT_LANE_URL is read at import; point it at the live lane.
-    monkeypatch.setattr(ingress, "DEFAULT_LANE_URL", lane_url)
+    """The ingress app pointed at the running fake lane (all lanes → fake lane)."""
+    _route_all_lanes_to(monkeypatch, str(lane_client.make_url("")))
     client = TestClient(TestServer(ingress.build_app()))
     await client.start_server()
     yield client
@@ -195,19 +219,18 @@ async def test_health_is_fast_and_reports_lane(ingress_client: TestClient) -> No
     assert payload["default_lane"].startswith("http://")
 
 
-async def test_unreachable_lane_yields_503(ingress_client: TestClient) -> None:
-    """A dead lane surfaces as a clean 503, not an unhandled exception."""
-    saved = ingress.DEFAULT_LANE_URL
-    ingress.DEFAULT_LANE_URL = "http://127.0.0.1:1"  # closed port
-    try:
-        async with ingress_client.post(
-            "/v1/messages", json={}, headers={"Authorization": "Bearer t"}
-        ) as resp:
-            assert resp.status == 503
-            payload = await resp.json()
-        assert payload["error"] == "ingress-upstream-unreachable"
-    finally:
-        ingress.DEFAULT_LANE_URL = saved  # don't poison sibling tests
+async def test_unreachable_lane_yields_503(ingress_client: TestClient, monkeypatch) -> None:
+    """A lane marked open but whose URL is dead surfaces as a clean 503.
+
+    Models the race window between polls (the next poll would mark it closed).
+    Drives it via LANES + lane_state (S3), not the S1 DEFAULT_LANE_URL."""
+    _route_all_lanes_to(monkeypatch, "http://127.0.0.1:1")  # closed port, all "open"
+    async with ingress_client.post(
+        "/v1/messages", json={}, headers={"Authorization": "Bearer t"}
+    ) as resp:
+        assert resp.status == 503
+        payload = await resp.json()
+    assert payload["error"] == "ingress-upstream-unreachable"
 
 
 async def test_hop_by_hop_headers_stripped(ingress_client: TestClient) -> None:
@@ -327,18 +350,151 @@ async def test_large_messages_body_defaults_role_and_forwards_complete(
     assert seen.get("body") == payload
 
 
-async def test_unreachable_lane_503_does_not_leak_detail(ingress_client: TestClient) -> None:
+async def test_unreachable_lane_503_does_not_leak_detail(
+    ingress_client: TestClient, monkeypatch
+) -> None:
     """The 503 body is generic — upstream exception text never reaches the client."""
-    saved = ingress.DEFAULT_LANE_URL
-    ingress.DEFAULT_LANE_URL = "http://127.0.0.1:1"  # closed port
-    try:
-        async with ingress_client.post(
-            "/v1/messages", json={}, headers={"Authorization": "Bearer t"}
-        ) as resp:
-            assert resp.status == 503
-            text = await resp.text()
-    finally:
-        ingress.DEFAULT_LANE_URL = saved
+    _route_all_lanes_to(monkeypatch, "http://127.0.0.1:1")  # closed port, all "open"
+    async with ingress_client.post(
+        "/v1/messages", json={}, headers={"Authorization": "Bearer t"}
+    ) as resp:
+        assert resp.status == 503
+        text = await resp.text()
     # No detail field, no port/IP echoed back to the client.
     assert "detail" not in text
     assert "127.0.0.1" not in text
+
+
+async def test_s3_routes_by_role_over_distinct_lanes(monkeypatch) -> None:
+    """S3 acceptance: the ingress routes by role + gauge across DISTINCT lanes.
+
+    generate → anthropic (preferred); bulk → kimi (NEVER anthropic, invariant 2);
+    locking anthropic advances generate to kimi (invariant 3). Each fake lane
+    stamps its own id so the test can prove which lane served the request.
+    """
+
+    def _lane_app(lane_id: str) -> web.Application:
+        async def serve(request: web.Request) -> web.Response:
+            await request.read()
+            return web.Response(status=200, body=b"ok", headers={"x-lane-id": lane_id})
+
+        app = web.Application()
+        app.router.add_post("/v1/messages", serve)
+        return app
+
+    anth = TestClient(TestServer(_lane_app("anthropic")))
+    kim = TestClient(TestServer(_lane_app("kimi")))
+    await anth.start_server()
+    await kim.start_server()
+    monkeypatch.setattr(
+        ingress,
+        "LANES",
+        {
+            "anthropic": Lane(
+                "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
+            ),
+            "kimi": Lane(
+                "kimi", str(kim.make_url("")).rstrip("/"), frozenset({"generate", "bulk"})
+            ),
+            "glm": Lane(
+                "glm", str(kim.make_url("")).rstrip("/"), frozenset({"generate", "judge", "bulk"})
+            ),
+        },
+    )
+    monkeypatch.setattr(ingress, "LANE_HEALTH_INTERVAL_S", 0.0)
+    now = time.time()
+    monkeypatch.setattr(
+        ingress,
+        "lane_state",
+        {
+            "anthropic": LaneState(True, now, "test"),
+            "kimi": LaneState(True, now, "test"),
+            "glm": LaneState(True, now, "test"),
+        },
+    )
+    ing = TestClient(TestServer(ingress.build_app()))
+    await ing.start_server()
+    try:
+        # generate (opus) → anthropic
+        async with ing.post(
+            "/v1/messages", json={"model": "claude-opus-4-8"}, headers={"Authorization": "Bearer t"}
+        ) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+            assert r.headers["x-lane-id"] == "anthropic"
+        # bulk (sonnet-4-6) → kimi (NEVER anthropic, even though anthropic is open)
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-sonnet-4-6"},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "kimi"
+            assert r.headers["x-lane-id"] == "kimi"
+        # Lock anthropic → generate advances to kimi (invariant 3)
+        monkeypatch.setattr(
+            ingress,
+            "lane_state",
+            {
+                "anthropic": LaneState(False, now, "no-usable-bearer"),
+                "kimi": LaneState(True, now, "test"),
+                "glm": LaneState(True, now, "test"),
+            },
+        )
+        async with ing.post(
+            "/v1/messages", json={"model": "claude-opus-4-8"}, headers={"Authorization": "Bearer t"}
+        ) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "kimi"
+    finally:
+        await ing.close()
+        await anth.close()
+        await kim.close()
+
+
+async def test_s3_oversized_lane_health_marked_closed(monkeypatch) -> None:
+    """Gate MAJOR: a lane returning a health body over LANE_HEALTH_MAX_BYTES is
+    marked closed (health-oversized), not parsed into memory."""
+    import aiohttp as _aiohttp
+
+    async def huge_health(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"x" * 4096, content_type="application/json")
+
+    app = web.Application()
+    app.router.add_get("/__throttle/health", huge_health)
+    lane = TestClient(TestServer(app))
+    await lane.start_server()
+    monkeypatch.setattr(ingress, "LANE_HEALTH_MAX_BYTES", 1024)  # body is 4096 > cap
+    target_lane = Lane("glm", str(lane.make_url("")).rstrip("/"), frozenset({"bulk"}))
+    async with _aiohttp.ClientSession() as session:
+        await ingress._poll_one_lane(session, target_lane)
+    await lane.close()
+    st = ingress.lane_state.get("glm")
+    assert st is not None and st.open is False
+    assert st.detail == "health-oversized"
+
+
+async def test_s3_all_lanes_capped_yields_503(monkeypatch) -> None:
+    """S3/S5: every lane for the role closed → 503 (the basic HOLD; S5 refines)."""
+    _route_all_lanes_to(monkeypatch, "http://127.0.0.1:9999")  # url irrelevant; all closed
+    monkeypatch.setattr(
+        ingress,
+        "lane_state",
+        {
+            "anthropic": LaneState(False, time.time(), "no-usable-bearer"),
+            "kimi": LaneState(False, time.time(), "no-usable-bearer"),
+            "glm": LaneState(False, time.time(), "no-usable-bearer"),
+        },
+    )
+    ing = TestClient(TestServer(ingress.build_app()))
+    await ing.start_server()
+    try:
+        async with ing.post(
+            "/v1/messages", json={"model": "claude-opus-4-8"}, headers={"Authorization": "Bearer t"}
+        ) as r:
+            assert r.status == 503
+            payload = await r.json()
+        assert payload["error"] == "ingress-all-lanes-capped"
+        assert payload["role"] == "generate"
+    finally:
+        await ing.close()
