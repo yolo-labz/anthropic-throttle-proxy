@@ -89,6 +89,18 @@ CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
 CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT", "10"))
 UPSTREAM_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_TIMEOUT", "10"))
+# Per-read socket timeout on the FORWARD path (inter-byte, not total). A stalled
+# upstream that emits no bytes for this many seconds raises SocketTimeoutError,
+# which the proxy turns into a single retry-direct. Default 600 preserves the
+# historic behavior; for upstreams that can stall silently (e.g. z.ai mid long
+# max_tokens generation), set this BELOW the client idle timeout (~60 s) so the
+# retry fires while the client is still connected — otherwise the late write
+# hits a closing transport and the truncated HTTP surfaces client-side as
+# InvalidHTTPResponse (23/07 :8766 incident: a glm-5.2 POST hung 621 s against a
+# 600 s sock_read). The Anthropic lane streams SSE keepalives during reasoning,
+# which reset sock_read, so it is tolerant of a lower value too; keep the
+# default conservative and tune per-instance via THROTTLE_UPSTREAM_SOCK_READ_TIMEOUT_S.
+UPSTREAM_SOCK_READ_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_SOCK_READ_TIMEOUT_S", "600"))
 UPSTREAM_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_INTERVAL", "30"))
 # Central-health hysteresis: a single transient probe miss must NOT abandon
 # central — that flips the whole local fleet to direct fallback and risks an

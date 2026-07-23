@@ -77,7 +77,9 @@ def _target_url(base: str, path: str, query: str) -> str:
 
 def direct_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout]:
     """Direct-upstream URL + timeout for this request, ignoring central."""
-    timeout = aiohttp.ClientTimeout(total=None, sock_read=600, sock_connect=30)
+    timeout = aiohttp.ClientTimeout(
+        total=None, sock_read=config.UPSTREAM_SOCK_READ_TIMEOUT, sock_connect=30
+    )
     return _target_url(config.UPSTREAM, path, query), timeout
 
 
@@ -91,7 +93,9 @@ def pick_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout, str]
     """
     if config.CENTRAL_URL and config.state["central_status"] != "down":
         client_timeout = aiohttp.ClientTimeout(
-            total=None, sock_read=600, sock_connect=config.CENTRAL_FORWARD_TIMEOUT
+            total=None,
+            sock_read=config.UPSTREAM_SOCK_READ_TIMEOUT,
+            sock_connect=config.CENTRAL_FORWARD_TIMEOUT,
         )
         return _target_url(config.CENTRAL_URL, path, query), client_timeout, "central"
     url, client_timeout = direct_target(path, query)
