@@ -94,7 +94,7 @@ def pick_target(path: str, query: str) -> tuple[str, aiohttp.ClientTimeout, str]
     if config.CENTRAL_URL and config.state["central_status"] != "down":
         client_timeout = aiohttp.ClientTimeout(
             total=None,
-            sock_read=config.UPSTREAM_SOCK_READ_TIMEOUT,
+            sock_read=config.CENTRAL_SOCK_READ_TIMEOUT,
             sock_connect=config.CENTRAL_FORWARD_TIMEOUT,
         )
         return _target_url(config.CENTRAL_URL, path, query), client_timeout, "central"

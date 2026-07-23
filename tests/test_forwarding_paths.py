@@ -461,28 +461,39 @@ def test_pick_target_prefers_central_during_cold_start(monkeypatch) -> None:
 
 
 def test_sock_read_timeout_honors_config_knob(monkeypatch) -> None:
-    """The forward sock_read must track UPSTREAM_SOCK_READ_TIMEOUT so a silently
-    stalling upstream can be bounded under the client idle timeout.
+    """The forward sock_read must track the per-lane config knobs so a silently
+    stalling upstream can be bounded independently per lane.
 
     Regression guard for the 23/07 :8766 incident: a glm-5.2 POST hung 621 s
     against a hardcoded 600 s sock_read, the retry-direct-once then raced the
     client disconnect and the truncated HTTP surfaced as InvalidHTTPResponse.
-    The knob lets each instance lower it (e.g. z.ai) below the ~60 s client
-    patience while the default (600) preserves the Anthropic lane unchanged.
+    The two knobs let each lane lower it (e.g. z.ai direct) below the ~60 s
+    client patience WITHOUT affecting the central sibling-proxy lane (which
+    runs its own keepalive-hold), while defaults (600) preserve both lanes.
     """
     _reset()
     monkeypatch.setattr(config, "UPSTREAM", "https://api.example")
     monkeypatch.setattr(config, "UPSTREAM_SOCK_READ_TIMEOUT", 45.0)
+    monkeypatch.setattr(config, "CENTRAL_SOCK_READ_TIMEOUT", 600.0)
 
     _url, direct_timeout = forwarding.direct_target("v1/messages", "")
     assert direct_timeout.total is None
     assert direct_timeout.sock_read == 45.0
     assert direct_timeout.sock_connect == 30
 
+    # Central lane uses its OWN knob — a lowered direct value must NOT leak in.
     monkeypatch.setattr(config, "CENTRAL_URL", "http://central.example")
     _url, central_timeout, via = forwarding.pick_target("v1/messages", "")
     assert via == "central"
-    assert central_timeout.sock_read == 45.0
+    assert central_timeout.sock_read == 600.0
+    assert central_timeout.sock_connect == config.CENTRAL_FORWARD_TIMEOUT
+
+    # And lowering central does not affect a direct-only pick (central down).
+    monkeypatch.setattr(config, "CENTRAL_SOCK_READ_TIMEOUT", 20.0)
+    config.state["central_status"] = "down"
+    _url, direct_timeout2, via2 = forwarding.pick_target("v1/messages", "")
+    assert via2 == "direct"
+    assert direct_timeout2.sock_read == 45.0
 
 
 async def test_poll_central_once_up_then_down(monkeypatch) -> None:

@@ -89,18 +89,28 @@ CENTRAL_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_INTERVAL
 CENTRAL_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_HEALTH_TIMEOUT", "5"))
 CENTRAL_FORWARD_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_FORWARD_TIMEOUT", "10"))
 UPSTREAM_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_TIMEOUT", "10"))
-# Per-read socket timeout on the FORWARD path (inter-byte, not total). A stalled
-# upstream that emits no bytes for this many seconds raises SocketTimeoutError,
-# which the proxy turns into a single retry-direct. Default 600 preserves the
-# historic behavior; for upstreams that can stall silently (e.g. z.ai mid long
-# max_tokens generation), set this BELOW the client idle timeout (~60 s) so the
-# retry fires while the client is still connected — otherwise the late write
-# hits a closing transport and the truncated HTTP surfaces client-side as
-# InvalidHTTPResponse (23/07 :8766 incident: a glm-5.2 POST hung 621 s against a
-# 600 s sock_read). The Anthropic lane streams SSE keepalives during reasoning,
-# which reset sock_read, so it is tolerant of a lower value too; keep the
-# default conservative and tune per-instance via THROTTLE_UPSTREAM_SOCK_READ_TIMEOUT_S.
+# Per-read socket timeouts on the FORWARD path (inter-byte, NOT total): a
+# stalled upstream that emits no bytes for this many seconds raises
+# SocketTimeoutError, which the proxy turns into a single retry-direct. Two
+# knobs because the direct and central paths have different pause tolerance:
+#   * UPSTREAM_SOCK_READ_TIMEOUT  — the raw upstream (Anthropic, z.ai, ...).
+#   * CENTRAL_SOCK_READ_TIMEOUT   — a sibling anthropic-throttle-proxy central
+#     tier, which runs its OWN SSE keepalive-hold, so it must NOT inherit a
+#     direct-lane value lowered for a stall-prone upstream (else a flaky z.ai
+#     setting would also choke central's legit long SSE gaps). The desktop
+#     :8765 proxy runs central (`central_status: up`), so this split is live.
+# Defaults preserve the historic 600 s on BOTH lanes (zero behavior change).
+# ADVISORY tuning only — never force a value below an upstream's legit
+# first-byte / inter-SSE-gap latency: lowering it lets a stalled upstream fail
+# WHILE THE CLIENT IS STILL CONNECTED (the proxy's retry then hits a live
+# transport instead of a closing one), which is what hides the client-side
+# InvalidHTTPResponse from the 23/07 :8766 incident (a glm-5.2 POST hung 621 s
+# against a hardcoded 600 s sock_read). Choose the value per-instance from
+# observed inter-byte latency, not by formula. Anthropic streams SSE keepalives
+# during reasoning (they reset sock_read), so it is tolerant of a lower value;
+# z.ai's inter-byte behavior is unmeasured — set + observe.
 UPSTREAM_SOCK_READ_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_SOCK_READ_TIMEOUT_S", "600"))
+CENTRAL_SOCK_READ_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_SOCK_READ_TIMEOUT_S", "600"))
 UPSTREAM_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_INTERVAL", "30"))
 # Central-health hysteresis: a single transient probe miss must NOT abandon
 # central — that flips the whole local fleet to direct fallback and risks an
