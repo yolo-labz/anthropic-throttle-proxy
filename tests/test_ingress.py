@@ -80,6 +80,31 @@ async def lane_client() -> TestClient:
 
 
 @pytest.fixture
+async def ingress_factory(monkeypatch):
+    """Factory: ``await ingress_factory(lane_app) -> (ingress_client, lane_client)``.
+
+    Builds a custom lane app + an ingress pointed at it, with both torn down on
+    test exit. Dedupes the lane/ingress bootstrap for tests that need a bespoke
+    lane handler (vs the shared echo ``lane_client``).
+    """
+    created: list[tuple[TestClient, TestClient]] = []
+
+    async def _make(lane_app: web.Application) -> tuple[TestClient, TestClient]:
+        lane = TestClient(TestServer(lane_app))
+        await lane.start_server()
+        monkeypatch.setattr(ingress, "DEFAULT_LANE_URL", str(lane.make_url("")).rstrip("/"))
+        ing = TestClient(TestServer(ingress.build_app()))
+        await ing.start_server()
+        created.append((ing, lane))
+        return ing, lane
+
+    yield _make
+    for ing, lane in created:
+        await ing.close()
+        await lane.close()
+
+
+@pytest.fixture
 async def ingress_client(lane_client: TestClient, monkeypatch) -> TestClient:
     """The ingress app pointed at the running fake lane."""
     lane_url = str(lane_client.make_url("")).rstrip("/")
@@ -210,9 +235,7 @@ async def test_hop_by_hop_headers_stripped(ingress_client: TestClient) -> None:
         assert hop not in seen, f"hop-by-hop header {hop!r} leaked to the lane"
 
 
-async def test_ingress_marker_overwrites_upstream_marker(
-    lane_client: TestClient, monkeypatch
-) -> None:
+async def test_ingress_marker_overwrites_upstream_marker(ingress_factory) -> None:
     """A lane trying to spoof the ingress marker can't — ours overwrites it."""
 
     # Lane that returns its own fake ingress marker claiming it's the ingress.
@@ -221,18 +244,87 @@ async def test_ingress_marker_overwrites_upstream_marker(
 
     app = web.Application()
     app.router.add_post("/v1/messages", spoof)
-    lane = TestClient(TestServer(app))
-    await lane.start_server()
-    monkeypatch.setattr(ingress, "DEFAULT_LANE_URL", str(lane.make_url("")).rstrip("/"))
-    ing = TestClient(TestServer(ingress.build_app()))
-    await ing.start_server()
-    try:
-        async with ing.post("/v1/messages", json={}, headers={"Authorization": "Bearer t"}) as resp:
-            # Our stamp wins: the client sees "1", never the lane's "999".
-            assert resp.headers.get(ingress.MARKER_HEADER) == "1"
-    finally:
-        await ing.close()
-        await lane.close()
+    ing, _lane = await ingress_factory(app)
+    async with ing.post("/v1/messages", json={}, headers={"Authorization": "Bearer t"}) as resp:
+        # Our stamp wins: the client sees "1", never the lane's "999".
+        assert resp.headers.get(ingress.MARKER_HEADER) == "1"
+
+
+async def test_role_stamped_on_messages_response(ingress_client: TestClient) -> None:
+    """S2: POST /v1/messages infers the role from the body model + stamps it."""
+    async with ingress_client.post(
+        "/v1/messages",
+        json={"model": "claude-sonnet-4-6", "max_tokens": 8},
+        headers={"Authorization": "Bearer t"},
+    ) as resp:
+        assert resp.status == 200
+        assert resp.headers.get("x-anthropic-throttle-role") == "bulk"
+    async with ingress_client.post(
+        "/v1/messages",
+        json={"model": "claude-opus-4-8", "max_tokens": 8},
+        headers={"Authorization": "Bearer t"},
+    ) as resp:
+        assert resp.headers.get("x-anthropic-throttle-role") == "generate"
+
+
+async def test_non_messages_path_streams_body_unparsed(ingress_client: TestClient) -> None:
+    """S2: only POST /v1/messages buffers the body; other paths stream unchanged.
+
+    A GET to the echo lane (no body buffering) must still succeed and return the
+    path it was sent — proves the role-inference buffering didn't break forwards
+    on other paths.
+    """
+    async with ingress_client.get("/v1/messages?role=check") as resp:
+        assert resp.status == 200
+        payload = await resp.json()
+    assert payload["path"] == "/v1/messages"
+    assert payload["query"] == {"role": "check"}
+
+
+async def test_other_post_path_body_streamed_not_parsed(ingress_factory) -> None:
+    """S2 gate gap: a non-/v1/messages POST streams its body, is never buffered."""
+    seen: dict[str, bytes] = {}
+
+    async def capture(request: web.Request) -> web.Response:
+        seen["body"] = await request.read()
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_post("/v1/other", capture)
+    ing, _lane = await ingress_factory(app)
+    big = b"x" * 200_000  # far over the read limit; proves no buffering here
+    async with ing.post("/v1/other", data=big, headers={"Authorization": "Bearer t"}) as resp:
+        assert resp.status == 204
+    assert seen.get("body") == big  # full body arrived byte-complete
+
+
+async def test_large_messages_body_defaults_role_and_forwards_complete(
+    ingress_factory, monkeypatch
+) -> None:
+    """S2 gate BLOCKER fix: a body > ROLE_BODY_READ_LIMIT never parses (bound
+    memory/CPU) — role defaults to generate — but the FULL body still reaches
+    the lane byte-complete (prefix + streamed remainder)."""
+    seen: dict[str, bytes] = {}
+
+    async def capture(request: web.Request) -> web.Response:
+        seen["body"] = await request.read()
+        return web.Response(status=200, body=b"ok")
+
+    app = web.Application()
+    app.router.add_post("/v1/messages", capture)
+    ing, _lane = await ingress_factory(app)
+    # Shrink the read limit so the test body exceeds it without sending 64 KiB.
+    monkeypatch.setattr(ingress, "ROLE_BODY_READ_LIMIT", 16)
+    # Valid model at the START, then a large body that exceeds the 16-byte cap.
+    payload = b'{"model":"claude-sonnet-4-6","padding":"' + (b"y" * 100_000) + b'"}'
+    async with ing.post(
+        "/v1/messages", data=payload, headers={"Authorization": "Bearer t"}
+    ) as resp:
+        assert resp.status == 200
+        # Role defaulted to generate (body not parsed past the 16-byte cap).
+        assert resp.headers.get("x-anthropic-throttle-role") == "generate"
+    # The FULL body still reached the lane byte-complete (no truncation).
+    assert seen.get("body") == payload
 
 
 async def test_unreachable_lane_503_does_not_leak_detail(ingress_client: TestClient) -> None:
