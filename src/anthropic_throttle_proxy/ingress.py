@@ -22,10 +22,13 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import AsyncIterator
 from typing import Final
 
 import aiohttp
 from aiohttp import web
+
+from .routing import infer_role_from_body
 
 # --- config (env-derived, read once at import like config.py) ----------------
 # The ingress listens on its own port; 127.0.0.1 keeps it host-local (the fleet
@@ -48,9 +51,21 @@ DEFAULT_LANE_URL: Final[str] = os.environ.get(
 # lower only for a stall-prone lane where the lane's own sock-read is too loose.
 FORWARD_TIMEOUT_S: Final[float] = float(os.environ.get("INGRESS_FORWARD_TIMEOUT_S", "0"))
 
+# S2: maximum request-body bytes inspected for the ``model`` field on
+# POST /v1/messages. The model is early in a claude-code body, so 64 KiB is
+# ample; bodies larger than this keep streaming through unparsed (role defaults
+# to generate) — bounds memory + the json.loads CPU surface (gate BLOCKER).
+ROLE_BODY_READ_LIMIT: Final[int] = int(
+    os.environ.get("INGRESS_ROLE_BODY_READ_LIMIT", str(64 * 1024))
+)
+
 # Stamp on every served response so a downstream tier / probe can tell an
 # ingress-served response from a direct-lane response.
 MARKER_HEADER: Final[str] = "x-anthropic-throttle-ingress"
+
+# S2: the inferred role (generate/judge/bulk) stamped on served responses for
+# observability. S6 surfaces per-(role→lane) decision counts.
+ROLE_HEADER: Final[str] = "x-anthropic-throttle-role"
 
 # Hop-by-hop headers (RFC 7230 §6.1) — must not be forwarded verbatim; aiohttp
 # also manages Content-Length / Transfer-Encoding on the rebuilt request.
@@ -87,21 +102,52 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     """Forward one request to the default lane, path-preservingly.
 
     Path + query string are preserved verbatim (``request.path_qs``), the body
-    is streamed, and the upstream response is streamed back byte-identical. In
-    S1 this is identical to the client pointing at the lane directly; later
-    slices swap the target URL + remap the body model without touching this
-    shape.
+    is streamed (or buffered for ``POST /v1/messages`` so S2 can read the
+    model), and the upstream response is streamed back byte-identical. S1 made
+    this a pure passthrough; S2 adds role inference (stamped on the response for
+    observability, no routing change — S3 selects the lane).
     """
     session: aiohttp.ClientSession = request.app[_SESSION_KEY]
     target = f"{DEFAULT_LANE_URL}{request.path_qs}"
     timeout = aiohttp.ClientTimeout(total=FORWARD_TIMEOUT_S or None)
+
+    # S2: infer the role from the model on POST /v1/messages only. Other paths
+    # stream unchanged (no model to read, no body buffering).
+    #
+    # Bounded read (DoS guard, gate BLOCKER on S2): only the first
+    # ROLE_BODY_READ_LIMIT bytes are inspected for the model — the ``model``
+    # field is early in a claude-code body. If the body is larger, role stays
+    # the default and the FULL body still streams through (prefix + remainder),
+    # so we never buffer an unbounded body and json.loads only ever runs on a
+    # bounded prefix.
+    role = "generate"
+    body_data: bytes | AsyncIterator[bytes] = request.content
+    if request.method == "POST" and request.path == "/v1/messages":
+        prefix = await request.content.read(ROLE_BODY_READ_LIMIT)
+        if len(prefix) < ROLE_BODY_READ_LIMIT:
+            # Whole body fit in the limit → safe to parse for the model.
+            role = infer_role_from_body(prefix)
+            body_data = prefix
+        else:
+            # Body exceeds the limit → don't parse (bound memory/CPU). Stream the
+            # prefix + the remainder through so the forward stays byte-complete.
+            role = "generate"
+
+            async def _chained_body() -> AsyncIterator[bytes]:
+                yield prefix
+                async for chunk in request.content.iter_any():
+                    if chunk:
+                        yield chunk
+
+            body_data = _chained_body()
+
     upstream: aiohttp.ClientResponse | None = None
     try:
         upstream = await session.request(
             request.method,
             target,
             headers=_forward_headers(request),
-            data=request.content,
+            data=body_data,
             timeout=timeout,
             allow_redirects=False,
             auto_decompress=False,
@@ -121,6 +167,7 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
         resp = web.StreamResponse(status=upstream.status, headers=out_headers)
         resp.headers[MARKER_HEADER] = "1"
+        resp.headers[ROLE_HEADER] = role  # S2 observability (S6 surfaces counts)
         await resp.prepare(request)
         async for chunk in upstream.content.iter_any():
             if not chunk:
