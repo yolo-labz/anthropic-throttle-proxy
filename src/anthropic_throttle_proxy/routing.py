@@ -36,9 +36,12 @@ __all__ = ["ROLES", "infer_role", "infer_role_from_body"]
 
 ROLES = ("generate", "judge", "bulk")
 
-# Context-size suffixes on a model id, e.g. "claude-opus-4-8[1m]". Stripped
-# before tier matching so a 1M-context opus is still "generate".
-_CTX_SUFFIX = re.compile(r"\s*\[\d+[mk]\]\s*", re.IGNORECASE)
+# Context-size suffix on a model id, e.g. "claude-opus-4-8[1m]". Stripped
+# before tier matching so a 1M-context opus is still "generate". No leading/
+# trailing ``\s*`` — the surrounding ``.strip()`` handles whitespace, and a
+# ``\s*`` anchor on user-controlled input is a ReDoS flag (CodeQL high); the
+# bounded suffix alone is linear.
+_CTX_SUFFIX = re.compile(r"\[\d+[mk]\]", re.IGNORECASE)
 
 
 def _normalize(model: str) -> str:

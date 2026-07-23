@@ -53,6 +53,21 @@ def test_infer_role_strips_anthropic_prefix() -> None:
 @pytest.mark.parametrize(
     "model",
     [
+        "claude-opus-4-8[1m]",
+        "claude-opus-4-8 [1m]",  # whitespace before suffix — .strip() handles it
+        "  claude-opus-4-8[1m]  ",  # surrounding whitespace
+        "claude-opus-4-8[1M]",  # case-insensitive suffix
+    ],
+)
+def test_infer_role_context_suffix_stripped_without_redos_regex(model: str) -> None:
+    """The context-suffix regex carries no ``\\s*`` anchor (ReDoS guard); the
+    surrounding ``.strip()`` still normalizes whitespace."""
+    assert infer_role(model) == "generate"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
         "claude-sonnet-4-6",  # Spec 093 subagent slot (PR #1183)
         "claude-sonnet-4-6[1m]",
         "claude-haiku-4-5",
