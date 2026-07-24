@@ -939,3 +939,44 @@ async def test_s5_bulk_served_via_kimi_when_anthropic_capped_invariant_1(
     finally:
         await ing.close()
         await kim.close()
+
+
+# ─── Saturation spill (coordinator ask) ─────────────────────────────────────
+
+
+async def test_ingress_spills_on_saturation_503(monkeypatch) -> None:
+    """When a lane returns a queue-wait-timeout 503, the ingress spills the
+    request to the NEXT lane in the chain instead of passing the 503 through.
+    bulk (chain kimi→glm); kimi saturates → spill to glm → client gets 200."""
+
+    async def saturated(_request: web.Request) -> web.Response:
+        return web.Response(
+            status=503, headers={"x-anthropic-throttle-queue-timeout": "1"}, text="queue full"
+        )
+
+    async def ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    kim = await _start_lane(saturated)
+    glm = await _start_lane(ok)
+    ing = await _boot_ingress(
+        monkeypatch,
+        _lanes_with("http://127.0.0.1:1", str(kim.make_url("")), str(glm.make_url(""))),
+        _open_state({"kimi", "glm"}),
+    )
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 200  # spilled from kimi (503) → glm (200)
+            assert r.headers["x-anthropic-throttle-lane"] == "glm"
+    finally:
+        await ing.close()
+        await kim.close()
+        await glm.close()
+    # kimi was marked saturated in lane_state
+    assert ingress.lane_state.get("kimi") is not None
+    assert ingress.lane_state["kimi"].open is False
+    assert ingress.lane_state["kimi"].detail == "saturated"
