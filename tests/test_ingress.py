@@ -498,6 +498,9 @@ async def test_s3_routes_by_role_over_distinct_lanes(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(ingress, "LANE_HEALTH_INTERVAL_S", 0.0)
+    monkeypatch.setattr(
+        ingress.routing, "GENERATE_OVERFLOW_ENABLED", True
+    )  # exercise full generate chain
     now = time.time()
     monkeypatch.setattr(
         ingress,
@@ -571,7 +574,9 @@ async def test_s3_oversized_lane_health_marked_closed(monkeypatch) -> None:
 
 
 async def test_s3_all_lanes_capped_yields_503(monkeypatch) -> None:
-    """S3/S5: every lane for the role closed → 503 (the basic HOLD; S5 refines)."""
+    """S5: a bulk role with every lane closed → 503 all-lanes-capped (no downgrade
+    possible — bulk is already the cheap lanes). Generate-all-capped is the S5
+    generate-held path (tested separately)."""
     _route_all_lanes_to(monkeypatch, "http://127.0.0.1:9999")  # url irrelevant; all closed
     monkeypatch.setattr(
         ingress,
@@ -586,12 +591,14 @@ async def test_s3_all_lanes_capped_yields_503(monkeypatch) -> None:
     await ing.start_server()
     try:
         async with ing.post(
-            "/v1/messages", json={"model": "claude-opus-4-8"}, headers={"Authorization": "Bearer t"}
+            "/v1/messages",
+            json={"model": "claude-sonnet-4-6"},  # bulk
+            headers={"Authorization": "Bearer t"},
         ) as r:
             assert r.status == 503
             payload = await r.json()
         assert payload["error"] == "ingress-all-lanes-capped"
-        assert payload["role"] == "generate"
+        assert payload["role"] == "bulk"
     finally:
         await ing.close()
 
@@ -674,6 +681,7 @@ async def test_s4_session_stickiness_pins_then_evicts_on_lock(monkeypatch) -> No
         ),
     }
     ing = await _boot_ingress(monkeypatch, lanes, _open_state({"anthropic", "glm"}, {"kimi"}))
+    monkeypatch.setattr(ingress.routing, "GENERATE_OVERFLOW_ENABLED", True)  # generate spills
     try:
         body = {"model": "claude-opus-4-8", "metadata": {"user_id": "sess-1"}, "messages": []}
         async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
@@ -688,3 +696,115 @@ async def test_s4_session_stickiness_pins_then_evicts_on_lock(monkeypatch) -> No
         await ing.close()
         await anth.close()
         await glm.close()
+
+
+# ─── Spec 093 S5 — generate-held (don't silently downgrade) ─────────────────
+
+
+async def test_s5_generate_held_when_anthropic_capped_and_overflow_off(monkeypatch) -> None:
+    """Invariant 6 (default, pre-kimi-k3): Anthropic capped + Kimi/GLM wide open
+    → generate HOLDs (503 generate-held), NOT silently served on Kimi/GLM as Opus."""
+    _route_all_lanes_to(monkeypatch, "http://127.0.0.1:9999")
+    monkeypatch.setattr(
+        ingress,
+        "lane_state",
+        {
+            "anthropic": LaneState(False, time.time(), "capped"),
+            "kimi": LaneState(True, time.time(), "ok"),
+            "glm": LaneState(True, time.time(), "ok"),
+        },
+    )
+    # overflow OFF is the default; assert it explicitly.
+    monkeypatch.setattr(ingress.routing, "GENERATE_OVERFLOW_ENABLED", False)
+    ing = TestClient(TestServer(ingress.build_app()))
+    await ing.start_server()
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-opus-4-8"},  # generate
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 503
+            payload = await r.json()
+        assert payload["error"] == "ingress-generate-held"
+        assert payload["reason"] == "anthropic-capped-overflow-disabled"
+    finally:
+        await ing.close()
+
+
+async def _start_lane(handler) -> TestClient:
+    """Start a fake lane app (handler at /v1/messages) on an ephemeral port."""
+    client = TestClient(TestServer(_app_with(handler)))
+    await client.start_server()
+    return client
+
+
+def _lanes_with(
+    anth_url: str = "http://127.0.0.1:1",
+    kim_url: str = "http://127.0.0.1:1",
+    glm_url: str = "http://127.0.0.1:1",
+) -> dict:
+    """3-lane config with explicit URLs (default dead) — dedupes lane construction."""
+    return {
+        "anthropic": Lane("anthropic", anth_url.rstrip("/"), frozenset({"generate", "judge"})),
+        "kimi": Lane("kimi", kim_url.rstrip("/"), frozenset({"generate", "bulk"})),
+        "glm": Lane("glm", glm_url.rstrip("/"), frozenset({"generate", "judge", "bulk"})),
+    }
+
+
+async def test_s5_pinned_generate_lane_respects_overflow_toggle(monkeypatch) -> None:
+    """S5 BLOCKER fix: a generate session pinned to Kimi (when overflow was on)
+    is NOT honored after overflow turns off — the request re-selects (Anthropic)
+    or HOLDs rather than silently downgrading to Kimi."""
+
+    async def echo_ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    anth = await _start_lane(echo_ok)
+    kim = await _start_lane(echo_ok)
+    ing = await _boot_ingress(
+        monkeypatch,
+        _lanes_with(str(anth.make_url("")), str(kim.make_url(""))),
+        _open_state({"anthropic", "kimi"}),
+    )
+    # Pre-pin a generate session to Kimi (simulating overflow-was-on at pin time).
+    ingress._session_lane["sess-x"] = "kimi"
+    monkeypatch.setattr(ingress.routing, "GENERATE_OVERFLOW_ENABLED", False)  # now off
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-opus-4-8", "metadata": {"user_id": "sess-x"}, "messages": []},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            # Pin dropped → re-select: generate (overflow off) → Anthropic only.
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+    finally:
+        await ing.close()
+        await anth.close()
+        await kim.close()
+
+
+async def test_s5_bulk_served_via_kimi_when_anthropic_capped_invariant_1(
+    monkeypatch,
+) -> None:
+    """Invariant 1: with Anthropic capped + Kimi open, a BULK request is still
+    served (via Kimi) — the overflow flag gates only generate, not the cheap lanes."""
+
+    async def echo_ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    kim = TestClient(TestServer(_app_with(echo_ok)))
+    await kim.start_server()
+    lanes = _kimi_real_lanes(str(kim.make_url("")))
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"kimi", "glm"}, {"anthropic"}))
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-sonnet-4-6"},  # bulk
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "kimi"
+    finally:
+        await ing.close()
+        await kim.close()

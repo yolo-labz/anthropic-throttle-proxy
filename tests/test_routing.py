@@ -18,6 +18,7 @@ from anthropic_throttle_proxy.routing import (
     ROLES,
     LaneState,
     bearer_usable,
+    effective_chain,
     infer_role,
     infer_role_from_body,
     lane_usable,
@@ -158,19 +159,30 @@ def _st(open_: bool) -> LaneState:
 
 
 def test_select_lane_generate_prefers_anthropic_then_kimi_then_glm() -> None:
-    """generate chain = anthropic→kimi→glm; first open wins."""
+    """generate chain = anthropic→kimi→glm; first open wins. Requires overflow ON
+    (post-kimi-k3 GA) — pre-GA, generate is Anthropic-only (see S5 tests)."""
     assert (
-        select_lane("generate", {"anthropic": _st(True), "kimi": _st(True), "glm": _st(True)})
+        select_lane(
+            "generate", {"anthropic": _st(True), "kimi": _st(True), "glm": _st(True)}, overflow=True
+        )
         == "anthropic"
     )
     # anthropic closed → kimi
     assert (
-        select_lane("generate", {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)})
+        select_lane(
+            "generate",
+            {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)},
+            overflow=True,
+        )
         == "kimi"
     )
     # anthropic+kimi closed → glm (the floor)
     assert (
-        select_lane("generate", {"anthropic": _st(False), "kimi": _st(False), "glm": _st(True)})
+        select_lane(
+            "generate",
+            {"anthropic": _st(False), "kimi": _st(False), "glm": _st(True)},
+            overflow=True,
+        )
         == "glm"
     )
 
@@ -188,12 +200,13 @@ def test_select_lane_bulk_never_returns_anthropic_invariant_2() -> None:
 
 
 def test_select_lane_lock_skips_to_next_open_invariant_3() -> None:
-    """Invariant 3: a lane going closed mid-fleet → the next request auto-advances."""
+    """Invariant 3: a lane going closed mid-fleet → the next request auto-advances
+    (overflow ON; bulk/judge always advance, generate only post-kimi-k3)."""
     state = {"anthropic": _st(True), "kimi": _st(True), "glm": _st(True)}
-    assert select_lane("generate", state) == "anthropic"
-    # Anthropic account locks (all bearers capped) → next generate advances to Kimi
+    assert select_lane("generate", state, overflow=True) == "anthropic"
+    # Anthropic account locks → next generate advances to Kimi
     state["anthropic"] = _st(False)
-    assert select_lane("generate", state) == "kimi"
+    assert select_lane("generate", state, overflow=True) == "kimi"
 
 
 def test_select_lane_all_capped_returns_none_hold() -> None:
@@ -211,7 +224,7 @@ def test_select_lane_unknown_role_uses_generate_chain() -> None:
 
 def test_select_lane_missing_state_entry_is_skipped() -> None:
     """A lane never polled (absent from state) is skipped, not assumed open."""
-    assert select_lane("generate", {"kimi": _st(True)}) == "kimi"
+    assert select_lane("generate", {"kimi": _st(True)}, overflow=True) == "kimi"
     assert select_lane("generate", {}) is None
 
 
@@ -330,3 +343,43 @@ def test_session_key_from_body_absent_returns_none() -> None:
 
 def test_session_key_from_body_non_string_user_id_returns_none() -> None:
     assert session_key_from_body(b'{"metadata":{"user_id":123}}') is None
+
+
+# ─── Spec 093 S5 — never-hard-fail / don't-silently-downgrade ───────────────
+
+
+def test_effective_chain_generate_overflow_off_is_anthropic_only() -> None:
+    """Invariant 6 (default, pre-kimi-k3 GA): generate must NOT spill to the cheap
+    lanes — it would silently serve kimi-k2.6/GLM as Opus. Anthropic-only."""
+    assert effective_chain("generate", overflow=False) == ("anthropic",)
+
+
+def test_effective_chain_generate_overflow_on_is_full_chain() -> None:
+    """Post-kimi-k3 GA (INGRESS_GENERATE_OVERFLOW=true): generate spills."""
+    assert effective_chain("generate", overflow=True) == ("anthropic", "kimi", "glm")
+
+
+def test_effective_chain_bulk_judge_unaffected_by_overflow_flag() -> None:
+    """Bulk/judge already run on the cheap lanes; the overflow flag is generate-only."""
+    assert effective_chain("bulk", overflow=False) == ("kimi", "glm")
+    assert effective_chain("judge", overflow=False) == ("anthropic", "glm", "kimi")
+
+
+def test_select_lane_generate_overflow_off_holds_when_anthropic_capped() -> None:
+    """Default (overflow off): Anthropic capped + Kimi/GLM wide open → generate
+    HOLDs (None) rather than downgrading — invariant 6."""
+    state = {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)}
+    assert select_lane("generate", state, overflow=False) is None
+
+
+def test_select_lane_bulk_still_served_when_anthropic_capped_invariant_1() -> None:
+    """Invariant 1: bulk is served via Kimi/GLM even when Anthropic is capped —
+    the overflow flag doesn't gate the cheap lanes."""
+    state = {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)}
+    assert select_lane("bulk", state, overflow=False) == "kimi"
+
+
+def test_select_lane_judge_served_via_glm_when_anthropic_capped() -> None:
+    """Judge spills Anthropic→GLM (overflow flag is generate-only; judge always spills)."""
+    state = {"anthropic": _st(False), "kimi": _st(False), "glm": _st(True)}
+    assert select_lane("judge", state, overflow=False) == "glm"
