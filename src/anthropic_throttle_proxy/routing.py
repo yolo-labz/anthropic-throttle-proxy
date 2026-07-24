@@ -45,6 +45,7 @@ __all__ = [
     "effective_chain",
     "infer_role",
     "infer_role_from_body",
+    "role_from_header",
     "bearer_usable",
     "lane_usable",
     "select_lane",
@@ -302,6 +303,36 @@ def infer_role_from_body(raw: bytes) -> str:
     if isinstance(obj, dict):
         return infer_role(obj.get("model"))
     return "generate"
+
+
+# The role-override header may only DOWNGRADE to a cheaper lane, never CLAIM the
+# premium generate lane. Inference already defaults unknown/absent to generate,
+# so no legitimate consumer needs to *assert* generate — and honoring a
+# client-set ``generate`` would let any local process pin traffic onto the
+# reserved Anthropic lane (GLM finding A). Restrict to the two spill-eligible
+# roles; a ``generate`` claim falls through to inference.
+_HEADER_OVERRIDABLE_ROLES = frozenset({"judge", "bulk"})
+
+
+def role_from_header(value: str | None) -> str | None:
+    """Spill-eligible role from the ``x-anthropic-throttle-role-hint`` request
+    header, or ``None`` to fall back to model-tier inference.
+
+    Only ``bulk``/``judge`` are honored — the header can DOWNGRADE traffic onto
+    the cheap lanes but can NEVER claim the premium ``generate`` lane (a
+    ``generate`` value → ``None`` → inference). This is Spec 093 Q2's "optional
+    later" role header, made LOAD-BEARING by the NixOS #1281 drift: the fleet's
+    subagent slot is ``claude-opus-4-8[1m]`` — the SAME id as primary-generate —
+    so ``infer_role`` alone maps subagent fan-out to ``generate`` and it never
+    reaches the bulk chain. A consumer (the NixOS bulk clients) sets this header
+    to route bulk fan-out to Kimi/GLM WITHOUT changing the model id (CI-guarded,
+    #1281). Absent/unknown/``generate`` → ``None``. Never raises — an attacker-set
+    header can at worst downgrade its OWN request to a cheaper lane.
+    """
+    if not value:
+        return None
+    v = value.strip().lower()
+    return v if v in _HEADER_OVERRIDABLE_ROLES else None
 
 
 def remap_body_model(raw: bytes, new_model: str) -> bytes:
