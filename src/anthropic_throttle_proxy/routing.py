@@ -33,7 +33,7 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 __all__ = [
     "ROLES",
@@ -46,6 +46,8 @@ __all__ = [
     "bearer_usable",
     "lane_usable",
     "select_lane",
+    "remap_body_model",
+    "session_key_from_body",
 ]
 
 ROLES = ("generate", "judge", "bulk")
@@ -66,13 +68,16 @@ class Lane:
     """A per-lane throttle the ingress can route to.
 
     ``url`` is the lane's base URL (requests forward to ``url + path_qs``);
-    ``health_url`` defaults to ``url + /__throttle/health``.
+    ``health_url`` defaults to ``url + /__throttle/health``. ``models`` maps a
+    role → the model id the lane's upstream expects (S4 egress remap); an empty
+    mapping (Anthropic) means the client's ``claude-*`` id is forwarded verbatim.
     """
 
     id: str
     url: str
     roles: frozenset[str]
-    health_url: str = ""  # filled by default_lanes
+    health_url: str = ""
+    models: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.health_url:
@@ -89,7 +94,20 @@ class LaneState:
 
 
 def default_lanes() -> dict[str, Lane]:
-    """The three-lane fleet (Spec 093). URLs env-overridable for test/non-local deploys."""
+    """The three-lane fleet (Spec 093). URLs env-overridable for test/non-local deploys.
+
+    Egress model ids (S4 remap): Anthropic keeps the client's ``claude-*``; Kimi
+    expects Moonshot ids (kimi-k3 for generate — GA 27/07; kimi-k2.6 for bulk/judge,
+    verified 23/07); GLM expects glm-5.2 (verified). Overrides via
+    ``INGRESS_<LANE>_<ROLE>_MODEL`` so the fleet can pin exact ids without a code change.
+    """
+    kimi_models = {
+        "generate": os.environ.get("INGRESS_KIMI_GENERATE_MODEL", "kimi-k3"),
+        "bulk": os.environ.get("INGRESS_KIMI_BULK_MODEL", "kimi-k2.6"),
+        "judge": os.environ.get("INGRESS_KIMI_JUDGE_MODEL", "kimi-k2.6"),
+    }
+    glm_model = os.environ.get("INGRESS_GLM_MODEL", "glm-5.2")
+    glm_models = {"generate": glm_model, "bulk": glm_model, "judge": glm_model}
     return {
         "anthropic": Lane(
             "anthropic",
@@ -100,11 +118,13 @@ def default_lanes() -> dict[str, Lane]:
             "kimi",
             os.environ.get("INGRESS_KIMI_LANE_URL", "http://127.0.0.1:8767"),
             frozenset({"generate", "bulk"}),
+            models=kimi_models,
         ),
         "glm": Lane(
             "glm",
             os.environ.get("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766"),
             frozenset({"generate", "judge", "bulk"}),
+            models=glm_models,
         ),
     }
 
@@ -246,3 +266,50 @@ def infer_role_from_body(raw: bytes) -> str:
     if isinstance(obj, dict):
         return infer_role(obj.get("model"))
     return "generate"
+
+
+def remap_body_model(raw: bytes, new_model: str) -> bytes:
+    """Return ``raw`` with its JSON ``model`` field set to ``new_model`` (S4 egress remap).
+
+    Used when forwarding a ``claude-*`` client request to a non-Anthropic lane
+    whose upstream expects its own id (``kimi-k2.6`` / ``glm-5.2``). The
+    client-facing response keeps the original id (the lane returns its own; the
+    ingress does not rewrite the response model — invariant 4 is about the
+    *request* egress, the client sent its id and gets a coherent answer back).
+
+    On any parse failure the body is returned UNCHANGED — remap never breaks a
+    forward (a lane that can't parse the body fails its own way, same as today).
+    """
+    if not raw or not new_model:
+        return raw
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    obj["model"] = new_model
+    return json.dumps(obj).encode()
+
+
+def session_key_from_body(raw: bytes) -> str | None:
+    """S4 session stickiness: a stable per-session key from the request body.
+
+    claude-code sends ``metadata.user_id`` (a stable per-user id) — the cleanest
+    session boundary for cache economics (a mid-session lane switch forces a slow
+    uncached turn). Returns None when absent → no stickiness for that request.
+    """
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    meta = obj.get("metadata")
+    if isinstance(meta, dict):
+        uid = meta.get("user_id")
+        if isinstance(uid, str) and uid:
+            return uid
+    return None

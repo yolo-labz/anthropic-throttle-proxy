@@ -25,6 +25,102 @@ from anthropic_throttle_proxy import ingress
 from anthropic_throttle_proxy.routing import Lane, LaneState
 
 
+def _app_with(handler) -> web.Application:
+    """Tiny lane app mounting ``handler`` at /v1/messages (POST + GET)."""
+    app = web.Application()
+    app.router.add_post("/v1/messages", handler)
+    app.router.add_get("/v1/messages", handler)
+    return app
+
+
+async def _boot_ingress(monkeypatch, lanes: dict, state: dict) -> TestClient:
+    """Configure LANES + lane_state (poll disabled) + empty _session_lane, boot a
+    fresh ingress client. Caller closes it."""
+    monkeypatch.setattr(ingress, "LANES", lanes)
+    monkeypatch.setattr(ingress, "lane_state", state)
+    monkeypatch.setattr(ingress, "LANE_HEALTH_INTERVAL_S", 0.0)
+    monkeypatch.setattr(ingress, "_session_lane", {})
+    client = TestClient(TestServer(ingress.build_app()))
+    await client.start_server()
+    return client
+
+
+def _open_state(ids: set[str], closed: set[str] | None = None) -> dict:
+    now = time.time()
+    out = {lid: LaneState(True, now, "test") for lid in ids}
+    for lid in closed or set():
+        out[lid] = LaneState(False, now, "capped")
+    return out
+
+
+_KIMI_MODELS = {"generate": "kimi-k3", "bulk": "kimi-k2.6", "judge": "kimi-k2.6"}
+_GLM_MODELS = {"generate": "glm-5.2", "bulk": "glm-5.2", "judge": "glm-5.2"}
+
+
+def _dead_overflow_lanes() -> dict:
+    """Kimi + GLM as dead URLs (with their remap models). Shared by lane fixtures
+    so the dead-URL construction isn't duplicated across tests (code-slop gate)."""
+    return {
+        "kimi": Lane(
+            "kimi", "http://127.0.0.1:1", frozenset({"generate", "bulk"}), models=_KIMI_MODELS
+        ),
+        "glm": Lane(
+            "glm",
+            "http://127.0.0.1:1",
+            frozenset({"generate", "judge", "bulk"}),
+            models=_GLM_MODELS,
+        ),
+    }
+
+
+def _kimi_real_lanes(kimi_url: str) -> dict:
+    """3-lane config: Kimi real at ``kimi_url``, Anthropic + GLM dead."""
+    lanes = _dead_overflow_lanes()
+    lanes.pop("kimi")
+    lanes["kimi"] = Lane(
+        "kimi", kimi_url.rstrip("/"), frozenset({"generate", "bulk"}), models=_KIMI_MODELS
+    )
+    lanes["anthropic"] = Lane("anthropic", "http://127.0.0.1:1", frozenset({"generate", "judge"}))
+    return lanes
+
+
+def _anthropic_real_lanes(anth_url: str) -> dict:
+    """3-lane config: Anthropic real at ``anth_url``, Kimi + GLM dead."""
+    lanes = _dead_overflow_lanes()
+    lanes["anthropic"] = Lane("anthropic", anth_url.rstrip("/"), frozenset({"generate", "judge"}))
+    return lanes
+
+
+async def _boot_kimi_ingress(monkeypatch, lane_handler) -> tuple[TestClient, TestClient]:
+    """Kimi-real ingress (anthropic closed) for the remap/CL tests. Returns
+    (ingress_client, kimi_client); caller closes both."""
+    kim = TestClient(TestServer(_app_with(lane_handler)))
+    await kim.start_server()
+    ing = await _boot_ingress(
+        monkeypatch,
+        _kimi_real_lanes(str(kim.make_url(""))),
+        _open_state({"kimi", "glm"}, {"anthropic"}),
+    )
+    return ing, kim
+
+
+async def _post_bulk_and_close(ing: TestClient, kim: TestClient) -> dict:
+    """POST a bulk (sonnet-4-6) body through the ingress, assert it routed to
+    Kimi, return the lane's JSON response. Closes both clients."""
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "kimi"
+            return await r.json()
+    finally:
+        await ing.close()
+        await kim.close()
+
+
 def _route_all_lanes_to(monkeypatch, lane_url: str) -> None:
     """S3: point every lane id at ``lane_url`` + mark all OPEN, so a test's fake
     lane serves any role. Disables the background health poll
@@ -498,3 +594,97 @@ async def test_s3_all_lanes_capped_yields_503(monkeypatch) -> None:
         assert payload["role"] == "generate"
     finally:
         await ing.close()
+
+
+# ─── Spec 093 S4 — model-remap + session stickiness ─────────────────────────
+
+
+async def _echo_model(request: web.Request) -> web.Response:
+    body = await request.read()
+    return web.json_response({"received_model": json.loads(body).get("model")})
+
+
+async def test_s4_remaps_model_on_egress_to_non_anthropic_lane(monkeypatch) -> None:
+    """S4 invariant 4: egress body model == the lane's mapped id.
+
+    A bulk request (claude-sonnet-4-6) routed to Kimi arrives with model
+    ``kimi-k2.6`` (remapped), not the client's claude-* id."""
+    ing, kim = await _boot_kimi_ingress(monkeypatch, _echo_model)
+    payload = await _post_bulk_and_close(ing, kim)
+    assert payload["received_model"] == "kimi-k2.6"  # remapped, not claude-*
+
+
+async def test_s4_no_remap_to_anthropic_keeps_client_model(monkeypatch) -> None:
+    """Anthropic keeps the client's claude-* id verbatim (no models map)."""
+    anth = TestClient(TestServer(_app_with(_echo_model)))
+    await anth.start_server()
+    ing = await _boot_ingress(
+        monkeypatch,
+        _anthropic_real_lanes(str(anth.make_url(""))),
+        _open_state({"anthropic", "kimi", "glm"}),
+    )
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-opus-4-8", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+            assert (await r.json())["received_model"] == "claude-opus-4-8"  # verbatim
+    finally:
+        await ing.close()
+        await anth.close()
+
+
+async def test_s4_content_length_recomputed_on_remap(monkeypatch) -> None:
+    """The client's stale Content-Length is stripped (gate BLOCKER false-alarm
+    guard + TEST-GAP): the lane receives a CL matching the REMAPPED body length,
+    not the client's original. Without this the lane hangs on a length mismatch."""
+
+    async def echo_cl(request: web.Request) -> web.Response:
+        body = await request.read()
+        return web.json_response({"received_cl": request.content_length, "received_len": len(body)})
+
+    ing, kim = await _boot_kimi_ingress(monkeypatch, echo_cl)
+    payload = await _post_bulk_and_close(ing, kim)
+    # The lane received the remapped body intact (CL == actual byte length),
+    # proving the stale client CL was stripped and aiohttp recomputed it.
+    assert payload["received_cl"] == payload["received_len"]
+    assert payload["received_cl"] is not None
+
+
+async def test_s4_session_stickiness_pins_then_evicts_on_lock(monkeypatch) -> None:
+    """S4: a session pins to its first lane; when that lane locks, the poll's
+    eviction makes the next request re-select down the chain."""
+
+    async def echo_ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    anth = TestClient(TestServer(_app_with(echo_ok)))
+    glm = TestClient(TestServer(_app_with(echo_ok)))
+    await anth.start_server()
+    await glm.start_server()
+    lanes = {
+        "anthropic": Lane(
+            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
+        ),
+        "kimi": Lane("kimi", "http://127.0.0.1:1", frozenset({"generate", "bulk"})),
+        "glm": Lane(
+            "glm", str(glm.make_url("")).rstrip("/"), frozenset({"generate", "judge", "bulk"})
+        ),
+    }
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"anthropic", "glm"}, {"kimi"}))
+    try:
+        body = {"model": "claude-opus-4-8", "metadata": {"user_id": "sess-1"}, "messages": []}
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"  # generate→anthropic
+        assert ingress._session_lane.get("sess-1") == "anthropic"  # pinned
+        # Anthropic locks → poll evicts the pinned session → next request advances.
+        ingress.lane_state["anthropic"] = LaneState(False, time.time(), "capped")
+        ingress._evict_sessions_for_closed_lanes({"anthropic"})
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.headers["x-anthropic-throttle-lane"] == "glm"  # anthropic→kimi(closed)→glm
+    finally:
+        await ing.close()
+        await anth.close()
+        await glm.close()
