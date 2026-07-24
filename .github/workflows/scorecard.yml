@@ -1,0 +1,56 @@
+name: OpenSSF Scorecard
+
+# OpenSSF Scorecard — the automated proxy metric for this org's OSPS Baseline
+# target (release-eng rule 25). Publishes results so the score is visible + the
+# Pinned-Dependencies / Branch-Protection / SAST axes are tracked over time.
+# The ~8.7/10 solo-dev ceiling (Contributors is structurally capped) is
+# expected — accept it. Runs on push to main + weekly + on demand.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write # SARIF upload to GitHub Security tab.
+      id-token: write # Sigstore OIDC for ossf/scorecard-action keyless signing.
+      contents: read # checkout source.
+      actions: read # Scorecard reads workflow files for its audits.
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scorecard-sarif
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.28.18
+        with:
+          sarif_file: results.sarif
