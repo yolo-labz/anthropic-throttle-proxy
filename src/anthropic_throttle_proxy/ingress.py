@@ -113,6 +113,17 @@ QUEUE_TIMEOUT_HEADER: Final[str] = "x-anthropic-throttle-queue-timeout"
 LANE_SATURATION_COOLDOWN_S: Final[float] = float(
     os.environ.get("INGRESS_LANE_SATURATION_COOLDOWN_S", "15")
 )
+# When a generate request hits a saturation-503 from the Anthropic lane and
+# there's NO overflow lane (overflow disabled or generate-only chain), the
+# ingress RETRIES the same lane this many times with a delay between each.
+# This makes the ingress QUEUE-AND-WAIT (honoring the Anthropic lane's own
+# queue) instead of 503-aborting — matching what direct :8765 does (the nix
+# w1W:p4 flip-gate requirement). Total max wait = retries × delay (default
+# 3 × 5 = 15s, well under claude-code's ~60s patience).
+GENERATE_QUEUE_RETRIES: Final[int] = int(os.environ.get("INGRESS_GENERATE_QUEUE_RETRIES", "3"))
+GENERATE_QUEUE_RETRY_DELAY_S: Final[float] = float(
+    os.environ.get("INGRESS_GENERATE_QUEUE_RETRY_DELAY_S", "5")
+)
 
 # --- S3: lane registry + gauge polling --------------------------------------
 # The three-lane fleet (Spec 093). Built once at import from env-overridable URLs.
@@ -282,6 +293,7 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     spillable = is_messages and full_body is not None
     tried: set[str] = set()
     used_pin = False
+    generate_retries = 0
 
     while True:
         # Lane selection: session-sticky on the first pick (cache economics),
@@ -372,8 +384,34 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             upstream = None
             tried.add(lane_id)
             lane_state[lane_id] = LaneState(False, time.time(), "saturated")
-            continue  # re-select + retry the next lane
-
+            # Is there a NEXT lane to spill to (bulk/judge overflow)?
+            next_lane = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+            if next_lane is not None and next_lane not in tried:
+                continue  # spill to the next lane in the chain
+            # No overflow lane. For generate, RETRY the same lane
+            # (queue-and-wait) instead of 503-aborting — matching direct
+            # :8765 behavior where claude-code's SDK retries on 503. The
+            # ingress retries internally so the client never sees the abort
+            # (the nix w1W:p4 flip-gate requirement).
+            if role == "generate" and generate_retries < GENERATE_QUEUE_RETRIES:
+                generate_retries += 1
+                # Un-mark the lane (it may have drained during the retry delay).
+                lane_state[lane_id] = LaneState(True, time.time(), "generate-retry")
+                tried.discard(lane_id)
+                await asyncio.sleep(GENERATE_QUEUE_RETRY_DELAY_S)
+                continue  # re-select + retry the same lane
+            # Retries exhausted (or non-generate with no overflow) → 503.
+            if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
+                return web.json_response(
+                    {
+                        "error": "ingress-generate-held",
+                        "reason": "queue-saturated-after-retries",
+                    },
+                    status=503,
+                )
+            return web.json_response(
+                {"error": "ingress-all-lanes-capped", "role": role}, status=503
+            )
         # Not a saturation-503 (or not spillable) → stream the response through.
         try:
             out_headers = {
