@@ -627,6 +627,64 @@ async def test_s4_remaps_model_on_egress_to_non_anthropic_lane(monkeypatch) -> N
     assert payload["received_model"] == "kimi-k2.6"  # remapped, not claude-*
 
 
+async def _echo_model_and_headers(request: web.Request) -> web.Response:
+    body = await request.read()
+    return web.json_response(
+        {
+            "received_model": json.loads(body).get("model"),
+            "received_headers": {k.lower(): v for k, v in request.headers.items()},
+        }
+    )
+
+
+async def test_role_hint_header_routes_opus_id_to_kimi_and_is_stripped(monkeypatch) -> None:
+    """The header-override wiring end-to-end (GLM finding A/B + the #1281 case):
+
+    a request with the opus-4-8[1m] id (which infers as GENERATE, never spills)
+    plus ``x-anthropic-throttle-role-hint: bulk`` routes to the Kimi BULK lane
+    (received_model == kimi-k2.6), AND the hint header is stripped before the
+    upstream forward (never propagates to a chained ingress)."""
+    ing, kim = await _boot_kimi_ingress(monkeypatch, _echo_model_and_headers)
+    try:
+        resp = await ing.post(
+            "/v1/messages",
+            data=json.dumps({"model": "claude-opus-4-8[1m]", "max_tokens": 8}),
+            headers={
+                "content-type": "application/json",
+                "x-anthropic-throttle-role-hint": "bulk",
+            },
+        )
+        payload = await resp.json()
+    finally:
+        await ing.close()
+        await kim.close()
+    assert resp.headers.get("x-anthropic-throttle-role") == "bulk"  # response stamp
+    assert payload["received_model"] == "kimi-k2.6"  # bulk remap → routed to Kimi
+    assert "x-anthropic-throttle-role-hint" not in payload["received_headers"]  # stripped
+
+
+async def test_role_hint_generate_claim_does_not_pin_anthropic(monkeypatch) -> None:
+    """GLM finding A end-to-end: a client-set ``role-hint: generate`` cannot claim
+    the premium lane — a bulk-model request still routes to the bulk chain."""
+    ing, kim = await _boot_kimi_ingress(monkeypatch, _echo_model_and_headers)
+    try:
+        resp = await ing.post(
+            "/v1/messages",
+            data=json.dumps({"model": "claude-sonnet-4-6", "max_tokens": 8}),
+            headers={
+                "content-type": "application/json",
+                "x-anthropic-throttle-role-hint": "generate",
+            },
+        )
+        payload = await resp.json()
+    finally:
+        await ing.close()
+        await kim.close()
+    # generate claim ignored → falls back to inference (sonnet-4-6 = bulk) → Kimi.
+    assert resp.headers.get("x-anthropic-throttle-role") == "bulk"
+    assert payload["received_model"] == "kimi-k2.6"
+
+
 async def test_s4_no_remap_to_anthropic_keeps_client_model(monkeypatch) -> None:
     """Anthropic keeps the client's claude-* id verbatim (no models map)."""
     anth = TestClient(TestServer(_app_with(_echo_model)))

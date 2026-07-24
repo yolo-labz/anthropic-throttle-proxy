@@ -23,6 +23,7 @@ from anthropic_throttle_proxy.routing import (
     infer_role_from_body,
     lane_usable,
     remap_body_model,
+    role_from_header,
     select_lane,
     session_key_from_body,
 )
@@ -383,3 +384,47 @@ def test_select_lane_judge_served_via_glm_when_anthropic_capped() -> None:
     """Judge spills Anthropic→GLM (overflow flag is generate-only; judge always spills)."""
     state = {"anthropic": _st(False), "kimi": _st(False), "glm": _st(True)}
     assert select_lane("judge", state, overflow=False) == "glm"
+
+
+def test_role_from_header_spill_eligible_overrides() -> None:
+    """Only the two spill-eligible roles are honored (downgrade-only)."""
+    assert role_from_header("bulk") == "bulk"
+    assert role_from_header("judge") == "judge"
+
+
+def test_role_from_header_generate_claim_rejected_privilege_escalation() -> None:
+    """GLM finding A: the header must NOT be able to CLAIM the premium generate
+    lane — a client-set ``generate`` falls through to inference (None), so no
+    local process can pin traffic onto the reserved Anthropic lane."""
+    assert role_from_header("generate") is None
+
+
+def test_role_from_header_case_and_whitespace_tolerant() -> None:
+    assert role_from_header("  BULK ") == "bulk"
+
+
+def test_role_from_header_absent_or_unknown_falls_back_to_none() -> None:
+    """Absent/blank/unknown/lane-id → None so the caller falls back to model
+    inference; the header can at worst downgrade its OWN request to a cheap lane."""
+    assert role_from_header(None) is None
+    assert role_from_header("") is None
+    assert role_from_header("frontier") is None
+    assert role_from_header("kimi") is None  # a lane id is not a role
+
+
+def test_role_from_header_only_spill_eligible_roles() -> None:
+    for r in ROLES:
+        expected = r if r in {"bulk", "judge"} else None
+        assert role_from_header(r) == expected
+
+
+def test_role_header_bulk_routes_opus_id_to_kimi_1281_drift() -> None:
+    """The #1281 case end-to-end at the routing layer: the fleet sends the
+    opus-4-8[1m] id for a subagent-bulk request. infer_role maps it to generate
+    (no spill), but the bulk header overrides → bulk chain → Kimi even with
+    Anthropic capped and generate-overflow OFF."""
+    assert infer_role("claude-opus-4-8[1m]") == "generate"  # inference alone
+    role = role_from_header("bulk") or infer_role("claude-opus-4-8[1m]")
+    assert role == "bulk"
+    state = {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)}
+    assert select_lane(role, state, overflow=False) == "kimi"

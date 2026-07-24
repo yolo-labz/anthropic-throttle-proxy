@@ -85,9 +85,18 @@ REMAP_BODY_MAX_BYTES: Final[int] = int(
 # ingress-served response from a direct-lane response.
 MARKER_HEADER: Final[str] = "x-anthropic-throttle-ingress"
 
-# S2: the inferred role (generate/judge/bulk) stamped on served responses for
-# observability. S6 surfaces per-(role→lane) decision counts.
+# S2: the inferred role (generate/judge/bulk) stamped on served RESPONSES for
+# observability. S6 surfaces per-(role→lane) decision counts. This is a response
+# stamp only — never read from the request (see ROLE_OVERRIDE_HEADER).
 ROLE_HEADER: Final[str] = "x-anthropic-throttle-role"
+
+# A DISTINCT REQUEST header a trusted consumer sets to override model-tier role
+# inference (only bulk/judge honored — see routing.role_from_header). Kept
+# separate from ROLE_HEADER (a response stamp) so the two directions never
+# alias, and STRIPPED in _forward_headers so a client-set value never
+# propagates to the upstream lane — mirrors the repo's anti-spoof posture on
+# x-anthropic-throttle-wait-budget-ms (GLM finding B).
+ROLE_OVERRIDE_HEADER: Final[str] = "x-anthropic-throttle-role-hint"
 
 # S2: the lane id the ingress routed to, stamped on served responses.
 LANE_HEADER: Final[str] = "x-anthropic-throttle-lane"
@@ -183,9 +192,21 @@ _served = 0
 _SESSION_KEY: Final[str] = web.AppKey("ingress_session")
 
 
+# Ingress-internal request headers consumed HERE — never forwarded to the
+# upstream lane. The role-hint override is admission-only; forwarding it verbatim
+# would let it propagate through a chained/remote ingress and be re-applied as an
+# override downstream (spoofing), the class the repo already gates for
+# x-anthropic-throttle-wait-budget-ms (GLM finding B).
+_INGRESS_ONLY_HEADERS: Final[frozenset[str]] = frozenset({ROLE_OVERRIDE_HEADER})
+
+
 def _forward_headers(request: web.Request) -> dict[str, str]:
-    """Client headers minus hop-by-hop, ready for the upstream request."""
-    return {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    """Client headers minus hop-by-hop + ingress-internal, ready for upstream."""
+    return {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in _HOP_BY_HOP and k.lower() not in _INGRESS_ONLY_HEADERS
+    }
 
 
 async def _forward(request: web.Request) -> web.StreamResponse:
@@ -211,7 +232,17 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     prefix_complete = True
     if is_messages:
         prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
-        role = infer_role_from_body(prefix)
+        # An explicit x-anthropic-throttle-role-hint header OVERRIDES model-tier
+        # inference (bulk/judge only — never generate). Load-bearing under NixOS
+        # #1281: the fleet's subagent slot is claude-opus-4-8[1m] == the
+        # primary-generate id, so inference alone can't tell bulk fan-out from
+        # generate and everything maps to generate (never spills — invariant 6).
+        # A consumer marks bulk traffic via this header so fan-out reaches the
+        # cheap Kimi/GLM chain without a model-id change (the id is CI-guarded).
+        # Absent/unknown/generate → fall back to inference. The header is
+        # stripped in _forward_headers so it never reaches the upstream lane.
+        header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
+        role = header_role or infer_role_from_body(prefix)
         sess_key = session_key_from_body(prefix)
 
     # S4 session stickiness: a pinned, still-open lane wins over the chain walk
