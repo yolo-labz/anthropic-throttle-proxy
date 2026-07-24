@@ -92,6 +92,7 @@ from .config import (
 )
 from .forwarding import (
     RetryableStatusError,
+    StreamCommittedError,
     _forward_once,
     central_health_loop,
     direct_target,
@@ -1657,6 +1658,13 @@ async def _try_forward(
         attempt.final_status = status
         attempt.response = response
         return response, None
+    # A mid-stream upstream error (StreamCommittedError) leaves the 200 + partial
+    # body already on the wire + write_eof'd. Preserve the committed response so
+    # the caller returns it as-is instead of retrying (re-prepare → corruption).
+    if isinstance(exc, StreamCommittedError) and response is not None:
+        attempt.final_status = status
+        attempt.response = response
+        return response, exc
     return None, exc
 
 
@@ -2372,6 +2380,22 @@ async def _forward_with_retry(
         except _CLIENT_DISCONNECT_EXC as cexc:
             return _record_disconnect(path, "first", cexc, attempt)
         if exc is not None:
+            # #130 deferred follow-up (a): the upstream stalled/errored AFTER the
+            # 200 + body were already streamed to this client. The response is
+            # committed + write_eof'd — return it as-is; retrying would
+            # re-prepare a second response on the committed connection → the
+            # client sees InvalidHTTPResponse (the recurring :8766 z.ai failure).
+            if isinstance(exc, StreamCommittedError) and response is not None:
+                log(
+                    f"upstream-mid-stream path=/{path}: {exc.__cause__!r}"
+                    " → response committed, no retry"
+                )
+                return response
+            # #130 deferred follow-up (b): client already gave up before the
+            # retry (long stall → SocketTimeoutError → disconnect). Don't write
+            # into the closing transport — account + stop; the client retries.
+            if _request_disconnected(request):
+                return _record_disconnect(path, "before-upstream-retry", exc, attempt)
             return await _retry_direct_once(
                 request, headers, body, path, via, url, client_timeout, exc, attempt, bid
             )

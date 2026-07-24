@@ -8,6 +8,7 @@ SDK is imported here (invariant #1).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import TYPE_CHECKING
 
@@ -58,6 +59,24 @@ class RetryableStatusError(RuntimeError):
     def __init__(self, message: str, proxy_served: bool = False) -> None:
         super().__init__(message)
         self.proxy_served = proxy_served
+
+
+class StreamCommittedError(RuntimeError):
+    """An upstream error AFTER the client response was already committed.
+
+    ``_stream_response`` had already ``prepare()``'d + streamed part of the body
+    (HTTP 200 + headers + chunks are on the wire) when the upstream stalled
+    (sock_read) or errored mid-stream. The response cannot be retried —
+    re-preparing would write a second response onto the committed connection
+    → the client sees ``InvalidHTTPResponse`` (the recurring :8766 z.ai
+    coding-endpoint failure, #130 deferred follow-up). The stream is
+    ``write_eof``'d for a clean truncation instead, and this sentinel tells the
+    caller to return the already-sent response WITHOUT retrying.
+    """
+
+    def __init__(self, cause: BaseException) -> None:
+        super().__init__(f"upstream error after response committed: {cause!r}")
+        self.__cause__ = cause
 
 
 async def stamp_proxy_marker(_request: web.Request, response: web.StreamResponse) -> None:
@@ -209,12 +228,23 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     await response.prepare(request)
     captured = bytearray()
     cap_limit = 1024 * 1024
-    async for chunk in upstream.content.iter_any():
-        if not chunk:
-            break
-        await response.write(chunk)
-        if len(captured) < cap_limit:
-            captured.extend(chunk[: cap_limit - len(captured)])
+    try:
+        async for chunk in upstream.content.iter_any():
+            if not chunk:
+                break
+            await response.write(chunk)
+            if len(captured) < cap_limit:
+                captured.extend(chunk[: cap_limit - len(captured)])
+    except Exception as mid_exc:
+        # Upstream stalled/errored AFTER 200 + headers + partial body are on the
+        # wire. End the stream cleanly (write_eof → the client sees a valid
+        # truncated HTTP response it can detect+retry, NOT InvalidHTTPResponse)
+        # and signal via StreamCommittedError that the response is committed —
+        # the caller must NOT retry (re-preparing writes a second response on
+        # this connection → corruption). #130 deferred follow-up.
+        with contextlib.suppress(Exception):
+            await response.write_eof()
+        return response, upstream.status, captured, StreamCommittedError(mid_exc), meta
     await response.write_eof()
     return response, upstream.status, captured, None, meta
 

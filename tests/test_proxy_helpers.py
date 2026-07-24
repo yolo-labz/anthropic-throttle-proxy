@@ -30,6 +30,7 @@ import pytest
 from aiohttp.test_utils import make_mocked_request
 
 from anthropic_throttle_proxy import accounts, config, limiter, proxy
+from anthropic_throttle_proxy.forwarding import StreamCommittedError
 from anthropic_throttle_proxy.limiter import FairBearerLimiter
 
 # ---------------------------------------------------------------------------
@@ -1604,6 +1605,90 @@ async def test_retry_direct_once_attributes_response_to_direct_fallback(monkeypa
     assert attempt.context["via"] == "direct-fallback"
     assert "via=direct-fallback" in lines[-1]
     assert "\n" not in lines[-1]
+
+
+async def test_forward_with_retry_skips_retry_when_client_disconnected(monkeypatch) -> None:
+    """#130 deferred follow-up. On a long upstream stall the client gives up
+    before the proxy's sock_read fires; retrying then writes a second response
+    onto the closing transport → ClientConnectionResetError → InvalidHTTPResponse
+    (the recurring :8766 z.ai coding-endpoint failure). When the client is
+    already disconnected at the retry point, return a 499 disconnect WITHOUT
+    calling _retry_direct_once."""
+
+    async def try_forward_returns_exc(*_a: Any, **_kw: Any) -> tuple[Any, Exception]:
+        return None, RuntimeError("upstream SocketTimeoutError")
+
+    async def fail_retry(*_a: Any, **_kw: Any) -> Any:
+        raise AssertionError("_retry_direct_once must NOT run when the client is disconnected")
+
+    monkeypatch.setattr(proxy, "_try_forward", try_forward_returns_exc)
+    monkeypatch.setattr(proxy, "_request_disconnected", lambda _req: True)
+    monkeypatch.setattr(proxy, "_retry_direct_once", fail_retry)
+    config.state["client_disconnects"] = 0  # baseline the counter
+    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    attempt = proxy._Attempt()
+    attempt.context = {
+        "method": "POST",
+        "bid": "99e59638",
+        "cid": "127.0.0.1:1",
+        "via": "direct",
+        "model": "glm-5.2",
+    }
+
+    resp = await proxy._forward_with_retry(
+        fake_request,
+        {},
+        None,
+        "api/coding/paas/v4/chat/completions",
+        "direct",
+        "http://up.example/api/coding/paas/v4/chat/completions",
+        proxy.aiohttp.ClientTimeout(total=1),
+        attempt,
+        "99e59638",
+        cast(Any, object()),  # limiter — unused on the disconnect path
+    )
+
+    assert resp.status == 499  # disconnect accounted, no retry, no InvalidHTTPResponse
+    assert config.state["client_disconnects"] == 1
+
+
+async def test_forward_with_retry_no_retry_on_mid_stream_commit(monkeypatch) -> None:
+    """#130 deferred follow-up (a): an upstream stall AFTER 200 + body were sent
+    (StreamCommittedError) must NOT retry. Retrying re-prepares a second
+    response on the committed connection → InvalidHTTPResponse (the recurring
+    :8766 z.ai failure). Return the committed (write_eof'd) response as-is."""
+
+    committed = proxy.web.Response(status=200, body=b"partial")
+
+    async def try_forward_committed(*_a: Any, **_kw: Any) -> tuple[Any, Exception]:
+        return committed, StreamCommittedError(RuntimeError("upstream SocketTimeoutError"))
+
+    async def fail_retry(*_a: Any, **_kw: Any) -> Any:
+        raise AssertionError("_retry_direct_once must NOT run on a committed response")
+
+    monkeypatch.setattr(proxy, "_try_forward", try_forward_committed)
+    monkeypatch.setattr(proxy, "_retry_direct_once", fail_retry)
+    config.state["client_disconnects"] = 0
+    config.state["upstream_retries"] = 0
+    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    attempt = proxy._Attempt()
+    attempt.context = {"method": "POST", "bid": "99e59638", "via": "direct", "model": "glm-5.2"}
+
+    resp = await proxy._forward_with_retry(
+        fake_request,
+        {},
+        None,
+        "api/coding/paas/v4/chat/completions",
+        "direct",
+        "http://up.example/api/coding/x",
+        proxy.aiohttp.ClientTimeout(total=1),
+        attempt,
+        "99e59638",
+        cast(Any, object()),
+    )
+
+    assert resp is committed  # the already-sent response, returned unchanged
+    assert config.state["upstream_retries"] == 0  # no retry attempted
 
 
 async def test_retry_direct_once_relays_telemetry_throttle_unchanged(monkeypatch) -> None:
