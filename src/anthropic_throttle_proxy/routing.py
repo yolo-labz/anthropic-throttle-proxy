@@ -41,11 +41,11 @@ __all__ = [
     "GENERATE_OVERFLOW_ENABLED",
     "Lane",
     "LaneState",
+    "body_has_tools",
     "default_lanes",
     "effective_chain",
     "infer_role",
     "infer_role_from_body",
-    "role_from_header",
     "bearer_usable",
     "lane_usable",
     "select_lane",
@@ -315,6 +315,28 @@ def infer_role_from_body(raw: bytes) -> str:
     if isinstance(obj, dict):
         return infer_role(obj.get("model"))
     return "generate"
+
+
+def body_has_tools(raw: bytes) -> bool:
+    """True when the request body carries a non-empty ``tools`` array.
+
+    Agentic (tool-use) requests need a tools-capable lane. On the current fleet
+    only Anthropic reliably handles multi-turn tool-use streaming — Kimi aborts
+    (stop_reason=null on multi-turn) and GLM has path+key blockers. The ingress
+    uses this as a safety FLOOR: agentic requests are forced to ``generate``
+    (Anthropic) regardless of model tier or header hint, so a consumer can't
+    overflow tool-use to a lane that can't handle it.
+    """
+    if not raw:
+        return False
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return False
+    if not isinstance(obj, dict):
+        return False
+    tools = obj.get("tools")
+    return isinstance(tools, list) and len(tools) > 0
 
 
 # The role-override header may only DOWNGRADE to a cheaper lane, never CLAIM the

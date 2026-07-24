@@ -18,6 +18,7 @@ from anthropic_throttle_proxy.routing import (
     ROLES,
     LaneState,
     bearer_usable,
+    body_has_tools,
     effective_chain,
     infer_role,
     infer_role_from_body,
@@ -442,3 +443,32 @@ def test_role_header_bulk_routes_opus_id_to_kimi_1281_drift() -> None:
     assert role == "bulk"
     state = {"anthropic": _st(False), "kimi": _st(True), "glm": _st(True)}
     assert select_lane(role, state, overflow=False) == "kimi"
+
+
+# ─── Agentic guard (nix w1W:p4 pre-flip gate) ───────────────────────────────
+
+
+def test_body_has_tools_detects_tool_use() -> None:
+    body = json.dumps(
+        {
+            "model": "claude-sonnet-4-6",
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [],
+        }
+    ).encode()
+    assert body_has_tools(body) is True
+
+
+def test_body_has_tools_false_for_simple_request() -> None:
+    body = json.dumps({"model": "claude-sonnet-4-6", "messages": []}).encode()
+    assert body_has_tools(body) is False
+
+
+def test_body_has_tools_empty_tools_array_is_not_agentic() -> None:
+    body = json.dumps({"model": "claude-sonnet-4-6", "tools": [], "messages": []}).encode()
+    assert body_has_tools(body) is False
+
+
+def test_body_has_tools_invalid_json_returns_false() -> None:
+    assert body_has_tools(b"not json") is False
+    assert body_has_tools(b"") is False

@@ -35,6 +35,7 @@ from . import routing
 from .routing import (
     Lane,
     LaneState,
+    body_has_tools,
     default_lanes,
     infer_role_from_body,
     lane_usable,
@@ -260,6 +261,13 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
         header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
         role = header_role or infer_role_from_body(prefix)
+        # Agentic safety floor: a request with `tools` needs a tools-capable
+        # lane. Kimi aborts multi-turn tool-use streaming; GLM has path+key
+        # blockers. Force "generate" (Anthropic) regardless of model tier or
+        # header hint — a consumer must not overflow agentic to a lane that
+        # can't handle it (nix w1W:p4 pre-flip gate finding).
+        if body_has_tools(prefix):
+            role = "generate"
         sess_key = session_key_from_body(prefix)
         if prefix_complete:
             full_body = prefix

@@ -980,3 +980,38 @@ async def test_ingress_spills_on_saturation_503(monkeypatch) -> None:
     assert ingress.lane_state.get("kimi") is not None
     assert ingress.lane_state["kimi"].open is False
     assert ingress.lane_state["kimi"].detail == "saturated"
+
+
+async def test_agentic_bulk_stays_on_anthropic_not_kimi(monkeypatch) -> None:
+    """Agentic safety floor: a request with `tools` is forced to generate
+    (Anthropic) regardless of model tier or header hint — Kimi aborts multi-turn
+    tool-use streaming, GLM has path+key blockers (nix w1W:p4 pre-flip gate)."""
+
+    async def echo_lane(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    anth = await _start_lane(echo_lane)
+    ing = await _boot_ingress(
+        monkeypatch,
+        _lanes_with(str(anth.make_url("")), "http://127.0.0.1:1", "http://127.0.0.1:1"),
+        _open_state({"anthropic", "kimi", "glm"}),
+    )
+    try:
+        # Agentic bulk: sonnet-4-6 (bulk tier) + tools + bulk header hint.
+        body = {
+            "model": "claude-sonnet-4-6",
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        async with ing.post(
+            "/v1/messages",
+            json=body,
+            headers={"Authorization": "Bearer t", "x-anthropic-throttle-role-hint": "bulk"},
+        ) as r:
+            assert r.status == 200
+            # Forced to generate → Anthropic, NOT kimi (which would abort).
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+            assert r.headers["x-anthropic-throttle-role"] == "generate"
+    finally:
+        await ing.close()
+        await anth.close()
