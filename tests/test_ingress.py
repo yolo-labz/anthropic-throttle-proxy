@@ -1015,3 +1015,41 @@ async def test_agentic_bulk_stays_on_anthropic_not_kimi(monkeypatch) -> None:
     finally:
         await ing.close()
         await anth.close()
+
+
+async def test_generate_queue_wait_retries_on_saturation_503(monkeypatch) -> None:
+    """The nix w1W:p4 flip-gate requirement: when the Anthropic lane returns a
+    saturation-503 (queue full), the ingress must RETRY (queue-and-wait), not
+    503-abort. Here: first attempt 503s → ingress retries → second attempt 200."""
+
+    attempts = {"n": 0}
+
+    async def lane_handler(request: web.Request) -> web.Response:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return web.Response(
+                status=503,
+                headers={"x-anthropic-throttle-queue-timeout": "1"},
+                text="queue full",
+            )
+        return web.Response(status=200, body=b'{"type":"message","stop_reason":"end_turn"}')
+
+    anth = await _start_lane(lane_handler)
+    ing = await _boot_ingress(
+        monkeypatch,
+        _lanes_with(str(anth.make_url("")), "http://127.0.0.1:1", "http://127.0.0.1:1"),
+        _open_state({"anthropic", "kimi", "glm"}),
+    )
+    monkeypatch.setattr(ingress, "GENERATE_QUEUE_RETRY_DELAY_S", 0.1)  # fast test
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-opus-4-8", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 200  # retried after the 503 → served
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+        assert attempts["n"] == 2  # first 503'd, second served
+    finally:
+        await ing.close()
+        await anth.close()
