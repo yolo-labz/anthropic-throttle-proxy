@@ -422,7 +422,7 @@ async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
     except TimeoutError:
         lane_state[lane.id] = LaneState(False, now, "health-timeout")
         return
-    open_, detail = lane_usable(body, now)
+    open_, detail = lane_usable(body, now, proxy_owns_key=lane.proxy_owns_key)
     lane_state[lane.id] = LaneState(open_, now, detail)
     # S4: when a lane goes closed, evict sessions pinned to it so the next
     # request re-selects down the chain (stickiness must not pin to a dead lane).
