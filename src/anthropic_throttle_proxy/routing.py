@@ -38,9 +38,11 @@ from dataclasses import dataclass, field
 __all__ = [
     "ROLES",
     "ROLE_CHAINS",
+    "GENERATE_OVERFLOW_ENABLED",
     "Lane",
     "LaneState",
     "default_lanes",
+    "effective_chain",
     "infer_role",
     "infer_role_from_body",
     "bearer_usable",
@@ -51,6 +53,16 @@ __all__ = [
 ]
 
 ROLES = ("generate", "judge", "bulk")
+
+# Spec 093 S5 invariant 6: don't silently serve a weaker model as Opus. Pre
+# kimi-k3 GA (27/07), the Kimi generate model is kimi-k2.6 — a downgrade from
+# Opus/Fable. So generate does NOT spill to Kimi/GLM until this flag is on
+# (post-GA). Bulk/judge already run on the cheap lanes by design, so the guard
+# only applies to generate. Flip via INGRESS_GENERATE_OVERFLOW=true after 27/07
+# (once kimi-k3 is live + verified), or to force-overflow in a pinch.
+GENERATE_OVERFLOW_ENABLED: bool = os.environ.get(
+    "INGRESS_GENERATE_OVERFLOW", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # Spec 093 S3: per-role ordered lane chain. Walked first→last; the first OPEN
 # lane serves the request. GLM is the floor (cheap, flat) so it closes every
@@ -176,18 +188,42 @@ def lane_usable(health_json: dict, now: float | None = None) -> tuple[bool, str]
     return False, "no-usable-bearer"
 
 
+def effective_chain(role: str, overflow: bool | None = None) -> tuple[str, ...]:
+    """The lane chain actually walked for ``role`` (S5).
+
+    Generate is restricted to Anthropic-only while overflow is disabled
+    (pre-kimi-k3 GA) so a capped Anthropic account HOLDs rather than silently
+    downgrading to kimi-k2.6/GLM served as Opus (invariant 6). Bulk/judge keep
+    their full chains (they're already the cheap lanes).
+
+    ``overflow=None`` reads the LIVE module flag at call time (so a runtime
+    toggle of INGRESS_GENERATE_OVERFLOW is honored, not the import-time snapshot).
+    """
+    if overflow is None:
+        overflow = GENERATE_OVERFLOW_ENABLED
+    chain = ROLE_CHAINS.get(role, ROLE_CHAINS["generate"])
+    if role == "generate" and not overflow:
+        return ("anthropic",)
+    return chain
+
+
 def select_lane(
     role: str,
     state: dict[str, LaneState],
     chains: dict[str, tuple[str, ...]] | None = None,
+    overflow: bool | None = None,
 ) -> str | None:
-    """Pick the first OPEN lane for the role, walking its chain. None = all capped (HOLD).
+    """Pick the first OPEN lane for the role, walking its effective chain. None = HOLD.
 
     Pure (no I/O) so it's testable directly by populating ``state``. Unknown
     role → generate chain. Bulk never returns ``anthropic`` (structurally — it's
-    not in the bulk chain, invariant 2).
+    not in the bulk chain, invariant 2). Generate with overflow disabled can only
+    return ``anthropic`` (invariant 6). ``overflow=None`` reads the live flag.
     """
-    chain = (chains or ROLE_CHAINS).get(role, ROLE_CHAINS["generate"])
+    if chains is not None:
+        chain = chains.get(role, ROLE_CHAINS["generate"])
+    else:
+        chain = effective_chain(role, overflow)
     for lane_id in chain:
         st = state.get(lane_id)
         if st is not None and st.open:

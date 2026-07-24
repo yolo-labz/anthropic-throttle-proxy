@@ -30,6 +30,7 @@ from typing import Final
 import aiohttp
 from aiohttp import web
 
+from . import routing
 from .routing import (
     Lane,
     LaneState,
@@ -202,18 +203,37 @@ async def _forward(request: web.Request) -> web.StreamResponse:
 
     # S4 session stickiness: a pinned, still-open lane wins over the chain walk
     # (cache economics — avoid a mid-session uncached turn). Else select_lane.
+    # S5 guard: a generate pin to a non-Anthropic lane is only honored while
+    # overflow is on — if overflow was toggled off, drop the pin so we don't
+    # silently downgrade generate to kimi/glm (invariant 6).
     lane_id: str | None = None
     if sess_key is not None:
         pinned = _session_lane.get(sess_key)
-        if pinned is not None and (lane_state.get(pinned) or LaneState(False, 0)).open:
+        pin_open = pinned is not None and (lane_state.get(pinned) or LaneState(False, 0)).open
+        if (
+            pin_open
+            and role == "generate"
+            and pinned != "anthropic"
+            and not routing.GENERATE_OVERFLOW_ENABLED
+        ):
+            pin_open = False
+        if pin_open:
             lane_id = pinned
     if lane_id is None:
-        lane_id = select_lane(role, lane_state)
+        lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
         if lane_id is not None and sess_key is not None:
             _session_lane[sess_key] = lane_id
 
-    # S3/S5: every lane for the role capped → HOLD (503).
+    # S3/S5: no open lane for the role → HOLD (503). Generate with overflow
+    # disabled HOLDs distinctly (invariant 6: don't silently downgrade to
+    # kimi-k2.6/GLM served as Opus pre-kimi-k3) so the operator can tell a
+    # deliberate generate-hold from a genuine all-capped.
     if lane_id is None:
+        if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
+            return web.json_response(
+                {"error": "ingress-generate-held", "reason": "anthropic-capped-overflow-disabled"},
+                status=503,
+            )
         return web.json_response({"error": "ingress-all-lanes-capped", "role": role}, status=503)
     lane = LANES.get(lane_id)
     if lane is None:  # defensive: chain named a lane not in the registry
