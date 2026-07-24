@@ -101,6 +101,18 @@ ROLE_OVERRIDE_HEADER: Final[str] = "x-anthropic-throttle-role-hint"
 # S2: the lane id the ingress routed to, stamped on served responses.
 LANE_HEADER: Final[str] = "x-anthropic-throttle-lane"
 
+# Saturation spill (coordinator ask): a sibling proxy lane stamps this on a 503
+# from its OWN queue-wait timeout. The ingress detects it to SPILL the request to
+# the next lane in the role chain instead of passing the 503 through. Only a
+# sibling proxy sets it, so it's a trustworthy saturation signal.
+QUEUE_TIMEOUT_HEADER: Final[str] = "x-anthropic-throttle-queue-timeout"
+# How long the ingress avoids a lane that just returned a saturation 503. Covers
+# ~one health-poll cycle; a draining lane re-opens on the next poll, a still-
+# saturated lane re-marks on the next 503.
+LANE_SATURATION_COOLDOWN_S: Final[float] = float(
+    os.environ.get("INGRESS_LANE_SATURATION_COOLDOWN_S", "15")
+)
+
 # --- S3: lane registry + gauge polling --------------------------------------
 # The three-lane fleet (Spec 093). Built once at import from env-overridable URLs.
 LANES: dict[str, Lane] = default_lanes()
@@ -224,141 +236,154 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
 
 
 async def _forward(request: web.Request) -> web.StreamResponse:
-    """Forward one request to the selected lane, path-preservingly.
+    """Forward a request to the selected lane, **spilling to the next lane in the
+    role chain on a saturation 503** (the coordinator's ask).
 
-    Path + query string are preserved verbatim, the body is streamed (or buffered
-    for ``POST /v1/messages`` so S2 can read the model), and the upstream
-    response is streamed back byte-identical. S2 infers the role; **S3 selects
-    the lane** by walking the role's chain over the cached gauge verdicts
-    (``select_lane``) and forwards to that lane's URL. If every lane for the role
-    is capped, the request is held with a 503 (S5 refines the HOLD+flag policy;
-    S3's bar is the basic all-capped 503).
+    On ``POST /v1/messages`` the full body is buffered (when it fits) so it's
+    re-sendable. If the chosen lane returns a queue-wait-timeout 503 (stamped
+    ``x-anthropic-throttle-queue-timeout: 1`` by the sibling proxy lane), the
+    ingress marks that lane saturated (short cooldown) and retries the NEXT lane
+    in the role's chain — instead of passing the 503 through. Non-spillable
+    bodies (too large to buffer, or non-messages) get one attempt. Generate with
+    overflow disabled never spills past Anthropic (invariant 6).
     """
     session: aiohttp.ClientSession = request.app[_SESSION_KEY]
     timeout = aiohttp.ClientTimeout(total=FORWARD_TIMEOUT_S or None)
 
-    # S2/S4: on POST /v1/messages, read a bounded prefix to infer the role +
-    # session key. Other paths stream unchanged (no model to read).
     is_messages = request.method == "POST" and request.path == "/v1/messages"
     role = "generate"
     sess_key: str | None = None
     prefix = b""
-    prefix_complete = True
+    buffered_rest = b""
+    full_body: bytes | None = None  # re-sendable buffered body; None = stream once
     if is_messages:
         prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
-        # An explicit x-anthropic-throttle-role-hint header OVERRIDES model-tier
-        # inference (bulk/judge only — never generate). Load-bearing under NixOS
-        # #1281: the fleet's subagent slot is claude-opus-4-8[1m] == the
-        # primary-generate id, so inference alone can't tell bulk fan-out from
-        # generate and everything maps to generate (never spills — invariant 6).
-        # A consumer marks bulk traffic via this header so fan-out reaches the
-        # cheap Kimi/GLM chain without a model-id change (the id is CI-guarded).
-        # Absent/unknown/generate → fall back to inference. The header is
-        # stripped in _forward_headers so it never reaches the upstream lane.
         header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
         role = header_role or infer_role_from_body(prefix)
         sess_key = session_key_from_body(prefix)
-
-    # S4 session stickiness: a pinned, still-open lane wins over the chain walk
-    # (cache economics — avoid a mid-session uncached turn). Else select_lane.
-    # S5 guard: a generate pin to a non-Anthropic lane is only honored while
-    # overflow is on — if overflow was toggled off, drop the pin so we don't
-    # silently downgrade generate to kimi/glm (invariant 6).
-    lane_id: str | None = None
-    if sess_key is not None:
-        pinned = _session_lane.get(sess_key)
-        pin_open = pinned is not None and (lane_state.get(pinned) or LaneState(False, 0)).open
-        if (
-            pin_open
-            and role == "generate"
-            and pinned != "anthropic"
-            and not routing.GENERATE_OVERFLOW_ENABLED
-        ):
-            pin_open = False
-        if pin_open:
-            lane_id = pinned
-    if lane_id is None:
-        lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
-        if lane_id is not None and sess_key is not None:
-            _session_lane[sess_key] = lane_id
-
-    # S3/S5: no open lane for the role → HOLD (503). Generate with overflow
-    # disabled HOLDs distinctly (invariant 6: don't silently downgrade to
-    # kimi-k2.6/GLM served as Opus pre-kimi-k3) so the operator can tell a
-    # deliberate generate-hold from a genuine all-capped.
-    if lane_id is None:
-        if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
-            return web.json_response(
-                {"error": "ingress-generate-held", "reason": "anthropic-capped-overflow-disabled"},
-                status=503,
-            )
-        return web.json_response({"error": "ingress-all-lanes-capped", "role": role}, status=503)
-    lane = LANES.get(lane_id)
-    if lane is None:  # defensive: chain named a lane not in the registry
-        return web.json_response(
-            {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
-        )
-    target = f"{lane.url}{request.path_qs}"
-    M_ROUTE_DECISIONS.labels(role=role, lane=lane_id).inc()  # S6 observability
-
-    # S4 model-remap: a non-Anthropic lane's upstream expects its own id, so
-    # rewrite the body's model field on egress (client keeps its claude-* id).
-    # Content-Length is stripped in _forward_headers so aiohttp recomputes it from
-    # the (possibly length-changed) bytes actually sent.
-    body_data: bytes | AsyncIterator[bytes] = request.content
-    if is_messages:
-        target_model = lane.models.get(role)
-        if target_model:
-            if prefix_complete:
-                body_data = remap_body_model(prefix, target_model)
-            else:
-                rest, rest_complete = await _read_bounded(request.content, REMAP_BODY_MAX_BYTES)
-                if rest_complete:
-                    body_data = remap_body_model(prefix + rest, target_model)
-                else:
-                    body_data = _chain_stream(request.content, prefix, rest)
-        elif prefix_complete:
-            body_data = prefix
+        if prefix_complete:
+            full_body = prefix
         else:
-            body_data = _chain_stream(request.content, prefix)
+            buffered_rest, rest_complete = await _read_bounded(
+                request.content, REMAP_BODY_MAX_BYTES
+            )
+            if rest_complete:
+                full_body = prefix + buffered_rest
+            # else: too large to buffer → full_body stays None (streamed, 1 attempt)
 
-    upstream: aiohttp.ClientResponse | None = None
-    try:
-        upstream = await session.request(
-            request.method,
-            target,
-            headers=_forward_headers(request),
-            data=body_data,
-            timeout=timeout,
-            allow_redirects=False,
-            auto_decompress=False,
+    spillable = is_messages and full_body is not None
+    tried: set[str] = set()
+    used_pin = False
+
+    while True:
+        # Lane selection: session-sticky on the first pick (cache economics),
+        # else walk the role's chain. S5 guard: a generate pin to a non-Anthropic
+        # lane is only honored while overflow is on (don't silently downgrade).
+        lane_id: str | None = None
+        if not used_pin and sess_key is not None:
+            pinned = _session_lane.get(sess_key)
+            pin_open = (
+                pinned is not None
+                and pinned not in tried
+                and (lane_state.get(pinned) or LaneState(False, 0)).open
+            )
+            if (
+                pin_open
+                and role == "generate"
+                and pinned != "anthropic"
+                and not routing.GENERATE_OVERFLOW_ENABLED
+            ):
+                pin_open = False
+            if pin_open:
+                lane_id = pinned
+            used_pin = True
+        if lane_id is None:
+            lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+            if lane_id is not None and lane_id in tried:
+                lane_id = None
+            elif lane_id is not None and sess_key is not None:
+                _session_lane[sess_key] = lane_id
+
+        if lane_id is None or lane_id in tried:
+            if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
+                return web.json_response(
+                    {
+                        "error": "ingress-generate-held",
+                        "reason": "anthropic-capped-overflow-disabled",
+                    },
+                    status=503,
+                )
+            return web.json_response(
+                {"error": "ingress-all-lanes-capped", "role": role}, status=503
+            )
+        lane = LANES.get(lane_id)
+        if lane is None:
+            return web.json_response(
+                {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
+            )
+        target = f"{lane.url}{request.path_qs}"
+        M_ROUTE_DECISIONS.labels(role=role, lane=lane_id).inc()
+
+        # Build the per-lane body from the buffered full_body (re-sendable) or
+        # the one-shot stream (large body / non-messages).
+        body_data: bytes | AsyncIterator[bytes]
+        if is_messages and full_body is not None:
+            target_model = lane.models.get(role)
+            body_data = remap_body_model(full_body, target_model) if target_model else full_body
+        elif is_messages:
+            body_data = _chain_stream(request.content, prefix, buffered_rest)
+        else:
+            body_data = request.content
+
+        upstream: aiohttp.ClientResponse | None = None
+        try:
+            upstream = await session.request(
+                request.method,
+                target,
+                headers=_forward_headers(request),
+                data=body_data,
+                timeout=timeout,
+                allow_redirects=False,
+                auto_decompress=False,
+            )
+        except aiohttp.ClientError:
+            return web.json_response({"error": "ingress-upstream-unreachable"}, status=503)
+        except TimeoutError:
+            return web.json_response({"error": "ingress-upstream-timeout"}, status=504)
+
+        assert upstream is not None
+        # Saturation spill: the lane returned a queue-wait-timeout 503. If the
+        # body is re-sendable + there may be another lane, mark this lane
+        # saturated (short cooldown) + retry the chain. This is the core fix for
+        # the 503-while-overflow-sits-idle symptom.
+        is_saturation_503 = (
+            upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
         )
-    except aiohttp.ClientError:
-        # Generic body only — never echo upstream exception text to the client
-        # (it can leak internal paths / connection details). Server-side
-        # observability lands with S6.
-        return web.json_response({"error": "ingress-upstream-unreachable"}, status=503)
-    except TimeoutError:
-        return web.json_response({"error": "ingress-upstream-timeout"}, status=504)
+        if is_saturation_503 and spillable:
+            upstream.release()
+            upstream = None
+            tried.add(lane_id)
+            lane_state[lane_id] = LaneState(False, time.time(), "saturated")
+            continue  # re-select + retry the next lane
 
-    assert upstream is not None
-    try:
-        # Drop hop-by-hop from the upstream response too; keep the rest verbatim
-        # so SSE / content-type / rate-limit headers pass through unchanged.
-        out_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP}
-        resp = web.StreamResponse(status=upstream.status, headers=out_headers)
-        resp.headers[MARKER_HEADER] = "1"
-        resp.headers[ROLE_HEADER] = role  # S2 observability (S6 surfaces counts)
-        resp.headers[LANE_HEADER] = lane_id  # S3: which lane served the role
-        await resp.prepare(request)
-        async for chunk in upstream.content.iter_any():
-            if not chunk:
-                continue
-            await resp.write(chunk)
-        await resp.write_eof()
-        return resp
-    finally:
-        upstream.release()
+        # Not a saturation-503 (or not spillable) → stream the response through.
+        try:
+            out_headers = {
+                k: v for k, v in upstream.headers.items() if k.lower() not in _HOP_BY_HOP
+            }
+            resp = web.StreamResponse(status=upstream.status, headers=out_headers)
+            resp.headers[MARKER_HEADER] = "1"
+            resp.headers[ROLE_HEADER] = role
+            resp.headers[LANE_HEADER] = lane_id
+            await resp.prepare(request)
+            async for chunk in upstream.content.iter_any():
+                if not chunk:
+                    continue
+                await resp.write(chunk)
+            await resp.write_eof()
+            return resp
+        finally:
+            upstream.release()
 
 
 async def _root_probe(_request: web.Request) -> web.Response:
