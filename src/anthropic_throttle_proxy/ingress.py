@@ -114,22 +114,13 @@ LANE_HEALTH_MAX_BYTES: Final[int] = int(
 
 async def _read_bounded(stream: aiohttp.StreamReader, limit: int) -> tuple[bytes, bool]:
     """Read up to ``limit`` body bytes. Returns ``(data, complete)``: ``complete``
-    is True iff the whole body fit (EOF reached). ``readany()`` returns as soon as
-    any chunk arrives (never waits for ``limit`` bytes), so a small body on a
-    keep-alive transport returns promptly without a transport-level deadlock."""
-    chunks: list[bytes] = []
-    total = 0
-    while total < limit:
-        chunk = await stream.readany()
-        if not chunk:
-            break  # EOF (body fully delivered / Content-Length satisfied)
-        chunks.append(chunk)
-        total += len(chunk)
-    # complete = the whole body fit. ``total < limit`` covers the EOF-broke case;
-    # ``at_eof()`` covers a body that is exactly ``limit`` bytes (loop exited on
-    # the condition, not on EOF) so it isn't mis-read as a partial buffer.
-    complete = total < limit or stream.at_eof()
-    return b"".join(chunks), complete
+    is True iff the whole body fit (EOF reached). ``StreamReader.read(limit)``
+    returns up to ``limit`` bytes (not a full chunk like ``readany``), so a body
+    larger than ``limit`` yields a bounded prefix and the role parse runs on only
+    that prefix — the S2 contract (body > limit → default role, no full parse)."""
+    data = await stream.read(limit)
+    complete = len(data) < limit or stream.at_eof()
+    return data, complete
 
 
 async def _chain_stream(stream: aiohttp.StreamReader, *initial: bytes) -> AsyncIterator[bytes]:
