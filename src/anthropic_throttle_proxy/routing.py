@@ -91,6 +91,11 @@ class Lane:
     roles: frozenset[str]
     health_url: str = ""
     models: dict[str, str] = field(default_factory=dict)
+    # True for a proxy-owns-key lane (Kimi :8767 injects its own credential and
+    # tracks zero per-client bearers). Such a lane is usable with an empty
+    # ``bearers`` map; a client-provides-key lane (GLM :8766) is NOT — empty
+    # bearers means no client has a token routed through it, so traffic would 401.
+    proxy_owns_key: bool = False
 
     def __post_init__(self) -> None:
         if not self.health_url:
@@ -132,6 +137,7 @@ def default_lanes() -> dict[str, Lane]:
             os.environ.get("INGRESS_KIMI_LANE_URL", "http://127.0.0.1:8767"),
             frozenset({"generate", "bulk"}),
             models=kimi_models,
+            proxy_owns_key=True,
         ),
         "glm": Lane(
             "glm",
@@ -169,19 +175,25 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
     return True
 
 
-def lane_usable(health_json: dict, now: float | None = None) -> tuple[bool, str]:
+def lane_usable(
+    health_json: dict, now: float | None = None, proxy_owns_key: bool = False
+) -> tuple[bool, str]:
     """Lane-level verdict from a ``/__throttle/health`` body.
 
     Returns ``(open, detail)``. Open requires the lane can reach its upstream
-    AND at least one bearer is usable right now. This is the uniform gauge the
-    ingress walks the role chain on (Spec 093 S3, invariant 3: a locked lane
-    is skipped → the next request auto-advances).
+    (``upstream_egress_ok``). A proxy-owns-key lane (Kimi :8767) injects its own
+    credential and legitimately tracks zero per-client bearers, so an empty
+    ``bearers`` map is OPEN for it (it had falsely closed Kimi → bulk spilled to
+    GLM, which needs a client key the tabs don't have). A client-provides-key
+    lane (GLM :8766) with no bearers is CLOSED — no client token is routed
+    through it, so traffic would 401. A lane that tracks bearers is open iff
+    ≥1 bearer is usable (retry-aftered/rejected → skip).
     """
     if not health_json.get("upstream_egress_ok", False):
         return False, "upstream-egress-down"
     bearers = health_json.get("bearers") or {}
     if not bearers:
-        return False, "no-bearers"
+        return (True, "no-bearers-proxy-owns-key") if proxy_owns_key else (False, "no-bearers")
     now = time.time() if now is None else now
     for bearer in bearers.values():
         if bearer_usable(bearer, now):

@@ -282,9 +282,23 @@ def test_lane_usable_requires_upstream_egress_ok() -> None:
     assert open_ is False and detail == "upstream-egress-down"
 
 
-def test_lane_usable_no_bearers_is_closed() -> None:
-    open_, detail = lane_usable({"upstream_egress_ok": True, "bearers": {}})
+def test_lane_usable_no_bearers_proxy_owns_key_is_open() -> None:
+    """A proxy-owns-key lane (Kimi :8767) with no per-client bearers is OPEN —
+    it injects its own credential. Returning closed here had falsely skipped
+    Kimi, forcing bulk onto GLM (which needs a client key the tabs lack)."""
+    open_, detail = lane_usable({"upstream_egress_ok": True, "bearers": {}}, proxy_owns_key=True)
+    assert open_ is True and detail == "no-bearers-proxy-owns-key"
+
+
+def test_lane_usable_no_bearers_client_key_is_closed() -> None:
+    """A client-provides-key lane (GLM :8766) with no bearers is CLOSED — no
+    client token is routed through it, so traffic would 401. The targeted fix
+    must NOT over-open client-key lanes (gate BLOCK on the first attempt)."""
+    open_, detail = lane_usable({"upstream_egress_ok": True, "bearers": {}}, proxy_owns_key=False)
     assert open_ is False and detail == "no-bearers"
+    # ...but a lane that can't reach its upstream stays closed regardless.
+    open_, detail = lane_usable({"upstream_egress_ok": False, "bearers": {}}, proxy_owns_key=True)
+    assert open_ is False and detail == "upstream-egress-down"
 
 
 def test_lane_usable_all_bearers_locked_is_closed() -> None:
