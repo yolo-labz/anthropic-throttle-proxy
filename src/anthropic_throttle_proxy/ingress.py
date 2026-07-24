@@ -125,13 +125,27 @@ LANE_HEALTH_MAX_BYTES: Final[int] = int(
 
 async def _read_bounded(stream: aiohttp.StreamReader, limit: int) -> tuple[bytes, bool]:
     """Read up to ``limit`` body bytes. Returns ``(data, complete)``: ``complete``
-    is True iff the whole body fit (EOF reached). ``StreamReader.read(limit)``
-    returns up to ``limit`` bytes (not a full chunk like ``readany``), so a body
-    larger than ``limit`` yields a bounded prefix and the role parse runs on only
-    that prefix — the S2 contract (body > limit → default role, no full parse)."""
-    data = await stream.read(limit)
-    complete = len(data) < limit or stream.at_eof()
-    return data, complete
+    is True iff the whole body fit (genuine EOF reached within ``limit``).
+
+    LOOPS ``read()`` to accumulate up to ``limit`` — a single ``StreamReader.read(n)``
+    returns AS SOON AS any data is available (the first TCP segment / chunk), which
+    can be FEWER than ``n`` bytes with more still coming. Treating that short read
+    as EOF (the old ``len(data) < limit``) mis-flags a multi-chunk upload as
+    complete, so ``remap_body_model`` runs on a TRUNCATED prefix → invalid JSON is
+    re-serialized → Moonshot 400 "unexpected end of JSON input" (24/07 incident:
+    claude-code sends its body in multiple chunks; curl sent it in one read, hence
+    curl passed but real claude-code 400'd). A short read is NOT EOF — only an
+    EMPTY read is. So loop until ``limit`` bytes OR a genuine empty read."""
+    chunks: list[bytes] = []
+    total = 0
+    while total < limit:
+        chunk = await stream.read(limit - total)
+        if not chunk:  # empty read == genuine EOF
+            return b"".join(chunks), True
+        chunks.append(chunk)
+        total += len(chunk)
+    # Accumulated exactly ``limit`` bytes without hitting EOF — more may follow.
+    return b"".join(chunks), stream.at_eof()
 
 
 async def _chain_stream(stream: aiohttp.StreamReader, *initial: bytes) -> AsyncIterator[bytes]:
