@@ -29,6 +29,7 @@ from typing import Final
 
 import aiohttp
 from aiohttp import web
+from prometheus_client import CollectorRegistry, Counter, generate_latest
 
 from . import routing
 from .routing import (
@@ -140,6 +141,18 @@ async def _chain_stream(stream: aiohttp.StreamReader, *initial: bytes) -> AsyncI
 # uncached turn). Evicted when the pinned lane goes closed (see _poll_one_lane).
 _session_lane: dict[str, str] = {}
 
+# S6 observability: a process-local Prometheus registry (NOT the proxy's — the
+# ingress is a separate process). The route-decision counter is the S6 core
+# signal; Kimi-balance polling is a documented follow-up (needs the Moonshot key
+# + a dedicated poll loop).
+REGISTRY = CollectorRegistry()
+M_ROUTE_DECISIONS = Counter(
+    "ingress_route_decisions_total",
+    "Requests routed by the unified ingress, by inferred role and chosen lane.",
+    ["role", "lane"],
+    registry=REGISTRY,
+)
+
 # Hop-by-hop headers (RFC 7230 §6.1) — must not be forwarded verbatim; aiohttp
 # also manages Content-Length / Transfer-Encoding on the rebuilt request.
 # ``content-length`` is filtered too: the ingress may rewrite the body (S4
@@ -241,6 +254,7 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
         )
     target = f"{lane.url}{request.path_qs}"
+    M_ROUTE_DECISIONS.labels(role=role, lane=lane_id).inc()  # S6 observability
 
     # S4 model-remap: a non-Anthropic lane's upstream expects its own id, so
     # rewrite the body's model field on egress (client keeps its claude-* id).
@@ -333,6 +347,12 @@ async def _health(_request: web.Request) -> web.Response:
             },
         }
     )
+
+
+async def _metrics(_request: web.Request) -> web.Response:
+    """S6: Prometheus scrape of the ingress's process-local registry."""
+    body = generate_latest(REGISTRY)
+    return web.Response(body=body, content_type="text/plain; version=0.0.4")
 
 
 @web.middleware
@@ -443,6 +463,7 @@ def build_app() -> web.Application:
     app.cleanup_ctx.append(_lane_health_context)  # S3: depends on the session existing
     app.router.add_get("/", _root_probe)
     app.router.add_get("/__throttle/health", _health)
+    app.router.add_get("/metrics", _metrics)
     app.router.add_route("*", "/{path:.*}", _forward)
     return app
 
