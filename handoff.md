@@ -6,6 +6,38 @@ host activation. Latest incident first.
 
 ---
 
+## 23-24/07/2026 - Spec 093 unified `:8760` ingress — proxy-side COMPLETE (S1–S6 merged), S7 = Nix deploy (Pedro-gated)
+
+The "never run out of AI" router. **Proxy-side done: 6 merged PRs (#132–#137).**
+The `:8760` ingress is a complete, opt-in, gated router across the three lanes.
+S7 (Nix wire-through + fleet flip) remains — Pedro-gated (blast radius = every
+claude-code tab; the Nix tab stated ":8760 stays on its schedule").
+
+### What shipped (all in `src/anthropic_throttle_proxy/{ingress,routing}.py`)
+- **S1 #132** — `:8760` ingress skeleton; forwards to a default lane byte-identical; opt-in, no-op-when-unset.
+- **S2 #133** — role inference (generate/judge/bulk) from the model; bounded body read.
+- **S3 #134** — gauge-driven lane selection; walks the role's chain (anthropic→kimi→glm; bulk never anthropic); polls each lane's `/__throttle/health`; auto-advances on a lock.
+- **S4 #135** — model-remap on egress (`claude-*`→`kimi-k2.6`/`glm-5.2`); session stickiness (`metadata.user_id`); **root fix: strip `Content-Length`** (remap changes body length → stale CL hung the lane).
+- **S5 #136** — `GENERATE_OVERFLOW_ENABLED` (default false = pre-kimi-k3 GA): generate is Anthropic-only, HOLDs (`503 ingress-generate-held`) rather than silently downgrading to kimi/GLM as Opus. Bulk/judge keep full chains.
+- **S6 #137** — `ingress_route_decisions_total{role,lane}` counter + `GET /metrics`.
+
+Verified models (23/07 live probes): Kimi accepts `kimi-k2.6`; GLM accepts `glm-5.2`; `kimi-k3` (generate overflow) GA 27/07.
+
+### Gate calibration (IMPORTANT)
+Cross-family gate ran on **GROQ `openai/gpt-oss-120b`** (codex quota-dead till 28/07, Anthropic lane degraded). GROQ is weaker than codex/claude: it **missed a real CodeQL-high ReDoS** (`\s*` regex anchors on S2) that **CodeQL caught** — fixed. It also issued a false-read BLOCKER on S4 (claimed the `content-length` filter is case-sensitive; it does `.lower()`). **S1–S6 flagged for the mandatory codex re-review when it recovers (28/07).** Lean on CodeQL, not GROQ, for the bar.
+
+### S7 — Nix deploy (Pedro-gated, coordinate with the Nix tab `w1W:p2`)
+1. Bump the proxy package pin `~/NixOS/pkgs/anthropic-throttle-proxy/default.nix:360` `rev` from `a58b6c7…` → the S6 head `fd84331…` (+ recompute the fixed-output hash via `nix build`).
+2. Add a `unified-throttle-ingress` HM module on `:8760` pointing at the three lanes (`INGRESS_ANTHROPIC_LANE_URL=:8765`, `:8766`, `:8767`; `INGRESS_GENERATE_OVERFLOW=false` until 27/07+kimi-k3 verified). Reuses the `throttle-proxy-instance` factory pattern.
+3. **Fleet flip (Pedro's moment):** canary ONE claude-code tab's `ANTHROPIC_BASE_URL=http://127.0.0.1:8760` first; confirm bulk→Kimi/glm + generate→Anthropic via the `x-anthropic-throttle-{role,lane}` response headers; then roll to the fleet. Activation is niri-guarded (`nh os switch`).
+
+### Known model-id drift (S7 reconciliation)
+NixOS #1330 / Issue #1281: the deployed subagent slot is `claude-opus-4-8[1m]` (same as primary-generate), NOT `claude-sonnet-4-6` — so model-tier inference maps subagent fan-out to `generate`, not `bulk`. Reconcile in S7 (re-pin the subagent model OR add a role header) so bulk fan-out hits the cheap lanes.
+
+Reversal: one `git revert` per slice; the ingress is opt-in (no behavior change until an operator starts `:8760` + points a tab at it).
+
+---
+
 ## 23/07/2026 - Spec 093 unified `:8760` ingress — S1 + S2 merged (build in progress)
 
 The "never run out of AI" router (Spec 093, `specs/093-predictive-glide-spillover/`).
