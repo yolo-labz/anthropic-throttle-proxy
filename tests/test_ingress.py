@@ -104,18 +104,24 @@ async def _boot_kimi_ingress(monkeypatch, lane_handler) -> tuple[TestClient, Tes
     return ing, kim
 
 
+async def _post_bulk(ing: TestClient) -> tuple[int, bytes]:
+    """POST a bulk (sonnet-4-6) body through the ingress; assert it routed to
+    Kimi; return (status, body_bytes). Single POST implementation (dedup)."""
+    async with ing.post(
+        "/v1/messages",
+        json={"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "hi"}]},
+        headers={"Authorization": "Bearer t"},
+    ) as r:
+        assert r.headers["x-anthropic-throttle-lane"] == "kimi"
+        return r.status, await r.read()
+
+
 async def _post_bulk_and_close(ing: TestClient, kim: TestClient) -> dict:
-    """POST a bulk (sonnet-4-6) body through the ingress, assert it routed to
-    Kimi, return the lane's JSON response. Closes both clients."""
+    """POST a bulk body via Kimi, return the lane's JSON response; closes both."""
     try:
-        async with ing.post(
-            "/v1/messages",
-            json={"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "hi"}]},
-            headers={"Authorization": "Bearer t"},
-        ) as r:
-            assert r.status == 200
-            assert r.headers["x-anthropic-throttle-lane"] == "kimi"
-            return await r.json()
+        status, body = await _post_bulk(ing)
+        assert status == 200
+        return json.loads(body)
     finally:
         await ing.close()
         await kim.close()
@@ -782,6 +788,28 @@ async def test_s5_pinned_generate_lane_respects_overflow_toggle(monkeypatch) -> 
         await ing.close()
         await anth.close()
         await kim.close()
+
+
+async def test_s6_metrics_exposes_route_decision_counter(monkeypatch) -> None:
+    """S6: a /metrics scrape shows the per-(role→lane) decision count after a forward."""
+
+    async def echo_ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    ing, kim = await _boot_kimi_ingress(monkeypatch, echo_ok)
+    try:
+        status, _ = await _post_bulk(ing)
+        assert status == 200
+        async with ing.get("/metrics") as m:
+            assert m.status == 200
+            text = (await m.read()).decode()
+    finally:
+        await ing.close()
+        await kim.close()
+    # The bulk request was routed to Kimi → the counter line is present.
+    assert 'ingress_route_decisions_total{lane="kimi",role="bulk"}' in text
+    # Prometheus exposition format: the value line follows the HELP/TYPE.
+    assert "ingress_route_decisions_total" in text
 
 
 async def test_s5_bulk_served_via_kimi_when_anthropic_capped_invariant_1(
