@@ -36,7 +36,9 @@ from .routing import (
     default_lanes,
     infer_role_from_body,
     lane_usable,
+    remap_body_model,
     select_lane,
+    session_key_from_body,
 )
 
 # --- config (env-derived, read once at import like config.py) ----------------
@@ -66,6 +68,15 @@ FORWARD_TIMEOUT_S: Final[float] = float(os.environ.get("INGRESS_FORWARD_TIMEOUT_
 # to generate) — bounds memory + the json.loads CPU surface (gate BLOCKER).
 ROLE_BODY_READ_LIMIT: Final[int] = int(
     os.environ.get("INGRESS_ROLE_BODY_READ_LIMIT", str(64 * 1024))
+)
+
+# S4: max request-body bytes buffered for model-remap on POST /v1/messages to a
+# non-Anthropic lane (remap needs the full body to re-serialize). The hot
+# Anthropic path never buffers beyond ROLE_BODY_READ_LIMIT (no remap); only the
+# Kimi/GLM overflow path reads up to this cap. Bodies larger skip remap and
+# stream verbatim (the lane may reject) — bounds memory on the overflow path.
+REMAP_BODY_MAX_BYTES: Final[int] = int(
+    os.environ.get("INGRESS_REMAP_BODY_MAX_BYTES", str(8 * 1024 * 1024))
 )
 
 # Stamp on every served response so a downstream tier / probe can tell an
@@ -100,8 +111,48 @@ LANE_HEALTH_MAX_BYTES: Final[int] = int(
     os.environ.get("INGRESS_LANE_HEALTH_MAX_BYTES", str(1024 * 1024))
 )
 
+
+async def _read_bounded(stream: aiohttp.StreamReader, limit: int) -> tuple[bytes, bool]:
+    """Read up to ``limit`` body bytes. Returns ``(data, complete)``: ``complete``
+    is True iff the whole body fit (EOF reached). ``readany()`` returns as soon as
+    any chunk arrives (never waits for ``limit`` bytes), so a small body on a
+    keep-alive transport returns promptly without a transport-level deadlock."""
+    chunks: list[bytes] = []
+    total = 0
+    while total < limit:
+        chunk = await stream.readany()
+        if not chunk:
+            break  # EOF (body fully delivered / Content-Length satisfied)
+        chunks.append(chunk)
+        total += len(chunk)
+    # complete = the whole body fit. ``total < limit`` covers the EOF-broke case;
+    # ``at_eof()`` covers a body that is exactly ``limit`` bytes (loop exited on
+    # the condition, not on EOF) so it isn't mis-read as a partial buffer.
+    complete = total < limit or stream.at_eof()
+    return b"".join(chunks), complete
+
+
+async def _chain_stream(stream: aiohttp.StreamReader, *initial: bytes) -> AsyncIterator[bytes]:
+    """Yield the ``initial`` byte chunks, then drain ``stream`` — a byte-complete
+    forward when the body was only partially buffered (large-body / no-remap path)."""
+    for chunk in initial:
+        if chunk:
+            yield chunk
+    async for chunk in stream.iter_any():
+        if chunk:
+            yield chunk
+
+
+# S4 session stickiness: metadata.user_id → pinned lane id. Keeps a session on
+# its lane across requests (cache economics — a mid-session switch forces a slow
+# uncached turn). Evicted when the pinned lane goes closed (see _poll_one_lane).
+_session_lane: dict[str, str] = {}
+
 # Hop-by-hop headers (RFC 7230 §6.1) — must not be forwarded verbatim; aiohttp
 # also manages Content-Length / Transfer-Encoding on the rebuilt request.
+# ``content-length`` is filtered too: the ingress may rewrite the body (S4
+# model-remap changes its length), so the client's CL must NOT be forwarded —
+# aiohttp recomputes it from the bytes actually sent (or chunked for streams).
 _HOP_BY_HOP: Final[frozenset[str]] = frozenset(
     {
         "connection",
@@ -113,6 +164,7 @@ _HOP_BY_HOP: Final[frozenset[str]] = frozenset(
         "transfer-encoding",
         "upgrade",
         "host",
+        "content-length",
     }
 )
 
@@ -145,40 +197,31 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     session: aiohttp.ClientSession = request.app[_SESSION_KEY]
     timeout = aiohttp.ClientTimeout(total=FORWARD_TIMEOUT_S or None)
 
-    # S2: infer the role from the model on POST /v1/messages only. Other paths
-    # stream unchanged (no model to read, no body buffering).
-    #
-    # Bounded read (DoS guard, gate BLOCKER on S2): only the first
-    # ROLE_BODY_READ_LIMIT bytes are inspected for the model — the ``model``
-    # field is early in a claude-code body. If the body is larger, role stays
-    # the default and the FULL body still streams through (prefix + remainder),
-    # so we never buffer an unbounded body and json.loads only ever runs on a
-    # bounded prefix.
+    # S2/S4: on POST /v1/messages, read a bounded prefix to infer the role +
+    # session key. Other paths stream unchanged (no model to read).
+    is_messages = request.method == "POST" and request.path == "/v1/messages"
     role = "generate"
-    body_data: bytes | AsyncIterator[bytes] = request.content
-    if request.method == "POST" and request.path == "/v1/messages":
-        prefix = await request.content.read(ROLE_BODY_READ_LIMIT)
-        if len(prefix) < ROLE_BODY_READ_LIMIT:
-            # Whole body fit in the limit → safe to parse for the model.
-            role = infer_role_from_body(prefix)
-            body_data = prefix
-        else:
-            # Body exceeds the limit → don't parse (bound memory/CPU). Stream the
-            # prefix + the remainder through so the forward stays byte-complete.
-            role = "generate"
+    sess_key: str | None = None
+    prefix = b""
+    prefix_complete = True
+    if is_messages:
+        prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
+        role = infer_role_from_body(prefix)
+        sess_key = session_key_from_body(prefix)
 
-            async def _chained_body() -> AsyncIterator[bytes]:
-                yield prefix
-                async for chunk in request.content.iter_any():
-                    if chunk:
-                        yield chunk
+    # S4 session stickiness: a pinned, still-open lane wins over the chain walk
+    # (cache economics — avoid a mid-session uncached turn). Else select_lane.
+    lane_id: str | None = None
+    if sess_key is not None:
+        pinned = _session_lane.get(sess_key)
+        if pinned is not None and (lane_state.get(pinned) or LaneState(False, 0)).open:
+            lane_id = pinned
+    if lane_id is None:
+        lane_id = select_lane(role, lane_state)
+        if lane_id is not None and sess_key is not None:
+            _session_lane[sess_key] = lane_id
 
-            body_data = _chained_body()
-
-    # S3: pick the lane for this role from the cached gauge verdicts. If every
-    # lane in the role's chain is capped, HOLD (503) — S5 refines the
-    # don't-silently-downgrade policy; S3's bar is the basic all-capped hold.
-    lane_id = select_lane(role, lane_state)
+    # S3/S5: every lane for the role capped → HOLD (503).
     if lane_id is None:
         return web.json_response({"error": "ingress-all-lanes-capped", "role": role}, status=503)
     lane = LANES.get(lane_id)
@@ -187,6 +230,27 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
         )
     target = f"{lane.url}{request.path_qs}"
+
+    # S4 model-remap: a non-Anthropic lane's upstream expects its own id, so
+    # rewrite the body's model field on egress (client keeps its claude-* id).
+    # Content-Length is stripped in _forward_headers so aiohttp recomputes it from
+    # the (possibly length-changed) bytes actually sent.
+    body_data: bytes | AsyncIterator[bytes] = request.content
+    if is_messages:
+        target_model = lane.models.get(role)
+        if target_model:
+            if prefix_complete:
+                body_data = remap_body_model(prefix, target_model)
+            else:
+                rest, rest_complete = await _read_bounded(request.content, REMAP_BODY_MAX_BYTES)
+                if rest_complete:
+                    body_data = remap_body_model(prefix + rest, target_model)
+                else:
+                    body_data = _chain_stream(request.content, prefix, rest)
+        elif prefix_complete:
+            body_data = prefix
+        else:
+            body_data = _chain_stream(request.content, prefix)
 
     upstream: aiohttp.ClientResponse | None = None
     try:
@@ -298,6 +362,20 @@ async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
         return
     open_, detail = lane_usable(body, now)
     lane_state[lane.id] = LaneState(open_, now, detail)
+    # S4: when a lane goes closed, evict sessions pinned to it so the next
+    # request re-selects down the chain (stickiness must not pin to a dead lane).
+    if not open_:
+        _evict_sessions_for_closed_lanes({lane.id})
+
+
+def _evict_sessions_for_closed_lanes(closed_ids: set[str]) -> int:
+    """Drop every session pinned to a now-closed lane. Returns the count evicted."""
+    n = 0
+    for key, pinned in list(_session_lane.items()):
+        if pinned in closed_ids:
+            _session_lane.pop(key, None)
+            n += 1
+    return n
 
 
 async def _poll_lanes_once(session: aiohttp.ClientSession) -> None:

@@ -21,7 +21,9 @@ from anthropic_throttle_proxy.routing import (
     infer_role,
     infer_role_from_body,
     lane_usable,
+    remap_body_model,
     select_lane,
+    session_key_from_body,
 )
 
 
@@ -283,3 +285,48 @@ def test_lane_usable_all_bearers_locked_is_closed() -> None:
     }
     open_, detail = lane_usable(health)
     assert open_ is False and detail == "no-usable-bearer"
+
+
+# ─── Spec 093 S4 — model-remap + session key ────────────────────────────────
+
+
+def test_remap_body_model_rewrites_model_field() -> None:
+    """Invariant 4: egress body model == the lane's mapped id."""
+    out = remap_body_model(b'{"model":"claude-sonnet-4-6","messages":[1]}', "kimi-k2.6")
+    assert json.loads(out)["model"] == "kimi-k2.6"
+    # other fields preserved
+    assert json.loads(out)["messages"] == [1]
+
+
+def test_remap_body_model_preserves_rest_of_body() -> None:
+    out = remap_body_model(b'{"model":"x","max_tokens":8,"metadata":{"user_id":"u"}}', "glm-5.2")
+    parsed = json.loads(out)
+    assert parsed["model"] == "glm-5.2"
+    assert parsed["max_tokens"] == 8
+    assert parsed["metadata"]["user_id"] == "u"
+
+
+def test_remap_body_model_invalid_json_returns_unchanged() -> None:
+    """Remap never breaks a forward: unparseable body passes through verbatim."""
+    raw = b"not json"
+    assert remap_body_model(raw, "kimi-k2.6") == raw
+
+
+def test_remap_body_model_empty_model_or_body_is_noop() -> None:
+    assert remap_body_model(b"", "kimi-k2.6") == b""
+    assert remap_body_model(b'{"model":"x"}', "") == b'{"model":"x"}'
+
+
+def test_session_key_from_body_reads_metadata_user_id() -> None:
+    assert session_key_from_body(b'{"metadata":{"user_id":"user-42"}}') == "user-42"
+
+
+def test_session_key_from_body_absent_returns_none() -> None:
+    assert session_key_from_body(b'{"model":"x"}') is None
+    assert session_key_from_body(b'{"metadata":{}}') is None
+    assert session_key_from_body(b"") is None
+    assert session_key_from_body(b"not json") is None
+
+
+def test_session_key_from_body_non_string_user_id_returns_none() -> None:
+    assert session_key_from_body(b'{"metadata":{"user_id":123}}') is None
