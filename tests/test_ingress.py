@@ -452,6 +452,51 @@ async def test_large_messages_body_defaults_role_and_forwards_complete(
     assert seen.get("body") == payload
 
 
+class _ChunkedReader:
+    """Mimics aiohttp StreamReader.read(n): returns the NEXT queued chunk capped
+    at n — i.e. a short read (< n) even when more data is still coming, which is
+    the real behavior for a multi-TCP-segment upload. An empty read == EOF."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = list(chunks)
+
+    async def read(self, n: int) -> bytes:
+        if not self._chunks:
+            return b""
+        head = self._chunks[0]
+        if len(head) <= n:
+            return self._chunks.pop(0)
+        self._chunks[0] = head[n:]
+        return head[:n]
+
+    def at_eof(self) -> bool:
+        return not self._chunks
+
+
+async def test_read_bounded_accumulates_across_short_chunks_not_false_eof() -> None:
+    """Regression (24/07 Moonshot 400): a multi-chunk body whose first read()
+    returns < limit must NOT be flagged complete-at-the-first-chunk. The old
+    ``len(data) < limit`` treated a 16-byte first chunk of a larger body as EOF →
+    remap ran on a truncated prefix → invalid JSON → upstream 400. _read_bounded
+    must LOOP: accumulate the full body when it fits, complete=True only at EOF."""
+    body = b'{"model":"claude-opus-4-8","messages":[{"role":"user","content":"hi"}]}'
+    chunks = [body[i : i + 16] for i in range(0, len(body), 16)]  # 16-byte segments
+    data, complete = await ingress._read_bounded(_ChunkedReader(chunks), 64 * 1024)
+    assert data == body  # full body accumulated, not just the first 16-byte chunk
+    assert complete is True  # genuine EOF (fit under the limit)
+    json.loads(data)  # valid JSON — remap would succeed, no truncation
+
+
+async def test_read_bounded_over_limit_returns_prefix_not_complete() -> None:
+    """A body larger than the limit yields exactly ``limit`` bytes + complete=False
+    (the caller then reads the remainder). Still accumulates across short chunks."""
+    body = b"x" * 200
+    chunks = [body[i : i + 16] for i in range(0, len(body), 16)]
+    data, complete = await ingress._read_bounded(_ChunkedReader(chunks), 64)
+    assert len(data) == 64
+    assert complete is False
+
+
 async def test_unreachable_lane_503_does_not_leak_detail(
     ingress_client: TestClient, monkeypatch
 ) -> None:
