@@ -270,16 +270,6 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     full_body: bytes | None = None  # re-sendable buffered body; None = stream once
     if is_messages:
         prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
-        header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
-        role = header_role or infer_role_from_body(prefix)
-        # Agentic safety floor: a request with `tools` needs a tools-capable
-        # lane. Kimi aborts multi-turn tool-use streaming; GLM has path+key
-        # blockers. Force "generate" (Anthropic) regardless of model tier or
-        # header hint — a consumer must not overflow agentic to a lane that
-        # can't handle it (nix w1W:p4 pre-flip gate finding).
-        if body_has_tools(prefix):
-            role = "generate"
-        sess_key = session_key_from_body(prefix)
         if prefix_complete:
             full_body = prefix
         else:
@@ -289,6 +279,27 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             if rest_complete:
                 full_body = prefix + buffered_rest
             # else: too large to buffer → full_body stays None (streamed, 1 attempt)
+        header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
+        role = header_role or infer_role_from_body(prefix)
+        # Agentic safety floor: a request with `tools` needs a tools-capable
+        # lane. Kimi aborts multi-turn tool-use streaming; GLM has path+key
+        # blockers. Force "generate" (Anthropic) regardless of model tier or
+        # header hint — a consumer must not overflow agentic to a lane that
+        # can't handle it (nix w1W:p4 pre-flip gate finding).
+        #
+        # This one reads the BUFFERED body, not `prefix`. A prefix cut at
+        # ROLE_BODY_READ_LIMIT is invalid JSON, and `body_has_tools` answers
+        # False on a parse failure — i.e. it fails OPEN, deleting the floor for
+        # exactly the requests that need it (a real claude-code turn ships
+        # ~100 KiB of tool schemas, so `role-hint: bulk` routed it to Kimi and
+        # the turn hung). The neighbours above fail SAFE on the same truncation
+        # (role → "generate", session key → None), so they stay on `prefix`:
+        # widening them would migrate live non-agentic traffic between lanes,
+        # which is a routing decision, not this bug. A body too large to buffer
+        # at all can't be inspected, so it fails CLOSED to the capable lane.
+        if full_body is None or body_has_tools(full_body):
+            role = "generate"
+        sess_key = session_key_from_body(prefix)
 
     spillable = is_messages and full_body is not None
     tried: set[str] = set()

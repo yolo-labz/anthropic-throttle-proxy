@@ -982,10 +982,21 @@ async def test_ingress_spills_on_saturation_503(monkeypatch) -> None:
     assert ingress.lane_state["kimi"].detail == "saturated"
 
 
-async def test_agentic_bulk_stays_on_anthropic_not_kimi(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "tool_description",
+    ["", "x" * (ingress.ROLE_BODY_READ_LIMIT + 1024)],
+    ids=["small-body", "body-over-role-read-limit"],
+)
+async def test_agentic_bulk_stays_on_anthropic_not_kimi(tool_description, monkeypatch) -> None:
     """Agentic safety floor: a request with `tools` is forced to generate
     (Anthropic) regardless of model tier or header hint — Kimi aborts multi-turn
-    tool-use streaming, GLM has path+key blockers (nix w1W:p4 pre-flip gate)."""
+    tool-use streaming, GLM has path+key blockers (nix w1W:p4 pre-flip gate).
+
+    The over-limit case is a regression guard: the floor used to read only the
+    ROLE_BODY_READ_LIMIT prefix, which truncates mid-JSON, so ``body_has_tools``
+    took its parse-failure branch and answered False — the floor vanished for
+    every REAL agentic turn (claude-code ships ~100 KiB of tool schemas) and
+    ``role-hint: bulk`` sent it to Kimi."""
 
     async def echo_lane(_request: web.Request) -> web.Response:
         return web.Response(status=200, body=b"ok")
@@ -1000,7 +1011,13 @@ async def test_agentic_bulk_stays_on_anthropic_not_kimi(monkeypatch) -> None:
         # Agentic bulk: sonnet-4-6 (bulk tier) + tools + bulk header hint.
         body = {
             "model": "claude-sonnet-4-6",
-            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "tools": [
+                {
+                    "name": "get_time",
+                    "description": tool_description,
+                    "input_schema": {"type": "object"},
+                }
+            ],
             "messages": [{"role": "user", "content": "hi"}],
         }
         async with ing.post(
