@@ -372,14 +372,18 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             return web.json_response({"error": "ingress-upstream-timeout"}, status=504)
 
         assert upstream is not None
-        # Saturation spill: the lane returned a queue-wait-timeout 503. If the
-        # body is re-sendable + there may be another lane, mark this lane
-        # saturated (short cooldown) + retry the chain. This is the core fix for
-        # the 503-while-overflow-sits-idle symptom.
+        # Retryable: saturation-503 (queue full) OR a 429 that leaked through
+        # :8765's own pushback retries. For generate, the ingress retries
+        # internally (queue-and-wait) so claude-code never sees the transient
+        # 429 — matching direct :8765 behavior where the SDK retries on 429.
+        # The nix w1W:p4 flip-gate: without this, a 429 from :8765 reaches
+        # claude-code → 60s rate_limit retry → abort. With this, the ingress
+        # absorbs the 429 + retries → succeeds on the next attempt.
         is_saturation_503 = (
             upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
         )
-        if is_saturation_503 and spillable:
+        is_retryable = is_saturation_503 or (upstream.status == 429 and role == "generate")
+        if is_retryable and spillable:
             upstream.release()
             upstream = None
             tried.add(lane_id)

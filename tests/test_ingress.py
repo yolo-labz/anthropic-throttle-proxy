@@ -1053,3 +1053,38 @@ async def test_generate_queue_wait_retries_on_saturation_503(monkeypatch) -> Non
     finally:
         await ing.close()
         await anth.close()
+
+
+async def test_generate_retries_on_429_from_lane(monkeypatch) -> None:
+    """The nix w1W:p4 flip-gate: when :8765 returns a 429 (exhausted its own
+    pushback retries), the ingress must RETRY (not pass the 429 through to
+    claude-code). Direct :8765 works because the SDK retries on 429; the ingress
+    must do the same internally."""
+    attempts = {"n": 0}
+
+    async def lane_handler(request: web.Request) -> web.Response:
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            return web.json_response(
+                {"type": "error", "error": {"type": "rate_limit_error"}}, status=429
+            )
+        return web.json_response({"type": "message", "stop_reason": "end_turn"}, status=200)
+
+    anth = await _start_lane(lane_handler)
+    ing = await _boot_ingress(
+        monkeypatch,
+        _lanes_with(str(anth.make_url("")), "http://127.0.0.1:1", "http://127.0.0.1:1"),
+        _open_state({"anthropic", "kimi", "glm"}),
+    )
+    monkeypatch.setattr(ingress, "GENERATE_QUEUE_RETRY_DELAY_S", 0.1)
+    try:
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-opus-4-8", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer t"},
+        ) as r:
+            assert r.status == 200  # retried after the 429 → served
+        assert attempts["n"] == 2  # first 429'd, second served
+    finally:
+        await ing.close()
+        await anth.close()
