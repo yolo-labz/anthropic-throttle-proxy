@@ -3146,6 +3146,57 @@ async def handler(request: web.Request) -> web.StreamResponse:
             source=source,
         )
 
+    probe_waited: set[str] = set()
+
+    async def wait_for_alternate_probe() -> bool:
+        """Park on another bearer's in-flight probe instead of fast-failing.
+
+        ``_account_routing_candidate_score`` scores a bearer ``inf`` while its
+        half-open probe is in flight, so for the lifetime of ONE probe the fleet
+        can look candidate-less even though a healthy account exists. Every
+        request that lands in that window used to take the 429 fast-fail — a
+        dead client turn. Measured 31/07/2026: the first request claimed the
+        probe on the one healthy account, and the next 24 got
+        ``retry-after-fast-fail source=pre-dispatch`` with no ``account-route``
+        line at all. One probe killed 24 tabs.
+
+        A probe resolves in a single upstream round trip, comfortably inside the
+        queue-wait budget, so waiting for it strictly dominates failing. Bounded
+        twice over: each alternate is waited on at most once per request, and
+        every wait goes through ``wait_for_revalidation``, which is capped by
+        ``wait_deadline``. That cap is only as strong as the queue-wait knob —
+        ``QUEUE_MAX_WAIT_S=0`` leaves ``wait_deadline`` None and this wait
+        unbounded, exactly as it already leaves the two sibling revalidation
+        waits below unbounded; the operator asking for no wait bound gets none
+        here either. Returns True when the caller should re-route.
+
+        Deliberately NOT wired into the post-slot fast-fail: that path holds a
+        dispatch slot, and parking while counted inflight is the failure mode
+        its neighbouring comments exist to prevent. The observed kill was
+        pre-dispatch on every one of the 24 requests.
+
+        A request that already holds a probe lease never parks. It is reachable
+        here: ``reroute_after_revalidation`` can claim a lease on the new bearer,
+        and a small non-zero window on that bearer then slips past the first
+        site's ``probe_lease["bid"] != bid`` guard. Parking in that state closes
+        a cycle — R1 holds A's lease and waits on B's probe while R2 holds B's
+        and waits on A's — and pins BOTH accounts invisible to routing for the
+        whole queue budget, which is the very pathology this function exists to
+        undo. Nothing is lost by refusing: a lease is only ever claimed on a
+        bearer routing scored under ``MAX_HOLD_RETRY_AFTER_S``, so the fast-fail
+        below returns None for it and the request dispatches rather than dying.
+        """
+        if probe_lease["bid"] or not _account_routing_enabled():
+            return False
+        for alt_bid in _limiter.probe_inflight_bids():
+            if alt_bid == bid or alt_bid in probe_waited:
+                continue
+            probe_waited.add(alt_bid)
+            log(f"retry-after-probe-wait bid={bid} alt={alt_bid} cid={cid} path=/{path}")
+            if await wait_for_revalidation(lambda b=alt_bid: _limiter.wait_retry_probe(b)):
+                return True
+        return False
+
     while True:
         queue_mode, hard_max = _effective_admission(bid)
         # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
@@ -3162,6 +3213,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
                 if rerouted is not None:
                     bid, headers = rerouted
+                    continue
+                # No candidate MAY mean "every alternate is mid-probe", not
+                # "every alternate is capped". Check before killing the turn.
+                if await wait_for_alternate_probe():
+                    reroute_after_revalidation()
                     continue
                 if (
                     fast_fail := _retry_after_fast_fail_response(
@@ -3190,6 +3246,12 @@ async def handler(request: web.Request) -> web.StreamResponse:
             if rerouted is not None:
                 finish_probe(success=False)
                 bid, headers = rerouted
+                continue
+            # Same escape as above; unlike that branch this one is reachable
+            # holding a lease on `bid`, which wait_for_alternate_probe refuses
+            # to park on (see its docstring — that way lies a lease cycle).
+            if await wait_for_alternate_probe():
+                reroute_after_revalidation()
                 continue
             if (
                 fast_fail := _retry_after_fast_fail_response(

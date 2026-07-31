@@ -107,6 +107,17 @@ def finish_retry_probe(bid: str, *, success: bool) -> bool:
     return True
 
 
+def probe_inflight_bids() -> list[str]:
+    """Bearers whose half-open probe is currently held by some other request.
+
+    Routing scores such a bearer ``inf`` (see ``_account_routing_candidate_score``),
+    so for the lifetime of one probe a fleet can look candidate-less even though
+    a healthy account exists. Callers use this to park on the probe instead of
+    failing the request outright.
+    """
+    return [bid for bid, gate in _retry_probe_gates.items() if gate.required and gate.inflight]
+
+
 def _reset_retry_probe_gates() -> None:
     """Test-only registry reset alongside the other process-global state."""
     _retry_probe_gates.clear()
