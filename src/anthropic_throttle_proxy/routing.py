@@ -148,6 +148,45 @@ def default_lanes() -> dict[str, Lane]:
     }
 
 
+def unified_live_view(unified: dict, now: float | None = None) -> dict:
+    """``unified`` with every window whose own reset epoch has already passed dropped.
+
+    A bearer's unified gauges refresh ONLY from its own response headers, so a
+    bearer that a gate turns off stops producing the very samples that would
+    turn it back on: the snapshot freezes at ``rejected`` / ``util=1.0`` and
+    stays frozen for the life of the process, long after the window it
+    describes has reset. Measured 31/07/2026 — a bearer sat ``status_5h
+    =rejected util_5h=1.0`` for 33 minutes on a snapshot whose ``reset_5h``
+    had passed; when finally re-probed its real utilization was ``0.0``. Every
+    request it should have served was queued behind a healthy sibling instead.
+
+    A reading past its own reset epoch describes a window that no longer
+    exists, so it must not gate anything. ``accounts._window_view`` has
+    applied exactly this rule to the DISPLAY layer since the 10/06 outage
+    ("the frozen stale reading"); this is the same rule for the paths that
+    decide whether traffic may flow.
+
+    Dropping the window does not force traffic at a genuinely-exhausted
+    bearer: it only lets the bearer score finite again, and the half-open
+    retry probe is what actually re-tests it. If upstream is still refusing,
+    the probe's response headers re-populate the window and it re-gates.
+    """
+    now = time.time() if now is None else now
+    # Shallow copy is deliberate and sufficient: ``ratelimit._parse_unified``
+    # emits only scalars (str | float | int | None), so there is no nested
+    # mutable to alias back into ``config.bearer_state``.
+    live = dict(unified)
+    # The bare ("") suffix is a real schema member, not a typo — _parse_unified
+    # emits an unsuffixed "status"/"reset" pair for the representative window
+    # alongside the 5h/7d ones, and _account_routing_candidate_score gates on it.
+    for suffix in ("", "_5h", "_7d"):
+        reset = live.get(f"reset{suffix}")
+        if isinstance(reset, (int, float)) and not isinstance(reset, bool) and float(reset) <= now:
+            for prefix in ("status", "util", "reset"):
+                live.pop(f"{prefix}{suffix}", None)
+    return live
+
+
 def bearer_usable(bearer: dict, now: float | None = None) -> bool:
     """Is one bearer usable right now? Uniform across the three lanes (same proxy schema).
 
@@ -158,6 +197,9 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
     Lanes without Anthropic-style unified gauges (Kimi/GLM) simply have no
     ``rejected`` field, so a reachable bearer with no retry-after is usable —
     the lane's own AIMD handles its internal pressure.
+
+    A ``rejected`` window whose reset epoch has passed is a stale reading, not
+    a lock — see ``unified_live_view``.
     """
     now = time.time() if now is None else now
     limiter = bearer.get("limiter") or {}
@@ -169,7 +211,7 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
         retry_after_until = 0.0
     if retry_after_until > now:
         return False
-    unified = bearer.get("unified") or {}
+    unified = unified_live_view(bearer.get("unified") or {}, now)
     if unified.get("status_5h") == "rejected" or unified.get("status_7d") == "rejected":
         return False
     return True
