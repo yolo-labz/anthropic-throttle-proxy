@@ -3170,8 +3170,19 @@ async def handler(request: web.Request) -> web.StreamResponse:
         dispatch slot, and parking while counted inflight is the failure mode
         its neighbouring comments exist to prevent. The observed kill was
         pre-dispatch on every one of the 24 requests.
+
+        A request that already holds a probe lease never parks. It is reachable
+        here: ``reroute_after_revalidation`` can claim a lease on the new bearer,
+        and a small non-zero window on that bearer then slips past the first
+        site's ``probe_lease["bid"] != bid`` guard. Parking in that state closes
+        a cycle — R1 holds A's lease and waits on B's probe while R2 holds B's
+        and waits on A's — and pins BOTH accounts invisible to routing for the
+        whole queue budget, which is the very pathology this function exists to
+        undo. Nothing is lost by refusing: a lease is only ever claimed on a
+        bearer routing scored under ``MAX_HOLD_RETRY_AFTER_S``, so the fast-fail
+        below returns None for it and the request dispatches rather than dying.
         """
-        if not _account_routing_enabled():
+        if probe_lease["bid"] or not _account_routing_enabled():
             return False
         for alt_bid in _limiter.probe_inflight_bids():
             if alt_bid == bid or alt_bid in probe_waited:
@@ -3232,11 +3243,10 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 finish_probe(success=False)
                 bid, headers = rerouted
                 continue
-            # Same escape as above. finish_probe first: unlike the branch
-            # above, this one IS reachable holding a lease on `bid`, and
-            # reroute_after_revalidation overwrites probe_lease.
+            # Same escape as above; unlike that branch this one is reachable
+            # holding a lease on `bid`, which wait_for_alternate_probe refuses
+            # to park on (see its docstring — that way lies a lease cycle).
             if await wait_for_alternate_probe():
-                finish_probe(success=False)
                 reroute_after_revalidation()
                 continue
             if (

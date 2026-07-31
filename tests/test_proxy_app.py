@@ -1278,6 +1278,80 @@ async def test_retry_after_parks_on_a_siblings_inflight_probe(
     assert config.bearer_state[bid_a]["served"] == 1
 
 
+async def test_probe_lease_holder_never_parks_on_another_probe(
+    client: TestClient, monkeypatch
+) -> None:
+    """The safety half of the park: a lease holder must not wait on a sibling.
+
+    ``_route_account_and_claim_retry_probe`` refuses to claim a lease on a
+    bearer that already has a window, so the lease holder reaches the second
+    fast-fail site only through the narrow race its post-slot sibling models:
+    the window is armed by a concurrent response AFTER the claim, and the first
+    site's ``probe_lease["bid"] != bid`` guard then hands it straight through.
+    Parking in that state closes a cycle — R1 holds A's lease waiting on B's
+    probe while R2 holds B's waiting on A's — pinning both accounts invisible to
+    routing for the whole queue budget, i.e. the very pathology the park exists
+    to undo. Nothing is lost by refusing: the window is under
+    MAX_HOLD_RETRY_AFTER_S, so the fast-fail returns None and the request
+    dispatches instead of dying.
+
+    B claims its lease at entry with a clean window, then the patched path
+    helper reports the 0.5s window that landed a moment later. A is mid-probe
+    and therefore inf to routing, so the reroute finds nothing — exactly the
+    setup that makes the sibling test park. This one must NOT.
+    """
+    _force_single_slot_fair_queue(monkeypatch)  # MAX_HOLD_RETRY_AFTER_S = 1.0
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/fake/a.json,B:/fake/b.json")
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 5.0)
+
+    raw_a = "sk-ant-oat01-LEASE-HOLD-A"
+    raw_b = "sk-ant-oat01-LEASE-HOLD-B"
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    account_a = {"label": "A", "token": raw_a, "bearer_id": bid_a}
+    account_b = {"label": "B", "token": raw_b, "bearer_id": bid_b}
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [account_a, account_b])
+
+    lim_b = await proxy._get_bearer_limiter(bid_b, "fair", config.MAX_CONCURRENT)
+    lim_a = await proxy._get_bearer_limiter(bid_a, "fair", config.MAX_CONCURRENT)
+    assert lim_a.try_begin_retry_probe(), "A must be mid-probe, i.e. inf to routing"
+
+    # The window lands after the entry claim, which is the only way a lease
+    # holder ever reaches the second fast-fail site. One-shot on purpose: it has
+    # to be visible to the pre-dispatch read and gone by the post-slot one, or
+    # the in-slot hold would spin on a window whose real deadline never passes.
+    real_remaining_for_path = proxy._retry_after_remaining_for_path
+    pre_dispatch_reads = 0
+
+    def window_armed_just_after_the_claim(lim, path_: str) -> float:
+        nonlocal pre_dispatch_reads
+        if lim is lim_b:
+            pre_dispatch_reads += 1
+            if pre_dispatch_reads == 1:
+                return 0.5
+        return real_remaining_for_path(lim, path_)
+
+    monkeypatch.setattr(proxy, "_retry_after_remaining_for_path", window_armed_just_after_the_claim)
+    lines: list[str] = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+
+    status, _streamed = await asyncio.wait_for(
+        _post_and_settle(
+            client,
+            data=b'{"model":"claude-sonnet-4-6"}',
+            headers={"Authorization": f"Bearer {raw_b}"},
+        ),
+        timeout=5.0,
+    )
+
+    assert status == 200
+    assert not any(line.startswith("retry-after-probe-wait") for line in lines), lines
+    assert config.bearer_state[bid_b]["served"] == 1
+    # A's lease is untouched: the request neither stole nor released it.
+    assert limiter.retry_probe_inflight(bid_a)
+
+
 async def test_active_long_retry_after_window_fails_fast_after_queue(
     client: TestClient, monkeypatch
 ) -> None:
