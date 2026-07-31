@@ -1473,6 +1473,23 @@ def _retry_after_reroute_headers(
         path=path,
         model=model,
         max_tokens=max_tokens,
+        # Cold-start probation must not disqualify the ESCAPE target. Every
+        # FairBearerLimiter.__init__ arms require_retry_probe, so for a few
+        # seconds after a restart no bearer has been probed yet; scoring with
+        # allow_retry_probe=False makes every sibling math.inf, the router
+        # hands back the incoming bearer, `rerouted_bid == current_bid` below
+        # returns None, and the caller fast-fails a 429 that kills the whole
+        # client turn. Observed 31/07/2026: 13 kills in the minute after one
+        # restart, 4 after the next — one burst per restart, all day.
+        # Probation means "dispatch one probe first", and a rerouted request
+        # IS that probe: the caller's loop re-enters the probation gate on the
+        # new bid and claims the lease via try_begin_retry_probe(). This is
+        # the same flag the ingress path already passes (see
+        # _route_account_and_claim_probe). The genuinely-unsafe cases stay
+        # math.inf inside _account_routing_candidate_score regardless: a probe
+        # already inflight, and an open Retry-After window whose probation
+        # blocks routing.
+        allow_retry_probe=True,
     )
     if rerouted_bid == current_bid or rerouted_bid in seen_bids:
         return None
