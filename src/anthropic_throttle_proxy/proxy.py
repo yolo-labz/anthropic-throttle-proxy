@@ -3146,6 +3146,42 @@ async def handler(request: web.Request) -> web.StreamResponse:
             source=source,
         )
 
+    probe_waited: set[str] = set()
+
+    async def wait_for_alternate_probe() -> bool:
+        """Park on another bearer's in-flight probe instead of fast-failing.
+
+        ``_account_routing_candidate_score`` scores a bearer ``inf`` while its
+        half-open probe is in flight, so for the lifetime of ONE probe the fleet
+        can look candidate-less even though a healthy account exists. Every
+        request that lands in that window used to take the 429 fast-fail — a
+        dead client turn. Measured 31/07/2026: the first request claimed the
+        probe on the one healthy account, and the next 24 got
+        ``retry-after-fast-fail source=pre-dispatch`` with no ``account-route``
+        line at all. One probe killed 24 tabs.
+
+        A probe resolves in a single upstream round trip, comfortably inside the
+        queue-wait budget, so waiting for it strictly dominates failing. Bounded
+        twice over: each alternate is waited on at most once per request, and
+        every wait goes through ``wait_for_revalidation``, which is capped by
+        ``wait_deadline``. Returns True when the caller should re-route.
+
+        Deliberately NOT wired into the post-slot fast-fail: that path holds a
+        dispatch slot, and parking while counted inflight is the failure mode
+        its neighbouring comments exist to prevent. The observed kill was
+        pre-dispatch on every one of the 24 requests.
+        """
+        if not _account_routing_enabled():
+            return False
+        for alt_bid in _limiter.probe_inflight_bids():
+            if alt_bid == bid or alt_bid in probe_waited:
+                continue
+            probe_waited.add(alt_bid)
+            log(f"retry-after-probe-wait bid={bid} alt={alt_bid} cid={cid} path=/{path}")
+            if await wait_for_revalidation(lambda b=alt_bid: _limiter.wait_retry_probe(b)):
+                return True
+        return False
+
     while True:
         queue_mode, hard_max = _effective_admission(bid)
         # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
@@ -3162,6 +3198,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
                 rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
                 if rerouted is not None:
                     bid, headers = rerouted
+                    continue
+                # No candidate MAY mean "every alternate is mid-probe", not
+                # "every alternate is capped". Check before killing the turn.
+                if await wait_for_alternate_probe():
+                    reroute_after_revalidation()
                     continue
                 if (
                     fast_fail := _retry_after_fast_fail_response(
@@ -3190,6 +3231,13 @@ async def handler(request: web.Request) -> web.StreamResponse:
             if rerouted is not None:
                 finish_probe(success=False)
                 bid, headers = rerouted
+                continue
+            # Same escape as above. finish_probe first: unlike the branch
+            # above, this one IS reachable holding a lease on `bid`, and
+            # reroute_after_revalidation overwrites probe_lease.
+            if await wait_for_alternate_probe():
+                finish_probe(success=False)
+                reroute_after_revalidation()
                 continue
             if (
                 fast_fail := _retry_after_fast_fail_response(

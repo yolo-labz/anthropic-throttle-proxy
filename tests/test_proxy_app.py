@@ -1205,6 +1205,79 @@ async def test_retry_after_before_queue_reroutes_to_fresh_account(
     assert config.bearer_state[bid_b]["served"] == 1
 
 
+async def test_retry_after_parks_on_a_siblings_inflight_probe(
+    client: TestClient, monkeypatch
+) -> None:
+    """31/07/2026: one in-flight probe made a healthy fleet look candidate-less.
+
+    ``_account_routing_candidate_score`` returns ``inf`` while a bearer's
+    half-open probe is claimed (PR #150 keeps that gate on purpose — two
+    requests must never both be the canary). But the reroute out of a long
+    Retry-After window shares that scorer, so for the lifetime of ONE probe the
+    only healthy account is invisible and every arriving request took the 429
+    fast-fail. Measured: the first request claimed the probe, the next 24 logged
+    ``retry-after-fast-fail source=pre-dispatch`` with no ``account-route`` line
+    at all. One probe, 24 dead turns.
+
+    A probe resolves in a single upstream round trip — inside the queue-wait
+    budget by orders of magnitude — so parking on it strictly dominates failing.
+    Here B is hard-gated (3600s > MAX_HOLD) and A is healthy but mid-probe; the
+    request must wait for A's probe, reroute, and return 200.
+    """
+    _force_single_slot_fair_queue(monkeypatch)  # MAX_HOLD_RETRY_AFTER_S = 1.0
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/fake/a.json,B:/fake/b.json")
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 5.0)
+
+    raw_a = "sk-ant-oat01-PROBE-WAIT-A"
+    raw_b = "sk-ant-oat01-PROBE-WAIT-B"
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    account_a = {"label": "A", "token": raw_a, "bearer_id": bid_a}
+    account_b = {"label": "B", "token": raw_b, "bearer_id": bid_b}
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [account_a, account_b])
+
+    # B: the incoming bearer, window far past the hold ceiling. Retire its own
+    # cold-start probation first, so this exercises the plain "account got a
+    # long 429" path rather than the cold-start one PR #150 already fixed.
+    lim_b = await proxy._get_bearer_limiter(bid_b, "fair", config.MAX_CONCURRENT)
+    assert lim_b.try_begin_retry_probe()
+    lim_b.finish_retry_probe(success=True)
+    lim_b.note_retry_after(3600)
+    # A: healthy, but some other request already holds the half-open lease.
+    lim_a = await proxy._get_bearer_limiter(bid_a, "fair", config.MAX_CONCURRENT)
+    assert lim_a.try_begin_retry_probe(), "test must start with A's probe claimed"
+
+    # Release A's probe the moment the handler announces it is parking. Driving
+    # it off the log line instead of a sleep keeps the ordering deterministic:
+    # a timer that fired first would leave nothing in flight to park on.
+    lines: list[str] = []
+    loop = asyncio.get_running_loop()
+
+    def log_and_release(line: str) -> None:
+        lines.append(line)
+        if line.startswith("retry-after-probe-wait"):
+            loop.call_soon(lambda: limiter.finish_retry_probe(bid_a, success=True))
+
+    monkeypatch.setattr(proxy, "log", log_and_release)
+
+    status, streamed = await asyncio.wait_for(
+        _post_and_settle(
+            client,
+            data=b'{"model":"claude-sonnet-4-6"}',
+            headers={"Authorization": f"Bearer {raw_b}"},
+        ),
+        timeout=5.0,
+    )
+
+    assert status == 200
+    assert b"holding the local gateway request" not in streamed
+    assert any(line.startswith("retry-after-probe-wait") for line in lines), lines
+    assert not any(line.startswith("retry-after-fast-fail") for line in lines), lines
+    assert config.bearer_state[bid_b]["served"] == 0
+    assert config.bearer_state[bid_a]["served"] == 1
+
+
 async def test_active_long_retry_after_window_fails_fast_after_queue(
     client: TestClient, monkeypatch
 ) -> None:
