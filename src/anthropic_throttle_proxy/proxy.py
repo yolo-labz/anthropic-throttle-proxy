@@ -3164,7 +3164,11 @@ async def handler(request: web.Request) -> web.StreamResponse:
         queue-wait budget, so waiting for it strictly dominates failing. Bounded
         twice over: each alternate is waited on at most once per request, and
         every wait goes through ``wait_for_revalidation``, which is capped by
-        ``wait_deadline``. Returns True when the caller should re-route.
+        ``wait_deadline``. That cap is only as strong as the queue-wait knob —
+        ``QUEUE_MAX_WAIT_S=0`` leaves ``wait_deadline`` None and this wait
+        unbounded, exactly as it already leaves the two sibling revalidation
+        waits below unbounded; the operator asking for no wait bound gets none
+        here either. Returns True when the caller should re-route.
 
         Deliberately NOT wired into the post-slot fast-fail: that path holds a
         dispatch slot, and parking while counted inflight is the failure mode
