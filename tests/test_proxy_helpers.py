@@ -1122,6 +1122,81 @@ def test_reroute_allows_hop_to_shorter_window_bearer(
     assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
 
 
+def test_reroute_escapes_a_cold_start_probation_fleet(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A just-restarted proxy must still reroute off a Retry-After bearer.
+
+    Every ``FairBearerLimiter.__init__`` arms cold-start probation, so for a few
+    seconds after a restart NO bearer has been probed. Scoring the reroute with
+    ``allow_retry_probe=False`` made every sibling ``math.inf``, the router
+    handed back the incoming bearer, and the caller fast-failed a 429 that kills
+    the client's whole turn — one burst per restart (13 kills observed in the
+    minute after one restart on 31/07/2026).
+
+    Note the `bearer_id=` arguments: the sibling reroute tests construct
+    limiters WITHOUT one, which skips `require_retry_probe` entirely and is why
+    they never caught this.
+    """
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    # B is the bearer we must escape: window far past the hold ceiling, exactly
+    # as restored-from-disk state looks after a restart.
+    long_b = FairBearerLimiter(8, "fair", bearer_id=bid_b)
+    long_b.note_retry_after(900)
+    config.bearer_limiters[bid_b] = long_b
+    # A is healthy but UNPROBED — the cold-start state, not a warmed sibling.
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair", bearer_id=bid_a)
+    assert limiter.retry_probe_required(bid_a), "test must start A in probation"
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is not None, "cold-start probation must not block the escape hatch"
+    next_bid, label, headers = rerouted
+    assert next_bid == bid_a
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"
+
+
+def test_reroute_still_refuses_a_probe_already_inflight(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The safety half of the gate above: allow_retry_probe widens eligibility to
+    UNCLAIMED probation only. A sibling whose probe is already inflight stays
+    ineligible, so two requests can never both become the canary."""
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    long_b = FairBearerLimiter(8, "fair", bearer_id=bid_b)
+    long_b.note_retry_after(900)
+    config.bearer_limiters[bid_b] = long_b
+    lim_a = FairBearerLimiter(8, "fair", bearer_id=bid_a)
+    config.bearer_limiters[bid_a] = lim_a
+    assert lim_a.try_begin_retry_probe(), "another request already holds A's lease"
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is None
+
+
 def test_all_configured_hard_gated_keeps_incoming_not_unusable_account(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
