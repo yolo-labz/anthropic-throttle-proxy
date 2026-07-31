@@ -2690,3 +2690,92 @@ no lost wakeup (a fresh `asyncio.Event` is swapped in on probe begin and set
 on finish, so waiters never park on a stale already-set event). All four line
 claims were re-verified against `main` at `326558a` before this record was
 written. The owed-Codex caveat is withdrawn; #123 is fully closed.
+
+## 31/07/2026 — restart-burst turn kills (#149, #150, #151) + a one-bearer fleet
+
+Two Retry-After defects landed today, both of the same class: the proxy
+converted a *routable* condition into a client-visible 429 that kills the whole
+Claude Code turn. #149 stopped killing the turn on upstream pushback and
+rerouted instead. #150 fixed the case #149 could not reach — the seconds right
+after a restart.
+
+**The #150 mechanism.** Every `FairBearerLimiter.__init__` arms
+`require_retry_probe`, so for a few seconds after any restart NO bearer has
+been probed. The reroute site scored candidates with `allow_retry_probe=False`,
+which makes an unprobed sibling `math.inf`. Every sibling scored `inf`, the
+router handed back the incoming bearer, `rerouted_bid == current_bid` returned
+`None`, and the caller fast-failed. One burst per restart, in a fleet that
+restarts on every deploy.
+
+Log signature, from the 12:49:18 restart (pre-fix):
+
+```
+retry-after-fast-fail bid=47f0b262 source=pre-dispatch remaining=900 max_hold=60.0
+```
+
+`remaining=900` is the restored-from-disk window, not a live server cap — that
+is what makes it the cold-start artifact rather than a real refusal.
+
+**Deployed and verified.** #150 merged 13:27, NixOS #1483 bumped the pin to
+`60dbbfd` at 13:56, and the running unit re-execed at 14:15:15. Post-fix the
+`remaining=900` signature is gone; the fast-fails that remain in the same
+90-second window all carry real server-sourced windows —
+`bid=47f0b262 remaining=225883` (account A's 7-day cap) and
+`bid=666a53af remaining=13483` (account C's 5-hour cap) — which are correct
+refusals with nowhere to escape to. Reroutes in that window went 19 → 48.
+
+Caveat on the strength of that verification: the post-fix restart happened
+while 2 of 3 bearers were genuinely capped, so the fix had few healthy targets
+to escape to. The clean falsifier is the disappearance of the `remaining=900`
+class, not the raw fast-fail count (which rose, for the unrelated reason
+below).
+
+**#151 — the gate finding.** The adversarial pass on #150 (DeepInfra Kimi
+K2.6, family-diverse against the Claude-authored diff) cleared all four
+correctness questions: no probe herd (`try_begin_retry_probe` toggles
+`gate.inflight` with no `await` between check and set, so the claim cannot be
+preempted), no lease-less dispatch, no routing into an open window, no
+unbounded reroute loop (`seen_bids` only grows). It found one real gap: the
+*safety half* of the widened gate — the
+`retry_after_remaining > 0 and retry_probe_blocks_routing(bid)` clause — had no
+test, so a future widening of `allow_retry_probe` could have swallowed a bearer
+upstream was still actively backing off. #151 adds that test, falsified against
+the removed clause (without it the reroute picks A and the test fails).
+
+### Fleet capacity state, same day — one live bearer
+
+The restart-burst class is fixed, but it was never the binding constraint
+today. Bearer map (id = `sha256("Bearer " + accessToken)[:8]`):
+
+| bearer | account | state |
+|---|---|---|
+| `47f0b262` | A `~/.claude` | 7-day capped, `retry_after` 230135s → reopens 03/08 ~05:00 BRT |
+| `666a53af` | C `~/.claude-c` | 5-hour capped, `retry_after` 13483s → reopens 31/07 ~18:18 BRT |
+| `b144f62f` | B `~/.claude-b` | carrying 100% of traffic |
+
+B shed 308 `queue_wait_timeouts_total` in ~35 minutes before the 14:15 restart
+reset the counter, and 50 more in the 18 minutes after it. Meanwhile its 429
+rate was negligible — 2/1241 on Opus (0.16%), 3/128 on Sonnet — which is the
+25/07 signature exactly: **the binding cap is local, not upstream.**
+
+The available levers were already spent. Live `/ui/config` overrides were in
+place: `max_concurrent` 5 (default 2) and `queue_max_wait_s` 45 (default 25),
+both raised by a sibling session and both above the values
+`claude-multi-account.nix` declares. Raising `max_concurrent` further is what
+the 25/07 falsifier rejected, and there is no reason to retry it on a
+*one*-bearer mix.
+
+Cross-lane spill is not an option either, for two independent reasons:
+
+1. The Spec 093 ingress on `:8760` exists and is reboot-durable, but **nothing
+   points at it** — the fleet-wide `ANTHROPIC_BASE_URL` cutover is still
+   Pedro-gated (blast radius = all ~50 tabs). So `INGRESS_GENERATE_OVERFLOW`
+   is moot for this incident whatever its value.
+2. The Kimi lane on `:8767` answers its health check (`upstream_egress_ok:
+   true`) but its request counters are `status="401"` ×34 and `status="429"`
+   ×5, zero 200s — Moonshot's native account is suspended. The GLM lane on
+   `:8766` is retiring with the cancelled z.ai subscription (NixOS #1476).
+
+So the honest position is that the fleet was demand-bound on a single bearer,
+with the proxy behaving correctly, and the remedy is time (C at ~18:18, A on
+03/08) rather than a knob.
