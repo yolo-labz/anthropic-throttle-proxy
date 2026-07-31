@@ -172,7 +172,13 @@ def unified_live_view(unified: dict, now: float | None = None) -> dict:
     the probe's response headers re-populate the window and it re-gates.
     """
     now = time.time() if now is None else now
+    # Shallow copy is deliberate and sufficient: ``ratelimit._parse_unified``
+    # emits only scalars (str | float | int | None), so there is no nested
+    # mutable to alias back into ``config.bearer_state``.
     live = dict(unified)
+    # The bare ("") suffix is a real schema member, not a typo — _parse_unified
+    # emits an unsuffixed "status"/"reset" pair for the representative window
+    # alongside the 5h/7d ones, and _account_routing_candidate_score gates on it.
     for suffix in ("", "_5h", "_7d"):
         reset = live.get(f"reset{suffix}")
         if isinstance(reset, (int, float)) and not isinstance(reset, bool) and float(reset) <= now:
