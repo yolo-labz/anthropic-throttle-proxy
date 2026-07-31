@@ -1197,6 +1197,48 @@ def test_reroute_still_refuses_a_probe_already_inflight(
     assert rerouted is None
 
 
+def test_reroute_still_refuses_a_probation_that_blocks_while_retrying(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The other safety half: ``block_while_retry`` probation survives the widening.
+
+    ``note_retry_after`` arms ``require_retry_probe(block_while_retry=True)``
+    whenever the window exceeds ``MAX_HOLD_RETRY_AFTER_S``. That bearer stays
+    ineligible for the whole window even under ``allow_retry_probe=True`` — the
+    widening only relaxes *cold-start* probation (remaining == 0), never a
+    bearer upstream is still actively backing off.
+    """
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
+    long_b = FairBearerLimiter(8, "fair", bearer_id=bid_b)
+    long_b.note_retry_after(7200)
+    config.bearer_limiters[bid_b] = long_b
+    # A is nearer the front of its back-off than B, so every OTHER gate lets it
+    # through once the ceiling is lifted below — only the blocking probation
+    # arms it out.
+    long_a = FairBearerLimiter(8, "fair", bearer_id=bid_a)
+    long_a.note_retry_after(900)
+    config.bearer_limiters[bid_a] = long_a
+    assert limiter.retry_probe_blocks_routing(bid_a), "test must arm A's blocking probation"
+    # Lift the hard ceiling above A's window so the `> MAX_HOLD` gate cannot be
+    # what rejects A — isolating the probation clause under test.
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 3600.0)
+
+    rerouted = proxy._retry_after_reroute_headers(
+        {"Authorization": "Bearer sk-ant-oat01-SIM-B"},
+        bid_b,
+        bid_b,
+        {bid_b},
+        "POST",
+        "v1/messages",
+        "",
+        None,
+        current_remaining=proxy._bearer_retry_after_remaining(bid_b),
+    )
+
+    assert rerouted is None
+
+
 def test_all_configured_hard_gated_keeps_incoming_not_unusable_account(
     isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
