@@ -152,6 +152,7 @@ from .ratelimit import (
     _publish_ratelimit_gauges,
     _short_request_hint,
 )
+from .routing import unified_live_view as _unified_live_view
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
@@ -1074,6 +1075,10 @@ def _account_routing_candidate_score(
     bstate = config.bearer_state.get(bid, {})
     unified = bstate.get("unified") if isinstance(bstate, dict) else None
     if isinstance(unified, dict):
+        # Drop windows whose own reset epoch has passed BEFORE they gate anything:
+        # this snapshot only refreshes from the bearer's own response headers, so
+        # a gated-off bearer can never clear its own gate. See unified_live_view.
+        unified = _unified_live_view(unified, now)
         statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
         if "rejected" in statuses:
             return math.inf

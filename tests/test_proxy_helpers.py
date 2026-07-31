@@ -1349,6 +1349,55 @@ def test_account_routing_hard_gates_exhausted_unified_even_under_spillover(
     )
 
 
+# ---------------------------------------------------------------------------
+# 31/07/2026 frozen-snapshot bearer lockout (PR #154)
+# ``config.bearer_state[bid]["unified"]`` refreshes ONLY from that bearer's own
+# response headers. So the gate below is self-perpetuating: score inf -> never
+# dispatched -> no response headers -> snapshot stays frozen at rejected/util
+# 1.0 for the life of the process. Measured on desktop: a bearer sat locked out
+# for 33 min past its own reset_5h; a proxy restart revealed util_5h=0.0 — a
+# completely empty budget, locked out purely by software. Half the fleet's
+# capacity, invisible.
+# ---------------------------------------------------------------------------
+
+
+def test_account_routing_expired_rejected_snapshot_scores_finite(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Past its own reset epoch, a frozen rejected/util-1.0 snapshot stops gating.
+
+    Re-routable is not re-flooded: the retry-probe gate still makes the first
+    request onto the revived bearer a half-open probe, and that probe's response
+    headers re-populate the window for real.
+    """
+    _bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    past = time.time() - 600
+    config.bearer_state[bid_b] = {
+        "unified": {"status_5h": "rejected", "util_5h": 1.0, "reset_5h": past}
+    }
+    acct = {"bearer_id": bid_b, "token": "sk-ant-oat01-SIM-B", "label": "B"}
+    assert math.isfinite(proxy._account_routing_candidate_score(acct, "incoming"))
+
+
+def test_account_routing_unexpired_rejected_snapshot_still_gated(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The falsifier for the test above: a LIVE rejected window still scores inf.
+
+    If this ever passes finite, the fix has stopped distinguishing "stale" from
+    "exhausted" and is hammering a genuinely capped account.
+    """
+    _bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    future = time.time() + 600
+    config.bearer_state[bid_b] = {
+        "unified": {"status_5h": "rejected", "util_5h": 1.0, "reset_5h": future}
+    }
+    acct = {"bearer_id": bid_b, "token": "sk-ant-oat01-SIM-B", "label": "B"}
+    assert proxy._account_routing_candidate_score(acct, "incoming") == math.inf
+
+
 def test_account_routing_skips_endpoint_rejected_candidate(
     isolated_account_routing,
     monkeypatch: pytest.MonkeyPatch,

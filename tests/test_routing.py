@@ -27,6 +27,7 @@ from anthropic_throttle_proxy.routing import (
     role_from_header,
     select_lane,
     session_key_from_body,
+    unified_live_view,
 )
 
 
@@ -261,6 +262,64 @@ def test_bearer_usable_rejected_window_is_locked() -> None:
     """A unified ``rejected`` window (5h or 7d) = budget exhausted = locked."""
     assert not bearer_usable({"limiter": {}, "unified": {"status_7d": "rejected"}})
     assert not bearer_usable({"limiter": {}, "unified": {"status_5h": "rejected"}})
+
+
+# ---------------------------------------------------------------------------
+# 31/07/2026 frozen-snapshot bearer lockout (PR #154)
+# A bearer's unified gauges refresh ONLY from its own response headers, so a
+# bearer that a gate turns off stops producing the samples that would turn it
+# back on. Measured: one bearer sat status_5h=rejected for 33 min on a snapshot
+# whose reset_5h had already passed; when finally re-probed its real util was
+# 0.0. A reading past its own reset epoch describes a window that no longer
+# exists and must not gate anything.
+# ---------------------------------------------------------------------------
+
+
+def test_bearer_usable_expired_rejected_window_is_not_locked() -> None:
+    """``rejected`` + reset epoch in the PAST = stale reading, not a lock."""
+    past = time.time() - 600
+    assert bearer_usable({"limiter": {}, "unified": {"status_5h": "rejected", "reset_5h": past}})
+    assert bearer_usable({"limiter": {}, "unified": {"status_7d": "rejected", "reset_7d": past}})
+
+
+def test_bearer_usable_unexpired_rejected_window_still_locked() -> None:
+    """The falsifier: a live window must keep gating. Only staleness unlocks."""
+    future = time.time() + 600
+    assert not bearer_usable(
+        {"limiter": {}, "unified": {"status_5h": "rejected", "reset_5h": future}}
+    )
+
+
+def test_unified_live_view_drops_only_the_expired_window() -> None:
+    """Per-window, not all-or-nothing: an expired 5h must not clear a live 7d."""
+    now = time.time()
+    live = unified_live_view(
+        {
+            "status_5h": "rejected",
+            "util_5h": 1.0,
+            "reset_5h": now - 600,
+            "status_7d": "rejected",
+            "util_7d": 1.0,
+            "reset_7d": now + 600,
+        },
+        now=now,
+    )
+    assert "status_5h" not in live and "util_5h" not in live and "reset_5h" not in live
+    assert live == {"status_7d": "rejected", "util_7d": 1.0, "reset_7d": now + 600}
+
+
+def test_unified_live_view_keeps_windows_with_no_reset_epoch() -> None:
+    """No reset epoch = nothing to expire against; never drop on a guess."""
+    unified = {"status_5h": "rejected", "util_5h": 1.0}
+    assert unified_live_view(unified, now=time.time()) == unified
+
+
+def test_unified_live_view_does_not_mutate_the_caller_snapshot() -> None:
+    """The argument is live shared state (``config.bearer_state``) — copy it."""
+    now = time.time()
+    unified = {"status_5h": "rejected", "reset_5h": now - 1}
+    unified_live_view(unified, now=now)
+    assert unified == {"status_5h": "rejected", "reset_5h": now - 1}
 
 
 def test_bearer_usable_lanes_without_unified_gauges_default_usable() -> None:
