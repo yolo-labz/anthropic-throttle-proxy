@@ -69,6 +69,7 @@ def _make_upstream() -> web.Application:
         "release_b_headers": asyncio.Event(),
         "slow_headers": asyncio.Event(),
         "release_slow_eof": asyncio.Event(),
+        "long_once": False,
     }
 
     async def messages(request: web.Request) -> web.StreamResponse:
@@ -92,6 +93,16 @@ def _make_upstream() -> web.Application:
             return response
         if mode == "429":
             return web.Response(status=429, headers={"retry-after": "0", **_RATELIMIT_HEADERS})
+        if mode == "429-long-once" and not probe_state["long_once"]:
+            # Whichever bearer is dispatched FIRST answers with a window far too
+            # long to hold; every later bearer succeeds. Deterministic regardless
+            # of which account the router picks.
+            probe_state["long_once"] = True
+            return web.Response(
+                status=429,
+                headers={"retry-after": "3600", **_RATELIMIT_HEADERS},
+                text="rate limited",
+            )
         if mode == "429-long-retry-after":
             return web.Response(
                 status=429,
@@ -1319,6 +1330,65 @@ async def test_retry_after_after_queue_reroutes_to_fresh_account(
     assert config.bearer_state[bid_b]["served"] == 1
     assert lim_a.snapshot()["queued_total"] == 0
     assert lim_a.snapshot()["inflight"] == 0
+
+
+async def test_pushback_long_window_reroutes_instead_of_killing_the_turn(
+    client: TestClient, monkeypatch
+) -> None:
+    """31/07/2026 incident: the recovery probe is a REAL user request.
+
+    ``try_begin_retry_probe`` volunteers the first caller after a window expires
+    to test whether the account recovered. When that dispatch comes back 429 with
+    a Retry-After too long to hold, the pushback path used to return the fast-fail
+    straight to the client — destroying a 9-12 minute turn while a healthy sibling
+    account sat idle. Pre-dispatch already rerouted here; pushback now does too.
+    """
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/fake/a.json,B:/fake/b.json")
+
+    raw_a = "sk-ant-oat01-PUSHBACK-A"
+    raw_b = "sk-ant-oat01-PUSHBACK-B"
+    bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    account_a = {"label": "A", "token": raw_a, "bearer_id": bid_a}
+    account_b = {"label": "B", "token": raw_b, "bearer_id": bid_b}
+
+    lim_a = await proxy._get_bearer_limiter(bid_a, "fair", config.MAX_CONCURRENT)
+    lim_b = await proxy._get_bearer_limiter(bid_b, "fair", config.MAX_CONCURRENT)
+    # Warm BOTH bearers out of cold-start probation. Every fresh
+    # FairBearerLimiter arms `require_retry_probe` (limiter.py) and the reroute
+    # path routes with `allow_retry_probe=False`, so an unprobed bearer scores
+    # `inf` and can never be a reroute target. In production the healthy sibling
+    # has been serving traffic for hours; leaving it cold here would test the
+    # cold-start rule, not the pushback reroute.
+    for lim in (lim_a, lim_b):
+        assert lim.try_begin_retry_probe() is True
+        assert lim.finish_retry_probe(success=True) is True
+
+    # Both accounts stay in the snapshot, as in production: it is
+    # `_account_routing_candidate_score` that rules out a bearer sitting inside
+    # an active Retry-After window. (Filtering here instead would make the
+    # capped account look UNCONFIGURED, and the router hands those straight back
+    # via `_healthy_known_unconfigured_bearer`.)
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [account_a, account_b])
+
+    status, streamed = await _post_and_settle(
+        client,
+        data=b'{"model":"claude-sonnet-4-6"}',
+        headers={"Authorization": f"Bearer {raw_a}", "X-Stub-Mode": "429-long-once"},
+    )
+
+    # The turn survives: the caller gets a real answer, not the fast-fail body.
+    assert status == 200
+    assert b"failing fast instead of holding" not in streamed
+
+    # …and it survived by REROUTING, not by the stub going easy on us: exactly one
+    # bearer must be left holding the 3600 s window it was probed into.
+    lim_a = await proxy._get_bearer_limiter(bid_a, "fair", config.MAX_CONCURRENT)
+    lim_b = await proxy._get_bearer_limiter(bid_b, "fair", config.MAX_CONCURRENT)
+    armed = [lim.retry_after_remaining() > 0 for lim in (lim_a, lim_b)]
+    assert armed.count(True) == 1, "the probed bearer must latch its long window"
+    assert config.state["inflight"] == 0
 
 
 async def test_short_window_holds_on_b_without_rerouting_to_dead_a(

@@ -2332,6 +2332,26 @@ async def _keepalive_hold_and_retry(
             keepalive_task.cancel()
 
 
+class _RetryAfterArmed(Exception):
+    """A pushback 429 armed a too-long Retry-After on the bearer we dispatched on.
+
+    Raised instead of returning the fast-fail so the dispatch loop can hand the
+    slot back and re-enter the routing gate, which reroutes onto a healthy
+    bearer and only fast-fails when none is better.
+
+    Why this matters: the request that discovers a still-capped account IS a
+    real user request. ``try_begin_retry_probe`` volunteers the first caller
+    after a window expires as the recovery probe, so returning the 429 straight
+    from here destroyed that caller's whole turn (31/07/2026: 9- and 12-minute
+    turns killed) while a healthy sibling account sat idle serving other tabs.
+    Pre-dispatch already reroutes in this situation; pushback did not.
+    """
+
+    def __init__(self, remaining: float) -> None:
+        super().__init__(remaining)
+        self.remaining = remaining
+
+
 async def _forward_with_retry(
     request: web.Request,
     headers: Mapping[str, str],
@@ -2460,7 +2480,18 @@ async def _forward_with_retry(
             if (
                 fast_fail := _retry_after_fast_fail_response(bid, path, pause, source="pushback")
             ) is not None:
-                return fast_fail
+                if not _account_routing_enabled():
+                    # Single-active-account mode: there is no sibling bearer to
+                    # reroute onto, and the 401 credential nudge is itself the
+                    # answer (it makes the tab adopt the swapped credential).
+                    return fast_fail
+                # Latch the window BEFORE handing the request back to the routing
+                # gate: `_pushback_pause` is pure, and without this the retry would
+                # see remaining<=0 and re-probe this same bearer forever. Recording
+                # it also arms `require_retry_probe(block_while_retry=True)`, which
+                # is what makes the pre-dispatch reroute branch fire on re-entry.
+                limiter.note_retry_after(pause)
+                raise _RetryAfterArmed(pause)
             await _aimd_feedback(bid, limiter, attempt)
             _schedule_advisor(bid, attempt.final_status, path)
             await limiter.wait_retry_after()
@@ -3226,28 +3257,51 @@ async def handler(request: web.Request) -> web.StreamResponse:
                         continue
                     if _request_disconnected(request):
                         return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
-                    return await _forward_with_retry(
-                        request,
-                        headers,
-                        body,
-                        path,
-                        via,
-                        url,
-                        client_timeout,
-                        attempt,
-                        bid,
-                        limiter,
-                        # Deadline (not a snapshot): every central attempt re-stamps
-                        # the REMAINING budget, so pushback sleeps between retries
-                        # keep eating it instead of re-granting central a full
-                        # window (Codex round-2 BLOCKER on PR #83).
-                        wait_deadline=wait_deadline,
-                        on_success_headers=(
-                            (lambda: finish_probe(success=True))
-                            if probe_lease["bid"] == bid
-                            else None
-                        ),
-                    )
+                    try:
+                        return await _forward_with_retry(
+                            request,
+                            headers,
+                            body,
+                            path,
+                            via,
+                            url,
+                            client_timeout,
+                            attempt,
+                            bid,
+                            limiter,
+                            # Deadline (not a snapshot): every central attempt re-stamps
+                            # the REMAINING budget, so pushback sleeps between retries
+                            # keep eating it instead of re-granting central a full
+                            # window (Codex round-2 BLOCKER on PR #83).
+                            wait_deadline=wait_deadline,
+                            on_success_headers=(
+                                (lambda: finish_probe(success=True))
+                                if probe_lease["bid"] == bid
+                                else None
+                            ),
+                        )
+                    except _RetryAfterArmed:
+                        # The bearer we dispatched on answered with a Retry-After
+                        # too long to hold. Record the attempt (this is a REAL
+                        # upstream 429, so it must hit metrics/AIMD), release the
+                        # probe lease so the pre-dispatch gate below is reachable,
+                        # then re-enter routing. Setting `rerouted` suppresses the
+                        # finally-block finalize we just ran ourselves.
+                        await _finalize(
+                            counters,
+                            bid,
+                            limiter,
+                            bstate,
+                            attempt,
+                            t0,
+                            model,
+                            model_label,
+                            request,
+                            path,
+                        )
+                        finish_probe(success=False)
+                        rerouted = (bid, headers)
+                        continue
                 finally:
                     if rerouted is None:
                         try:
