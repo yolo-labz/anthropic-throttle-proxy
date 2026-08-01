@@ -88,3 +88,80 @@ def test_no_binding_line_when_all_windows_stale():
     ]
     detail = routes._compute_status(bearers, "fair", NOW)["detail"]
     assert "binding:" not in detail
+
+
+def test_provider_label_derives_host_root():
+    assert routes._provider_label("https://api.anthropic.com") == "anthropic"
+    assert routes._provider_label("https://api.moonshot.ai/anthropic") == "moonshot"
+    assert (
+        routes._provider_label("http://127.0.0.1:8766") == "127"
+    )  # ip → first octet, still renders
+    assert routes._provider_label("") == "upstream"  # defensive: never raises / empty
+
+
+def _providers(**over):
+    base = dict(
+        upstream="https://api.anthropic.com",
+        central_url="(direct)",
+        central_status="unknown",
+        level="throttled",
+        inflight=10,
+        queued=9,
+        served=23550,
+        max_concurrent=5,
+        fleet=[],
+    )
+    base.update(over)
+    return routes._build_providers(**base)
+
+
+def test_build_providers_always_has_primary_by_default():
+    # "Integrate all providers by default": the primary lane renders with NO
+    # fleet configured — the dead-lane env card is no longer the only provider row.
+    rows = _providers(fleet=[])
+    assert len(rows) == 1
+    p = rows[0]
+    assert p["kind"] == "primary"
+    assert p["name"] == "anthropic"
+    assert p["ok"] is True and p["egress_ok"] is True  # direct upstream → egress ok
+    assert p["served"] == 23550 and p["max_concurrent"] == 5
+    assert p["level"] == "throttled"
+
+
+def test_build_providers_central_mode_reflects_central_health():
+    up = _providers(central_url="http://central:9000", central_status="up")[0]
+    assert up["name"] == "central" and up["upstream"] == "http://central:9000"
+    assert up["egress_ok"] is True
+    down = _providers(central_url="http://central:9000", central_status="down")[0]
+    assert down["egress_ok"] is False  # central down → primary egress impaired
+
+
+def test_build_providers_appends_fleet_siblings():
+    fleet = [
+        {
+            "name": "kimi",
+            "ok": True,
+            "upstream": "https://api.moonshot.ai",
+            "served": 18,
+            "inflight": 0,
+            "queued": 0,
+            "max_concurrent": 6,
+            "upstream_egress_ok": True,
+        },
+        {
+            "name": "glm",
+            "ok": False,
+            "upstream": "http://127.0.0.1:8766",
+            "err": "sibling unreachable",
+        },
+    ]
+    rows = _providers(fleet=fleet)
+    assert [r["name"] for r in rows] == ["anthropic", "kimi", "glm"]
+    kimi = rows[1]
+    assert kimi["kind"] == "sibling" and kimi["ok"] is True and kimi["served"] == 18
+    assert kimi["level"] == "healthy"
+    glm = rows[2]
+    assert (
+        glm["ok"] is False and glm["level"] == "throttled" and glm["err"] == "sibling unreachable"
+    )
+    assert glm["served"] == 0  # missing numeric fields coerce to 0, never KeyError

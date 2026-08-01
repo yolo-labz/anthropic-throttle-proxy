@@ -6,36 +6,48 @@
 </div>
 {% endif %}
 
-{% if fleet %}
-<h2>Fleet · <span class="count">{{ fleet | length }} {{ 'proxy' if fleet | length == 1 else 'proxies' }}</span></h2>
-<section class="fleet" aria-label="Sibling proxy fleet health">
-  {% for f in fleet %}
-  <div class="fleet-tile {{ 'up' if f.ok else 'down' }}">
-    <span class="fname"><span class="fdot"></span>{{ f.name }}</span>
-    {% if f.ok %}
-      <div class="fserved"><span class="served-label">served</span>{{ "{:,}".format(f.served) }}</div>
-      <div class="fegress">egress <b>{{ 'ok' if f.upstream_egress_ok else 'down' }}</b></div>
-      <div class="fmeta">
-        <span>inflight <b>{{ f.inflight }}</b></span>
-        <span>queued <b>{{ f.queued }}</b></span>
-        <span>cap <b>{{ f.max_concurrent }}</b></span>
-        <span class="fupstream" title="{{ f.upstream }}">{{ f.upstream }}</span>
-      </div>
-    {% else %}
-      <div class="ferr">{{ f.err }}</div>
-    {% endif %}
-  </div>
-  {% endfor %}
+<section class="overview" aria-label="Live proxy totals">
+  <div class="stat"><span class="stat-label">in-flight</span><span class="stat-value">{{ inflight }}</span></div>
+  <div class="stat"><span class="stat-label">queued</span><span class="stat-value{% if queued %} is-warn{% endif %}">{{ queued }}</span></div>
+  <div class="stat"><span class="stat-label">served</span><span class="stat-value">{{ "{:,}".format(served) }}</span></div>
+  <div class="stat"><span class="stat-label">retries</span><span class="stat-value{% if retries %} is-crit{% endif %}">{{ retries }}</span></div>
+  <div class="stat"><span class="stat-label">disconnects</span><span class="stat-value{% if disconnects %} is-crit{% endif %}">{{ disconnects }}</span></div>
+</section>
+
+{% if providers %}
+<h2>Providers · <span class="count">{{ providers | length }}</span></h2>
+<section class="bearers-wrap" tabindex="0" aria-label="Routing providers and lane health">
+<table class="bearers providers">
+  <thead>
+    <tr>
+      <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH">provider</th>
+      <th scope="col" title="Upstream base URL this provider forwards to">upstream</th>
+      <th scope="col" title="Lifetime requests served through this provider since it started">served</th>
+      <th scope="col" class="th-center" title="Concurrency ceiling (MAX / per-lane cap)">cap</th>
+      <th scope="col" class="th-center" title="Reachability + upstream egress health">status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in providers %}
+    <tr>
+      <td>
+        <span class="prov prov-{{ p.level }}"><span class="pdot"></span>{{ p.name }}</span>
+        {% if p.kind == "primary" %}<span class="prov-tag">primary</span>{% endif %}
+      </td>
+      <td class="prov-upstream" title="{{ p.upstream }}">{{ p.upstream or "—" }}</td>
+      <td class="num">{{ "{:,}".format(p.served) }}</td>
+      <td class="td-center num">{{ p.max_concurrent or "—" }}</td>
+      <td class="td-center">
+        {% if not p.ok %}<span class="egress down" title="{{ p.err }}">unreachable</span>
+        {% elif p.egress_ok %}<span class="egress up">egress ok</span>
+        {% else %}<span class="egress down">egress down</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
 </section>
 {% endif %}
-
-<div class="cards">
-  <div class="card"><div class="label">in-flight</div><div class="value">{{ inflight }}</div></div>
-  <div class="card"><div class="label">queued</div><div class="value">{{ queued }}</div></div>
-  <div class="card"><div class="label">served</div><div class="value">{{ "{:,}".format(served) }}</div></div>
-  <div class="card{% if retries %} alarm{% endif %}"><div class="label">retries</div><div class="value">{{ retries }}</div></div>
-  <div class="card{% if disconnects %} alarm{% endif %}"><div class="label">disconnects</div><div class="value">{{ disconnects }}</div></div>
-</div>
 
 {% if accounts %}
 <h2>Accounts · <span class="count">{{ accounts | length }}</span></h2>

@@ -21,6 +21,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import aiohttp_jinja2
 import jinja2
@@ -209,6 +210,77 @@ def _publish_account_gauges(
     _metrics.M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in suspected.values()))
 
 
+def _provider_label(upstream: str) -> str:
+    """Friendly provider name from an upstream URL — the host's root label.
+
+    ``https://api.anthropic.com`` → ``anthropic``; ``https://api.moonshot.ai`` →
+    ``moonshot``. Defensive: an unparseable / hostless URL falls back to the
+    raw string so the row still renders (never raises into the render path).
+    """
+    host = urlparse(upstream).hostname or upstream.strip()
+    host = host.removeprefix("www.").removeprefix("api.")
+    root = host.split(".", 1)[0] if host else ""
+    return root or "upstream"
+
+
+def _build_providers(
+    *,
+    upstream: str,
+    central_url: str,
+    central_status: str,
+    level: str,
+    inflight: int,
+    queued: int,
+    served: int,
+    max_concurrent: int,
+    fleet: list[dict],
+) -> list[dict]:
+    """Unified provider rows: the primary upstream (always) + fleet siblings.
+
+    "Integrate all providers by default" — the primary lane always renders as a
+    provider row, synthesized from live proxy state, so the dashboard shows the
+    routing destination with no env gate. Each configured sibling proxy
+    (``THROTTLE_FLEET_HEALTH``) appends as another row, so every provider the
+    proxy can reach lives in ONE table instead of a separate optional card strip.
+    """
+    is_central = central_url != "(direct)"
+    providers: list[dict] = [
+        {
+            "name": "central" if is_central else _provider_label(upstream),
+            "kind": "primary",
+            "upstream": central_url if is_central else upstream,
+            # The proxy itself is up (it is rendering this page); egress is only
+            # impaired when a configured central tier is reporting down.
+            "ok": True,
+            "egress_ok": not (is_central and central_status == "down"),
+            "inflight": inflight,
+            "queued": queued,
+            "served": served,
+            "max_concurrent": max_concurrent,
+            "level": level,
+            "err": "",
+        }
+    ]
+    for f in fleet:
+        ok = bool(f.get("ok"))
+        providers.append(
+            {
+                "name": str(f.get("name") or "?"),
+                "kind": "sibling",
+                "upstream": str(f.get("upstream") or ""),
+                "ok": ok,
+                "egress_ok": bool(f.get("upstream_egress_ok")),
+                "inflight": int(f.get("inflight") or 0),
+                "queued": int(f.get("queued") or 0),
+                "served": int(f.get("served") or 0),
+                "max_concurrent": int(f.get("max_concurrent") or 0),
+                "level": "healthy" if ok else "throttled",
+                "err": str(f.get("err") or ""),
+            }
+        )
+    return providers
+
+
 async def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
@@ -247,12 +319,25 @@ async def _collect_view() -> dict[str, object]:
     )
     fleet_view = fleet_raw if isinstance(fleet_raw, list) else []
     copilot_view = copilot_raw if isinstance(copilot_raw, list) else []
+    status = _compute_status(bearers, _proxy.QUEUE_MODE, now)
+    central_url = _proxy.CENTRAL_URL or "(direct)"
+    providers = _build_providers(
+        upstream=_proxy.UPSTREAM,
+        central_url=central_url,
+        central_status=cs,
+        level=str(status.get("level", "idle")),
+        inflight=_proxy.state["inflight"],
+        queued=_proxy.state["queued"],
+        served=_proxy.state["served"],
+        max_concurrent=_proxy.MAX_CONCURRENT,
+        fleet=fleet_view,
+    )
     return {
         "accounts": accounts_view,
         "identity": identity,
-        "fleet": fleet_view,
+        "providers": providers,
         "copilot": copilot_view,
-        "status": _compute_status(bearers, _proxy.QUEUE_MODE, now),
+        "status": status,
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
         "served": _proxy.state["served"],
@@ -262,7 +347,7 @@ async def _collect_view() -> dict[str, object]:
         "queue_mode": _proxy.QUEUE_MODE,
         "min_dispatch_gap_ms": int(_proxy.MIN_DISPATCH_GAP_S * 1000),
         "upstream": _proxy.UPSTREAM,
-        "central_url": _proxy.CENTRAL_URL or "(direct)",
+        "central_url": central_url,
         "central_status": cs,
         "bearers": bearers,
         "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
