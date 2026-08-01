@@ -23,6 +23,8 @@
       <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH">provider</th>
       <th scope="col" title="Upstream base URL this provider forwards to">upstream</th>
       <th scope="col" title="Lifetime requests served through this provider since it started">served</th>
+      <th scope="col" class="th-center" title="Requests in flight through this provider right now">in-flight</th>
+      <th scope="col" class="th-center" title="Requests queued waiting for a slot on this provider">queued</th>
       <th scope="col" class="th-center" title="Concurrency ceiling (MAX / per-lane cap)">cap</th>
       <th scope="col" class="th-center" title="Reachability + upstream egress health">status</th>
     </tr>
@@ -36,6 +38,8 @@
       </td>
       <td class="prov-upstream" title="{{ p.upstream }}">{{ p.upstream or "—" }}</td>
       <td class="num">{{ "{:,}".format(p.served) }}</td>
+      <td class="td-center num">{% if p.ok %}{{ p.inflight }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="td-center num{% if p.ok and p.queued %} warn-text{% endif %}">{% if p.ok %}{{ p.queued }}{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="td-center num">{{ p.max_concurrent or "—" }}</td>
       <td class="td-center prov-status">
         {% if not p.ok %}

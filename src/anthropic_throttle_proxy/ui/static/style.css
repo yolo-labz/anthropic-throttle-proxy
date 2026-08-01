@@ -165,7 +165,7 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
 /* ── providers table (primary upstream + sibling lanes, unified) ────── */
 /* Auto layout + intrinsic width so 1-3 providers pack left instead of a fixed
    table stretching a single column into a wide mid-row gap on a big screen. */
-table.bearers.providers { table-layout: auto; width: auto; min-width: 42rem; max-width: 100%; }
+table.bearers.providers { table-layout: auto; width: auto; min-width: 50rem; max-width: 100%; }
 table.bearers.providers th,
 table.bearers.providers td { padding-right: 1.6rem; }
 table.bearers.providers th:last-child,
