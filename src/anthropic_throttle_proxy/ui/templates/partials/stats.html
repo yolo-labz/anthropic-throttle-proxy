@@ -37,10 +37,14 @@
       <td class="prov-upstream" title="{{ p.upstream }}">{{ p.upstream or "—" }}</td>
       <td class="num">{{ "{:,}".format(p.served) }}</td>
       <td class="td-center num">{{ p.max_concurrent or "—" }}</td>
-      <td class="td-center">
-        {% if not p.ok %}<span class="egress down" title="{{ p.err }}">unreachable</span>
-        {% elif p.egress_ok %}<span class="egress up">egress ok</span>
-        {% else %}<span class="egress down">egress down</span>{% endif %}
+      <td class="td-center prov-status">
+        {% if not p.ok %}
+          <span class="prov-state prov-idle">unreachable</span>
+          {% if p.err %}<span class="prov-err">{{ p.err }}</span>{% endif %}
+        {% else %}
+          <span class="prov-state prov-{{ p.level }}">{{ p.level }}</span>
+          <span class="egress {{ 'up' if p.egress_ok else 'down' }}">egress {{ 'ok' if p.egress_ok else 'down' }}</span>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}

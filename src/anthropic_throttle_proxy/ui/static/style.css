@@ -171,6 +171,17 @@ table.bearers.providers td { padding-right: 1.6rem; }
 table.bearers.providers th:last-child,
 table.bearers.providers td:last-child { padding-right: 0.7rem; }
 table.bearers.providers td.prov-upstream { text-align: left; }
+table.bearers.providers thead th:nth-child(2) { text-align: left; }  /* upstream header over left-aligned URLs */
+td.prov-status { white-space: normal; }
+/* Level as TEXT, colour-matched to the row dot — so the dot is never the sole
+   carrier of the pacing state (WCAG 1.4.1). */
+.prov-state { font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.prov-state.prov-healthy   { color: var(--ok); }
+.prov-state.prov-pacing    { color: var(--warn); }
+.prov-state.prov-throttled { color: var(--crit); }
+.prov-state.prov-idle      { color: var(--ctp-subtext0); }
+.prov-status .egress { margin-left: 0.5rem; }
+.prov-err { display: block; font-family: var(--mono); font-size: 0.66rem; color: var(--crit); margin-top: 0.1rem; }
 .prov { display: inline-flex; align-items: center; gap: 0.45rem; font-family: var(--mono); font-weight: 600; color: var(--ctp-text); }
 .prov .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 .prov-healthy   .pdot { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }

@@ -274,7 +274,11 @@ def _build_providers(
                 "queued": int(f.get("queued") or 0),
                 "served": int(f.get("served") or 0),
                 "max_concurrent": int(f.get("max_concurrent") or 0),
-                "level": "healthy" if ok else "throttled",
+                # A sibling probe is BINARY reachability, not the primary's
+                # 4-state pacing. Map a failed probe to the neutral "idle"
+                # (grey dot) so a dead lane is never pixel-identical to a
+                # rate-limited-but-serving primary ("throttled", red dot).
+                "level": "healthy" if ok else "idle",
                 "err": str(f.get("err") or ""),
             }
         )

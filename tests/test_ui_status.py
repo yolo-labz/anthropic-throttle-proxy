@@ -161,7 +161,9 @@ def test_build_providers_appends_fleet_siblings():
     assert kimi["kind"] == "sibling" and kimi["ok"] is True and kimi["served"] == 18
     assert kimi["level"] == "healthy"
     glm = rows[2]
-    assert (
-        glm["ok"] is False and glm["level"] == "throttled" and glm["err"] == "sibling unreachable"
-    )
+    # A failed sibling probe maps to "idle" (grey), NOT "throttled" — a dead lane
+    # must be visually distinct from the primary's real rate-limited state, which
+    # is also "throttled". (Codex/Throttle #156 review, near-blocker.)
+    assert glm["ok"] is False and glm["level"] == "idle" and glm["err"] == "sibling unreachable"
+    assert glm["level"] != rows[0]["level"]  # dead sibling != rate-limited primary
     assert glm["served"] == 0  # missing numeric fields coerce to 0, never KeyError
