@@ -30,6 +30,14 @@ def isolate_overrides(monkeypatch, tmp_path):
     config.ENV_DEFAULTS.clear()
     config._capture_env_defaults()
     yield
+    # set_override writes the LIVE module attr (via _set_module_attr), so clearing
+    # only the RUNTIME_OVERRIDES dict would leak that value into every later test.
+    # Harmless until _pushback_pause began clamping synthetic pauses to
+    # MAX_HOLD_RETRY_AFTER_S (PR #155): test_set_override_max_hold_retry_after left
+    # MAX_HOLD_RETRY_AFTER_S=2.5 module-global, collapsing the AIMD/pacing suites'
+    # 5–30s budget pauses to 2.5s. Restore each overridden knob to its default.
+    for key in list(config.RUNTIME_OVERRIDES):
+        config.reset_override(key)
     config.RUNTIME_OVERRIDES.clear()
 
 
