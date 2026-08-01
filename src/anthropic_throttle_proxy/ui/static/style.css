@@ -138,82 +138,50 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
 .status.crit .dot, .status.identity-banner .dot { background: var(--crit); }
 .status.crit .verdict, .status.identity-banner .verdict { color: var(--crit); }
 
-/* ── fleet strip (sibling proxies) ──────────────────────────────────── */
-.fleet {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
-  gap: 0.6rem;
-}
-.fleet-tile {
-  background: var(--ctp-mantle);
-  border: var(--hairline);
-  border-radius: var(--radius);
-  padding: 0.6rem 0.75rem;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-areas: "name name name" "served served egress" "meta meta meta";
-  gap: 0.15rem 0.5rem;
-  align-items: baseline;
-}
-.fleet-tile.down { border-left: 3px solid var(--crit); }
-.fleet-tile.up   { border-left: 3px solid var(--ok); }
-.fleet-tile .fname {
-  grid-area: name;
-  font-family: var(--mono);
-  font-weight: 600;
-  font-size: 0.82rem;
-  color: var(--ctp-text);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.fleet-tile .fname .fdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
-.fleet-tile.up .fdot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
-.fleet-tile.down .fdot { background: var(--crit); }
-.fleet-tile .fserved {
-  grid-area: served;
-  font-family: var(--mono);
-  font-size: 1.25rem;
-  font-weight: 500;
-  line-height: 1;
-  color: var(--ctp-text);
-}
-.fleet-tile .fserved .served-label { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-bottom: 0.1rem; font-weight: 400; }
-.fleet-tile .fegress { grid-area: egress; font-family: var(--mono); font-size: 0.66rem; color: var(--muted); text-align: right; }
-.fleet-tile .fegress b { color: var(--ok); font-weight: 500; }
-.fleet-tile.down .fegress b { color: var(--crit); }
-.fleet-tile .fmeta {
-  grid-area: meta;
+/* ── overview strip (global proxy totals) ───────────────────────────── */
+.overview {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.2rem 0.7rem;
-  font-family: var(--mono);
-  font-size: 0.68rem;
-  color: var(--muted);
-  border-top: 1px solid color-mix(in srgb, var(--ctp-surface0) 60%, transparent);
-  padding-top: 0.3rem;
-  margin-top: 0.2rem;
-}
-.fleet-tile .fmeta b { color: var(--ctp-subtext1); font-weight: 500; }
-.fleet-tile .fmeta .fupstream { color: var(--accent); max-width: 24ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fleet-tile .ferr { grid-area: meta; font-family: var(--mono); font-size: 0.7rem; color: var(--crit); }
-
-/* ── metric cards ───────────────────────────────────────────────────── */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
-  gap: 0.55rem;
-}
-.card {
   background: var(--ctp-mantle);
   border: var(--hairline);
   border-radius: var(--radius);
-  padding: 0.6rem 0.8rem;
+  overflow: hidden;
 }
-.card .label { color: var(--muted); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; }
-.card .value { font-family: var(--mono); font-size: 1.45rem; font-weight: 500; line-height: 1.1; margin-top: 0.15rem; color: var(--ctp-text); }
-.card.alarm { border-left: 3px solid var(--crit); }
-.card.alarm .value { color: var(--crit); }
+.overview .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  flex: 1 1 auto;
+  min-width: 6.5rem;
+  padding: 0.6rem 1.05rem;
+  border-left: var(--hairline);
+}
+.overview .stat:first-child { border-left: none; }
+.overview .stat-label { color: var(--muted); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; }
+.overview .stat-value { font-family: var(--mono); font-size: 1.4rem; font-weight: 500; line-height: 1.05; color: var(--ctp-text); }
+.overview .stat-value.is-warn { color: var(--warn); }
+.overview .stat-value.is-crit { color: var(--crit); }
+
+/* ── providers table (primary upstream + sibling lanes, unified) ────── */
+/* Auto layout + intrinsic width so 1-3 providers pack left instead of a fixed
+   table stretching a single column into a wide mid-row gap on a big screen. */
+table.bearers.providers { table-layout: auto; width: auto; min-width: 42rem; max-width: 100%; }
+table.bearers.providers th,
+table.bearers.providers td { padding-right: 1.6rem; }
+table.bearers.providers th:last-child,
+table.bearers.providers td:last-child { padding-right: 0.7rem; }
+table.bearers.providers td.prov-upstream { text-align: left; }
+.prov { display: inline-flex; align-items: center; gap: 0.45rem; font-family: var(--mono); font-weight: 600; color: var(--ctp-text); }
+.prov .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.prov-healthy   .pdot { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
+.prov-pacing    .pdot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+.prov-throttled .pdot { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 16%, transparent); }
+.prov-idle      .pdot { background: var(--muted); }
+.prov-tag { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border: 1px solid var(--ctp-surface1); border-radius: var(--radius-sm); padding: 0.02rem 0.32rem; margin-left: 0.45rem; }
+.prov-upstream { font-family: var(--mono); font-size: 0.74rem; color: var(--accent); }
+.egress { font-family: var(--mono); font-size: 0.68rem; }
+.egress.up   { color: var(--ok); }
+.egress.down { color: var(--crit); }
 
 /* ── section heading ────────────────────────────────────────────────── */
 h2 {
