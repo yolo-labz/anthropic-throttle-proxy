@@ -2586,13 +2586,25 @@ def _pushback_pause(meta: Mapping[str, str] | None, bid: str = "") -> tuple[floa
     AIMD shrink already sheds the load and the 429 clears the instant inflight
     drops, so a 30s pause would needlessly collapse the active account to cap=1
     and hold it there under fleet load.
+
+    A synthetic pause is a LOCAL pacing decision, not an upstream instruction, so
+    it is clamped to ``MAX_HOLD_RETRY_AFTER_S`` — the longest the gateway can hold
+    a request before the client (claude) aborts the silent turn at ~60s. Only a
+    REAL upstream ``Retry-After`` is honored uncapped and allowed to exceed that
+    ceiling (a genuine wall SHOULD fast-fail past it — holding longer truncates
+    the transport → phantom 401 storm). Latching a self-invented window past the
+    ceiling instead makes ``_retry_after_fast_fail_response`` kill client turns
+    for a pause we never actually received: 01/08 storm — host AIMD_BACKOFF_S=90 >
+    MAX_HOLD=60, so every budget 429 on a still-serving allowed_warning bearer
+    (b144f62f, 7d=0.85) emitted ~30s of pre-dispatch turn-killers per event.
     """
     retry_after = _parse_retry_after(meta)
     if retry_after > 0:
         return retry_after, False
+    cap = config.MAX_HOLD_RETRY_AFTER_S
     if _budget_under_pressure(meta, bid):
-        return max(0.0, config.AIMD_BACKOFF_S), True
-    return max(0.0, config.CONCURRENCY_COOLDOWN_S), True
+        return min(max(0.0, config.AIMD_BACKOFF_S), cap), True
+    return min(max(0.0, config.CONCURRENCY_COOLDOWN_S), cap), True
 
 
 def _note_retry_after_if_set(

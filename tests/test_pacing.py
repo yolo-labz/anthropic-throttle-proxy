@@ -147,6 +147,53 @@ def test_pushback_pause_short_cooldown_for_concurrency_429():
     assert proxy._pushback_pause({}) == (config.AIMD_BACKOFF_S, True)
 
 
+def test_pushback_pause_clamps_synthetic_to_max_hold(monkeypatch):
+    """A self-invented pause must never exceed the local hold ceiling.
+
+    Regression for the 01/08 storm: the host tuned AIMD_BACKOFF_S=90 > the
+    MAX_HOLD_RETRY_AFTER_S=60 hold ceiling, so a headerless budget 429 synthesized
+    a 90s pause, latched it as a Retry-After window, and every request on that
+    still-serving ``allowed_warning`` bearer (b144f62f, 7d=0.85) then fast-failed
+    to the client for the ~30s the invented window exceeded the ceiling. A pause
+    the proxy invented itself must always be holdable.
+    """
+    from anthropic_throttle_proxy import config
+
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 90.0, raising=True)
+    monkeypatch.setattr(config, "CONCURRENCY_COOLDOWN_S", 2.0, raising=True)
+    monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0, raising=True)
+
+    warning = {
+        "anthropic-ratelimit-unified-status": "allowed_warning",
+        "anthropic-ratelimit-unified-representative-claim": "seven_day",
+        "anthropic-ratelimit-unified-7d-status": "allowed_warning",
+        "anthropic-ratelimit-unified-7d-utilization": "0.85",
+    }
+    pause, synthetic = proxy._pushback_pause(warning)
+    assert synthetic is True
+    # Clamped to the hold ceiling, NOT the raw 90s budget backoff.
+    assert pause == config.MAX_HOLD_RETRY_AFTER_S
+    assert pause < config.AIMD_BACKOFF_S
+    # The whole point: a clamped synthetic pause can no longer trip the
+    # client-visible fast-fail (remaining <= MAX_HOLD → hold locally, never kill).
+    assert (
+        proxy._retry_after_fast_fail_response("b144f62f", "v1/messages", pause, source="pushback")
+        is None
+    )
+    # Concurrency cooldown stays short — the clamp never lengthens a pause.
+    assert proxy._pushback_pause(_ALLOWED_LOW) == (config.CONCURRENCY_COOLDOWN_S, True)
+
+    # A REAL upstream Retry-After stays uncapped and STILL fast-fails past the
+    # ceiling: a genuine wall must not be held (a late write on a client that has
+    # already aborted the silent turn truncates the transport → phantom 401).
+    real = proxy._pushback_pause({"retry-after": "171"})
+    assert real == (171.0, False)
+    assert (
+        proxy._retry_after_fast_fail_response("b144f62f", "v1/messages", real[0], source="pushback")
+        is not None
+    )
+
+
 def test_extract_zai_quota_body_generates_retry_after():
     body = b'{"error":{"code":"1316","message":"quota exceeded","reset_time":1700000100}}'
     meta = proxy._extract_zai_ratelimit_from_body(body, now=1700000000, quota_jitter_s=7)
