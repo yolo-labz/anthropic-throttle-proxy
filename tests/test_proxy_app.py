@@ -21,6 +21,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from anthropic_throttle_proxy import accounts, config, limiter, pacing, proxy
+from anthropic_throttle_proxy.ui import routes as ui_routes
 from anthropic_throttle_proxy.ui.routes import _compute_status, attach_ui
 
 # A minimal but realistic streamed Messages response: message_start carries the
@@ -1782,6 +1783,10 @@ async def test_ui_dashboard_renders(client: TestClient) -> None:
     assert resp.status == 200
     html = await resp.text()
     assert "<table" in html.lower() or "html" in html.lower()
+    # Assets carry a content-hash suffix; a rebuilt stylesheet must not be
+    # masked by the browser cache (see tests/test_ui_assets.py).
+    assert f'href="/ui/static/style.css?v={ui_routes._ASSET_V}"' in html
+    assert (await client.get(f"/ui/static/style.css?v={ui_routes._ASSET_V}")).status == 200
 
 
 async def test_ui_stats_partial_renders(client: TestClient) -> None:
