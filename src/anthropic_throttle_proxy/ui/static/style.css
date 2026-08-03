@@ -311,6 +311,25 @@ table.bearers code { font-family: var(--mono); color: var(--ctp-peach); backgrou
 .bar > i.crit { background: var(--crit); }
 .util .pct { font-family: var(--mono); font-size: 0.74rem; min-width: 2.4rem; text-align: right; }
 
+/* ── subscription lanes (every meter the host pays for) ─────────────── */
+table.bearers.lanes { min-width: 46rem; }
+.lanes code { color: var(--accent); }
+.lane-meter { display: flex; align-items: baseline; gap: 0.5rem; }
+.lane-meter + .lane-meter { margin-top: 0.22rem; }
+.lane-meter .meter-label {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--ctp-subtext0);
+  min-width: 9.5rem;
+}
+.lane-meter .reset-in { display: inline; margin-top: 0; }
+/* Status carries its meaning in TEXT (WCAG 1.4.1) — colour only reinforces. */
+.lane-status { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.lane-ok        { color: var(--ok); }
+.lane-stale     { color: var(--warn); }
+.lane-unknown   { color: var(--crit); }
+.lane-delegated { color: var(--ctp-subtext0); }
+
 /* ── copilot panel ──────────────────────────────────────────────────── */
 table.bearers.copilot { min-width: 48rem; }
 .copilot .org { font-family: var(--mono); font-weight: 600; color: var(--accent); }
