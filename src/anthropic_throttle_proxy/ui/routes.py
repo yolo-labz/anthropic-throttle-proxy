@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import os
 import time
@@ -39,6 +40,27 @@ from .. import proxy as _proxy
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
 _STATIC = _HERE / "static"
+
+
+def _asset_version(static: Path = _STATIC) -> str:
+    """Content hash of the static bundle, used as a cache-busting URL suffix.
+
+    Nix normalises every store file's mtime to epoch 1, so aiohttp serves the
+    stylesheet with ``Last-Modified: 1970``. A browser with no explicit
+    ``Cache-Control`` then applies heuristic freshness (10% of the resource's
+    apparent age = decades) and never revalidates: after a rebuild Firefox
+    rendered the NEW markup against the OLD CSS, which reads as a totally
+    unstyled dashboard (03/08/2026). Hashing content into the URL gives each
+    build its own cache entry.
+    """
+    h = hashlib.sha256()
+    with contextlib.suppress(OSError):
+        for path in sorted(p for p in static.iterdir() if p.is_file()):
+            h.update(path.read_bytes())
+    return h.hexdigest()[:12]
+
+
+_ASSET_V = _asset_version()
 
 # Utilization at/above this fraction of a unified window counts as "pacing"
 # even before Anthropic flips the window to ``rejected``.
@@ -363,7 +385,9 @@ async def index(
     request: web.Request,
 ) -> web.Response:
     """GET /ui — render the full HTMX dashboard page."""
-    return aiohttp_jinja2.render_template("dashboard.html", request, await _collect_view())
+    return aiohttp_jinja2.render_template(
+        "dashboard.html", request, {**await _collect_view(), "asset_v": _ASSET_V}
+    )
 
 
 async def stats_partial(
