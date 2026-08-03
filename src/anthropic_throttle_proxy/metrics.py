@@ -175,6 +175,20 @@ M_ACCOUNT_SUSPECTED = Gauge(
     registry=REGISTRY,
 )
 # PR #575: AIMD ceiling per bearer + shrink counter.
+# Subscription-lane report (NixOS modules.home.throttleLanes). Every meter the
+# host pays for, including the lanes this proxy does NOT route (Codex accounts,
+# Copilot), so Grafana can alert on "Anthropic capped while ChatGPT idle".
+M_LANE_USED = Gauge(
+    "subscription_lane_used_percent",
+    "Per-lane meter fill 0..100 from the out-of-process lane report.",
+    ["lane", "family", "meter"],
+    registry=REGISTRY,
+)
+M_LANE_REPORT_AGE = Gauge(
+    "subscription_lane_report_age_seconds",
+    "Age of the lane report file. Grows without bound when the probe timer dies.",
+    registry=REGISTRY,
+)
 M_AIMD_MAX = Gauge(
     "anthropic_aimd_max_concurrent",
     "Current AIMD ceiling (mutable per-bearer max_concurrent).",

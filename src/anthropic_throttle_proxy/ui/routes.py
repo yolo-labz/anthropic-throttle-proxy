@@ -22,6 +22,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp_jinja2
@@ -32,6 +33,7 @@ from .. import accounts as _accounts
 from .. import config as _config
 from .. import copilot as _copilot
 from .. import fleet as _fleet
+from .. import lanes as _lanes
 from .. import metrics as _metrics
 
 # Lazy import: keep the proxy hot path free of UI deps.
@@ -185,6 +187,26 @@ def _compute_status(
 # stale per-model series instead of freezing it forever (Codex MEDIUM). Both this
 # and the registry are process-local, so they stay in sync across a restart.
 _scoped_model_seen: dict[str, str] = {}
+
+
+def _publish_lane_gauges(lanes_view: dict[str, Any]) -> None:
+    """Mirror the lane report into /metrics — including lanes this proxy never routes.
+
+    A missing reading stays UNPUBLISHED rather than set to 0: an unprobed
+    ChatGPT account reading as 0% is indistinguishable from a genuinely idle
+    one, and that ambiguity is exactly what hid account B's spare capacity on
+    03/08/2026.
+    """
+    age = lanes_view.get("age_s")
+    if isinstance(age, (int, float)):
+        _metrics.M_LANE_REPORT_AGE.set(float(age))
+    for lane in lanes_view.get("lanes") or []:
+        for meter in lane.get("meters") or []:
+            if meter.get("used_pct") is None:
+                continue
+            _metrics.M_LANE_USED.labels(lane["id"], lane["family"], meter["label"]).set(
+                meter["used_pct"]
+            )
 
 
 def _publish_account_gauges(
@@ -358,10 +380,13 @@ async def _collect_view() -> dict[str, object]:
         max_concurrent=_proxy.MAX_CONCURRENT,
         fleet=fleet_view,
     )
+    lanes_view = _lanes.view(now)
+    _publish_lane_gauges(lanes_view)
     return {
         "accounts": accounts_view,
         "identity": identity,
         "providers": providers,
+        "lanes": lanes_view,
         "copilot": copilot_view,
         "status": status,
         "inflight": _proxy.state["inflight"],

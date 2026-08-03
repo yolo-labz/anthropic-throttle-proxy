@@ -1789,6 +1789,48 @@ async def test_ui_dashboard_renders(client: TestClient) -> None:
     assert (await client.get(f"/ui/static/style.css?v={ui_routes._ASSET_V}")).status == 200
 
 
+async def test_ui_renders_subscription_lanes_and_publishes_gauges(
+    client: TestClient, monkeypatch, tmp_path
+) -> None:
+    """Lanes the proxy does NOT route still land on the dashboard + /metrics.
+
+    03/08/2026: two Anthropic bearers sat 7d-REJECTED while a ChatGPT account
+    sat at 0% and nothing on this page could say so.
+    """
+    from anthropic_throttle_proxy import lanes as lanes_mod
+
+    report = tmp_path / "throttle-lanes.json"
+    report.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "intervalSeconds": 900,
+                "lanes": [
+                    {
+                        "id": "codex:b",
+                        "kind": "codex",
+                        "status": "ok",
+                        "meters": [{"limitId": "codex", "usedPercent": 3, "planType": "prolite"}],
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("THROTTLE_LANES_FILE", str(report))
+    lanes_mod._cache = None
+
+    html = await (await client.get("/ui")).text()
+    assert "codex:b" in html
+    assert "openai" in html  # family, for the diversity invariant
+
+    metrics_text = await (await client.get("/metrics")).text()
+    assert 'subscription_lane_used_percent{family="openai",lane="codex:b",meter="codex"} 3.0' in (
+        metrics_text
+    )
+    lanes_mod._cache = None
+
+
 async def test_ui_stats_partial_renders(client: TestClient) -> None:
     resp = await client.get("/ui/stats")
     assert resp.status == 200

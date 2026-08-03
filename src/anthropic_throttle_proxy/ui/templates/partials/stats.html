@@ -57,6 +57,57 @@
 </section>
 {% endif %}
 
+{% if lanes and lanes.lanes %}
+<h2>Subscriptions · <span class="count">{{ lanes.lanes | length }}</span>
+  {% if lanes.stale %}<span class="tag-stale" title="The probe timer has not written in over 2 intervals — every reading below predates it">report stale</span>{% endif %}
+</h2>
+<section class="bearers-wrap" tabindex="0" aria-label="Every subscription meter this host pays for">
+<table class="bearers lanes">
+  <thead>
+    <tr>
+      <th scope="col" title="Lane id from the out-of-process probe report">lane</th>
+      <th scope="col" title="Model family. The gate reviewer must come from a different one.">family</th>
+      <th scope="col" title="Plan tier the provider reports for this lane">plan</th>
+      <th scope="col" title="Every meter the lane publishes, fullest first. Anthropic is not duplicated here — it is live in the Accounts table.">meters</th>
+      <th scope="col" title="ok = fresh probe · stale = report older than 2 intervals · unknown = probe failed (reason attached) · delegated = measured elsewhere on this page">status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for lane in lanes.lanes %}
+    <tr>
+      <td><code>{{ lane.id }}</code></td>
+      <td class="muted">{{ lane.family }}</td>
+      <td class="muted">{{ lane.plan or "—" }}</td>
+      <td>
+        {% if lane.meters %}
+          {% for m in lane.meters %}
+          <div class="lane-meter">
+            <span class="meter-label">{{ m.label }}</span>
+            {% if m.used_pct is not none %}
+              <span class="util">
+                <span class="bar"><i class="{% if m.used_pct >= 90 %}crit{% elif m.used_pct >= 75 %}warn{% endif %}" style="width: {{ m.used_pct }}%"></i></span>
+                <span class="pct">{{ "%.0f" | format(m.used_pct) }}%</span>
+              </span>
+              {% if m.reset_in %}<span class="reset-in">resets {{ m.reset_in }}</span>{% endif %}
+            {% elif m.unlimited %}
+              <span class="muted">unlimited</span>
+            {% else %}
+              <span class="muted">no reading</span>
+            {% endif %}
+          </div>
+          {% endfor %}
+        {% else %}
+          <span class="muted">{{ lane.reason or "—" }}</span>
+        {% endif %}
+      </td>
+      <td><span class="lane-status lane-{{ lane.status }}" {% if lane.reason %}title="{{ lane.reason }}"{% endif %}>{{ lane.status }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
 {% if accounts %}
 <h2>Accounts · <span class="count">{{ accounts | length }}</span></h2>
 {% if identity and identity.collapsed %}
