@@ -22,7 +22,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import aiohttp_jinja2
@@ -742,6 +742,12 @@ def _live_cap() -> int:
     return sum(lim.max_concurrent for lim in list(_proxy.bearer_limiters.values()))
 
 
+def _counter(key: str) -> int:
+    """Read one of ``proxy.state``'s integer counters. ``state`` is typed
+    ``dict[str, object]`` because it also holds strings and the advisor dict."""
+    return cast(int, _proxy.state[key])
+
+
 async def _history_sample_loop() -> None:
     """Close one history bucket per ``RESOLUTION_S`` so /ui has a time axis."""
     log = logging.getLogger("throttle.ui.history")
@@ -749,11 +755,14 @@ async def _history_sample_loop() -> None:
         await asyncio.sleep(_history.RESOLUTION_S)
         try:
             _history.record(
-                queued=int(_proxy.state["queued"]),  # type: ignore[call-overload]
-                inflight=int(_proxy.state["inflight"]),  # type: ignore[call-overload]
+                queued=_counter("queued"),
+                inflight=_counter("inflight"),
                 cap=_live_cap(),
             )
-        except Exception as exc:  # noqa: BLE001 — a sparkline must never crash the app
+        # A sparkline must never take the proxy down, but the catch stays
+        # narrow: these are the failures a shifting `state`/limiter shape can
+        # actually produce, and anything else deserves to surface.
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
             log.debug("history sample failed: %s", exc)
 
 
