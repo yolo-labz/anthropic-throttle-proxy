@@ -336,6 +336,140 @@ def _build_providers(
     return providers
 
 
+def _window_meter(label: str, window: dict | None) -> dict | None:
+    """One unified window as a meter row, or None when never observed."""
+    if not window:
+        return None
+    if window.get("stale"):
+        # The reading predates its own reset: 0%, not the previous cycle's peak.
+        return {"label": label, "pct": 0.0, "reset_in": "", "note": "reset"}
+    return {
+        "label": label,
+        "pct": window.get("pct"),
+        "reset_in": window.get("reset_in") or "",
+        "rejected": bool(window.get("rejected")),
+    }
+
+
+def _account_status(account: dict) -> tuple[str, str]:
+    """Worst-first verdict for an Anthropic account row: (status, detail)."""
+    token = account.get("token") or {}
+    # Detail accumulates: a rejected window and a usage lock are both true at
+    # once, and dropping the lock hid WHEN the account comes back.
+    notes = []
+    if account.get("locked_in"):
+        # Naming what it is NOT matters: a usage lock is a capacity cooldown,
+        # not an authentication failure, and the two were confused before.
+        notes.append(
+            f"usage locked (capacity cooldown, not authentication) · resets {account['locked_in']}"
+        )
+    if account.get("endpoint_err"):
+        notes.append(str(account["endpoint_err"]))
+    detail = " · ".join(notes)
+    if account.get("error"):
+        return "error", " · ".join([str(account["error"]), *notes])
+    for window, name in ((account.get("win5"), "5h"), (account.get("win7"), "7d")):
+        if window and window.get("rejected"):
+            return "rejected", " · ".join([f"{name} window rejected", *notes])
+    if account.get("locked_in"):
+        return "locked", detail
+    if token.get("state") == "expired":
+        return "token expired", " · ".join(filter(None, [str(token.get("detail") or ""), detail]))
+    if not account.get("seen"):
+        return "unseen", " · ".join(
+            filter(None, ["no request served with this account's current token yet", detail])
+        )
+    return "ok", detail
+
+
+def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> list[dict]:
+    """One row per subscription, whatever measures it.
+
+    The Accounts and Subscriptions tables answered the SAME question — how much
+    budget is left on each subscription — and were split only by where the
+    number came from: Anthropic through this proxy's own bearers, everything
+    else through the out-of-process lane report. That split also forced a
+    content-free `anthropic:proxy · delegated · "live at the throttle proxy"`
+    row whose only job was to point at the other table (Pedro, 04/08/2026:
+    "the accounts and subscriptions sections are redundant").
+    """
+    rows: list[dict] = []
+    for account in accounts:
+        meters = [
+            m
+            for m in (
+                _window_meter("5h", account.get("win5")),
+                _window_meter("7d", account.get("win7")),
+                _window_meter("7d sonnet", account.get("sonnet")),
+                _window_meter("7d opus", account.get("opus")),
+            )
+            if m is not None
+        ]
+        extra = account.get("extra") or {}
+        if extra.get("used") is not None:
+            meters.append(
+                {
+                    "label": "credits",
+                    "pct": None,
+                    "reset_in": "",
+                    "note": f"{extra['used']:.2f} {extra.get('currency') or ''}".strip(),
+                }
+            )
+        status, detail = _account_status(account)
+        rows.append(
+            {
+                "id": account.get("label") or "?",
+                "sub": account.get("email") or "",
+                "family": "anthropic",
+                "plan": "",
+                "src": account.get("src") or "",
+                "meters": meters,
+                "pace": account.get("pace"),
+                "pace_warn": bool(account.get("pace_warn")),
+                "eta": account.get("eta") or "",
+                "status": status,
+                "detail": detail,
+            }
+        )
+    for lane in lanes_view.get("lanes") or []:
+        # Anthropic is measured above, per account, from live bearer state. The
+        # report's placeholder row for it carries no meter by construction.
+        if lane.get("kind") == "anthropic":
+            continue
+        meters = [
+            {
+                "label": m.get("label") or "?",
+                "pct": m.get("used_pct"),
+                "reset_in": m.get("reset_in") or "",
+                "note": "unlimited" if m.get("unlimited") else "",
+            }
+            for m in lane.get("meters") or []
+        ]
+        rows.append(
+            {
+                "id": lane.get("id") or "?",
+                "sub": "",
+                "family": lane.get("family") or "",
+                "plan": lane.get("plan") or "",
+                "src": "report",
+                "meters": meters,
+                "pace": None,
+                "pace_warn": False,
+                "eta": "",
+                "status": lane.get("status") or "unknown",
+                "detail": lane.get("reason") or "",
+            }
+        )
+
+    # Fullest first: the row that decides where the next request can go leads.
+    def _binding(row: dict) -> float:
+        readings = [m["pct"] for m in row["meters"] if m.get("pct") is not None]
+        return max(readings) if readings else -1.0
+
+    rows.sort(key=_binding, reverse=True)
+    return rows
+
+
 async def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
@@ -387,22 +521,13 @@ async def _collect_view() -> dict[str, object]:
         max_concurrent=_proxy.MAX_CONCURRENT,
         fleet=fleet_view,
     )
-    # A column that is "—" in every row is not a column; it is a row detail
-    # nobody has. Four of the accounts table's ten columns rendered empty for
-    # every account (04/08/2026), which is most of the whitespace Pedro read as
-    # broken layout.
-    cols = {
-        "scoped": any(a.get("sonnet") or a.get("opus") for a in accounts_view),
-        "credits": any((a.get("extra") or {}).get("used") is not None for a in accounts_view),
-    }
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
     return {
-        "accounts": accounts_view,
+        "subscriptions": _build_subscriptions(accounts_view, lanes_view),
         "identity": identity,
         "providers": providers,
         "lanes": lanes_view,
-        "cols": cols,
         "copilot": copilot_view,
         "status": status,
         "inflight": _proxy.state["inflight"],
