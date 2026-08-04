@@ -45,7 +45,34 @@ def test_success_reopens_without_a_restart(owns_key):
 
 def test_throttle_and_server_errors_are_not_auth_verdicts(owns_key):
     for status in (429, 500, 503, 529):
-        forwarding.note_upstream_auth(status, b"{}")
+        forwarding.note_upstream_auth(status, b'{"error":{"message":"rate limited"}}')
+    assert config.state["upstream_auth_ok"] is True
+
+
+SUSPENDED = (
+    b'{"error":{"message":"Your account org-d1d1e19a <ak-fbj6> is suspended due to '
+    b'insufficient balance, please recharge your account"}}'
+)
+
+
+def test_suspended_account_closes_the_lane_even_though_it_is_a_429(owns_key):
+    """Moonshot answers a suspended account with 429, not 401 (measured 04/08/2026).
+
+    A lane that cannot serve until a human recharges it is dead, whatever
+    status the vendor chose to express that with.
+    """
+    forwarding.note_upstream_auth(429, SUSPENDED)
+    assert config.state["upstream_auth_ok"] is False
+    assert "suspended" in config.state["upstream_auth_error"]
+
+
+def test_payment_required_closes_the_lane(owns_key):
+    forwarding.note_upstream_auth(402, b'{"error":{"message":"payment required"}}')
+    assert config.state["upstream_auth_ok"] is False
+
+
+def test_a_bodyless_429_stays_inconclusive(owns_key):
+    forwarding.note_upstream_auth(429)
     assert config.state["upstream_auth_ok"] is True
 
 

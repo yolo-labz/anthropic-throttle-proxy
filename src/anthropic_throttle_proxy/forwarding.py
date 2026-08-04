@@ -202,21 +202,51 @@ def proxy_owns_key() -> bool:
     return config.API_KEY_ROUTING_MODE in {"overflow", "prefer"} and bool(config.API_KEY_FILE)
 
 
-def note_upstream_auth(status: int, body: bytes | None = None) -> None:
-    """Record whether the upstream accepts this lane's own credential.
+# A lane can be dead for billing rather than authentication, and the two look
+# nothing alike on the wire. Moonshot answers a suspended account with **429**
+# and "is suspended due to insufficient balance, please recharge" (measured
+# 04/08/2026); z.ai answered an exhausted plan with 402. Treating every 429 as
+# a dead key would close a lane that is merely rate-limited, so the verdict
+# needs the body, not just the status.
+_BILLING_DEAD_MARKERS = (
+    "suspended",
+    "insufficient balance",
+    "insufficient_quota",
+    "insufficient quota",
+    "recharge",
+    "billing",
+    "payment required",
+)
 
-    No-op unless this proxy owns the key. 401/403 closes the lane; any 2xx
-    reopens it, so a recharged key recovers on the first successful request
-    with no restart and no probe.
+
+def _lane_credential_dead(status: int, text: str) -> bool:
+    """True when the status+body says this lane cannot serve until a human acts."""
+    if status in (401, 403, 402):
+        return True
+    if status == 429:
+        lowered = text.lower()
+        return any(marker in lowered for marker in _BILLING_DEAD_MARKERS)
+    return False
+
+
+def note_upstream_auth(status: int, body: bytes | None = None) -> None:
+    """Record whether the upstream still serves this lane's own credential.
+
+    No-op unless this proxy owns the key. A rejected credential (401/403), a
+    payment-required (402), or a 429 whose body names a suspension/balance
+    problem closes the lane; any 2xx reopens it, so a recharged key recovers on
+    the first successful request with no restart and no probe.
     """
     if not proxy_owns_key():
         return
-    if status in (401, 403):
+    text = ""
+    if body:
+        text = bytes(body[:4096]).decode("utf-8", "replace")
+    if _lane_credential_dead(status, text):
         detail = ""
-        if body:
-            with contextlib.suppress(Exception):
-                payload = json.loads(bytes(body[:4096]).decode("utf-8", "replace"))
-                detail = str((payload.get("error") or {}).get("message") or "")[:160]
+        with contextlib.suppress(Exception):
+            payload = json.loads(text)
+            detail = str((payload.get("error") or {}).get("message") or "")[:160]
         if config.state["upstream_auth_ok"]:
             log(f"upstream-auth-rejected status={status} detail={detail!r}")
         config.state["upstream_auth_ok"] = False
