@@ -244,13 +244,19 @@ h2 .count { color: var(--muted); font-weight: 400; }
 }
 .bearers-wrap:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 35%, transparent); }
 table.bearers {
-  width: 100%;
+  /* Shrink-to-fit, like the lanes and accounts tables (#163): with width:100%
+     the one column that has no declared width swallows the surplus, which is
+     what left a hand's width of nothing between `acct` and `inflight` on a
+     2560px screen. */
+  width: auto;
+  max-width: 100%;
   border-collapse: collapse;
   font-size: 0.8rem;
   table-layout: fixed;
   min-width: 64rem;
 }
 table.bearers .col-bearer { width: 9rem; }
+table.bearers .col-acct   { width: 7rem; }
 table.bearers .col-num    { width: 6.5rem; }
 table.bearers .col-aimd   { width: 6rem; }
 table.bearers .col-window { width: 10.5rem; }
