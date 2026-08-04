@@ -385,21 +385,24 @@ async def test_ui_stats_renders_accounts_panel(tmp_path, monkeypatch):
     finally:
         proxy.bearer_state.pop(bid, None)
 
-    assert "Accounts ·" in html
-    assert '<span class="count">1</span>' in html  # count rendered in the styled span
-    assert html.count(bid) >= 2  # accounts row + labelled bearer row
-    assert ">A</span>" in html  # account label chip in both tables
+    # Accounts merged into the one Subscriptions table (#165): the account and
+    # the lane answered the same question from two data sources.
+    assert "Subscriptions ·" in html
+    assert ">A</span>" in html  # account label chip, subscriptions + bearers
+    assert bid in html  # bearer row still carries the hash
     assert "62%" in html
-    assert "usage locked · resets" in html
-    assert "authentication" in html
-    assert ">locked · resets" not in html
+    # The lock is reported as the row's status with its reason in the tooltip,
+    # and it still names what it is NOT (a capacity cooldown, not an auth
+    # failure) — the distinction the old panel carried.
+    assert "usage locked (capacity cooldown, not authentication)" in html
+    assert ">rejected<" in html  # the 5h window is the worse verdict of the two
     assert token not in html  # raw token must never reach the page
 
 
 async def test_ui_stats_hides_panel_when_unconfigured(monkeypatch):
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
     html = await _render_stats()
-    assert "Accounts ·" not in html
+    assert "Subscriptions ·" not in html
 
 
 # ── endpoint truth (PR #55) ─────────────────────────────────────────────
@@ -577,7 +580,7 @@ async def test_ui_stats_renders_identity_banner(tmp_path, monkeypatch):
     html = await _render_stats()
     assert "accounts collapsed" in html
     assert "same@x" in html
-    assert 'class="src src-endpoint"' in html
+    assert ">endpoint</div>" in html  # provenance of the merged row's numbers
 
 
 # ── FR-005 distinctness guard: local identity fallback + partial collision ──

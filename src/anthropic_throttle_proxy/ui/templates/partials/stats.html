@@ -64,63 +64,10 @@
 </section>
 {% endif %}
 
-{% if lanes and lanes.lanes %}
-<h2>Subscriptions · <span class="count">{{ lanes.lanes | length }}</span>
-  {% if lanes.stale %}<span class="tag-stale" title="The probe timer has not written in over 2 intervals — every reading below predates it">report stale</span>{% endif %}
+{% if subscriptions %}
+<h2>Subscriptions · <span class="count">{{ subscriptions | length }}</span>
+  {% if lanes and lanes.stale %}<span class="tag-stale" title="The lane probe timer has not written in over 2 intervals — non-Anthropic readings below predate it">report stale</span>{% endif %}
 </h2>
-<section class="bearers-wrap" tabindex="0" aria-label="Every subscription meter this host pays for">
-<table class="bearers lanes">
-  <colgroup>
-    <col class="c-lane" /><col class="c-family" /><col class="c-plan" />
-    <col class="c-meters" /><col class="c-lane-status" />
-  </colgroup>
-  <thead>
-    <tr>
-      <th scope="col" title="Lane id from the out-of-process probe report">lane</th>
-      <th scope="col" title="Model family. The gate reviewer must come from a different one.">family</th>
-      <th scope="col" title="Plan tier the provider reports for this lane">plan</th>
-      <th scope="col" title="Every meter the lane publishes, fullest first. Anthropic is not duplicated here — it is live in the Accounts table.">meters</th>
-      <th scope="col" title="ok = fresh probe · stale = report older than 2 intervals · unknown = probe failed (reason attached) · delegated = measured elsewhere on this page">status</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for lane in lanes.lanes %}
-    <tr>
-      <td><code>{{ lane.id }}</code></td>
-      <td class="muted">{{ lane.family }}</td>
-      <td class="muted">{{ lane.plan or "—" }}</td>
-      <td>
-        {% if lane.meters %}
-          {% for m in lane.meters %}
-          <div class="lane-meter">
-            <span class="meter-label">{{ m.label }}</span>
-            {% if m.used_pct is not none %}
-              <span class="util">
-                <span class="bar"><i class="{% if m.used_pct >= 90 %}crit{% elif m.used_pct >= 75 %}warn{% endif %}" style="width: {{ m.used_pct }}%"></i></span>
-                <span class="pct">{{ "%.0f" | format(m.used_pct) }}%</span>
-              </span>
-              {% if m.reset_in %}<span class="reset-in">resets {{ m.reset_in }}</span>{% endif %}
-            {% elif m.unlimited %}
-              <span class="muted">unlimited</span>
-            {% else %}
-              <span class="muted">no reading</span>
-            {% endif %}
-          </div>
-          {% endfor %}
-        {% else %}
-          <span class="muted">{{ lane.reason or "—" }}</span>
-        {% endif %}
-      </td>
-      <td><span class="lane-status lane-{{ lane.status }}" {% if lane.reason %}title="{{ lane.reason }}"{% endif %}>{{ lane.status }}</span></td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</section>
-{% endif %}
-
-{% if accounts %}
-<h2>Accounts · <span class="count">{{ accounts | length }}</span></h2>
 {% if identity and identity.collapsed %}
 <div class="status crit identity-banner" role="alert">
   <span class="dot"></span>
@@ -128,85 +75,60 @@
   <span class="detail">every configured credential file belongs to {{ identity.email }} — switching accounts is cosmetic and half the fleet capacity is gone (a hand-/login likely wrote the browser's active account into the wrong dir).</span>
 </div>
 {% endif %}
-<section class="bearers-wrap" tabindex="0" aria-label="Per-account usage table">
-<table class="bearers accounts">
+<section class="bearers-wrap" tabindex="0" aria-label="Every subscription this host pays for, with its remaining budget">
+<table class="bearers subs">
   <colgroup>
-    <col class="c-acct" /><col class="c-acct-bearer" /><col class="c-acct-src" />
-    <col class="c-acct-token" /><col class="c-acct-win" /><col class="c-acct-win" />
-    {% if cols.scoped %}<col class="c-acct-num" />{% endif %}
-    {% if cols.credits %}<col class="c-acct-num" />{% endif %}
-    <col class="c-acct-num" /><col class="c-acct-num" />
+    <col class="c-sub" /><col class="c-family" /><col class="c-plan" />
+    <col class="c-meters" /><col class="c-pace" /><col class="c-eta" /><col class="c-sub-status" />
   </colgroup>
   <thead>
     <tr>
-      <th scope="col" title="Label from THROTTLE_ACCOUNT_CRED_PATHS + the account email from /api/oauth/profile">account</th>
-      <th scope="col" title="Current bearer hash derived from the account's credentials file (rotates with the access token, ~8h)">bearer</th>
-      <th scope="col" title="Where the usage reading comes from: endpoint = /api/oauth/usage · proxy = last-seen unified headers · none = no reading">src</th>
-      <th scope="col" title="Access-token freshness. Expired beyond 90 min = the refresh pipeline (token broker) is failing.">token</th>
-      <th scope="col" title="5h unified-window utilisation. 'reset' = the window rolled over since the reading.">5h</th>
-      <th scope="col" title="7d unified-window utilisation (all models)">7d</th>
-      {% if cols.scoped %}<th scope="col" title="Model-metered 7d windows (Sonnet / Opus) when the plan reports them">7d S·O</th>{% endif %}
-      {% if cols.credits %}<th scope="col" title="Usage credits spent this month (extra usage beyond plan windows)">credits</th>{% endif %}
-      <th scope="col" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = on budget; ≥1.15× = fleet-pace alert.">pace</th>
-      <th scope="col" title="Projected time until 7d exhausts at current pace. Only when it lands before reset.">7d ETA</th>
+      <th scope="col" title="Anthropic accounts are measured live through this proxy's bearers; every other lane comes from the out-of-process probe report">subscription</th>
+      <th scope="col" title="Model family. The gate reviewer must come from a different one.">family</th>
+      <th scope="col" title="Plan tier the provider reports">plan</th>
+      <th scope="col" title="Every window this subscription publishes, fullest first">meters</th>
+      <th scope="col" class="num" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = on budget; ≥1.15× = fleet-pace alert.">pace</th>
+      <th scope="col" title="Projected exhaustion at the current pace, when it lands before the reset">exhausts</th>
+      <th scope="col" title="ok · rejected (window refused) · locked (usage cooldown) · token expired · unseen (no request served yet) · stale/unknown (probe)">status</th>
     </tr>
   </thead>
   <tbody>
-    {% for a in accounts %}
+    {% for s in subscriptions %}
     <tr>
       <td>
-        <span class="acct">{{ a.label }}</span>
-        {% if a.email %}<div class="email">{{ a.email }}</div>{% endif %}
+        <span class="acct">{{ s.id }}</span>
+        {% if s.sub %}<div class="email">{{ s.sub }}</div>{% endif %}
       </td>
+      <td class="muted">{{ s.family or "—" }}</td>
+      <td class="muted">{{ s.plan or "—" }}</td>
       <td>
-        {% if a.bearer_id %}
-          <code>{{ a.bearer_id }}</code>
-          {% if not a.seen %}<span class="tag-stale" title="The proxy has not yet served a request with this account's current token">unseen</span>{% endif %}
+        {% if s.meters %}
+          {% for m in s.meters %}
+          <div class="lane-meter">
+            <span class="meter-label">{{ m.label }}</span>
+            {% if m.pct is not none %}
+              <span class="util">
+                <span class="bar"><i class="{% if m.rejected or m.pct >= 90 %}crit{% elif m.pct >= 75 %}warn{% endif %}" style="width: {{ m.pct }}%"></i></span>
+                <span class="pct">{{ "%.0f" | format(m.pct) }}%</span>
+              </span>
+              {% if m.rejected %}<span class="tag-rejected">rejected</span>
+              {% elif m.note %}<span class="reset-in">{{ m.note }}</span>
+              {% elif m.reset_in %}<span class="reset-in">resets {{ m.reset_in }}</span>{% endif %}
+            {% else %}
+              <span class="muted">{{ m.note or "no reading" }}</span>
+            {% endif %}
+          </div>
+          {% endfor %}
         {% else %}
-          <span class="warn-text">{{ a.error }}</span>
+          <span class="muted">{{ s.detail or "—" }}</span>
         {% endif %}
       </td>
+      <td class="num{% if s.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(s.pace) if s.pace is not none else "—" }}</td>
+      <td class="muted">{{ "in " + s.eta if s.eta else "—" }}</td>
       <td>
-        <span class="src src-{{ a.src }}">{{ a.src }}</span>
-        {% if a.src == "cache" and a.cache_age %}<span class="reset-in" title="Aged reading persisted across the last proxy restart — no fresh usage endpoint or unified header">{{ a.cache_age }} old</span>{% endif %}
-        {% if a.locked_in %}<span class="reset-in locked-note" title="Usage-capacity lock (not authentication): a rejected usage window is cooling down">usage locked · resets {{ a.locked_in }}</span>{% endif %}
-        {% if a.endpoint_err %}<div class="warn-text endpoint-err" title="{{ a.endpoint_err }}">⚠</div>{% endif %}
+        <span class="lane-status lane-{{ s.status | replace(' ', '-') }}" {% if s.detail %}title="{{ s.detail }}"{% endif %}>{{ s.status }}</span>
+        {% if s.src %}<div class="src-note" title="Where this row's numbers come from">{{ s.src }}</div>{% endif %}
       </td>
-      <td>
-        {% if a.token %}<span class="tok tok-{{ a.token.state }}">{{ a.token.detail }}</span>
-        {% else %}<span class="muted">—</span>{% endif %}
-      </td>
-      {% for w in [a.win5, a.win7] %}
-      <td>
-        {% if w %}
-          {% if w.stale %}<span class="muted" title="Last reading predates this window's reset — effectively 0%">0% · reset</span>
-          {% else %}
-            <span class="util">
-              <span class="bar"><i class="{% if w.rejected or w.pct >= 90 %}crit{% elif w.pct >= 75 %}warn{% endif %}" style="width: {{ w.pct }}%"></i></span>
-              <span class="pct">{{ w.pct }}%</span>
-              {% if w.rejected %}<span class="tag-rejected">rejected</span>{% endif %}
-            </span>
-            {% if w.reset_in %}<span class="reset-in">resets {{ w.reset_in }}</span>{% endif %}
-          {% endif %}
-        {% else %}<span class="muted">—</span>{% endif %}
-      </td>
-      {% endfor %}
-      {% if cols.scoped %}
-      <td>
-        {% if a.sonnet or a.opus %}
-          {% if a.sonnet %}<span class="muted">S</span> <span class="pct">{{ a.sonnet.pct }}%</span>{% endif %}
-          {% if a.opus %}<span class="muted">O</span> <span class="pct{% if a.opus.pct >= 90 %} warn-text{% endif %}">{{ a.opus.pct }}%</span>{% endif %}
-        {% else %}<span class="muted">—</span>{% endif %}
-      </td>
-      {% endif %}
-      {% if cols.credits %}
-      <td class="num">
-        {% if a.extra and a.extra.used is not none %}{{ "%.2f" | format(a.extra.used) }} {{ a.extra.currency }}
-        {% else %}<span class="muted">—</span>{% endif %}
-      </td>
-      {% endif %}
-      <td class="num{% if a.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(a.pace) if a.pace is not none else "—" }}</td>
-      <td class="num">{{ "in " + a.eta if a.eta else "—" }}</td>
     </tr>
     {% endfor %}
   </tbody>
