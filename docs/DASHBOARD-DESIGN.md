@@ -92,13 +92,19 @@ narrowest columns on the page and should be the widest signal.
 
 ## The redesign
 
-**S4.1 — history ring buffer (server side).** A 60-minute, 10-second-resolution
+Status, 04/08/2026: S4.1, S4.2, S4.4 and S4.5 shipped in #167; S4.3 landed as
+one Subscriptions table in #165 (the per-row expand is still open — the
+Bearers table is demoted rather than folded into a row).
+
+**S4.1 — history ring buffer (server side).** SHIPPED (`history.py`). A 60-minute, 10-second-resolution
 in-memory ring (360 points) of: served, pushback events, queue depth, live cap,
 p50/p95 duration, per-lane binding utilisation. ~30 KB. It is a prerequisite for
 every visual below, and it is the piece the proxy genuinely lacks — everything
 else is arrangement.
 
-**S4.2 — header strip replaces the KPI row.** One line: identity + mode + live
+**S4.2 — header strip replaces the KPI row.** SHIPPED (`ui/signals.py`,
+server-rendered `<svg><polyline>`, folded to one point per minute so a
+sporadic-pushback series reads as a step rather than a barcode). One line: identity + mode + live
 cap, then four inline sparkline+value pairs (rate / errors / p95 / saturation),
 each with its 60-minute trace and the current value right-aligned. Same height
 as today's row, four times the information, and the "AI dashboard" tell is gone
@@ -112,11 +118,11 @@ served sparkline) · binding meter (bar + %) · pace · exhausts-in · status te
 fan-out, `7d S·O`, credits) moves into a per-row expand — present, not
 prominent.
 
-**S4.4 — status carries duration.** `THROTTLED for 12m · binding 7d 100% on
+**S4.4 — status carries duration.** SHIPPED (`history.level_since`). `THROTTLED for 12m · binding 7d 100% on
 b144f62f (account A)`. Cheap: the ring buffer already knows when the level last
 changed.
 
-**S4.5 — advisor becomes a header action.** A button in the header, result
+**S4.5 — advisor becomes a header action.** SHIPPED. A button in the header, result
 rendered as an inline strip above the capacity table when it fires. The
 standing prose block is a paragraph explaining a feature to someone who already
 opened the page.

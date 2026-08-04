@@ -2,17 +2,47 @@
 <div class="status {{ status.level }}">
   <span class="dot"></span>
   <span class="verdict">{{ status.verdict }}</span>
+  {% if status.since %}<span class="since" title="How long the fleet has held this verdict">for {{ status.since }}</span>{% endif %}
   <span class="detail">{{ status.detail }}</span>
 </div>
 {% endif %}
 
-<section class="overview" aria-label="Live proxy totals">
-  <div class="stat"><span class="stat-label">in-flight</span><span class="stat-value">{{ inflight }}</span></div>
-  <div class="stat"><span class="stat-label">queued</span><span class="stat-value{% if queued %} is-warn{% endif %}">{{ queued }}</span></div>
-  <div class="stat"><span class="stat-label">served</span><span class="stat-value">{{ "{:,}".format(served) }}</span></div>
-  <div class="stat"><span class="stat-label">retries</span><span class="stat-value{% if retries %} is-crit{% endif %}">{{ retries }}</span></div>
-  <div class="stat"><span class="stat-label">disconnects</span><span class="stat-value{% if disconnects %} is-crit{% endif %}">{{ disconnects }}</span></div>
+{# Four golden signals as 60-minute traces. A scalar with no baseline cannot
+   be judged — `served 87` is a busy hour or a dead one depending on when. #}
+<section class="signals" aria-label="Rate, errors, latency and saturation over the last hour">
+  {% for s in signals %}
+  <div class="signal{% if s.level %} is-{{ s.level }}{% endif %}">
+    <span class="sig-label">{{ s.label }}</span>
+    <div class="sig-row">
+      <svg class="spark" viewBox="0 0 {{ s.spark.width }} {{ s.spark.height }}" preserveAspectRatio="none" role="img" aria-label="{{ s.label }} over the last hour, peak {{ "%.1f"|format(s.spark.peak) }}">
+        {% if s.spark.points %}<polyline points="{{ s.spark.points }}" />{% else %}<line x1="0" y1="{{ s.spark.height }}" x2="{{ s.spark.width }}" y2="{{ s.spark.height }}" />{% endif %}
+      </svg>
+      <span class="sig-value">{{ s.value }}</span>
+    </div>
+    <span class="sig-detail">{{ s.detail }}</span>
+  </div>
+  {% endfor %}
+  <div class="signal totals">
+    <span class="sig-label">since start</span>
+    <div class="sig-row"><span class="sig-value">{{ "{:,}".format(served) }}</span></div>
+    <span class="sig-detail">{{ inflight }} in-flight · {{ queued }} queued
+      {%- if retries %} · <b class="is-crit-text">{{ retries }}</b> retries{% endif %}
+      {%- if disconnects %} · <b class="is-crit-text">{{ disconnects }}</b> disconnects{% endif %}</span>
+  </div>
 </section>
+
+{# Auto-diagnosis fires on a throttle event, so it belongs where the operator
+   is already looking (S4.5) — above the tables, not under a standing prose
+   block explaining the feature to someone who already opened the page. #}
+{# Clamped, not collapsible: this partial is re-swapped every 2 s, so any
+   open/closed state the operator sets here would be wiped on the next poll. #}
+{% if last_advisor %}
+<div class="advisor-auto">
+  <span class="aa-tag">auto-diagnosis</span>
+  <span class="advisor-trigger">{{ last_advisor.trigger }}</span>
+  <div class="markdown clamp" title="{{ last_advisor.text }}">{{ last_advisor.text }}</div>
+</div>
+{% endif %}
 
 {% if providers %}
 <h2>Providers · <span class="count">{{ providers | length }}</span></h2>
@@ -179,7 +209,9 @@
 {% endif %}
 
 {% if bearers %}
-<h2>Bearers · <span class="count">{{ bearers | length }}</span></h2>
+<h2 class="sub">Bearers · <span class="count">{{ bearers | length }}</span>
+  <span class="h2-note">live traffic per token — the account rows above are the budget</span>
+</h2>
 <section class="bearers-wrap" tabindex="0" aria-label="Bearer state table">
 <table class="bearers">
   <colgroup>
@@ -250,10 +282,4 @@
   <p class="muted">no bearers yet — point a client at this proxy to start.</p>
 {% endif %}
 
-{% if last_advisor %}
-<div class="advisor-auto">
-  <h2>Latest auto-diagnosis</h2>
-  <div class="advisor-trigger">{{ last_advisor.trigger }}</div>
-  <div class="markdown">{{ last_advisor.text }}</div>
-</div>
-{% endif %}
+

@@ -33,11 +33,13 @@ from .. import accounts as _accounts
 from .. import config as _config
 from .. import copilot as _copilot
 from .. import fleet as _fleet
+from .. import history as _history
 from .. import lanes as _lanes
 from .. import metrics as _metrics
 
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
+from . import signals as _signals
 
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
@@ -139,6 +141,16 @@ def _fleet_verdict(n: int, throttled: int, pacing: int) -> tuple[str, str, str]:
     return "healthy", "HEALTHY", f"all {n} bearer{plural} clear"
 
 
+def _fmt_since(seconds: float) -> str:
+    """Compact duration for the status strip: ``12m``, ``2h 05m``, ``just now``."""
+    if seconds < 60:
+        return "just now"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    return f"{minutes // 60}h {minutes % 60:02d}m"
+
+
 def _compute_status(
     bearers: list[dict], queue_mode: str, now: float | None = None
 ) -> dict[str, object]:
@@ -156,6 +168,7 @@ def _compute_status(
             "level": "idle",
             "verdict": "IDLE",
             "detail": "no bearers yet — point a client at this proxy to start.",
+            "since": _fmt_since(_history.level_since("idle", now)),
         }
 
     throttled: list[str] = []
@@ -180,7 +193,15 @@ def _compute_status(
             detail += f" · retry-after {binding[3]}"
     if queue_mode == "off":
         detail += " · queue off (passthrough)"
-    return {"level": level, "verdict": verdict, "detail": detail}
+    # A verdict with no duration cannot separate a transient from an outage
+    # (`docs/DASHBOARD-DESIGN.md` S4.4). The ring knows when the level last
+    # changed; asking it once per render is idempotent for an unchanged level.
+    return {
+        "level": level,
+        "verdict": verdict,
+        "detail": detail,
+        "since": _fmt_since(_history.level_since(level, now)),
+    }
 
 
 # account label -> last-published scoped model, so a Fable→Sonnet flip drops the
@@ -524,6 +545,7 @@ async def _collect_view() -> dict[str, object]:
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
     return {
+        "signals": _signals.collect(),
         "subscriptions": _build_subscriptions(accounts_view, lanes_view),
         "identity": identity,
         "providers": providers,
@@ -700,11 +722,47 @@ async def _start_account_refresher(
 
 
 async def _stop_account_refresher(app: web.Application) -> None:
-    task = app.get("_account_refresher")
+    await _cancel(app.get("_account_refresher"))
+
+
+async def _cancel(task: asyncio.Task | None) -> None:
     if task is not None:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+def _live_cap() -> int:
+    """Sum of every bearer's CURRENT AIMD ceiling — what can dispatch right now.
+
+    Read without the limiter lock on purpose: this is a 10-second sample of a
+    number that changes on pushback, and blocking the event loop for it would
+    break the <50 ms health budget the same loop serves.
+    """
+    return sum(lim.max_concurrent for lim in list(_proxy.bearer_limiters.values()))
+
+
+async def _history_sample_loop() -> None:
+    """Close one history bucket per ``RESOLUTION_S`` so /ui has a time axis."""
+    log = logging.getLogger("throttle.ui.history")
+    while True:
+        await asyncio.sleep(_history.RESOLUTION_S)
+        try:
+            _history.record(
+                queued=int(_proxy.state["queued"]),  # type: ignore[call-overload]
+                inflight=int(_proxy.state["inflight"]),  # type: ignore[call-overload]
+                cap=_live_cap(),
+            )
+        except Exception as exc:  # noqa: BLE001 — a sparkline must never crash the app
+            log.debug("history sample failed: %s", exc)
+
+
+async def _start_history_sampler(app: web.Application) -> None:
+    app["_history_sampler"] = asyncio.create_task(_history_sample_loop())
+
+
+async def _stop_history_sampler(app: web.Application) -> None:
+    await _cancel(app.get("_history_sampler"))
 
 
 def attach_ui(app: web.Application) -> None:
@@ -719,3 +777,5 @@ def attach_ui(app: web.Application) -> None:
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
     app.on_startup.append(_start_account_refresher)
     app.on_cleanup.append(_stop_account_refresher)
+    app.on_startup.append(_start_history_sampler)
+    app.on_cleanup.append(_stop_history_sampler)
