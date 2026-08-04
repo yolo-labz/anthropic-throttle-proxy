@@ -52,6 +52,7 @@ import aiohttp
 from aiohttp import web
 
 from . import config
+from . import history as _history
 from . import limiter as _limiter
 from . import pacing as _pacing
 from .body_shrink import shrink_body
@@ -2934,8 +2935,13 @@ async def _finalize(
     final_status = attempt.final_status
     telemetry_path = _is_oauth_telemetry_path(path)
     counters.exit_inflight(final_status)
+    duration = time.time() - t0
     M_REQUESTS.labels(method=request.method, status=str(final_status), model=model_label).inc()
-    M_DURATION.labels(model=model_label).observe(time.time() - t0)
+    M_DURATION.labels(model=model_label).observe(duration)
+    # Same reading, kept for 60 minutes so /ui can plot it. Telemetry probes
+    # are not fleet traffic and would flatten the rate trace.
+    if not telemetry_path:
+        _history.observe(final_status, duration)
 
     # Capture upstream rate-limit headroom for this bearer.
     meta = attempt.meta

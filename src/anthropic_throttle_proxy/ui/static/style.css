@@ -131,6 +131,9 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
   color: var(--ctp-subtext0);
 }
 .status .detail { color: var(--ctp-subtext0); font-size: 0.82rem; }
+/* "THROTTLED for 12m" — duration is what separates a transient from an
+   outage, and the verdict alone never said it. */
+.status .since { font-family: var(--mono); font-size: 0.72rem; color: var(--ctp-subtext0); }
 .status .detail b { color: var(--ctp-text); font-family: var(--mono); font-weight: 500; }
 .status.healthy   { border-left-color: var(--ok); }
 .status.healthy   .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
@@ -145,34 +148,63 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
 .status.crit .dot, .status.identity-banner .dot { background: var(--crit); }
 .status.crit .verdict, .status.identity-banner .verdict { color: var(--crit); }
 
-/* ── overview strip (global proxy totals) ───────────────────────────── */
-.overview {
-  display: flex;
-  flex-wrap: wrap;
+/* ── signal strip (RED / four golden signals, as 60-minute traces) ──── */
+/* Replaces the five-scalar KPI row: a number with no baseline cannot be
+   judged, and the oversized-KPI-row is the most reliable "generated
+   dashboard" tell (docs/DASHBOARD-DESIGN.md). Same height, four traces. */
+.signals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   background: var(--ctp-mantle);
   border: var(--hairline);
   border-radius: var(--radius);
   overflow: hidden;
 }
-.overview .stat {
+.signal {
   display: flex;
   flex-direction: column;
-  gap: 0.12rem;
-  flex: 1 1 auto;
-  min-width: 6.5rem;
-  padding: 0.6rem 1.05rem;
+  gap: 0.25rem;
+  padding: 0.62rem 1rem 0.7rem;
   border-left: var(--hairline);
+  min-width: 0;
 }
-.overview .stat:first-child { border-left: none; }
-.overview .stat-label { color: var(--muted); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; }
-.overview .stat-value { font-family: var(--mono); font-size: 1.4rem; font-weight: 500; line-height: 1.05; color: var(--ctp-text); }
-.overview .stat-value.is-warn { color: var(--warn); }
-.overview .stat-value.is-crit { color: var(--crit); }
+.signal:first-child { border-left: none; }
+.sig-label { color: var(--muted); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; }
+.sig-row { display: flex; align-items: flex-end; gap: 0.6rem; }
+.sig-value {
+  font-family: var(--mono);
+  font-size: 1.25rem;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ctp-text);
+  margin-left: auto;
+}
+.sig-detail {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sig-detail .is-crit-text { color: var(--crit); font-weight: 500; }
+.spark { width: 100%; height: 20px; flex: 1 1 auto; min-width: 0; overflow: visible; }
+.spark polyline { fill: none; stroke: var(--ctp-surface2); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.spark line { stroke: var(--ctp-surface1); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* Level tints the trace AND the value, so the state is never carried by
+   colour on its own — the number and its label say it too (WCAG 1.4.1). */
+.signal.is-warn .spark polyline { stroke: var(--warn); }
+.signal.is-warn .sig-value { color: var(--warn); }
+.signal.is-crit .spark polyline { stroke: var(--crit); }
+.signal.is-crit .sig-value { color: var(--crit); }
+.signal.totals { background: color-mix(in srgb, var(--ctp-crust) 45%, transparent); min-width: 15rem; }
+.signal.totals .sig-detail { white-space: normal; line-height: 1.45; }
 
 /* ── providers table (primary upstream + sibling lanes, unified) ────── */
 /* Auto layout + intrinsic width so 1-3 providers pack left instead of a fixed
    table stretching a single column into a wide mid-row gap on a big screen. */
 table.bearers.providers { table-layout: fixed; width: 100%; min-width: 62rem; }
+
 /* Column widths declared once, in the colgroup, instead of letting a fixed
    layout divide the viewport evenly between six columns. */
 col.c-prov-name    { width: 14rem; }
@@ -234,6 +266,10 @@ h2 {
   gap: 0.5rem;
 }
 h2 .count { color: var(--muted); font-weight: 400; }
+/* Secondary sections read as secondary: the budget tables are the page, the
+   per-token traffic table is the detail under them. */
+h2.sub { font-size: 0.66rem; color: var(--muted); letter-spacing: 0.08em; }
+h2 .h2-note { font-family: var(--sans); font-size: 0.68rem; text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
 
 /* ── shared table styling (bearers + accounts + copilot) ────────────── */
 .bearers-wrap {
@@ -352,6 +388,7 @@ col.c-acct-num    { width: 7rem; }
 /* inline utilization bar */
 .util { display: inline-flex; align-items: center; gap: 0.45rem; justify-content: flex-end; }
 .bar { width: 60px; height: 5px; border-radius: 3px; background: var(--ctp-surface0); overflow: hidden; flex: none; }
+.lane-meter .bar { width: auto; }
 .bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
 .bar > i.warn { background: var(--warn); }
 .bar > i.crit { background: var(--crit); }
@@ -361,8 +398,11 @@ col.c-acct-num    { width: 7rem; }
 /* Shrink-to-fit: with a 100% width the auto column swallows every spare pixel
    and opens a void between the meters and the status badge. Let the leftover
    width fall OUTSIDE the table instead of inside a cell. */
+/* The meters column is a genuine payload column that WANTS the surplus, so
+   this table may fill the measure — unlike #163's case, the spare width
+   lands inside the bars, not in a void between two edges. */
 table.bearers.lanes,
-table.bearers.subs { width: auto; min-width: 62rem; max-width: 100%; }
+table.bearers.subs { width: 100%; min-width: 62rem; max-width: 100%; }
 col.c-sub         { width: 15rem; }
 col.c-pace        { width: 6rem; }
 col.c-eta         { width: 8rem; }
@@ -393,7 +433,9 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
 .lanes code { color: var(--accent); }
 .lane-meter {
   display: grid;
-  grid-template-columns: 11rem 60px 3rem auto;
+  /* Label tight against its bar: an 11rem label column parked the bar a
+     hand's width to the right of the word it measures. */
+  grid-template-columns: 6.5rem minmax(60px, 14rem) 3rem auto;
   align-items: baseline;
   gap: 0.5rem;
 }
@@ -441,6 +483,18 @@ button {
 }
 button:hover { background: var(--ctp-surface1); border-color: var(--info); }
 button:active { background: var(--ctp-surface2); }
+/* Header action: sits in the badge row, so it wears the badge's weight. */
+button.ghost {
+  background: var(--ctp-mantle);
+  border: var(--hairline);
+  color: var(--ctp-subtext0);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  padding: 0.16rem 0.55rem;
+  border-radius: var(--radius-sm);
+}
+button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, var(--ctp-surface0)); background: var(--ctp-mantle); }
+#advisor-out:empty { display: none; }
 .htmx-indicator { display: none; margin-left: 0.5rem; color: var(--warn); font-family: var(--mono); }
 .htmx-request .htmx-indicator { display: inline; }
 .advisor-output {
@@ -457,9 +511,16 @@ button:active { background: var(--ctp-surface2); }
 .advisor-empty { margin-top: 0.8rem; padding: 0.6rem 0.9rem; background: var(--ctp-mantle); border: 1px dashed var(--ctp-surface1); border-radius: var(--radius-sm); font-size: 0.78rem; }
 .advisor-empty code { font-family: var(--mono); font-size: 0.74rem; color: var(--ctp-peach); background: var(--ctp-crust); padding: 0.05rem 0.3rem; border-radius: var(--radius-sm); }
 .advisor-output pre { background: var(--ctp-crust); padding: 0.55rem; border-radius: var(--radius-sm); overflow: auto; font-size: 0.74rem; color: var(--ctp-subtext1); }
-.advisor-auto { padding: 0.8rem 1rem; background: var(--ctp-mantle); border: var(--hairline); border-left: 3px solid var(--warn); border-radius: var(--radius); }
-.advisor-auto h2 { color: var(--warn); margin-top: 0; }
-.advisor-auto .advisor-trigger { color: var(--muted); font-family: var(--mono); font-size: 0.7rem; margin-bottom: 0.4rem; }
+.advisor-auto { padding: 0.55rem 0.9rem; background: var(--ctp-mantle); border: var(--hairline); border-left: 3px solid var(--warn); border-radius: var(--radius); }
+.advisor-auto .aa-tag { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--warn); margin-right: 0.5rem; }
+.advisor-auto .advisor-trigger { color: var(--muted); font-family: var(--mono); font-size: 0.7rem; }
+.advisor-auto .markdown.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 0.3rem;
+}
 .advisor-auto .markdown, .advisor-output .markdown { white-space: pre-wrap; color: var(--ctp-subtext1); font-size: 0.82rem; }
 .advisor-output .markdown b, .advisor-auto .markdown b { color: var(--ctp-text); }
 
