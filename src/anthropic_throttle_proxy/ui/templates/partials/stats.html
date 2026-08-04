@@ -18,6 +18,10 @@
 <h2>Providers · <span class="count">{{ providers | length }}</span></h2>
 <section class="bearers-wrap" tabindex="0" aria-label="Routing providers and lane health">
 <table class="bearers providers">
+  <colgroup>
+    <col class="c-prov-name" /><col class="c-prov-upstream" /><col class="c-n" />
+    <col class="c-n" /><col class="c-n" /><col class="c-n-sm" /><col class="c-prov-status" />
+  </colgroup>
   <thead>
     <tr>
       <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH">provider</th>
@@ -26,7 +30,7 @@
       <th scope="col" class="th-center" title="Requests in flight through this provider right now">in-flight</th>
       <th scope="col" class="th-center" title="Requests queued waiting for a slot on this provider">queued</th>
       <th scope="col" class="th-center" title="Concurrency ceiling (MAX / per-lane cap)">cap</th>
-      <th scope="col" class="th-center" title="Reachability + upstream egress health">status</th>
+      <th scope="col" title="Reachability + upstream egress health">status</th>
     </tr>
   </thead>
   <tbody>
@@ -44,10 +48,10 @@
       <td class="td-center prov-status">
         {% if not p.ok %}
           <span class="prov-state prov-idle">unreachable</span>
-          {% if p.err %}<span class="prov-err">{{ p.err }}</span>{% endif %}
+          {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
         {% elif p.auth_dead %}
           <span class="prov-state prov-crit" title="The lane is reachable but its own credential is rejected upstream — it can serve nothing">key rejected</span>
-          {% if p.err %}<span class="prov-err">{{ p.err }}</span>{% endif %}
+          {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
         {% else %}
           <span class="prov-state prov-{{ p.level }}">{{ p.level }}</span>
           <span class="egress {{ 'up' if p.egress_ok else 'down' }}">egress {{ 'ok' if p.egress_ok else 'down' }}</span>
@@ -66,6 +70,10 @@
 </h2>
 <section class="bearers-wrap" tabindex="0" aria-label="Every subscription meter this host pays for">
 <table class="bearers lanes">
+  <colgroup>
+    <col class="c-lane" /><col class="c-family" /><col class="c-plan" />
+    <col class="c-meters" /><col class="c-lane-status" />
+  </colgroup>
   <thead>
     <tr>
       <th scope="col" title="Lane id from the out-of-process probe report">lane</th>
@@ -122,6 +130,13 @@
 {% endif %}
 <section class="bearers-wrap" tabindex="0" aria-label="Per-account usage table">
 <table class="bearers accounts">
+  <colgroup>
+    <col class="c-acct" /><col class="c-acct-bearer" /><col class="c-acct-src" />
+    <col class="c-acct-token" /><col class="c-acct-win" /><col class="c-acct-win" />
+    {% if cols.scoped %}<col class="c-acct-num" />{% endif %}
+    {% if cols.credits %}<col class="c-acct-num" />{% endif %}
+    <col class="c-acct-num" /><col class="c-acct-num" />
+  </colgroup>
   <thead>
     <tr>
       <th scope="col" title="Label from THROTTLE_ACCOUNT_CRED_PATHS + the account email from /api/oauth/profile">account</th>
@@ -130,8 +145,8 @@
       <th scope="col" title="Access-token freshness. Expired beyond 90 min = the refresh pipeline (token broker) is failing.">token</th>
       <th scope="col" title="5h unified-window utilisation. 'reset' = the window rolled over since the reading.">5h</th>
       <th scope="col" title="7d unified-window utilisation (all models)">7d</th>
-      <th scope="col" title="Model-metered 7d windows (Sonnet / Opus) when the plan reports them">7d S·O</th>
-      <th scope="col" title="Usage credits spent this month (extra usage beyond plan windows)">credits</th>
+      {% if cols.scoped %}<th scope="col" title="Model-metered 7d windows (Sonnet / Opus) when the plan reports them">7d S·O</th>{% endif %}
+      {% if cols.credits %}<th scope="col" title="Usage credits spent this month (extra usage beyond plan windows)">credits</th>{% endif %}
       <th scope="col" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = on budget; ≥1.15× = fleet-pace alert.">pace</th>
       <th scope="col" title="Projected time until 7d exhausts at current pace. Only when it lands before reset.">7d ETA</th>
     </tr>
@@ -176,16 +191,20 @@
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
       {% endfor %}
+      {% if cols.scoped %}
       <td>
         {% if a.sonnet or a.opus %}
           {% if a.sonnet %}<span class="muted">S</span> <span class="pct">{{ a.sonnet.pct }}%</span>{% endif %}
           {% if a.opus %}<span class="muted">O</span> <span class="pct{% if a.opus.pct >= 90 %} warn-text{% endif %}">{{ a.opus.pct }}%</span>{% endif %}
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
+      {% endif %}
+      {% if cols.credits %}
       <td class="num">
         {% if a.extra and a.extra.used is not none %}{{ "%.2f" | format(a.extra.used) }} {{ a.extra.currency }}
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
+      {% endif %}
       <td class="num{% if a.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(a.pace) if a.pace is not none else "—" }}</td>
       <td class="num">{{ "in " + a.eta if a.eta else "—" }}</td>
     </tr>

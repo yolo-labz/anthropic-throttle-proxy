@@ -58,6 +58,13 @@ body {
   min-height: 100vh;
   padding: 1.4rem clamp(0.8rem, 3vw, 2.4rem);
   gap: 1.1rem;
+  /* An ultrawide viewport is not a reason to stretch six columns across
+     2560px: `table-layout: fixed` then hands each one ~480px and the content
+     flees to opposite edges of an empty row (04/08/2026, "broken spaces").
+     Cap the measure and centre it; the tables still scroll below 64rem. */
+  max-width: 102rem;
+  margin-inline: auto;
+  width: 100%;
 }
 
 /* ── header ─────────────────────────────────────────────────────────── */
@@ -165,14 +172,33 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
 /* ── providers table (primary upstream + sibling lanes, unified) ────── */
 /* Auto layout + intrinsic width so 1-3 providers pack left instead of a fixed
    table stretching a single column into a wide mid-row gap on a big screen. */
-table.bearers.providers { table-layout: auto; width: auto; min-width: 50rem; max-width: 100%; }
-table.bearers.providers th,
-table.bearers.providers td { padding-right: 1.6rem; }
-table.bearers.providers th:last-child,
-table.bearers.providers td:last-child { padding-right: 0.7rem; }
+table.bearers.providers { table-layout: fixed; width: 100%; min-width: 62rem; }
+/* Column widths declared once, in the colgroup, instead of letting a fixed
+   layout divide the viewport evenly between six columns. */
+col.c-prov-name    { width: 14rem; }
+col.c-prov-upstream{ width: 22rem; }
+col.c-n            { width: 6.5rem; }
+col.c-n-sm         { width: 5rem; }
 table.bearers.providers td.prov-upstream { text-align: left; }
-table.bearers.providers thead th:nth-child(2) { text-align: left; }  /* upstream header over left-aligned URLs */
+table.bearers.providers th:nth-child(3),
+table.bearers.providers td:nth-child(3) { text-align: right; }
+/* The status cell carries a vendor error sentence; let it wrap to two lines
+   and keep the full text in the tooltip rather than clipping mid-word. */
 td.prov-status { white-space: normal; }
+.prov-err {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* `table.bearers td` sets nowrap; without this the clamp has nothing to
+     clamp and the sentence is cut mid-word at the cell edge. */
+  white-space: normal;
+  line-height: 1.35;
+}
+col.c-prov-status { width: 30rem; }
+table.bearers.providers th:nth-child(7),
+table.bearers.providers td:nth-child(7) { text-align: left; }
+.prov-status .prov-state { display: inline-block; }
 /* Level as TEXT, colour-matched to the row dot — so the dot is never the sole
    carrier of the pacing state (WCAG 1.4.1). */
 .prov-state { font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
@@ -230,15 +256,20 @@ table.bearers .col-aimd   { width: 6rem; }
 table.bearers .col-window { width: 10.5rem; }
 table.bearers th,
 table.bearers td {
-  text-align: right;
+  text-align: left;
   padding: 0.45rem 0.7rem;
   border-bottom: 1px solid var(--ctp-surface0);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-table.bearers th:first-child,
-table.bearers td:first-child { text-align: left; }
+/* Numbers stay right-aligned (tabular-nums makes the column scan); words do
+   not — a left-aligned label next to a right-aligned number is the pairing
+   that reads, not two edges of a 480px void. */
+table.bearers th.num,
+table.bearers td.num,
+table.bearers th.col-num,
+table.bearers td.col-num { text-align: right; }
 table.bearers th.th-center,
 table.bearers td.td-center { text-align: center; }
 table.bearers thead th {
@@ -302,6 +333,15 @@ table.bearers code { font-family: var(--mono); color: var(--ctp-peach); backgrou
 .tok-expired  { color: var(--crit); font-weight: 600; }
 .reset-in { display: block; font-size: 0.68rem; margin-top: 0.12rem; }
 .accounts .email { font-size: 0.66rem; margin-top: 0.12rem; color: var(--muted); }
+/* Same shrink-to-fit as the lanes table: fixed columns + width:100% spreads
+   the surplus BETWEEN columns, which is the gap Pedro read as broken. */
+table.bearers.accounts { width: auto; max-width: 100%; }
+col.c-acct        { width: 13rem; }
+col.c-acct-bearer { width: 9rem; }
+col.c-acct-src    { width: 11rem; }
+col.c-acct-token  { width: 11rem; }
+col.c-acct-win    { width: 11rem; }
+col.c-acct-num    { width: 7rem; }
 
 /* inline utilization bar */
 .util { display: inline-flex; align-items: center; gap: 0.45rem; justify-content: flex-end; }
@@ -312,16 +352,37 @@ table.bearers code { font-family: var(--mono); color: var(--ctp-peach); backgrou
 .util .pct { font-family: var(--mono); font-size: 0.74rem; min-width: 2.4rem; text-align: right; }
 
 /* ── subscription lanes (every meter the host pays for) ─────────────── */
-table.bearers.lanes { min-width: 46rem; }
+/* Shrink-to-fit: with a 100% width the auto column swallows every spare pixel
+   and opens a void between the meters and the status badge. Let the leftover
+   width fall OUTSIDE the table instead of inside a cell. */
+table.bearers.lanes { width: auto; min-width: 58rem; max-width: 100%; }
+col.c-lane        { width: 13rem; }
+col.c-family      { width: 9rem; }
+col.c-plan        { width: 7rem; }
+col.c-meters      { width: auto; }
+col.c-lane-status { width: 7rem; }
+/* The meters cell is the row's payload: give it the slack and keep every
+   meter on one left-aligned baseline grid instead of right-drifting each
+   label to a different x. */
+table.bearers.lanes td:nth-child(4) { white-space: normal; }
 .lanes code { color: var(--accent); }
-.lane-meter { display: flex; align-items: baseline; gap: 0.5rem; }
+.lane-meter {
+  display: grid;
+  grid-template-columns: 11rem 60px 3rem auto;
+  align-items: baseline;
+  gap: 0.5rem;
+}
 .lane-meter + .lane-meter { margin-top: 0.22rem; }
 .lane-meter .meter-label {
   font-family: var(--mono);
   font-size: 0.7rem;
   color: var(--ctp-subtext0);
-  min-width: 9.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.lane-meter .util { display: contents; }
+.lane-meter > .muted { grid-column: 2 / 4; }
+.lane-meter .util .pct { text-align: right; }
 .lane-meter .reset-in { display: inline; margin-top: 0; }
 /* Status carries its meaning in TEXT (WCAG 1.4.1) — colour only reinforces. */
 .lane-status { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
