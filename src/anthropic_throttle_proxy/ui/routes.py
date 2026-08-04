@@ -387,6 +387,14 @@ async def _collect_view() -> dict[str, object]:
         max_concurrent=_proxy.MAX_CONCURRENT,
         fleet=fleet_view,
     )
+    # A column that is "—" in every row is not a column; it is a row detail
+    # nobody has. Four of the accounts table's ten columns rendered empty for
+    # every account (04/08/2026), which is most of the whitespace Pedro read as
+    # broken layout.
+    cols = {
+        "scoped": any(a.get("sonnet") or a.get("opus") for a in accounts_view),
+        "credits": any((a.get("extra") or {}).get("used") is not None for a in accounts_view),
+    }
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
     return {
@@ -394,6 +402,7 @@ async def _collect_view() -> dict[str, object]:
         "identity": identity,
         "providers": providers,
         "lanes": lanes_view,
+        "cols": cols,
         "copilot": copilot_view,
         "status": status,
         "inflight": _proxy.state["inflight"],

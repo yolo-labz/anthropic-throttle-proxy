@@ -1831,6 +1831,17 @@ async def test_ui_renders_subscription_lanes_and_publishes_gauges(
     lanes_mod._cache = None
 
 
+async def test_all_empty_columns_are_dropped(client):
+    """A column that is "—" in every row is a row detail nobody has.
+
+    Four of the accounts table's ten columns rendered empty for every account
+    on 04/08/2026, which is most of the whitespace that read as broken layout.
+    """
+    html = await (await client.get("/ui")).text()
+    assert "7d S·O" not in html  # no account reports a scoped window here
+    assert ">credits<" not in html
+
+
 async def test_ui_stats_partial_renders(client: TestClient) -> None:
     resp = await client.get("/ui/stats")
     assert resp.status == 200

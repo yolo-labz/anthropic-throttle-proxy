@@ -219,6 +219,19 @@ _BILLING_DEAD_MARKERS = (
 )
 
 
+def _clip(message: str, limit: int = 400) -> str:
+    """Cut a vendor error on a WORD boundary.
+
+    Mid-word truncation reads as a rendering bug rather than as the message it
+    is — 04/08/2026 the Kimi row ended at "please recharge your account or
+    check your".
+    """
+    message = " ".join(message.split())
+    if len(message) <= limit:
+        return message
+    return f"{message[:limit].rsplit(' ', 1)[0]}…"
+
+
 def _lane_credential_dead(status: int, text: str) -> bool:
     """True when the status+body says this lane cannot serve until a human acts."""
     if status in (401, 403, 402):
@@ -246,7 +259,7 @@ def note_upstream_auth(status: int, body: bytes | None = None) -> None:
         detail = ""
         with contextlib.suppress(Exception):
             payload = json.loads(text)
-            detail = str((payload.get("error") or {}).get("message") or "")[:160]
+            detail = _clip(str((payload.get("error") or {}).get("message") or ""))
         if config.state["upstream_auth_ok"]:
             log(f"upstream-auth-rejected status={status} detail={detail!r}")
         config.state["upstream_auth_ok"] = False
