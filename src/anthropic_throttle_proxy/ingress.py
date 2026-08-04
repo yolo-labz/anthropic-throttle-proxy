@@ -587,8 +587,31 @@ async def _session_context(app: web.Application):
         await session.close()
 
 
+def _warn_roles_without_a_lane() -> list[str]:
+    """Roles whose whole chain has been retired — they can only HOLD.
+
+    Retiring the last non-Anthropic lane silently turns `bulk` into a permanent
+    503, because bulk deliberately excludes Anthropic (invariant 2: bulk must
+    not draw the Opus meter). That is a policy decision, not an accident, so it
+    must be visible at boot rather than discovered by a stalled subagent.
+    """
+    orphaned = [
+        role
+        for role, chain in routing.ROLE_CHAINS.items()
+        if not any(lane_id in LANES for lane_id in chain)
+    ]
+    for role in orphaned:
+        print(
+            f"[ingress] role={role} has NO configured lane "
+            f"(chain={routing.ROLE_CHAINS[role]}) — every {role} request will HOLD",
+            flush=True,
+        )
+    return orphaned
+
+
 def build_app() -> web.Application:
     """Wire the ingress aiohttp app (route table + lifecycle hooks)."""
+    _warn_roles_without_a_lane()
     app = web.Application(client_max_size=128 * 1024 * 1024, middlewares=[_count_served])
     app.cleanup_ctx.append(_session_context)
     app.cleanup_ctx.append(_lane_health_context)  # S3: depends on the session existing

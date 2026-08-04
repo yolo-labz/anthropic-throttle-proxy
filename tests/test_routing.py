@@ -13,6 +13,7 @@ import time
 
 import pytest
 
+from anthropic_throttle_proxy import routing
 from anthropic_throttle_proxy.routing import (
     ROLE_CHAINS,
     ROLES,
@@ -531,3 +532,32 @@ def test_body_has_tools_empty_tools_array_is_not_agentic() -> None:
 def test_body_has_tools_invalid_json_returns_false() -> None:
     assert body_has_tools(b"not json") is False
     assert body_has_tools(b"") is False
+
+
+def test_empty_lane_url_retires_the_lane(monkeypatch):
+    """A cancelled subscription leaves the router by URL, not by code edit.
+
+    z.ai was cancelled 31/07/2026 and Moonshot suspended, yet both lanes kept
+    being probed every few seconds, rendered on the dashboard, and offered as
+    spill targets that answer 401.
+    """
+    monkeypatch.setenv("INGRESS_KIMI_LANE_URL", "")
+    monkeypatch.setenv("INGRESS_GLM_LANE_URL", "   ")
+    lanes = routing.default_lanes()
+    assert set(lanes) == {"anthropic"}
+
+
+def test_unset_lane_url_keeps_the_default(monkeypatch):
+    monkeypatch.delenv("INGRESS_KIMI_LANE_URL", raising=False)
+    monkeypatch.delenv("INGRESS_GLM_LANE_URL", raising=False)
+    assert set(routing.default_lanes()) == {"anthropic", "kimi", "glm"}
+
+
+def test_a_retired_lane_can_never_be_selected(monkeypatch):
+    """select_lane walks the chain against STATE; a retired lane has none."""
+    monkeypatch.setenv("INGRESS_KIMI_LANE_URL", "")
+    monkeypatch.setenv("INGRESS_GLM_LANE_URL", "")
+    lanes = routing.default_lanes()
+    state = {name: routing.LaneState(True, 0.0) for name in lanes}  # every CONFIGURED lane open
+    assert routing.select_lane("bulk", state) is None  # bulk chain is kimi/glm only
+    assert routing.select_lane("generate", state, overflow=False) == "anthropic"
