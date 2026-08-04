@@ -48,6 +48,32 @@ def test_quantiles_track_the_slow_tail():
     assert point.p95 == pytest.approx(5.0)
 
 
+def test_quantile_is_nearest_rank_on_even_counts():
+    history.observe(200, 0.0)
+    history.observe(200, 1.0)
+    # ceil(0.5 × 2) = rank 1 = the LOWER of the pair. The rounded form this
+    # started as answered 1.0, overstating p50 for every even sample count.
+    assert history.record(queued=0, inflight=0, cap=1, now=1.0).p50 == 0.0
+
+
+def test_open_bucket_cannot_grow_without_a_sampler():
+    for _ in range(history._DURATION_SAMPLES + 500):
+        history.observe(200, 0.1)
+    assert len(history._durations) == history._DURATION_SAMPLES
+    # served still counts every request — only the duration SAMPLES are capped.
+    assert history.record(queued=0, inflight=0, cap=1, now=1.0).served == (
+        history._DURATION_SAMPLES + 500
+    )
+
+
+def test_saturation_is_total_when_the_cap_is_zero_and_work_is_waiting():
+    history.record(queued=3, inflight=0, cap=0, now=1000.0)
+    assert signals._saturation_series(history.series()) == [100.0]
+    history.reset()
+    history.record(queued=0, inflight=0, cap=0, now=1000.0)
+    assert signals._saturation_series(history.series()) == [0.0]
+
+
 def test_level_since_holds_the_transition_instant():
     assert history.level_since("healthy", now=100.0) == 0.0
     # Same level, later render — the clock runs from the TRANSITION, not from

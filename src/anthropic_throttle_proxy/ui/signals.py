@@ -108,8 +108,14 @@ def _saturation_series(points: list[_history.Point]) -> list[float]:
     """
     out = []
     for p in points:
-        cap = p.cap or 0
-        out.append(((p.inflight + p.queued) / cap * 100.0) if cap > 0 else 0.0)
+        demand = p.inflight + p.queued
+        if p.cap > 0:
+            out.append(demand / p.cap * 100.0)
+        else:
+            # No cap AND work waiting is total saturation, not 0% — reading it
+            # as healthy would hide the exact state this signal exists for
+            # (every bearer paused on a Retry-After, nothing dispatchable).
+            out.append(100.0 if demand else 0.0)
     return out
 
 

@@ -18,6 +18,7 @@ stays importable from the hot path without a cycle.
 
 from __future__ import annotations
 
+import math
 import time
 from collections import deque
 from typing import NamedTuple
@@ -52,7 +53,15 @@ _ring: deque[Point] = deque(maxlen=POINTS)
 # Open bucket — accumulates until the next `record()` closes it.
 _served = 0
 _errors = 0
-_durations: list[float] = []
+# Bounded on purpose: an unbounded list would grow without limit if the
+# sampler task never starts (an app that attaches the routes but never runs
+# on_startup) or dies, and `record()` sorts it on the event loop. 4096
+# samples per 10 s bucket is far past this proxy's ceiling and sorts in well
+# under a millisecond; past it the oldest sample in the bucket is dropped.
+# ponytail: a drop biases the quantiles toward the tail of a huge bucket. The
+# upgrade path is a fixed-bin histogram, which we do not need at this volume.
+_DURATION_SAMPLES = 4096
+_durations: deque[float] = deque(maxlen=_DURATION_SAMPLES)
 # Level → the instant it was first observed, so the status strip can say
 # "THROTTLED for 12m" instead of an undated verdict (S4.4).
 _level = ""
@@ -67,7 +76,9 @@ def observe(status: int | None, duration: float) -> None:
     """
     global _served, _errors
     _served += 1
-    if status is not None and int(status) in _PUSHBACK:
+    # Membership, not a cast: a non-int status is simply not pushback, and a
+    # ValueError raised here would escape into request bookkeeping.
+    if status in _PUSHBACK:
         _errors += 1
     _durations.append(duration)
 
@@ -96,10 +107,14 @@ def record(queued: int, inflight: int, cap: int, now: float | None = None) -> Po
 
 
 def _quantile(ordered: list[float], q: float) -> float | None:
-    """Nearest-rank quantile of an already-sorted list (None when empty)."""
+    """Nearest-rank quantile of an already-sorted list (None when empty).
+
+    Nearest rank is ``ceil(q × n)``. The rounded form this started as put p50
+    of ``[0, 1]`` at ``1`` — wrong for every even sample count.
+    """
     if not ordered:
         return None
-    idx = min(len(ordered) - 1, max(0, round(q * len(ordered) + 0.5) - 1))
+    idx = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
     return ordered[idx]
 
 
