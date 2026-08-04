@@ -90,6 +90,10 @@ def _parse_health(body: Any) -> dict[str, Any]:
         "queue_mode": str(body.get("queue_mode") or ""),
         "upstream": str(body.get("upstream") or ""),
         "upstream_egress_ok": bool(body.get("upstream_egress_ok", False)),
+        # Tri-state on purpose: True/False only on a proxy-owns-key sibling,
+        # None where the client supplies the token (nothing lane-wide to judge).
+        "upstream_auth_ok": body.get("upstream_auth_ok"),
+        "upstream_auth_error": str(body.get("upstream_auth_error") or ""),
         "client_disconnects": _safe_int(body.get("client_disconnects")),
         "upstream_retries": _safe_int(body.get("upstream_retries")),
     }

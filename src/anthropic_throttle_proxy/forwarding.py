@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 from typing import TYPE_CHECKING
 
@@ -190,6 +191,45 @@ async def central_health_loop() -> None:
             await asyncio.sleep(config.CENTRAL_HEALTH_INTERVAL)
 
 
+def proxy_owns_key() -> bool:
+    """True when THIS instance injects its own credential upstream.
+
+    On such a lane (Kimi :8767) a 401/403 is the lane's own key being dead. On
+    the client-provides-key Anthropic lane the same status means one client's
+    OAuth token went stale, which is a per-request event and must never be
+    published as a lane-level verdict.
+    """
+    return config.API_KEY_ROUTING_MODE in {"overflow", "prefer"} and bool(config.API_KEY_FILE)
+
+
+def note_upstream_auth(status: int, body: bytes | None = None) -> None:
+    """Record whether the upstream accepts this lane's own credential.
+
+    No-op unless this proxy owns the key. 401/403 closes the lane; any 2xx
+    reopens it, so a recharged key recovers on the first successful request
+    with no restart and no probe.
+    """
+    if not proxy_owns_key():
+        return
+    if status in (401, 403):
+        detail = ""
+        if body:
+            with contextlib.suppress(Exception):
+                payload = json.loads(bytes(body[:4096]).decode("utf-8", "replace"))
+                detail = str((payload.get("error") or {}).get("message") or "")[:160]
+        if config.state["upstream_auth_ok"]:
+            log(f"upstream-auth-rejected status={status} detail={detail!r}")
+        config.state["upstream_auth_ok"] = False
+        config.state["upstream_auth_error"] = detail or f"upstream returned {status}"
+        config.state["upstream_auth_last_check"] = time.time()
+    elif 200 <= status < 300:
+        if not config.state["upstream_auth_ok"]:
+            log("upstream-auth-recovered")
+        config.state["upstream_auth_ok"] = True
+        config.state["upstream_auth_error"] = ""
+        config.state["upstream_auth_last_check"] = time.time()
+
+
 async def _stream_response(request: web.Request, upstream: aiohttp.ClientResponse) -> ForwardResult:
     """Stream an open upstream response back to the client, capturing usage.
 
@@ -207,6 +247,10 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
         drop_headers = config.HOP_HEADERS | {config.QUEUE_TIMEOUT_HEADER}
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
     meta = _extract_ratelimit(upstream.headers)
+    # Status only: reading the body here would drain the stream the client is
+    # about to receive. The lane verdict needs the status; the human-readable
+    # detail is attached on the paths that have already buffered the body.
+    note_upstream_auth(upstream.status)
     if upstream.status in config.THROTTLE_STATUSES:
         body = await upstream.read()
         meta.update(

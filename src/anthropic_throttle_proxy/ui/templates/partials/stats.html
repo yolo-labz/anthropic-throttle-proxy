@@ -45,6 +45,9 @@
         {% if not p.ok %}
           <span class="prov-state prov-idle">unreachable</span>
           {% if p.err %}<span class="prov-err">{{ p.err }}</span>{% endif %}
+        {% elif p.auth_dead %}
+          <span class="prov-state prov-crit" title="The lane is reachable but its own credential is rejected upstream — it can serve nothing">key rejected</span>
+          {% if p.err %}<span class="prov-err">{{ p.err }}</span>{% endif %}
         {% else %}
           <span class="prov-state prov-{{ p.level }}">{{ p.level }}</span>
           <span class="egress {{ 'up' if p.egress_ok else 'down' }}">egress {{ 'ok' if p.egress_ok else 'down' }}</span>

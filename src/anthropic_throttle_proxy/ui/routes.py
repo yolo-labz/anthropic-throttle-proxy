@@ -307,6 +307,11 @@ def _build_providers(
     ]
     for f in fleet:
         ok = bool(f.get("ok"))
+        # A sibling can be reachable, resolve DNS, and still be unable to serve
+        # one request because its own key is dead — the Kimi lane rendered
+        # "HEALTHY egress ok" for weeks that way (04/08/2026). Auth is the
+        # verdict that decides whether traffic can land, so it wins.
+        auth_dead = f.get("upstream_auth_ok") is False
         providers.append(
             {
                 "name": str(f.get("name") or "?"),
@@ -322,8 +327,10 @@ def _build_providers(
                 # 4-state pacing. Map a failed probe to the neutral "idle"
                 # (grey dot) so a dead lane is never pixel-identical to a
                 # rate-limited-but-serving primary ("throttled", red dot).
-                "level": "healthy" if ok else "idle",
-                "err": str(f.get("err") or ""),
+                "level": "crit" if (ok and auth_dead) else ("healthy" if ok else "idle"),
+                "auth_dead": auth_dead,
+                "err": str(f.get("err") or "")
+                or (str(f.get("upstream_auth_error") or "") if auth_dead else ""),
             }
         )
     return providers
