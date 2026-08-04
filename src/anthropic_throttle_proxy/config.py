@@ -112,6 +112,22 @@ UPSTREAM_HEALTH_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_TIMEOUT
 UPSTREAM_SOCK_READ_TIMEOUT = float(os.environ.get("THROTTLE_UPSTREAM_SOCK_READ_TIMEOUT_S", "600"))
 CENTRAL_SOCK_READ_TIMEOUT = float(os.environ.get("THROTTLE_CENTRAL_SOCK_READ_TIMEOUT_S", "600"))
 UPSTREAM_HEALTH_INTERVAL = float(os.environ.get("THROTTLE_UPSTREAM_HEALTH_INTERVAL", "30"))
+
+# Credential probe for a proxy-owns-key lane (Kimi :8767). Without it a lane
+# with a dead key reads healthy until the first request arrives — which on a
+# dormant overflow lane can be never (04/08/2026: Kimi rendered HEALTHY for
+# weeks while its key was unfunded).
+#
+# The probe is a `max_tokens: 1` message, NOT a GET /v1/models: Moonshot's
+# Anthropic-compatible base 404s that route, and its plain base answers 200
+# with a `url.not_found` body — a probe reading that as success would reopen a
+# dead lane. One token per interval is the price of an answer that cannot lie.
+#
+# PROBE_MODEL has no default. The proxy cannot know which model id a given
+# upstream accepts, and guessing wrong yields a 400 that says nothing about the
+# credential — so an unset model disables the probe rather than emitting noise.
+AUTH_PROBE_INTERVAL_S = float(os.environ.get("THROTTLE_AUTH_PROBE_INTERVAL_S", "300"))
+AUTH_PROBE_MODEL = os.environ.get("THROTTLE_AUTH_PROBE_MODEL", "").strip()
 # Central-health hysteresis: a single transient probe miss must NOT abandon
 # central — that flips the whole local fleet to direct fallback and risks an
 # unqueued firehose (the 25/05/2026 incident shape). Require FAIL_THRESHOLD

@@ -3478,6 +3478,79 @@ async def _upstream_egress_loop() -> None:
         await asyncio.sleep(min(interval, 5.0) if probe_failed else interval)
 
 
+async def _probe_upstream_auth_once() -> None:
+    """Ask the upstream whether this lane's own key is still accepted.
+
+    A ``max_tokens: 1`` message against ``{UPSTREAM}/v1/messages``. 401/403
+    closes the lane; a 2xx reopens it ONLY when the body is a real Anthropic
+    message. Everything else — 400 on a wrong model id, 429, 5xx, a timeout —
+    is INCONCLUSIVE and leaves the verdict untouched: a probe that cannot
+    answer must not manufacture one.
+
+    The strict success check is not paranoia. ``api.moonshot.ai/v1/models``
+    answers **200** with a ``url.not_found`` body, so a status-only probe would
+    have reopened a lane whose key is dead.
+    """
+    candidate = _api_key_candidate()
+    if candidate is None or not config.AUTH_PROBE_MODEL:
+        return
+    url = config.UPSTREAM.rstrip("/") + "/v1/messages"
+    timeout = aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT)
+    headers = {
+        "authorization": f"Bearer {candidate['token']}",
+        "x-api-key": str(candidate["token"]),
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": config.AUTH_PROBE_MODEL,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "."}],
+    }
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as session,
+        session.post(url, headers=headers, json=payload) as resp,
+    ):
+        body = await resp.read()
+        if 200 <= resp.status < 300:
+            # Only a real completion body reopens the lane (see docstring).
+            if _is_anthropic_message(body):
+                note_upstream_auth(resp.status)
+        else:
+            # note_upstream_auth ignores anything that is not a credential /
+            # billing verdict, so a plain 429 or a 5xx stays inconclusive here.
+            note_upstream_auth(resp.status, body)
+
+
+def _is_anthropic_message(body: bytes) -> bool:
+    """True only for a real ``{"type": "message", ...}`` completion body."""
+    try:
+        payload = json.loads(body[:8192].decode("utf-8", "replace"))
+    except ValueError:
+        return False
+    return isinstance(payload, dict) and payload.get("type") == "message"
+
+
+async def _upstream_auth_loop() -> None:
+    """Refresh the credential verdict on a slow timer. Key-owning lanes only."""
+    while True:
+        try:
+            await _probe_upstream_auth_once()
+        except Exception as exc:  # inconclusive: network/TLS/timeout
+            log(f"upstream auth probe error: {exc!r}")
+        await asyncio.sleep(max(30.0, config.AUTH_PROBE_INTERVAL_S))
+
+
+async def _upstream_auth_context(_app: web.Application):
+    if not (_api_key_routing_enabled() and config.AUTH_PROBE_INTERVAL_S > 0):
+        yield
+        return
+    task = asyncio.create_task(_upstream_auth_loop())
+    yield
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 async def _upstream_egress_context(_app: web.Application):
     task = asyncio.create_task(_upstream_egress_loop())
     yield
@@ -3820,6 +3893,7 @@ def main() -> None:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
     app.cleanup_ctx.append(_upstream_egress_context)
+    app.cleanup_ctx.append(_upstream_auth_context)
     # Every response this proxy serves carries MARKER_HEADER so a downstream
     # local tier can tell a central-served 5xx (relay — keep central up) from
     # dokku nginx answering for a dead container (mark central down).
