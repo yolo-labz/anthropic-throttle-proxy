@@ -233,6 +233,12 @@ def lane_usable(
     """
     if not health_json.get("upstream_egress_ok", False):
         return False, "upstream-egress-down"
+    # DNS resolving says nothing about whether the lane's own key still works.
+    # 04/08/2026: Kimi :8767 reported `upstream_egress_ok` while every request
+    # returned "Incorrect API key provided", and the no-bearers-proxy-owns-key
+    # rule below then held the lane OPEN — so a spill would 401 the caller.
+    if health_json.get("upstream_auth_ok") is False:
+        return False, "upstream-auth-rejected"
     bearers = health_json.get("bearers") or {}
     if not bearers:
         return (True, "no-bearers-proxy-owns-key") if proxy_owns_key else (False, "no-bearers")

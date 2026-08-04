@@ -96,6 +96,7 @@ from .forwarding import (
     _forward_once,
     central_health_loop,
     direct_target,
+    note_upstream_auth,
     notify_success_headers,
     pick_target,
     set_success_headers_callback,
@@ -2098,6 +2099,7 @@ async def _forward_once_into_sse(
                     # Throttle / error status: return body as captured, no piping.
                     if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
                         upstream_body = await upstream.read()
+                        note_upstream_auth(upstream.status, upstream_body)
                         meta.update(
                             _extract_zai_ratelimit_from_body(
                                 upstream_body,
@@ -3692,6 +3694,14 @@ async def health(_request: web.Request) -> web.Response:
         "upstream_egress_ok": upstream_egress_ok,
         "upstream_egress_error": upstream_egress_error,
         "upstream_egress_last_check": state["upstream_egress_last_check"],
+        # Credential verdict for a proxy-owns-key lane. null on a lane where
+        # the CLIENT supplies the token — there is no lane-wide credential to
+        # judge, and publishing True would be a claim nobody measured.
+        "upstream_auth_ok": (
+            bool(state["upstream_auth_ok"]) if _api_key_routing_enabled() else None
+        ),
+        "upstream_auth_error": state["upstream_auth_error"],
+        "upstream_auth_last_check": state["upstream_auth_last_check"],
         "central_url": config.CENTRAL_URL,
         "central_status": cs,
         # FR-005: distinct-account guard — {collapsed,duplicates,suspected,

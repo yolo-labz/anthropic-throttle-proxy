@@ -405,6 +405,17 @@ state: dict[str, object] = {
     "upstream_egress_ok": True,
     "upstream_egress_error": "",
     "upstream_egress_last_check": 0,
+    # Whether the upstream ACCEPTS the credential this proxy injects. Only
+    # meaningful on a proxy-owns-key lane (THROTTLE_API_KEY_FILE + routing
+    # prefer/overflow): there a 401/403 means the lane's own key is dead, not
+    # that a client's token went stale. Optimistic until an authoritative
+    # answer arrives, like the egress verdict above — but unlike egress, DNS
+    # resolving proves nothing about it (04/08/2026: the Kimi lane rendered
+    # HEALTHY with `egress ok` while every request to it returned
+    # "Incorrect API key provided").
+    "upstream_auth_ok": True,
+    "upstream_auth_error": "",
+    "upstream_auth_last_check": 0,
     # last_advisor holds {"text", "ts", "trigger"} from the GROQ advisor.
     "last_advisor": None,
 }
