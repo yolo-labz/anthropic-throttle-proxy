@@ -126,7 +126,7 @@ def default_lanes() -> dict[str, Lane]:
     }
     glm_model = os.environ.get("INGRESS_GLM_MODEL", "glm-5.2")
     glm_models = {"generate": glm_model, "bulk": glm_model, "judge": glm_model}
-    return {
+    lanes = {
         "anthropic": Lane(
             "anthropic",
             os.environ.get("INGRESS_ANTHROPIC_LANE_URL", "http://127.0.0.1:8765"),
@@ -145,6 +145,17 @@ def default_lanes() -> dict[str, Lane]:
             frozenset({"generate", "judge", "bulk"}),
             models=glm_models,
         ),
+    }
+    # An EXPLICITLY empty lane URL retires that lane: it is not built, so it
+    # never appears in the health payload, is never probed, and can never be
+    # selected. Unset keeps the default (backwards compatible). This is how a
+    # cancelled subscription leaves the router — z.ai was cancelled 31/07/2026
+    # and Moonshot suspended, and both kept being probed, rendered on the
+    # dashboard, and offered as spill targets that answer 401.
+    return {
+        name: lane
+        for name, lane in lanes.items()
+        if os.environ.get(f"INGRESS_{name.upper()}_LANE_URL", "unset").strip() != ""
     }
 
 

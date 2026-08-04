@@ -21,7 +21,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from anthropic_throttle_proxy import ingress
+from anthropic_throttle_proxy import ingress, routing
 from anthropic_throttle_proxy.routing import Lane, LaneState
 
 
@@ -1105,3 +1105,22 @@ async def test_generate_retries_on_429_from_lane(monkeypatch) -> None:
     finally:
         await ing.close()
         await anth.close()
+
+
+def test_boot_names_roles_left_without_a_lane(monkeypatch, capsys):
+    """Retiring the last non-Anthropic lane turns `bulk` into a permanent HOLD.
+
+    Bulk deliberately excludes Anthropic (invariant 2), so with kimi and glm
+    retired its chain is empty. That is a policy consequence worth printing at
+    boot rather than leaving a subagent to discover it as a 503.
+    """
+    monkeypatch.setattr(ingress, "LANES", {"anthropic": ingress.LANES["anthropic"]})
+    orphaned = ingress._warn_roles_without_a_lane()
+    assert orphaned == ["bulk"]
+    assert "role=bulk has NO configured lane" in capsys.readouterr().out
+
+
+def test_no_warning_while_every_role_has_a_lane(monkeypatch, capsys):
+    monkeypatch.setattr(ingress, "LANES", routing.default_lanes())
+    assert ingress._warn_roles_without_a_lane() == []
+    assert capsys.readouterr().out == ""
