@@ -481,6 +481,7 @@ col.c-sub-status  { width: 9rem; }
 .lane-token-expired { color: var(--crit); }
 .lane-locked        { color: var(--warn); }
 .lane-unseen        { color: var(--ctp-subtext0); }
+.lane-refused       { color: var(--crit); font-weight: 600; }
 col.c-lane        { width: 13rem; }
 col.c-family      { width: 9rem; }
 col.c-plan        { width: 7rem; }

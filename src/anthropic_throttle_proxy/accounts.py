@@ -405,6 +405,11 @@ def account_view(
                 "verified": email_verified,
                 "endpoint_err": endpoint_err,
                 "token": _token_view(acct["expires_at"], now),
+                # Upstream REFUSED this credential (403 org-policy, revoked
+                # token). Not a budget state — it carries no window and no
+                # Retry-After, so a usage-ranked view reads it as the freest
+                # account on the fleet unless it is named.
+                "credential": (bearer or {}).get("credential"),
                 "pace_warn": fields["pace"] is not None and fields["pace"] >= PACE_WARN,
                 "locked_in": _locked_in(fields, bearer, endpoint_entry, now),
                 **fields,
