@@ -1166,7 +1166,7 @@ def _quarantine_bearer(
     if _bearer_credential_dead(bid):
         return
     now = time.time()
-    bstate["credential"] = {
+    credential: dict[str, object] = {
         "ok": False,
         "status": status,
         "reason": reason,
@@ -1174,11 +1174,14 @@ def _quarantine_bearer(
         "since": now,
         "last_checked": now,
     }
+    bstate["credential"] = credential
     # The half-open gate can never reopen on its own — only a success does that,
     # and a refused credential has none to give. Drop it so no further client
     # turn is spent as a probe: that election loop IS the reported outage.
     _limiter.clear_retry_probe(bid)
-    _restored_credentials[bid] = dict(bstate["credential"])  # type: ignore[arg-type]
+    # A copy, not the live dict: the recheck loop stamps `last_checked` on the
+    # bstate entry, and the persisted record should not churn on every probe.
+    _restored_credentials[bid] = dict(credential)
     _persist_credential_state()
     log(f"credential-dead bid={bid} status={status} reason={reason} detail={detail!r}")
 
