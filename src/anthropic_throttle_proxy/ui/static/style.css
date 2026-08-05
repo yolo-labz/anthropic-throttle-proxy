@@ -65,14 +65,21 @@ body {
   min-height: 100vh;
   padding: 1.4rem clamp(0.8rem, 3vw, 2.4rem);
   gap: 1.1rem;
-  /* An ultrawide viewport is not a reason to stretch six columns across
-     2560px: `table-layout: fixed` then hands each one ~480px and the content
-     flees to opposite edges of an empty row (04/08/2026, "broken spaces").
-     Cap the measure and centre it; the tables still scroll below 64rem. */
-  max-width: 102rem;
-  margin-inline: auto;
+  /* No page-level cap. The 102rem cap added on 04/08 fixed "broken spaces"
+     (fixed-layout tables dividing 2560px evenly between six columns) by
+     shrinking the CANVAS, which is the wrong lever for an ops console: at
+     2560px it left 1151px — 45% of the viewport — as inert background while
+     the operator read a 1409px column mid-incident. The columns are governed
+     where the problem actually is: each table declares its own colgroup widths
+     and shrink-to-fit, so extra viewport goes to the payload columns instead
+     of to empty gutters. Prose keeps a readable measure via --measure below. */
   width: 100%;
 }
+
+/* Reading measure for the one place this page has real sentences: the status
+   detail and the advisor output. Tables are scanned, not read, so they are
+   deliberately not capped by this. */
+:root { --measure: 96ch; }
 
 /* ── header ─────────────────────────────────────────────────────────── */
 header {
@@ -137,7 +144,7 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
   letter-spacing: 0.02em;
   color: var(--ctp-subtext0);
 }
-.status .detail { color: var(--ctp-subtext0); font-size: 0.82rem; }
+.status .detail { color: var(--ctp-subtext0); font-size: 0.82rem; max-width: var(--measure); }
 /* "THROTTLED for 12m" — duration is what separates a transient from an
    outage, and the verdict alone never said it. */
 .status .since { font-family: var(--mono); font-size: 0.72rem; color: var(--ctp-subtext0); }
@@ -210,7 +217,9 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
 /* ── providers table (primary upstream + sibling lanes, unified) ────── */
 /* Auto layout + intrinsic width so 1-3 providers pack left instead of a fixed
    table stretching a single column into a wide mid-row gap on a big screen. */
-table.bearers.providers { table-layout: fixed; width: 100%; min-width: 62rem; }
+/* Shrink-to-fit like the other tables: a single provider row stretched over
+   2560px puts `served` and `status` at opposite ends of an empty band. */
+table.bearers.providers { table-layout: fixed; width: auto; min-width: 62rem; max-width: 100%; }
 
 /* Column widths declared once, in the colgroup, instead of letting a fixed
    layout divide the viewport evenly between six columns. */
@@ -409,7 +418,7 @@ col.c-acct-num    { width: 7rem; }
    this table may fill the measure — unlike #163's case, the spare width
    lands inside the bars, not in a void between two edges. */
 table.bearers.lanes,
-table.bearers.subs { width: 100%; min-width: 62rem; max-width: 100%; }
+table.bearers.subs { width: auto; min-width: 62rem; max-width: 100%; }
 col.c-sub         { width: 15rem; }
 col.c-pace        { width: 6rem; }
 col.c-eta         { width: 8rem; }
@@ -430,7 +439,9 @@ col.c-sub-status  { width: 9rem; }
 col.c-lane        { width: 13rem; }
 col.c-family      { width: 9rem; }
 col.c-plan        { width: 7rem; }
-col.c-meters      { width: auto; }
+/* Meters absorb the width the removed page cap used to waste: a longer bar is
+   a more readable bar, and at 2560px this is where the operator is looking. */
+col.c-meters      { width: auto; min-width: 26rem; }
 col.c-lane-status { width: 7rem; }
 /* The meters cell is the row's payload: give it the slack and keep every
    meter on one left-aligned baseline grid instead of right-drifting each
@@ -442,7 +453,13 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
   display: grid;
   /* Label tight against its bar: an 11rem label column parked the bar a
      hand's width to the right of the word it measures. */
-  grid-template-columns: 6.5rem minmax(60px, 14rem) 3rem auto;
+  /* The bar is the payload: give it the width the removed page cap used to
+     spend on empty background. 14rem was a cap written when the canvas was
+     capped too, so at 2560px the cell grew and the bar did not. */
+  /* The bar earns width the removed page cap used to waste, but only up to a
+     length the eye can still compare across rows — a 1100px bar at 2560px is
+     not more legible than a 24rem one, it is just longer. */
+  grid-template-columns: 6.5rem minmax(60px, 24rem) 3rem minmax(8rem, 1fr);
   align-items: baseline;
   gap: 0.5rem;
 }
@@ -508,6 +525,7 @@ button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--
 .htmx-indicator { display: none; margin-left: 0.5rem; color: var(--warn); font-family: var(--mono); }
 .htmx-request .htmx-indicator { display: inline; }
 .advisor-output {
+  max-width: var(--measure);
   margin-top: 0.8rem;
   padding: 0.8rem 1rem;
   background: var(--ctp-mantle);
