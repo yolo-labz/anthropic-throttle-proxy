@@ -267,6 +267,36 @@ RETRY_AFTER_RESTORE_CAP_S = max(
     0.0, float(os.environ.get("THROTTLE_RETRY_AFTER_RESTORE_CAP_S", "900"))
 )
 
+# ── Credential quarantine (per-bearer) ──────────────────────────────────────
+# A 401/403 on the client-provides-key lane is not rate pushback: it says one
+# ACCOUNT's credential is refused until a human acts. Such a response carries no
+# Retry-After and no unified window, so every load/budget gate reads that bearer
+# as idle and cheap — i.e. the most attractive candidate in the fleet. Measured
+# 04/08/2026 on the desktop: account A answered every POST /v1/messages with 403
+# `oauth_not_allowed_for_organization`, the half-open probe elected it 41 times
+# in 3 h, closed 41 times, and each election spent a REAL client turn.
+#
+# Seconds between synthetic re-checks of a quarantined bearer (0 disables the
+# re-check, leaving quarantine until restart). The re-check is a max_tokens:1
+# message — never a client's request.
+CREDENTIAL_RECHECK_S = max(0.0, float(os.environ.get("THROTTLE_CREDENTIAL_RECHECK_S", "900")))
+CREDENTIAL_RECHECK_MODEL = os.environ.get(
+    "THROTTLE_CREDENTIAL_RECHECK_MODEL", "claude-sonnet-5"
+).strip()
+
+# Consecutive 401/403 responses on one bearer (no intervening success) that
+# quarantine it even when the body names no recognised reason. The classifier
+# quarantines on the FIRST recognised code; this is the body-agnostic floor for
+# an empty or unfamiliar envelope — Anthropic is known to return an error status
+# with `Content-Length: 0` (PR #20), and an unbounded probe loop is exactly what
+# this feature exists to stop. Bounds the damage at N dead client turns.
+CREDENTIAL_DEAD_STREAK = max(1, int(os.environ.get("THROTTLE_CREDENTIAL_DEAD_STREAK", "3")))
+
+# Extra `error.details.error_code` values (comma-separated) treated as
+# credential death, on top of the built-in list. A code Anthropic adds later
+# should not need a release to be honoured.
+CREDENTIAL_DEAD_CODES_EXTRA = os.environ.get("THROTTLE_CREDENTIAL_DEAD_CODES", "").strip()
+
 # Ceiling on a LIVE "rejected"-window pause noted from `_maybe_pause_rejected`
 # (seconds; 0 = uncapped legacy "pause until reset"). A rejected budget window
 # ends at the account's reset epoch — potentially days out. The central tier
