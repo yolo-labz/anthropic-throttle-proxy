@@ -285,7 +285,7 @@ h2 .h2-note { font-family: var(--sans); font-size: 0.68rem; text-transform: none
   border-radius: var(--radius-sm);
   outline: none;
 }
-.bearers-wrap:focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 35%, transparent); }
+.bearers-wrap:focus-visible { box-shadow: 0 0 0 2px var(--info); }
 table.bearers {
   /* Shrink-to-fit, like the lanes and accounts tables (#163): with width:100%
      the one column that has no declared width swallows the surplus, which is
@@ -497,7 +497,10 @@ button.ghost {
   color: var(--ctp-subtext0);
   font-family: var(--mono);
   font-size: 0.72rem;
-  padding: 0.16rem 0.55rem;
+  /* 0.16rem gave a 22px-tall button — under the 24px minimum target
+     (WCAG 2.2 SC 2.5.8). Padding, not font-size, so the header row's rhythm
+     is unchanged. */
+  padding: 0.3rem 0.55rem;
   border-radius: var(--radius-sm);
 }
 button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, var(--ctp-surface0)); background: var(--ctp-mantle); }
@@ -531,9 +534,45 @@ button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--
 .advisor-auto .markdown, .advisor-output .markdown { white-space: pre-wrap; color: var(--ctp-subtext1); font-size: 0.82rem; }
 .advisor-output .markdown b, .advisor-auto .markdown b { color: var(--ctp-text); }
 
+/* ── focus + motion ─────────────────────────────────────────────────── */
+/* One ring, every keyboard-reachable control, drawn OUTSIDE the element so it
+   never resizes the layout it lands on. `:focus-visible` keeps it off pointer
+   clicks. WCAG 2.1 SC 2.4.7 (focus visible) + SC 1.4.11 (the ring itself is
+   --info #94e2d5 on base, 10.7:1). */
+:where(a, button, summary, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* The dashboard's motion is functional (a row tint on hover, a switch knob
+   sliding, an SVG spark redrawing every 2 s), so the reduced-motion answer is
+   to make state changes INSTANT, not to delete them: the tint and the knob
+   position still carry meaning. Never a global 0.01ms kill — that keeps the
+   animation running and only hides it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* ── footer ─────────────────────────────────────────────────────────── */
 footer { margin-top: auto; border-top: var(--hairline); padding-top: 0.8rem; color: var(--muted); font-size: 0.74rem; }
-footer a { color: var(--accent); text-decoration: none; font-family: var(--mono); }
+/* 24px minimum target (WCAG 2.2 SC 2.5.8). The links were 14px tall — fine
+   with a mouse, a coin-toss with a thumb. Padding, not font-size, so the
+   footer's density is unchanged. */
+footer a {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--mono);
+  display: inline-block;
+  padding: 0.32rem 0.1rem;
+}
 footer a:hover { color: var(--info); text-decoration: underline; }
 
 /* ── config editor ──────────────────────────────────────────────────── */
@@ -574,14 +613,17 @@ footer a:hover { color: var(--info); text-decoration: underline; }
 .config-form input[type="number"]::-webkit-outer-spin-button,
 .config-form input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .config-form input:hover { border-color: var(--ctp-surface1); }
-.config-form input:focus { outline: none; border-color: var(--info); }
+/* A border-colour swap alone is not a focus indicator: it fails SC 1.4.11
+   (3:1 against the adjacent colour) and vanishes for anyone who cannot compare
+   two dark greys. Keep the swap AND draw a ring. */
+.config-form input:focus-visible { border-color: var(--info); }
 .switch { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-family: var(--mono); color: var(--ctp-subtext0); font-size: 0.74rem; }
 .switch input { position: absolute; opacity: 0; pointer-events: none; }
 .switch span { width: 2.1rem; height: 1.1rem; border-radius: 999px; border: var(--hairline-strong); background: var(--ctp-base); position: relative; transition: border-color 120ms ease-out, background 120ms ease-out; }
 .switch span::before { content: ""; position: absolute; width: 0.7rem; height: 0.7rem; left: 0.18rem; top: 0.16rem; border-radius: 999px; background: var(--muted); transition: transform 120ms ease-out, background 120ms ease-out; }
 .switch input:checked + input + span { border-color: var(--info); background: color-mix(in srgb, var(--info) 14%, var(--ctp-base)); }
 .switch input:checked + input + span::before { transform: translateX(1rem); background: var(--info); }
-.switch input:focus + input + span { outline: 1px solid var(--info); outline-offset: 2px; }
+.switch input:focus-visible + input + span { outline: 2px solid var(--info); outline-offset: 2px; }
 .switch em { font-style: normal; min-width: 1.4rem; }
 .config-control button.reset { background: transparent; border: var(--hairline); color: var(--muted); padding: 0.18rem 0.5rem; font-family: var(--mono); font-size: 0.86rem; line-height: 1; border-radius: var(--radius-sm); cursor: pointer; transition: color 120ms ease-out, border-color 120ms ease-out; }
 .config-control button.reset:hover { border-color: var(--warn); color: var(--warn); }
