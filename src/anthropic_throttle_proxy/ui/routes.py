@@ -405,6 +405,10 @@ def _account_status(account: dict) -> tuple[str, str]:
     if account.get("endpoint_err"):
         notes.append(str(account["endpoint_err"]))
     detail = " · ".join(notes)
+    credential = account.get("credential")
+    if isinstance(credential, dict) and credential.get("ok") is False:
+        reason = str(credential.get("detail") or credential.get("reason") or "refused upstream")
+        return "refused", " · ".join([reason, *notes])
     if account.get("error"):
         return "error", " · ".join([str(account["error"]), *notes])
     for window, name in ((account.get("win5"), "5h"), (account.get("win7"), "7d")):
@@ -541,6 +545,10 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
         for row in subscriptions
         if row.get("family") == "anthropic"
         and not row.get("is_binding")
+        # "unseen" is fine — no traffic yet is not a fault. "refused" is not:
+        # naming a quarantined credential as what takes traffic next sends the
+        # operator at an account that answers 403 on every request (measured
+        # live 05/08/2026: account A, org-policy refusal, offered as next).
         and row.get("status") in {"ok", "unseen"}
     ]
 
@@ -575,6 +583,12 @@ async def _collect_view() -> dict[str, object]:
                 # 5h reading frozen from before its own reset — render as
                 # "0% · reset" so the bearer column matches the accounts panel.
                 "unified_5h_stale": _window_stale(unified, "reset_5h", now),
+                # A credential the upstream REFUSES (403 org-policy, revoked
+                # token) is not a budget state: it has no window and no
+                # Retry-After, so every "idlest account" ranking reads it as
+                # the freest thing on the fleet. The proxy already quarantines
+                # it (#168); the page has to say so.
+                "credential": bstate.get("credential"),
                 "limiter": lim.snapshot() if lim is not None else None,
             }
         )

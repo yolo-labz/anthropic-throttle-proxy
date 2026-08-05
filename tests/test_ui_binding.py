@@ -86,3 +86,36 @@ def test_a_spent_weekly_budget_is_not_clear():
         "unified": {"util_5h": 0.1, "status_5h": "allowed", "util_7d": 0.2, "status_7d": "allowed"}
     }
     assert routes._bearer_pacing_state(clear)[0] is None
+
+
+def _refused(label, bearer, pct):
+    row = _sub(label, bearer, pct)
+    row["status"] = "refused"
+    return row
+
+
+def test_a_refused_credential_is_never_offered_as_the_way_out():
+    """Measured live 05/08/2026: account A answers
+    `403 oauth_not_allowed_for_organization` on every request and the proxy
+    quarantines it — yet it read as 0% used, so the binding block named it as
+    what takes traffic next.
+    """
+    status = {"binding": {"bearer_id": "b-blocked", "window": "7d", "pct": 80, "retry_after": None}}
+    subs = [_sub("B", "b-blocked", 80.0), _refused("A", "b-dead", 0.0), _sub("C", "b-ok", 62.0)]
+
+    routes._attach_binding(status, subs)
+
+    assert status["binding"]["next_usable"] == "C"  # not the 0%-used dead one
+
+
+def test_refused_outranks_every_other_account_verdict():
+    account = {
+        "credential": {"ok": False, "detail": "OAuth authentication is currently not allowed"},
+        "locked_in": "2h",
+        "seen": False,
+        "token": {"state": "expired", "detail": "expired 3h ago"},
+        "win7": {"rejected": True, "pct": 100},
+    }
+    state, detail = routes._account_status(account)
+    assert state == "refused"
+    assert "not allowed" in detail
