@@ -85,13 +85,19 @@ def _bearer_pacing_state(b: dict) -> tuple[str | None, float | None, object]:
     """
     unified = b.get("unified") or {}
     util_5h = unified.get("util_5h")
+    util_7d = unified.get("util_7d")
     status_5h = unified.get("status") or unified.get("status_5h")
+    # The 7d window was not read here at all, so a bearer whose WEEKLY budget is
+    # spent — the state two of three fleet accounts sit in mid-week — reported
+    # "clear" while the binding line right beside it said 100% (05/08/2026). A
+    # rejected window is a rejected window whichever cycle it belongs to.
+    status_7d = unified.get("status_7d")
     retry_after = (b.get("last_ratelimit") or {}).get("retry-after")
     lim = b.get("limiter") or {}
     live, hard = lim.get("max_concurrent"), lim.get("hard_max")
     shrunk = live is not None and hard is not None and live < hard
-    over_pacing = util_5h is not None and util_5h >= _PACING_UTIL
-    if status_5h == "rejected" or retry_after:
+    over_pacing = any(u is not None and u >= _PACING_UTIL for u in (util_5h, util_7d))
+    if status_5h == "rejected" or status_7d == "rejected" or retry_after:
         return "throttled", util_5h, retry_after
     if shrunk or over_pacing or b.get("queued", 0) > 0:
         return "pacing", util_5h, retry_after
@@ -187,10 +193,21 @@ def _compute_status(
             binding = (util, label, b["bearer_id"], retry_after)
 
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
+    bound: dict[str, object] | None = None
     if binding is not None:
         detail += f" · binding: {binding[1]} window {round(binding[0] * 100)}% on {binding[2]}"
         if binding[3]:
             detail += f" · retry-after {binding[3]}"
+        # The same fact as an object, not a sentence. A prose fragment cannot be
+        # ranked, linked to its row, or read first — and "which subscription is
+        # blocked, until when, and what takes traffic next" is the one question
+        # this page exists to answer mid-incident.
+        bound = {
+            "bearer_id": binding[2],
+            "window": binding[1],
+            "pct": round(binding[0] * 100),
+            "retry_after": binding[3],
+        }
     if queue_mode == "off":
         detail += " · queue off (passthrough)"
     # A verdict with no duration cannot separate a transient from an outage
@@ -200,6 +217,7 @@ def _compute_status(
         "level": level,
         "verdict": verdict,
         "detail": detail,
+        "binding": bound,
         "since": _fmt_since(_history.level_since(level, now)),
     }
 
@@ -441,6 +459,9 @@ def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> li
             {
                 "id": account.get("label") or "?",
                 "sub": account.get("email") or "",
+                # Carried so the status strip can point at THIS row as the
+                # binding constraint instead of naming a bare hash.
+                "bearer_id": account.get("bearer_id") or "",
                 "family": "anthropic",
                 "plan": "",
                 "src": account.get("src") or "",
@@ -489,6 +510,48 @@ def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> li
 
     rows.sort(key=_binding, reverse=True)
     return rows
+
+
+def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
+    """Turn the binding bearer hash into a named row plus a way out.
+
+    "binding: 7d window 100% on b144f62f" tells the operator a hash. What they
+    need mid-incident is which paid subscription is blocked, when its window
+    reopens, and which subscription should take traffic meanwhile — so the
+    binding row is resolved against the subscription table, and the freest
+    serving sibling is named next to it.
+    """
+    bound = status.get("binding")
+    if not isinstance(bound, dict):
+        return
+    for row in subscriptions:
+        if row.get("bearer_id") and row["bearer_id"] == bound["bearer_id"]:
+            row["is_binding"] = True
+            bound["subscription"] = row["id"]
+            bound["sub"] = row.get("sub") or ""
+            for meter in row.get("meters") or []:
+                if meter.get("label") == bound["window"]:
+                    bound["resets_in"] = meter.get("reset_in") or ""
+            break
+    # Next usable: an Anthropic sibling that is serving, ranked by how much
+    # room it has left. Nothing to suggest is itself the answer — say so rather
+    # than leaving the operator to scan for a row that does not exist.
+    candidates = [
+        row
+        for row in subscriptions
+        if row.get("family") == "anthropic"
+        and not row.get("is_binding")
+        and row.get("status") in {"ok", "unseen"}
+    ]
+
+    def _fill(row: dict) -> float:
+        readings = [m["pct"] for m in row.get("meters") or [] if m.get("pct") is not None]
+        return max(readings) if readings else 0.0
+
+    candidates.sort(key=_fill)
+    if candidates:
+        bound["next_usable"] = candidates[0]["id"]
+        bound["next_usable_pct"] = round(_fill(candidates[0]))
 
 
 async def _collect_view() -> dict[str, object]:
@@ -544,9 +607,11 @@ async def _collect_view() -> dict[str, object]:
     )
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
+    subscriptions = _build_subscriptions(accounts_view, lanes_view)
+    _attach_binding(status, subscriptions)
     return {
         "signals": _signals.collect(),
-        "subscriptions": _build_subscriptions(accounts_view, lanes_view),
+        "subscriptions": subscriptions,
         "identity": identity,
         "providers": providers,
         "lanes": lanes_view,

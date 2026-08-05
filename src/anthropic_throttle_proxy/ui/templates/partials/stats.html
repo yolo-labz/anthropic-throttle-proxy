@@ -5,6 +5,33 @@
   {% if status.since %}<span class="since" title="How long the fleet has held this verdict">for {{ status.since }}</span>{% endif %}
   <span class="detail">{{ status.detail }}</span>
 </div>
+{# The binding constraint is the page's decision object, not a clause inside a
+   sentence: which paid subscription is blocked, until when, and what takes the
+   traffic meanwhile. Rendered only when a window is actually binding. #}
+{% if status.binding %}
+<div class="binding {{ status.level }}" role="status" aria-label="Binding constraint">
+  <div class="binding-what">
+    <span class="binding-label">blocked</span>
+    <span class="binding-sub">{{ status.binding.subscription or status.binding.bearer_id }}</span>
+    {% if status.binding.sub %}<span class="binding-email">{{ status.binding.sub }}</span>{% endif %}
+  </div>
+  <div class="binding-window">
+    <span class="binding-label">{{ status.binding.window }} window</span>
+    <span class="binding-pct">{{ status.binding.pct }}%</span>
+    {% if status.binding.resets_in %}<span class="binding-note">reopens in {{ status.binding.resets_in }}</span>
+    {% elif status.binding.retry_after %}<span class="binding-note">retry-after {{ status.binding.retry_after }}s</span>{% endif %}
+  </div>
+  <div class="binding-next">
+    <span class="binding-label">takes traffic next</span>
+    {% if status.binding.next_usable %}
+      <span class="binding-sub">{{ status.binding.next_usable }}</span>
+      <span class="binding-note">{{ status.binding.next_usable_pct }}% used</span>
+    {% else %}
+      <span class="binding-none">nothing — every sibling is blocked too</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 {% endif %}
 
 {# Four golden signals as 60-minute traces. A scalar with no baseline cannot
@@ -124,9 +151,10 @@
   </thead>
   <tbody>
     {% for s in subscriptions %}
-    <tr>
+    <tr{% if s.is_binding %} class="row-binding"{% endif %}>
       <td>
         <span class="acct">{{ s.id }}</span>
+        {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
         {% if s.sub %}<div class="email">{{ s.sub }}</div>{% endif %}
       </td>
       <td class="muted">{{ s.family or "—" }}</td>
@@ -279,7 +307,7 @@
   <span id="hdr-clients">Distinct client_id values sharing this bearer's fair queue.</span>
 </div>
 {% else %}
-  <p class="muted">no bearers yet — point a client at this proxy to start.</p>
+
 {% endif %}
 
 
