@@ -69,10 +69,17 @@ GENERATE_OVERFLOW_ENABLED: bool = os.environ.get(
 # lane serves the request. GLM is the floor (cheap, flat) so it closes every
 # chain; Anthropic is RESERVED for premium generate + judge and NEVER appears in
 # the bulk chain (invariant 2: bulk never touches Anthropic).
+#
+# DeepSeek V4-Flash-0731 leads the bulk chain (04/08/2026): the only funded,
+# reachable non-Anthropic lane at the time it was added — Kimi/GLM stay in the
+# chain (unretired-by-URL, #166) as automatic fallback the day either is
+# recharged, but neither answers today. V4-Flash-0731 beats V4-Pro-Preview on
+# agent bench (Terminal-Bench 2.1 82.7% vs 72.1%) at $0.14/$0.28 per 1M — the
+# cheap-AND-capable pick, not a cost-only tradeoff.
 ROLE_CHAINS: dict[str, tuple[str, ...]] = {
     "generate": ("anthropic", "kimi", "glm"),
     "judge": ("anthropic", "glm", "kimi"),
-    "bulk": ("kimi", "glm"),  # Anthropic deliberately absent
+    "bulk": ("deepseek", "kimi", "glm"),  # Anthropic deliberately absent
 }
 
 
@@ -112,11 +119,12 @@ class LaneState:
 
 
 def default_lanes() -> dict[str, Lane]:
-    """The three-lane fleet (Spec 093). URLs env-overridable for test/non-local deploys.
+    """The four-lane fleet (Spec 093 + #169). URLs env-overridable for test/non-local deploys.
 
     Egress model ids (S4 remap): Anthropic keeps the client's ``claude-*``; Kimi
     expects Moonshot ids (kimi-k3 for generate — GA 27/07; kimi-k2.6 for bulk/judge,
-    verified 23/07); GLM expects glm-5.2 (verified). Overrides via
+    verified 23/07); GLM expects glm-5.2 (verified); DeepSeek expects
+    deepseek-v4-flash (bulk only, verified 04/08). Overrides via
     ``INGRESS_<LANE>_<ROLE>_MODEL`` so the fleet can pin exact ids without a code change.
     """
     kimi_models = {
@@ -126,6 +134,7 @@ def default_lanes() -> dict[str, Lane]:
     }
     glm_model = os.environ.get("INGRESS_GLM_MODEL", "glm-5.2")
     glm_models = {"generate": glm_model, "bulk": glm_model, "judge": glm_model}
+    deepseek_models = {"bulk": os.environ.get("INGRESS_DEEPSEEK_BULK_MODEL", "deepseek-v4-flash")}
     lanes = {
         "anthropic": Lane(
             "anthropic",
@@ -144,6 +153,13 @@ def default_lanes() -> dict[str, Lane]:
             os.environ.get("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766"),
             frozenset({"generate", "judge", "bulk"}),
             models=glm_models,
+        ),
+        "deepseek": Lane(
+            "deepseek",
+            os.environ.get("INGRESS_DEEPSEEK_LANE_URL", "http://127.0.0.1:8768"),
+            frozenset({"bulk"}),
+            models=deepseek_models,
+            proxy_owns_key=True,
         ),
     }
     # An EXPLICITLY empty lane URL retires that lane: it is not built, so it
