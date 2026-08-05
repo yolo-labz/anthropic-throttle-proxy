@@ -268,6 +268,51 @@ table.bearers.providers td:nth-child(7) { text-align: left; }
 .egress.up   { color: var(--ok); }
 .egress.down { color: var(--crit); }
 
+/* ── binding constraint ─────────────────────────────────────────────── */
+/* The one object the operator reads first during an incident. Three facts,
+   left to right, in the order the question is asked: who is blocked, until
+   when, what takes traffic next. Sized above the tables and below the verdict;
+   no colour-only meaning — every field is labelled text. */
+.binding {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, auto));
+  gap: 0.4rem 2.5rem;
+  align-items: baseline;
+  padding: 0.7rem 0.95rem;
+  background: var(--ctp-mantle);
+  border: var(--hairline);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+}
+.binding.throttled { border-left-color: var(--crit); }
+.binding.healthy   { border-left-color: var(--ok); }
+.binding-label {
+  display: block;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin-bottom: 0.15rem;
+}
+.binding-sub { font-family: var(--mono); font-size: 1rem; font-weight: 600; color: var(--ctp-text); }
+.binding-email { font-size: 0.68rem; color: var(--muted); margin-left: 0.4rem; }
+.binding-pct { font-family: var(--mono); font-size: 1rem; font-weight: 600; color: var(--crit); }
+.binding-note { font-size: 0.74rem; color: var(--ctp-subtext0); margin-left: 0.45rem; }
+.binding-none { font-family: var(--mono); font-size: 0.82rem; color: var(--crit); }
+/* Marker on the row the strip refers to — text, so it survives greyscale. */
+.binding-tag {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--crit);
+  border: 1px solid color-mix(in srgb, var(--crit) 45%, var(--ctp-surface0));
+  border-radius: var(--radius-sm);
+  padding: 0.02rem 0.3rem;
+  margin-left: 0.4rem;
+}
+tr.row-binding > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
+
 /* ── section heading ────────────────────────────────────────────────── */
 h2 {
   font-family: var(--mono);
