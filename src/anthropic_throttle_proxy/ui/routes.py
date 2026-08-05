@@ -195,13 +195,13 @@ def _compute_status(
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
     bound: dict[str, object] | None = None
     if binding is not None:
-        detail += f" · binding: {binding[1]} window {round(binding[0] * 100)}% on {binding[2]}"
-        if binding[3]:
-            detail += f" · retry-after {binding[3]}"
-        # The same fact as an object, not a sentence. A prose fragment cannot be
-        # ranked, linked to its row, or read first — and "which subscription is
-        # blocked, until when, and what takes traffic next" is the one question
-        # this page exists to answer mid-incident.
+        # The binding block below the strip renders the same fact with a name,
+        # a countdown and a way out. Repeating it here as prose gave the
+        # operator two renderings of one condition that can drift apart
+        # (cross-family review, round 2). The object is the single source.
+        # A prose fragment cannot be ranked, linked to its row, or read first,
+        # and "which subscription is blocked, until when, and what takes traffic
+        # next" is the question this page exists to answer mid-incident.
         bound = {
             "bearer_id": binding[2],
             "window": binding[1],
