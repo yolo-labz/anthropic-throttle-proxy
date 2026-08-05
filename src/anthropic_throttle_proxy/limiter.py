@@ -107,6 +107,27 @@ def finish_retry_probe(bid: str, *, success: bool) -> bool:
     return True
 
 
+def clear_retry_probe(bid: str) -> bool:
+    """Disarm a bearer's half-open gate outright — no probe, no lease.
+
+    ``finish_retry_probe`` only disarms on SUCCESS, which is the right rule for
+    a rate-limited bearer: it stays gated until the upstream actually serves it
+    again. A bearer whose CREDENTIAL is refused can never produce that success,
+    so its gate stays armed forever and keeps electing real client turns as
+    probes that are guaranteed to fail. Credential quarantine disarms the gate
+    instead; the synthetic re-check owns re-testing from there.
+
+    Anyone parked in ``wait_retry_probe`` is woken before the gate is dropped —
+    the loop re-reads the registry, finds no gate, and returns.
+    """
+    gate = _retry_probe_gates.pop(bid, None)
+    if gate is None:
+        return False
+    if gate.event is not None:
+        gate.event.set()
+    return True
+
+
 def probe_inflight_bids() -> list[str]:
     """Bearers whose half-open probe is currently held by some other request.
 

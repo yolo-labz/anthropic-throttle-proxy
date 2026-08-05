@@ -1031,6 +1031,146 @@ def _budget_pacing_target_crossed(
     return any(min(util + expected_cost, 1.0) >= target for util, _, _ in windows)
 
 
+# ── Credential quarantine ───────────────────────────────────────────────────
+# ``forwarding.note_upstream_auth`` already draws this verdict for a lane that
+# owns its key, and its docstring is explicit that the same status on the
+# client-provides-key lane "means one client's OAuth token went stale, which is
+# a per-request event and must never be published as a lane-level verdict".
+# That is right about the LANE and silent about the BEARER. An organization that
+# turns OAuth off kills exactly one account while its siblings keep serving, so
+# the verdict belongs per-bearer — next to the Retry-After window it is so
+# easily mistaken for. See ``config.CREDENTIAL_RECHECK_S`` for the incident.
+
+# ``error.details.error_code`` values meaning "refused until a human acts".
+# Measured verbatim from api.anthropic.com on 04/08/2026:
+#   {"type":"error","error":{"type":"permission_error","message":"OAuth
+#    authentication is currently not allowed for this organization.",
+#    "details":{"error_code":"oauth_not_allowed_for_organization"}}}
+_CREDENTIAL_DEAD_CODES = frozenset({"oauth_not_allowed_for_organization"})
+
+# ``error.type`` values that are credential death on their own.
+# ``permission_error`` is deliberately ABSENT: Anthropic returns it for
+# per-REQUEST permission failures too ("this account cannot use model X"), and
+# quarantining a healthy account on one of those would be a worse outage than
+# the one this fixes. A permission_error qualifies only via its error_code
+# above, or via the streak floor.
+_CREDENTIAL_DEAD_TYPES = frozenset({"authentication_error"})
+
+_CREDENTIAL_DEAD_STATUSES = frozenset({401, 403})
+
+
+def _extra_dead_codes() -> frozenset[str]:
+    raw = config.CREDENTIAL_DEAD_CODES_EXTRA
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _credential_dead_reason(status: int, captured: bytearray | None) -> str:
+    """Why this response proves the bearer's credential is refused; ``''`` if it doesn't.
+
+    Conservative by construction: an unrecognised 401/403 returns ``''`` and the
+    request behaves exactly as it does today. The streak floor in
+    ``_note_bearer_credential`` is what stops an unrecognised-but-permanent
+    rejection (or an empty error envelope — PR #20) from looping forever.
+    """
+    if status not in _CREDENTIAL_DEAD_STATUSES:
+        return ""
+    if status == 401:
+        # Invalid/expired token. Quarantining is safe even when a broker is
+        # about to refresh it: a refreshed token hashes to a NEW bearer id, so
+        # the fresh credential is never the quarantined one.
+        return "status-401"
+    if not captured:
+        return ""
+    try:
+        payload = json.loads(bytes(captured[:65536]))
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    error = error if isinstance(error, dict) else {}
+    details = error.get("details")
+    details = details if isinstance(details, dict) else {}
+    code = str(details.get("error_code") or "").strip()
+    if code and (code in _CREDENTIAL_DEAD_CODES or code in _extra_dead_codes()):
+        return code
+    etype = str(error.get("type") or "").strip()
+    return etype if etype in _CREDENTIAL_DEAD_TYPES else ""
+
+
+def _bearer_credential(bid: str) -> dict[str, object]:
+    bstate = config.bearer_state.get(bid)
+    cred = bstate.get("credential") if isinstance(bstate, dict) else None
+    return cred if isinstance(cred, dict) else {}
+
+
+def _bearer_credential_dead(bid: str) -> bool:
+    """True while ``bid``'s credential is quarantined — never routable, never probed."""
+    return _bearer_credential(bid).get("ok") is False
+
+
+def _quarantine_bearer(
+    bid: str, bstate: dict[str, object], status: int, reason: str, detail: str
+) -> None:
+    if _bearer_credential_dead(bid):
+        return
+    now = time.time()
+    bstate["credential"] = {
+        "ok": False,
+        "status": status,
+        "reason": reason,
+        "detail": detail,
+        "since": now,
+        "last_checked": now,
+    }
+    # The half-open gate can never reopen on its own — only a success does that,
+    # and a refused credential has none to give. Drop it so no further client
+    # turn is spent as a probe: that election loop IS the reported outage.
+    _limiter.clear_retry_probe(bid)
+    log(f"credential-dead bid={bid} status={status} reason={reason} detail={detail!r}")
+
+
+def _clear_bearer_credential(bid: str, bstate: dict[str, object]) -> None:
+    was_dead = _bearer_credential_dead(bid)
+    bstate.pop("credential", None)
+    bstate.pop("credential_streak", None)
+    if was_dead:
+        log(f"credential-recovered bid={bid}")
+
+
+def _note_bearer_credential(
+    bid: str, bstate: dict[str, object], status: int, captured: bytearray | None
+) -> None:
+    """Fold one response's credential verdict into the bearer's quarantine state."""
+    if not bid:
+        return
+    if 200 <= status < 300:
+        _clear_bearer_credential(bid, bstate)
+        return
+    if status not in _CREDENTIAL_DEAD_STATUSES:
+        return
+    detail = ""
+    if captured:
+        try:
+            _etype, detail = _error_envelope_fields(captured)
+        except (ValueError, TypeError, UnicodeDecodeError):
+            detail = ""
+    reason = _credential_dead_reason(status, captured)
+    if reason:
+        _quarantine_bearer(bid, bstate, status, reason, detail)
+        return
+    previous = bstate.get("credential_streak")
+    streak = (previous if isinstance(previous, int) else 0) + 1
+    bstate["credential_streak"] = streak
+    if streak >= config.CREDENTIAL_DEAD_STREAK:
+        _quarantine_bearer(bid, bstate, status, f"streak-{streak}", detail)
+    else:
+        log(
+            f"credential-reject bid={bid} status={status} "
+            f"streak={streak}/{config.CREDENTIAL_DEAD_STREAK} detail={detail!r}"
+        )
+
+
 def _account_routing_candidate_score(
     acct: dict[str, object],
     incoming_bid: str,
@@ -1059,6 +1199,13 @@ def _account_routing_candidate_score(
     now = time.time() if now is None else now
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
+        return math.inf
+    # A refused credential is neither pressure nor a window: it carries no
+    # Retry-After and no unified gauges, so every gate below reads it as an idle,
+    # zero-utilization account — the CHEAPEST candidate in the fleet. Gate it
+    # first, ABOVE the retry-probe branch, so ``allow_retry_probe`` can never
+    # elect a dead account. That election is what spent 40 client turns on 403s.
+    if _bearer_credential_dead(bid):
         return math.inf
     retry_after_remaining = _bearer_retry_after_remaining(bid)
     if _limiter.retry_probe_required(bid) and (
@@ -2964,6 +3111,15 @@ async def _finalize(
         except Exception as aimde:
             log(f"aimd-error bid={bid}: {aimde!r}")
 
+    # Credential verdict for THIS bearer. Telemetry paths are excluded on
+    # purpose: /api/oauth/usage has its own endpoint-level 401/403/429 policy
+    # (13/07 incident) and must never be read as the message credential failing.
+    if not telemetry_path:
+        try:
+            _note_bearer_credential(bid, bstate, final_status, attempt.captured)
+        except Exception as cexc:
+            log(f"credential-note-error bid={bid}: {cexc!r}")
+
     _schedule_advisor(bid, final_status, path)
 
     if attempt.captured and request.method == "POST" and "v1/messages" in path:
@@ -3557,6 +3713,105 @@ async def _upstream_auth_context(_app: web.Application):
     await asyncio.gather(task, return_exceptions=True)
 
 
+def _touch_credential_check(bid: str) -> None:
+    cred = _bearer_credential(bid)
+    if cred:
+        cred["last_checked"] = time.time()
+
+
+async def _credential_recheck_one(bid: str, token: str) -> None:
+    """One synthetic ``max_tokens: 1`` message on a quarantined account's own token."""
+    url = config.UPSTREAM.rstrip("/") + "/v1/messages"
+    timeout = aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT)
+    headers = {
+        "authorization": f"Bearer {token}",
+        "anthropic-version": "2023-06-01",
+        # Subscription (OAuth) bearers are what this lane carries. Measured
+        # 04/08/2026 that the upstream answers identically with and without this
+        # header, but a real client sends it, so the probe should too.
+        "anthropic-beta": "oauth-2025-04-20",
+        "content-type": "application/json",
+    }
+    payload = {
+        "model": config.CREDENTIAL_RECHECK_MODEL,
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "."}],
+    }
+    try:
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.post(url, headers=headers, json=payload) as resp,
+        ):
+            status = resp.status
+            body = await resp.read()
+    except Exception as exc:  # network/TLS/timeout — inconclusive, stay dead
+        log(f"credential-recheck bid={bid} result=error err={exc!r}")
+        _touch_credential_check(bid)
+        return
+    bstate = config.bearer_state.get(bid)
+    if 200 <= status < 300 and _is_anthropic_message(body) and isinstance(bstate, dict):
+        _clear_bearer_credential(bid, bstate)
+        return
+    _touch_credential_check(bid)
+    log(f"credential-recheck bid={bid} result=still-dead status={status}")
+
+
+async def _credential_recheck_once() -> None:
+    """Re-test every quarantined account. Recovery must not need a restart.
+
+    Quarantine without a recovery path is a trap: a dead account receives no
+    traffic, so it can never produce the success that would clear it, and an
+    organization re-enabling OAuth would go unnoticed indefinitely. The probe is
+    deliberately SYNTHETIC — one token, off the limiter, never a client's turn.
+    That distinction is the whole point of the feature: the half-open retry probe
+    it replaces spent real requests to learn the same thing.
+
+    Only a real Anthropic message body reopens an account (same strictness as
+    ``_probe_upstream_auth_once``, and for the same reason). A 429, a 5xx or a
+    timeout is inconclusive and leaves the quarantine untouched.
+    """
+    if config.CREDENTIAL_RECHECK_S <= 0 or not config.CREDENTIAL_RECHECK_MODEL:
+        return
+    from . import accounts
+
+    now = time.time()
+    due: list[tuple[str, str]] = []
+    for acct in accounts.routing_snapshot(now):
+        bid = acct.get("bearer_id")
+        token = acct.get("token")
+        if not isinstance(bid, str) or not isinstance(token, str) or not token:
+            continue
+        cred = _bearer_credential(bid)
+        if cred.get("ok") is not False:
+            continue
+        last = cred.get("last_checked")
+        last_checked = float(last) if isinstance(last, (int, float)) else 0.0
+        if now - last_checked < config.CREDENTIAL_RECHECK_S:
+            continue
+        due.append((bid, token))
+    for bid, token in due:
+        await _credential_recheck_one(bid, token)
+
+
+async def _credential_recheck_loop() -> None:
+    while True:
+        try:
+            await _credential_recheck_once()
+        except Exception as exc:
+            log(f"credential-recheck loop error: {exc!r}")
+        await asyncio.sleep(max(30.0, config.CREDENTIAL_RECHECK_S))
+
+
+async def _credential_recheck_context(_app: web.Application):
+    if config.CREDENTIAL_RECHECK_S <= 0 or not config.CREDENTIAL_RECHECK_MODEL:
+        yield
+        return
+    task = asyncio.create_task(_credential_recheck_loop())
+    yield
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
 async def _upstream_egress_context(_app: web.Application):
     task = asyncio.create_task(_upstream_egress_loop())
     yield
@@ -3900,6 +4155,7 @@ def main() -> None:
     app = web.Application(client_max_size=128 * 1024 * 1024)
     app.cleanup_ctx.append(_upstream_egress_context)
     app.cleanup_ctx.append(_upstream_auth_context)
+    app.cleanup_ctx.append(_credential_recheck_context)
     # Every response this proxy serves carries MARKER_HEADER so a downstream
     # local tier can tell a central-served 5xx (relay — keep central up) from
     # dokku nginx answering for a dead container (mark central down).
