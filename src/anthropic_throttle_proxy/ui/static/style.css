@@ -27,7 +27,14 @@
   --crit:  var(--ctp-red);
   --info:  var(--ctp-teal);
   --accent: var(--ctp-blue);
-  --muted: var(--ctp-overlay0);
+  /* Secondary text, NOT decoration: every column header, unit and label on the
+     page is --muted. It was overlay0 (#6c7086), which measures 3.36:1 on base,
+     3.59:1 on mantle and 2.57:1 on surface0 — a WCAG 1.4.3 AA failure on 23
+     nodes (axe-core 4.12.1, 05/08/2026), and these are 9px labels where the
+     contrast matters most. subtext0 measures 7.37 / 7.89 / 5.65 on the same
+     three backgrounds. Locked by tests/test_ui_contrast.py; overlay0 stays
+     available for non-text use (hairlines, an idle dot). */
+  --muted: var(--ctp-subtext0);
 
   --mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
