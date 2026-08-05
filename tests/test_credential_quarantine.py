@@ -341,3 +341,50 @@ def test_corrupt_state_file_is_a_clean_start(cred_state):
     cred_state.write_text("{not json")
     proxy.load_credential_state()
     assert proxy._restored_credentials == {}
+
+
+# ── the restored verdict must stay VISIBLE ───────────────────────────────────
+#
+# Routing reads `_restored_credentials`, but /__throttle/health rendered only
+# `bearer_state` — so after a restart the `credential` row vanished from the
+# payload while the bearer stayed correctly quarantined. Not cosmetic:
+# `claude-account-pick` gates its own account choice on exactly this field
+# (NixOS #1634), so a restart left the LAUNCH picker electing the dead account
+# again while the proxy itself refused it. Measured on the desktop 05/08/2026:
+# `.bearers.<bid>.credential.ok` read `null` and the picker returned `pick=a`.
+
+
+async def _health_bearers() -> dict:
+    resp = await proxy.health(None)
+    return json.loads(resp.body).get("bearers") or {}
+
+
+async def test_health_shows_a_restored_quarantine(cred_state):
+    proxy._note_bearer_credential("deadH1", _bstate("deadH1"), 403, bytearray(ORG_DISABLED_BODY))
+    # Simulate the restart: process-global state gone, disk intact.
+    config.bearer_state.clear()
+    proxy._restored_credentials.clear()
+    proxy.load_credential_state()
+    assert proxy._bearer_credential_dead("deadH1"), "precondition: routing still gates it"
+
+    bearers = await _health_bearers()
+    assert "deadH1" in bearers, "a restored quarantine must appear in health at all"
+    assert bearers["deadH1"]["credential"]["ok"] is False
+    assert bearers["deadH1"]["credential"]["reason"] == "oauth_not_allowed_for_organization"
+
+
+async def test_the_restored_copy_never_masks_a_live_row(cred_state):
+    """`setdefault`, not assignment: a bearer holding a LIVE verdict keeps it.
+
+    Only asserts what the merge actually promises. A bearer already marked dead
+    by the restored map short-circuits `_quarantine_bearer` (it does not re-log
+    or rewrite), so this deliberately does NOT claim a live 403 refreshes a
+    stale stored `reason` — that is not a behaviour the design offers.
+    """
+    bstate = _bstate("deadH2")
+    bstate["clients"] = {}
+    proxy._note_bearer_credential("deadH2", bstate, 403, bytearray(ORG_DISABLED_BODY))
+    # A disk copy that disagrees must not overwrite the live row in the view.
+    proxy._restored_credentials["deadH2"] = {"ok": False, "reason": "stale-from-disk"}
+    bearers = await _health_bearers()
+    assert bearers["deadH2"]["credential"]["reason"] == "oauth_not_allowed_for_organization"
