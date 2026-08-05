@@ -1148,6 +1148,75 @@ async def test_generate_retries_on_429_from_lane(monkeypatch) -> None:
         await anth.close()
 
 
+async def test_code_role_spills_to_anthropic_on_codex_429(monkeypatch) -> None:
+    """#184: the Codex lane's ChatGPT-meter 429 ("Rate limited", no stamped
+    saturation header, no trustworthy Retry-After) must spill to the next lane
+    in the "code" chain — anthropic — not stream the raw 429 to the client.
+    """
+
+    async def codex_429(_request: web.Request) -> web.Response:
+        return web.json_response({"error": {"message": "Rate limited"}}, status=429)
+
+    async def anthropic_ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    codex = await _start_lane(codex_429)
+    anth = await _start_lane(anthropic_ok)
+    lanes = {
+        "codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"})),
+        "anthropic": Lane(
+            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
+        ),
+    }
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex", "anthropic"}))
+    try:
+        body = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 512,
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.status == 200  # spilled from codex (429) → anthropic
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+            assert r.headers["x-anthropic-throttle-role"] == "code"
+    finally:
+        await ing.close()
+        await codex.close()
+        await anth.close()
+    # codex was marked saturated in lane_state, same as a 503-saturated lane
+    assert ingress.lane_state.get("codex") is not None
+    assert ingress.lane_state["codex"].open is False
+    assert ingress.lane_state["codex"].detail == "saturated"
+
+
+async def test_code_role_429_on_last_lane_returns_all_lanes_capped(monkeypatch) -> None:
+    """#184: unlike generate, "code" has no same-lane queue-and-wait fallback —
+    if codex is the ONLY configured lane and it 429s, the request 503s rather
+    than retrying the dead lane forever."""
+
+    async def codex_429(_request: web.Request) -> web.Response:
+        return web.json_response({"error": {"message": "Rate limited"}}, status=429)
+
+    codex = await _start_lane(codex_429)
+    lanes = {"codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"}))}
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex"}))
+    try:
+        body = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 512,
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.status == 503
+            data = await r.json()
+            assert data == {"error": "ingress-all-lanes-capped", "role": "code"}
+    finally:
+        await ing.close()
+        await codex.close()
+
+
 def test_boot_names_roles_left_without_a_lane(monkeypatch, capsys):
     """Retiring the last non-Anthropic lane turns `bulk` into a permanent HOLD.
 
