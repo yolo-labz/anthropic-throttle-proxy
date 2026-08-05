@@ -4089,6 +4089,19 @@ async def health(_request: web.Request) -> web.Response:
         if lim is not None:
             view["limiter"] = lim.snapshot()
         bearers_view[bid] = view
+    # A quarantine RESTORED from disk lives in `_restored_credentials`, not in
+    # `bearer_state` — seeding it there would hand the hot path an entry with no
+    # `clients` map. Routing reads both (see `_bearer_credential`), but health
+    # rendered only `bearer_state`, so after a restart the `credential` row
+    # silently vanished from the payload while the bearer stayed correctly
+    # quarantined. That is not cosmetic: `claude-account-pick` gates its own
+    # account choice on this exact field (NixOS #1634), so a restart left the
+    # LAUNCH picker electing the dead account again while the proxy refused it.
+    # Measured 05/08/2026 — `.bearers.<bid>.credential.ok` read `null` after a
+    # restart and the picker went back to `pick=a`.
+    for bid, cred in _restored_credentials.items():
+        view = bearers_view.setdefault(bid, {})
+        view.setdefault("credential", dict(cred))
     upstream_egress_ok = bool(state["upstream_egress_ok"])
     upstream_egress_error = str(state["upstream_egress_error"])
     account_identity = None
