@@ -1034,6 +1034,26 @@ async def test_agentic_bulk_stays_on_anthropic_not_kimi(tool_description, monkey
         await anth.close()
 
 
+def _small_agentic_body(max_tokens: int) -> dict:
+    """Shared #182/#184 fixture: a tool-use POST /v1/messages body, size-varied
+    only by max_tokens (the axis is_small_agentic_code classifies on)."""
+    return {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": max_tokens,
+        "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+
+def _codex_and_anthropic_lanes(codex_url: str, anth_url: str) -> dict:
+    """Shared #182/#184 fixture: the two-lane {codex, anthropic} config the code
+    role's floor/spill tests exercise."""
+    return {
+        "codex": Lane("codex", codex_url.rstrip("/"), frozenset({"code"})),
+        "anthropic": Lane("anthropic", anth_url.rstrip("/"), frozenset({"generate", "judge"})),
+    }
+
+
 @pytest.mark.parametrize(
     "max_tokens,expect_lane,expect_role",
     [(512, "codex", "code"), (64_000, "anthropic", "generate")],
@@ -1051,20 +1071,10 @@ async def test_agentic_turn_floor_splits_code_vs_generate_by_size(
 
     codex = await _start_lane(echo_lane)
     anth = await _start_lane(echo_lane)
-    lanes = {
-        "codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"})),
-        "anthropic": Lane(
-            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
-        ),
-    }
+    lanes = _codex_and_anthropic_lanes(str(codex.make_url("")), str(anth.make_url("")))
     ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex", "anthropic"}))
     try:
-        body = {
-            "model": "claude-sonnet-4-6",
-            "max_tokens": max_tokens,
-            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
-            "messages": [{"role": "user", "content": "hi"}],
-        }
+        body = _small_agentic_body(max_tokens)
         async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
             assert r.status == 200
             assert r.headers["x-anthropic-throttle-lane"] == expect_lane
@@ -1146,6 +1156,53 @@ async def test_generate_retries_on_429_from_lane(monkeypatch) -> None:
     finally:
         await ing.close()
         await anth.close()
+
+
+async def codex_429(_request: web.Request) -> web.Response:
+    return web.json_response({"error": {"message": "Rate limited"}}, status=429)
+
+
+@pytest.mark.parametrize("with_anthropic_fallback", [True, False])
+async def test_code_role_on_codex_429(with_anthropic_fallback, monkeypatch) -> None:
+    """#184: the Codex lane's ChatGPT-meter 429 ("Rate limited", no stamped
+    saturation header, no trustworthy Retry-After) must spill to the next lane
+    in the "code" chain rather than stream the raw 429 to the client. Unlike
+    generate, "code" has no same-lane queue-and-wait fallback: with no next
+    lane configured, it 503s rather than retrying the dead lane forever."""
+
+    async def anthropic_ok(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    codex = await _start_lane(codex_429)
+    anth = None
+    open_ids = {"codex"}
+    if with_anthropic_fallback:
+        anth = await _start_lane(anthropic_ok)
+        lanes = _codex_and_anthropic_lanes(str(codex.make_url("")), str(anth.make_url("")))
+        open_ids.add("anthropic")
+    else:
+        lanes = {"codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"}))}
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state(open_ids))
+    try:
+        body = _small_agentic_body(512)
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            if with_anthropic_fallback:
+                assert r.status == 200  # spilled from codex (429) → anthropic
+                assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+                assert r.headers["x-anthropic-throttle-role"] == "code"
+            else:
+                assert r.status == 503
+                data = await r.json()
+                assert data == {"error": "ingress-all-lanes-capped", "role": "code"}
+    finally:
+        await ing.close()
+        await codex.close()
+        if anth is not None:
+            await anth.close()
+    # codex was marked saturated in lane_state, same as a 503-saturated lane
+    assert ingress.lane_state.get("codex") is not None
+    assert ingress.lane_state["codex"].open is False
+    assert ingress.lane_state["codex"].detail == "saturated"
 
 
 def test_boot_names_roles_left_without_a_lane(monkeypatch, capsys):

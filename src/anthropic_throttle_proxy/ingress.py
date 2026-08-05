@@ -126,6 +126,17 @@ GENERATE_QUEUE_RETRY_DELAY_S: Final[float] = float(
     os.environ.get("INGRESS_GENERATE_QUEUE_RETRY_DELAY_S", "5")
 )
 
+# #182/#184: roles whose lane chain treats a bare upstream 429 (no stamped
+# saturation header) as spillable rather than passing it straight through to
+# the client. "generate" needs it for :8765's own leaked pushback (see the
+# is_retryable comment below); "code" needs it because the Codex lane's
+# ChatGPT-meter 429 carries no Retry-After/unified gauges the ingress can
+# trust — same shape, same fix. bulk/judge are deliberately excluded: their
+# lanes' own AIMD already absorbs 429s internally (see the proxy's per-lane
+# pushback handling), and widening this to every role is a bigger behavior
+# change than either #182 or #184 asked for.
+_SPILL_ON_429_ROLES: Final[frozenset[str]] = frozenset({"generate", "code"})
+
 # --- S3: lane registry + gauge polling --------------------------------------
 # The three-lane fleet (Spec 093). Built once at import from env-overridable URLs.
 LANES: dict[str, Lane] = default_lanes()
@@ -392,17 +403,27 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             return web.json_response({"error": "ingress-upstream-timeout"}, status=504)
 
         assert upstream is not None
-        # Retryable: saturation-503 (queue full) OR a 429 that leaked through
-        # :8765's own pushback retries. For generate, the ingress retries
-        # internally (queue-and-wait) so claude-code never sees the transient
-        # 429 — matching direct :8765 behavior where the SDK retries on 429.
-        # The nix w1W:p4 flip-gate: without this, a 429 from :8765 reaches
-        # claude-code → 60s rate_limit retry → abort. With this, the ingress
-        # absorbs the 429 + retries → succeeds on the next attempt.
+        # Retryable: saturation-503 (queue full) OR a 429 on a role in
+        # _SPILL_ON_429_ROLES. For generate, a 429 that leaked through :8765's
+        # own pushback retries — the ingress retries internally (queue-and-wait)
+        # so claude-code never sees it, matching direct :8765 behavior where the
+        # SDK retries on 429. The nix w1W:p4 flip-gate: without this, a 429 from
+        # :8765 reaches claude-code → 60s rate_limit retry → abort. With this,
+        # the ingress absorbs the 429 + retries → succeeds on the next attempt.
+        #
+        # #182/#184: "code" (the Codex lane) is the SAME shape — the ChatGPT
+        # usage meter answers a plain 429 "Rate limited" with no stamped
+        # saturation header and no Retry-After the ingress can trust, so it must
+        # be treated identically: spill to the next lane in the "code" chain
+        # (anthropic, then deepseek) rather than streaming the raw 429 to the
+        # client. Unlike generate, "code" has no same-lane queue-and-wait
+        # fallback below — Codex's meter is account-level saturation (can stay
+        # 429 for a while), not a queue that drains in seconds, so spilling to a
+        # capable sibling lane is strictly better than retrying the same one.
         is_saturation_503 = (
             upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
         )
-        is_retryable = is_saturation_503 or (upstream.status == 429 and role == "generate")
+        is_retryable = is_saturation_503 or (upstream.status == 429 and role in _SPILL_ON_429_ROLES)
         if is_retryable and spillable:
             upstream.release()
             upstream = None
