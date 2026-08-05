@@ -162,7 +162,10 @@ def test_dead_account_is_never_a_routing_candidate():
     assert proxy._account_routing_candidate_score(acct, "other", allow_retry_probe=True) == math.inf
     assert (
         proxy._account_routing_candidate_score(
-            acct, "dead05", allow_retry_probe=True, allow_pressure=True,
+            acct,
+            "dead05",
+            allow_retry_probe=True,
+            allow_pressure=True,
             allow_target_spillover=True,
         )
         == math.inf
