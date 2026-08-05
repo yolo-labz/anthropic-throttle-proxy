@@ -57,9 +57,16 @@ def test_binding_line_names_the_representative_window_not_hardcoded_5h():
             },
         )
     ]
-    detail = routes._compute_status(bearers, "fair", NOW)["detail"]
-    assert "binding: 7d window 87% on b144f62f" in detail
-    assert "5h window" not in detail  # never the hardcoded/stale label
+    status = routes._compute_status(bearers, "fair", NOW)
+    # The binding is an OBJECT now, not a clause: the strip and the binding
+    # block rendered the same condition twice and could drift apart (#179).
+    assert status["binding"] == {
+        "bearer_id": "b144f62f",
+        "window": "7d",
+        "pct": 87,
+        "retry_after": None,
+    }
+    assert "5h" not in str(status["binding"]["window"])  # never the stale label
 
 
 def test_binding_line_uses_5h_when_it_is_the_live_binding_window():
@@ -75,8 +82,10 @@ def test_binding_line_uses_5h_when_it_is_the_live_binding_window():
             },
         )
     ]
-    detail = routes._compute_status(bearers, "fair", NOW)["detail"]
-    assert "binding: 5h window 91% on aaaa1111" in detail
+    status = routes._compute_status(bearers, "fair", NOW)
+    assert status["binding"]["window"] == "5h"
+    assert status["binding"]["pct"] == 91
+    assert status["binding"]["bearer_id"] == "aaaa1111"
 
 
 def test_no_binding_line_when_all_windows_stale():
@@ -86,8 +95,9 @@ def test_no_binding_line_when_all_windows_stale():
             {"util_5h": 0.5, "reset_5h": PAST, "util_7d": 0.5, "reset_7d": PAST},
         )
     ]
-    detail = routes._compute_status(bearers, "fair", NOW)["detail"]
-    assert "binding:" not in detail
+    status = routes._compute_status(bearers, "fair", NOW)
+    assert status["binding"] is None
+    assert "binding" not in status["detail"]
 
 
 def test_provider_label_derives_host_root():

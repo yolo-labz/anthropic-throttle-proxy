@@ -1906,8 +1906,10 @@ def test_compute_status_healthy_clear() -> None:
     out = _compute_status([_bearer("aa", util=0.30)], "fair")
     assert out["level"] == "healthy"
     assert out["verdict"] == "HEALTHY"
-    # binding line names the (only) bearer + its window.
-    assert "30% on aa" in out["detail"]
+    # The binding is a structured object, not a clause in the detail sentence
+    # (#179 — the strip and the binding block rendered the same fact twice).
+    assert out["binding"]["bearer_id"] == "aa"
+    assert out["binding"]["pct"] == 30
 
 
 def test_compute_status_pacing_on_high_utilization() -> None:
@@ -1931,13 +1933,14 @@ def test_compute_status_throttled_wins_over_pacing() -> None:
     assert out["level"] == "throttled"
     assert "1 of 2 bearers throttled" in out["detail"]
     # binding = highest-utilization bearer.
-    assert "97% on rej" in out["detail"]
+    assert out["binding"]["bearer_id"] == "rej"
+    assert out["binding"]["pct"] == 97
 
 
 def test_compute_status_retry_after_throttles_and_annotates() -> None:
     out = _compute_status([_bearer("aa", util=0.50, retry="38")], "fair")
     assert out["level"] == "throttled"
-    assert "retry-after 38" in out["detail"]
+    assert out["binding"]["retry_after"] == "38"
 
 
 def test_compute_status_notes_passthrough_when_queue_off() -> None:
