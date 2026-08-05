@@ -198,9 +198,22 @@ def test_select_lane_bulk_never_returns_anthropic_invariant_2() -> None:
     assert (
         select_lane("bulk", {"anthropic": _st(True), "kimi": _st(False), "glm": _st(False)}) is None
     )
-    # bulk prefers Kimi, then GLM
+    # bulk prefers Kimi, then GLM (deepseek absent from state → skipped)
     assert select_lane("bulk", {"kimi": _st(True), "glm": _st(True)}) == "kimi"
     assert select_lane("bulk", {"kimi": _st(False), "glm": _st(True)}) == "glm"
+
+
+def test_select_lane_bulk_prefers_deepseek_over_kimi_and_glm() -> None:
+    """#169: DeepSeek V4-Flash leads the bulk chain — the funded, reachable lane
+    (Kimi/GLM stay as unretired fallback but neither answers today)."""
+    assert (
+        select_lane("bulk", {"deepseek": _st(True), "kimi": _st(True), "glm": _st(True)})
+        == "deepseek"
+    )
+    # deepseek closed → falls through to kimi, then glm
+    assert (
+        select_lane("bulk", {"deepseek": _st(False), "kimi": _st(True), "glm": _st(True)}) == "kimi"
+    )
 
 
 def test_select_lane_lock_skips_to_next_open_invariant_3() -> None:
@@ -437,7 +450,7 @@ def test_effective_chain_generate_overflow_on_is_full_chain() -> None:
 
 def test_effective_chain_bulk_judge_unaffected_by_overflow_flag() -> None:
     """Bulk/judge already run on the cheap lanes; the overflow flag is generate-only."""
-    assert effective_chain("bulk", overflow=False) == ("kimi", "glm")
+    assert effective_chain("bulk", overflow=False) == ("deepseek", "kimi", "glm")
     assert effective_chain("judge", overflow=False) == ("anthropic", "glm", "kimi")
 
 
@@ -544,20 +557,22 @@ def test_empty_lane_url_retires_the_lane(monkeypatch):
     monkeypatch.setenv("INGRESS_KIMI_LANE_URL", "")
     monkeypatch.setenv("INGRESS_GLM_LANE_URL", "   ")
     lanes = routing.default_lanes()
-    assert set(lanes) == {"anthropic"}
+    assert set(lanes) == {"anthropic", "deepseek"}
 
 
 def test_unset_lane_url_keeps_the_default(monkeypatch):
     monkeypatch.delenv("INGRESS_KIMI_LANE_URL", raising=False)
     monkeypatch.delenv("INGRESS_GLM_LANE_URL", raising=False)
-    assert set(routing.default_lanes()) == {"anthropic", "kimi", "glm"}
+    monkeypatch.delenv("INGRESS_DEEPSEEK_LANE_URL", raising=False)
+    assert set(routing.default_lanes()) == {"anthropic", "kimi", "glm", "deepseek"}
 
 
 def test_a_retired_lane_can_never_be_selected(monkeypatch):
     """select_lane walks the chain against STATE; a retired lane has none."""
     monkeypatch.setenv("INGRESS_KIMI_LANE_URL", "")
     monkeypatch.setenv("INGRESS_GLM_LANE_URL", "")
+    monkeypatch.setenv("INGRESS_DEEPSEEK_LANE_URL", "")
     lanes = routing.default_lanes()
     state = {name: routing.LaneState(True, 0.0) for name in lanes}  # every CONFIGURED lane open
-    assert routing.select_lane("bulk", state) is None  # bulk chain is kimi/glm only
+    assert routing.select_lane("bulk", state) is None  # whole bulk chain retired
     assert routing.select_lane("generate", state, overflow=False) == "anthropic"
