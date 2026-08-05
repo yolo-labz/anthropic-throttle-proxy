@@ -119,3 +119,27 @@ def test_refused_outranks_every_other_account_verdict():
     state, detail = routes._account_status(account)
     assert state == "refused"
     assert "not allowed" in detail
+
+
+def test_quarantine_restored_after_a_restart_still_reaches_the_row(monkeypatch):
+    """A restart restores the quarantine into `_restored_credentials` and leaves
+    `bearer_state` clean. Reading bstate alone showed a 403-refused account as
+    healthy — measured live 05/08/2026, right after an activation restart the
+    page offered the org-dead account as "takes traffic next".
+    """
+    from anthropic_throttle_proxy import config, proxy
+
+    bid = "b144f62f"
+    config.bearer_state[bid] = {"inflight": 0, "queued": 0, "served": 0}  # no credential key
+    proxy._restored_credentials[bid] = {
+        "ok": False,
+        "status": 403,
+        "reason": "oauth_not_allowed_for_organization",
+    }
+    try:
+        assert proxy._bearer_credential(bid).get("ok") is False
+        state, _ = routes._account_status({"credential": proxy._bearer_credential(bid) or None})
+        assert state == "refused"
+    finally:
+        config.bearer_state.pop(bid, None)
+        proxy._restored_credentials.pop(bid, None)
