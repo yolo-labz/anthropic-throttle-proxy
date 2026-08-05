@@ -292,6 +292,17 @@ CREDENTIAL_RECHECK_MODEL = os.environ.get(
 # this feature exists to stop. Bounds the damage at N dead client turns.
 CREDENTIAL_DEAD_STREAK = max(1, int(os.environ.get("THROTTLE_CREDENTIAL_DEAD_STREAK", "3")))
 
+# JSON file persisting credential quarantines across restarts. A quarantine is
+# otherwise in-memory only, so every restart re-earns it at the cost of real
+# client turns — and the proxy restarts on every system activation (measured
+# 04/08/2026: 13 restarts in one day on the desktop, i.e. the quarantine was
+# being re-derived ~13 times). Unlike RETRY_AFTER_STATE_FILE, a restored entry
+# is NOT capped: a refused credential does not decay the way a rolling budget
+# window does. The synthetic re-check is what un-sticks it, and it costs no
+# client turn — so restoring is both safe and self-correcting. Empty default
+# keeps tests and stateless containers side-effect free.
+CREDENTIAL_STATE_FILE = os.environ.get("THROTTLE_CREDENTIAL_STATE_FILE", "").strip()
+
 # Extra `error.details.error_code` values (comma-separated) treated as
 # credential death, on top of the built-in list. A code Anthropic adds later
 # should not need a release to be honoured.
