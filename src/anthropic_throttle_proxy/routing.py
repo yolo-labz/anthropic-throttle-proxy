@@ -76,8 +76,21 @@ GENERATE_OVERFLOW_ENABLED: bool = os.environ.get(
 # recharged, but neither answers today. V4-Flash-0731 beats V4-Pro-Preview on
 # agent bench (Terminal-Bench 2.1 82.7% vs 72.1%) at $0.14/$0.28 per 1M — the
 # cheap-AND-capable pick, not a cost-only tradeoff.
+#
+# DeepSeek also joins the generate chain (05/08/2026, Pedro-directed): with
+# account A org-403'd and account C 7d-rejected, Anthropic generate capacity is
+# down to one account, and Kimi/GLM remain unconfigured (empty URL), so
+# invariant 6's overflow guard was leaving generate to HOLD for the whole
+# fleet with no usable spill target. A live probe (05/08) sent an
+# Anthropic-shape multi-turn tool-use request straight to the DeepSeek lane
+# and got a clean 200 stream (thinking + tool_use block + stop_reason:
+# "tool_use") — unlike Kimi (aborts multi-turn tool-use) or GLM (path/key
+# blockers), DeepSeek is verified tools-capable, so the body_has_tools floor
+# (agentic requests forced to "generate") now lands on a lane proven to handle
+# it. Still gated behind GENERATE_OVERFLOW_ENABLED (effective_chain), so the
+# guard is doing its job — this is an explicit opt-in, not a silent downgrade.
 ROLE_CHAINS: dict[str, tuple[str, ...]] = {
-    "generate": ("anthropic", "kimi", "glm"),
+    "generate": ("anthropic", "deepseek", "kimi", "glm"),
     "judge": ("anthropic", "glm", "kimi"),
     "bulk": ("deepseek", "kimi", "glm"),  # Anthropic deliberately absent
 }
@@ -119,13 +132,16 @@ class LaneState:
 
 
 def default_lanes() -> dict[str, Lane]:
-    """The four-lane fleet (Spec 093 + #169). URLs env-overridable for test/non-local deploys.
+    """The four-lane fleet (Spec 093 + #169 + #181). URLs env-overridable for
+    test/non-local deploys.
 
     Egress model ids (S4 remap): Anthropic keeps the client's ``claude-*``; Kimi
     expects Moonshot ids (kimi-k3 for generate — GA 27/07; kimi-k2.6 for bulk/judge,
     verified 23/07); GLM expects glm-5.2 (verified); DeepSeek expects
-    deepseek-v4-flash (bulk only, verified 04/08). Overrides via
-    ``INGRESS_<LANE>_<ROLE>_MODEL`` so the fleet can pin exact ids without a code change.
+    deepseek-v4-flash for both bulk and generate (v4-flash beats v4-pro on
+    agent bench AND is cheaper — same pick for both roles, verified 04/08 and
+    05/08). Overrides via ``INGRESS_<LANE>_<ROLE>_MODEL`` so the fleet can pin
+    exact ids without a code change.
     """
     kimi_models = {
         "generate": os.environ.get("INGRESS_KIMI_GENERATE_MODEL", "kimi-k3"),
@@ -134,7 +150,10 @@ def default_lanes() -> dict[str, Lane]:
     }
     glm_model = os.environ.get("INGRESS_GLM_MODEL", "glm-5.2")
     glm_models = {"generate": glm_model, "bulk": glm_model, "judge": glm_model}
-    deepseek_models = {"bulk": os.environ.get("INGRESS_DEEPSEEK_BULK_MODEL", "deepseek-v4-flash")}
+    deepseek_models = {
+        "bulk": os.environ.get("INGRESS_DEEPSEEK_BULK_MODEL", "deepseek-v4-flash"),
+        "generate": os.environ.get("INGRESS_DEEPSEEK_GENERATE_MODEL", "deepseek-v4-flash"),
+    }
     lanes = {
         "anthropic": Lane(
             "anthropic",
@@ -157,7 +176,7 @@ def default_lanes() -> dict[str, Lane]:
         "deepseek": Lane(
             "deepseek",
             os.environ.get("INGRESS_DEEPSEEK_LANE_URL", "http://127.0.0.1:8768"),
-            frozenset({"bulk"}),
+            frozenset({"bulk", "generate"}),
             models=deepseek_models,
             proxy_owns_key=True,
         ),
@@ -395,12 +414,16 @@ def infer_role_from_body(raw: bytes) -> str:
 def body_has_tools(raw: bytes) -> bool:
     """True when the request body carries a non-empty ``tools`` array.
 
-    Agentic (tool-use) requests need a tools-capable lane. On the current fleet
-    only Anthropic reliably handles multi-turn tool-use streaming — Kimi aborts
-    (stop_reason=null on multi-turn) and GLM has path+key blockers. The ingress
-    uses this as a safety FLOOR: agentic requests are forced to ``generate``
-    (Anthropic) regardless of model tier or header hint, so a consumer can't
-    overflow tool-use to a lane that can't handle it.
+    Agentic (tool-use) requests need a tools-capable lane. Anthropic and
+    DeepSeek (verified 05/08/2026: a multi-turn tool-use request to the
+    DeepSeek lane streamed a clean thinking + tool_use block + stop_reason:
+    "tool_use") both handle it reliably; Kimi aborts (stop_reason=null on
+    multi-turn) and GLM has path+key blockers, so those two stay excluded even
+    when the generate chain spills there. The ingress uses this as a safety
+    FLOOR: agentic requests are forced to ``generate`` regardless of model
+    tier or header hint, so a consumer can't overflow tool-use to a lane that
+    can't handle it — the generate chain (not this function) decides which
+    tools-capable lane actually serves it.
     """
     if not raw:
         return False

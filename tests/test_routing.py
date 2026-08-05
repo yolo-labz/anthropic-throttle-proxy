@@ -445,7 +445,22 @@ def test_effective_chain_generate_overflow_off_is_anthropic_only() -> None:
 
 def test_effective_chain_generate_overflow_on_is_full_chain() -> None:
     """Post-kimi-k3 GA (INGRESS_GENERATE_OVERFLOW=true): generate spills."""
-    assert effective_chain("generate", overflow=True) == ("anthropic", "kimi", "glm")
+    assert effective_chain("generate", overflow=True) == ("anthropic", "deepseek", "kimi", "glm")
+
+
+def test_select_lane_generate_overflow_prefers_deepseek_over_kimi_glm() -> None:
+    """#181: DeepSeek is verified tools-capable (unlike Kimi/GLM), so it leads
+    the generate overflow chain right after Anthropic."""
+    state = {
+        "anthropic": _st(False),
+        "deepseek": _st(True),
+        "kimi": _st(True),
+        "glm": _st(True),
+    }
+    assert select_lane("generate", state, overflow=True) == "deepseek"
+    # deepseek closed too -> falls through to kimi
+    state["deepseek"] = _st(False)
+    assert select_lane("generate", state, overflow=True) == "kimi"
 
 
 def test_effective_chain_bulk_judge_unaffected_by_overflow_flag() -> None:
