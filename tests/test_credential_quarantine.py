@@ -388,3 +388,58 @@ async def test_the_restored_copy_never_masks_a_live_row(cred_state):
     proxy._restored_credentials["deadH2"] = {"ok": False, "reason": "stale-from-disk"}
     bearers = await _health_bearers()
     assert bearers["deadH2"]["credential"]["reason"] == "oauth_not_allowed_for_organization"
+
+
+# ── the fallback must never hand a turn back to the dead account ─────────────
+#
+# When no configured account scores finite, `_route_account_if_enabled` keeps
+# the INCOMING bearer — sound when that bearer is merely throttled (a 429
+# against a 429), wrong when it is refused. Measured 05/08/2026: the usage
+# endpoint 429'd for all three accounts at once (its own per-endpoint limit,
+# unrelated to whether /v1/messages would serve), which scores every account
+# inf. With account A quarantined that left no candidates, and the fallback
+# handed two client turns straight back to the dead credential.
+
+
+def _snapshot(*rows):
+    return [{"bearer_id": bid, "token": f"tok-{bid}", "label": lbl} for bid, lbl in rows]
+
+
+def _route(monkeypatch, snapshot, incoming):
+    from anthropic_throttle_proxy import accounts
+
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda now=None: snapshot)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x,B:/y")
+    # Every account scores inf: the endpoint-429 shape from the incident.
+    for acct in snapshot:
+        acct["endpoint"] = {"err": "usage fetch failed (429)"}
+    headers = {"Authorization": "Bearer incoming"}
+    return proxy._route_account_if_enabled(
+        headers, incoming, method="POST", path="/v1/messages"
+    ), headers
+
+
+def test_no_candidates_plus_dead_incoming_routes_to_a_live_account(monkeypatch):
+    proxy._note_bearer_credential("deadF1", _bstate("deadF1"), 403, bytearray(ORG_DISABLED_BODY))
+    snapshot = _snapshot(("deadF1", "A"), ("liveF1", "B"))
+    (used_bid, label), headers = _route(monkeypatch, snapshot, "deadF1")
+    assert used_bid == "liveF1", "a retryable 429 beats a terminal 403"
+    assert label == "B"
+    assert headers["Authorization"] == "Bearer tok-liveF1"
+
+
+def test_no_candidates_with_a_healthy_incoming_still_keeps_it(monkeypatch):
+    """The pre-existing behaviour must be untouched when nothing is quarantined."""
+    snapshot = _snapshot(("liveF2", "A"), ("liveF3", "B"))
+    (used_bid, label), _ = _route(monkeypatch, snapshot, "liveF2")
+    assert used_bid == "liveF2" and label is None
+
+
+def test_dead_incoming_with_every_account_dead_keeps_the_incoming(monkeypatch):
+    """Nothing live to move to — do not invent a target."""
+    for bid in ("deadF2", "deadF3"):
+        proxy._note_bearer_credential(bid, _bstate(bid), 403, bytearray(ORG_DISABLED_BODY))
+    snapshot = _snapshot(("deadF2", "A"), ("deadF3", "B"))
+    (used_bid, label), _ = _route(monkeypatch, snapshot, "deadF2")
+    assert used_bid == "deadF2" and label is None
