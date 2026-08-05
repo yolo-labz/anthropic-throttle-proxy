@@ -16,8 +16,10 @@ REAL client turn — 40 sessions were handed the 403 instead of an answer.
 
 from __future__ import annotations
 
+import gzip
 import json
 import math
+import zlib
 
 import pytest
 
@@ -228,3 +230,46 @@ async def test_recheck_is_disabled_when_the_interval_is_zero(monkeypatch):
     monkeypatch.setattr(accounts, "routing_snapshot", boom)
     await proxy._credential_recheck_once()
     assert not called
+
+
+# ── compressed error envelopes ──────────────────────────────────────────────
+#
+# `_forward_once` captures an error body EXACTLY as it came off the wire and
+# Anthropic serves it gzipped, so every JSON consumer of `captured` was parsing
+# compressed bytes. Measured 04/08/2026 against the live 403: the body began
+# `1f 8b`, classification fell through, and quarantine cost 3 turns via the
+# streak floor instead of 1. Same root cause as the `reason=empty_body` the 413
+# diagnostic (PR #19/#20) kept reporting for non-empty bodies.
+
+
+def test_gzipped_403_still_classifies():
+    body = bytearray(gzip.compress(ORG_DISABLED_BODY))
+    assert body[:2] == b"\x1f\x8b", "fixture must actually be gzip"
+    assert proxy._credential_dead_reason(403, body) == "oauth_not_allowed_for_organization", (
+        "a gzipped envelope must classify identically to a plain one"
+    )
+
+
+def test_gzipped_403_quarantines_on_the_first_response():
+    bstate = _bstate("dead08")
+    proxy._note_bearer_credential(
+        "dead08", bstate, 403, bytearray(gzip.compress(ORG_DISABLED_BODY))
+    )
+    assert proxy._bearer_credential_dead("dead08")
+    assert bstate["credential"]["reason"] == "oauth_not_allowed_for_organization"
+    assert "organization" in bstate["credential"]["detail"], "detail must survive decompression"
+
+
+def test_deflate_and_plain_bodies_both_parse():
+    assert proxy._error_envelope_fields(bytearray(zlib.compress(ORG_DISABLED_BODY)))[0] == (
+        "permission_error"
+    )
+    assert proxy._error_envelope_fields(bytearray(ORG_DISABLED_BODY))[0] == "permission_error"
+
+
+def test_decompressed_body_never_raises_on_garbage():
+    """Unknown/corrupt input is returned unchanged so callers can always parse."""
+    assert proxy.decompressed_body(b"") == b""
+    assert proxy.decompressed_body(b"{}") == b"{}"
+    assert proxy.decompressed_body(b"\x1f\x8btruncated") == b"\x1f\x8btruncated"
+    assert proxy.decompressed_body(b"\x78garbage") == b"\x78garbage"

@@ -38,6 +38,7 @@ test-suite keep working unchanged.
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import json
 import math
@@ -45,6 +46,7 @@ import os
 import re
 import socket
 import time
+import zlib
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -1082,7 +1084,7 @@ def _credential_dead_reason(status: int, captured: bytearray | None) -> str:
     if not captured:
         return ""
     try:
-        payload = json.loads(bytes(captured[:65536]))
+        payload = json.loads(decompressed_body(bytes(captured[:65536])))
     except (ValueError, TypeError):
         return ""
     if not isinstance(payload, dict):
@@ -2985,8 +2987,37 @@ def _bounded_error_field(value: object, limit: int = 512) -> str:
     return text[:limit] or "<empty>"
 
 
+def decompressed_body(raw: bytes) -> bytes:
+    """Best-effort decompress a captured upstream body. Never raises.
+
+    ``_forward_once`` captures an error response EXACTLY as it came off the
+    wire, and Anthropic serves it **gzipped**. So every JSON consumer of
+    ``captured`` has been parsing compressed bytes and silently failing — which
+    is why the 413 diagnostic added in PR #19/#20 kept reporting
+    ``reason=empty_body`` / an unparseable preview for bodies that were neither
+    empty nor malformed. Measured 04/08/2026 against a live 403: the captured
+    body began ``1f 8b`` and `json.loads` raised on the very first byte.
+
+    Sniffs the magic bytes rather than trusting a Content-Encoding header,
+    because the capture path keeps only a filtered header map and a proxied
+    body can be re-encoded in transit. Unknown or already-plain input is
+    returned unchanged, so a caller can always parse the result.
+    """
+    if raw[:2] == b"\x1f\x8b":  # gzip
+        try:
+            return gzip.decompress(raw)
+        except (OSError, EOFError, zlib.error):
+            return raw
+    if raw[:1] == b"\x78":  # zlib/deflate
+        try:
+            return zlib.decompress(raw)
+        except zlib.error:
+            return raw
+    return raw
+
+
 def _error_envelope_fields(captured: bytearray) -> tuple[str, str]:
-    payload = json.loads(bytes(captured[:65536]))
+    payload = json.loads(decompressed_body(bytes(captured[:65536])))
     if not isinstance(payload, dict):
         raise TypeError("error envelope is not an object")
     nested = payload.get("error")
