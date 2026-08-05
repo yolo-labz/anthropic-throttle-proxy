@@ -273,3 +273,71 @@ def test_decompressed_body_never_raises_on_garbage():
     assert proxy.decompressed_body(b"{}") == b"{}"
     assert proxy.decompressed_body(b"\x1f\x8btruncated") == b"\x1f\x8btruncated"
     assert proxy.decompressed_body(b"\x78garbage") == b"\x78garbage"
+
+
+# ── persistence across restarts ──────────────────────────────────────────────
+#
+# A quarantine held only in memory is re-earned on every restart, at the cost of
+# real client turns — and the proxy restarts on every system activation
+# (measured 04/08/2026: 13 restarts in one day on the desktop). Unlike a
+# Retry-After window, a restored credential verdict is NOT capped: a refused
+# credential does not decay the way a rolling budget does, and the synthetic
+# re-check — which costs no client turn — is what un-sticks it.
+
+
+@pytest.fixture
+def cred_state(tmp_path, monkeypatch):
+    path = tmp_path / "credential-state.json"
+    monkeypatch.setattr(config, "CREDENTIAL_STATE_FILE", str(path))
+    proxy._restored_credentials.clear()
+    yield path
+    proxy._restored_credentials.clear()
+
+
+def test_quarantine_is_written_to_disk(cred_state):
+    proxy._note_bearer_credential("deadP1", _bstate("deadP1"), 403, bytearray(ORG_DISABLED_BODY))
+    on_disk = json.loads(cred_state.read_text())
+    assert on_disk["deadP1"]["ok"] is False
+    assert on_disk["deadP1"]["reason"] == "oauth_not_allowed_for_organization"
+
+
+def test_restart_restores_the_quarantine_without_a_single_dead_turn(cred_state):
+    proxy._note_bearer_credential("deadP2", _bstate("deadP2"), 403, bytearray(ORG_DISABLED_BODY))
+    # Simulate a restart: process-global state is lost, the file is not.
+    config.bearer_state.clear()
+    proxy._restored_credentials.clear()
+    assert not proxy._bearer_credential_dead("deadP2"), "precondition: memory really was cleared"
+    proxy.load_credential_state()
+    assert proxy._bearer_credential_dead("deadP2")
+    acct = {"bearer_id": "deadP2", "label": "A"}
+    assert proxy._account_routing_candidate_score(acct, "x", allow_retry_probe=True) == math.inf
+
+
+def test_recovery_removes_it_from_disk(cred_state):
+    bstate = _bstate("deadP3")
+    proxy._note_bearer_credential("deadP3", bstate, 403, bytearray(ORG_DISABLED_BODY))
+    assert json.loads(cred_state.read_text())
+    proxy._note_bearer_credential("deadP3", bstate, 200, bytearray(b"{}"))
+    assert json.loads(cred_state.read_text()) == {}, "a recovered account must not be resurrected"
+
+
+def test_a_live_verdict_beats_a_restored_one(cred_state):
+    """An in-process 2xx must win over stale disk state."""
+    proxy._restored_credentials["deadP4"] = {"ok": False, "status": 403, "reason": "stale"}
+    bstate = _bstate("deadP4")
+    proxy._note_bearer_credential("deadP4", bstate, 200, bytearray(b"{}"))
+    assert not proxy._bearer_credential_dead("deadP4")
+
+
+def test_no_state_file_configured_is_a_no_op(monkeypatch):
+    monkeypatch.setattr(config, "CREDENTIAL_STATE_FILE", "")
+    proxy._restored_credentials.clear()
+    proxy._note_bearer_credential("deadP5", _bstate("deadP5"), 403, bytearray(ORG_DISABLED_BODY))
+    assert proxy._bearer_credential_dead("deadP5"), "quarantine still works without persistence"
+    proxy.load_credential_state()  # must not raise
+
+
+def test_corrupt_state_file_is_a_clean_start(cred_state):
+    cred_state.write_text("{not json")
+    proxy.load_credential_state()
+    assert proxy._restored_credentials == {}

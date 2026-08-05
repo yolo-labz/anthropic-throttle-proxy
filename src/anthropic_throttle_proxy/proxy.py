@@ -47,6 +47,7 @@ import re
 import socket
 import time
 import zlib
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -1100,10 +1101,58 @@ def _credential_dead_reason(status: int, captured: bytearray | None) -> str:
     return etype if etype in _CREDENTIAL_DEAD_TYPES else ""
 
 
+# Quarantines restored from disk, keyed by bearer id. Consulted only when the
+# live bearer_state carries no verdict, so an in-process decision always wins.
+# NOT seeded into bearer_state directly: entries there are created by the
+# request path with a `clients` map that the hot path indexes unguarded.
+_restored_credentials: dict[str, dict[str, object]] = {}
+
+
+def _credential_state_path() -> Path | None:
+    raw = config.CREDENTIAL_STATE_FILE
+    return Path(os.path.expanduser(raw)) if raw else None
+
+
+def load_credential_state() -> None:
+    """Restore quarantines from disk. Corrupt/missing file is a clean start."""
+    _restored_credentials.clear()
+    path = _credential_state_path()
+    if path is None:
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(raw, dict):
+        return
+    for bid, cred in raw.items():
+        if isinstance(bid, str) and isinstance(cred, dict) and cred.get("ok") is False:
+            _restored_credentials[bid] = dict(cred)
+    if _restored_credentials:
+        log(f"credential-restore bids={','.join(sorted(_restored_credentials))}")
+
+
+def _persist_credential_state() -> None:
+    path = _credential_state_path()
+    if path is None:
+        return
+    live = {bid: cred for bid, cred in _restored_credentials.items() if cred.get("ok") is False}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(json.dumps(live, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        log(f"credential-state-write-error path={path} err={exc!r}")
+
+
 def _bearer_credential(bid: str) -> dict[str, object]:
     bstate = config.bearer_state.get(bid)
     cred = bstate.get("credential") if isinstance(bstate, dict) else None
-    return cred if isinstance(cred, dict) else {}
+    if isinstance(cred, dict):
+        return cred
+    restored = _restored_credentials.get(bid)
+    return restored if isinstance(restored, dict) else {}
 
 
 def _bearer_credential_dead(bid: str) -> bool:
@@ -1129,6 +1178,8 @@ def _quarantine_bearer(
     # and a refused credential has none to give. Drop it so no further client
     # turn is spent as a probe: that election loop IS the reported outage.
     _limiter.clear_retry_probe(bid)
+    _restored_credentials[bid] = dict(bstate["credential"])  # type: ignore[arg-type]
+    _persist_credential_state()
     log(f"credential-dead bid={bid} status={status} reason={reason} detail={detail!r}")
 
 
@@ -1136,6 +1187,8 @@ def _clear_bearer_credential(bid: str, bstate: dict[str, object]) -> None:
     was_dead = _bearer_credential_dead(bid)
     bstate.pop("credential", None)
     bstate.pop("credential_streak", None)
+    if _restored_credentials.pop(bid, None) is not None:
+        _persist_credential_state()
     if was_dead:
         log(f"credential-recovered bid={bid}")
 
@@ -4181,6 +4234,9 @@ def main() -> None:
     _limiter.set_lock(asyncio.Lock())
     # Burst-smoothing lock (process-global, single source of pacing truth).
     _pacing.set_lock(asyncio.Lock())
+    # Restore credential quarantines BEFORE the listener accepts anything, so a
+    # restart cannot re-derive a known-dead account at the cost of client turns.
+    load_credential_state()
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
