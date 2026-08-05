@@ -1615,6 +1615,38 @@ def _route_account_if_enabled(
         # the retry-after reroute path (guarded to configured-only) still owns
         # the "never hop to a stale incoming" invariant. Short holdable windows
         # never land here: the candidate score keeps them routable (PR #106).
+        #
+        # ...UNLESS the incoming credential is REFUSED rather than throttled.
+        # That reasoning above weighs a 429 against a 429; a quarantined bearer
+        # is a different currency. Keeping it guarantees a terminal 403, which
+        # claude-code renders as "your organization has disabled Claude
+        # subscription access" and does NOT retry, while a merely-budget-capped
+        # sibling answers 429 — retryable, and the client already knows how to
+        # wait on it. A live-but-pressured account therefore strictly dominates
+        # a dead one, so take the least-loaded non-quarantined account and
+        # ignore the soft gates that ruled it out.
+        #
+        # Measured on the desktop 05/08/2026: the usage endpoint 429'd for all
+        # three accounts at once (its own per-endpoint limit, unrelated to
+        # whether /v1/messages would serve), which scores every account inf.
+        # With account A quarantined that left no candidates, and the fallback
+        # handed two client turns straight back to the dead credential — the
+        # exact symptom the quarantine exists to prevent, reintroduced through
+        # the back door.
+        if _bearer_credential_dead(incoming_bid):
+            live = [
+                acct
+                for acct in snapshot
+                if isinstance(acct.get("token"), str)
+                and isinstance(acct.get("bearer_id"), str)
+                and not _bearer_credential_dead(str(acct["bearer_id"]))
+            ]
+            if live:
+                selected = min(
+                    live, key=lambda acct: _bearer_local_load_score(str(acct["bearer_id"]))
+                )
+                log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
+                return _route_to_selected_auth(headers, incoming_bid, selected)
         return incoming_bid, None
     selected = min(
         candidates,
