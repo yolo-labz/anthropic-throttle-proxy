@@ -1034,6 +1034,73 @@ async def test_agentic_bulk_stays_on_anthropic_not_kimi(tool_description, monkey
         await anth.close()
 
 
+async def test_small_agentic_turn_routes_to_codex_not_generate(monkeypatch) -> None:
+    """#182: tools + small max_tokens + small body → the floor exempts "code"
+    (not "generate") and it routes to the idle Codex lane, ahead of Anthropic."""
+
+    async def echo_lane(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    codex = await _start_lane(echo_lane)
+    anth = await _start_lane(echo_lane)
+    lanes = {
+        "codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"})),
+        "anthropic": Lane(
+            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
+        ),
+    }
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex", "anthropic"}))
+    try:
+        body = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 512,
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "codex"
+            assert r.headers["x-anthropic-throttle-role"] == "code"
+    finally:
+        await ing.close()
+        await codex.close()
+        await anth.close()
+
+
+async def test_large_agentic_turn_still_forced_to_generate(monkeypatch) -> None:
+    """#182 non-regression: tools + max_tokens over CODE_MAX_TOKENS stays on the
+    original "generate" floor — it must NOT fall through to code just because
+    tools are present."""
+
+    async def echo_lane(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    codex = await _start_lane(echo_lane)
+    anth = await _start_lane(echo_lane)
+    lanes = {
+        "codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"})),
+        "anthropic": Lane(
+            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
+        ),
+    }
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex", "anthropic"}))
+    try:
+        body = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 64_000,
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == "anthropic"
+            assert r.headers["x-anthropic-throttle-role"] == "generate"
+    finally:
+        await ing.close()
+        await codex.close()
+        await anth.close()
+
+
 async def test_generate_queue_wait_retries_on_saturation_503(monkeypatch) -> None:
     """The nix w1W:p4 flip-gate requirement: when the Anthropic lane returns a
     saturation-503 (queue full), the ingress must RETRY (queue-and-wait), not

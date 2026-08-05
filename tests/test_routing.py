@@ -15,6 +15,8 @@ import pytest
 
 from anthropic_throttle_proxy import routing
 from anthropic_throttle_proxy.routing import (
+    CODE_MAX_BODY_BYTES,
+    CODE_MAX_TOKENS,
     ROLE_CHAINS,
     ROLES,
     LaneState,
@@ -23,6 +25,7 @@ from anthropic_throttle_proxy.routing import (
     effective_chain,
     infer_role,
     infer_role_from_body,
+    is_small_agentic_code,
     lane_usable,
     remap_body_model,
     role_from_header,
@@ -114,9 +117,9 @@ def test_infer_role_egress_models_never_client_sent() -> None:
     assert infer_role("kimi-k3") == "generate"
 
 
-def test_roles_are_exactly_the_three_spec_roles() -> None:
-    """Spec 093 defines exactly three roles; guard against silent drift."""
-    assert ROLES == ("generate", "judge", "bulk")
+def test_roles_are_exactly_the_spec_roles() -> None:
+    """Spec 093 defines generate/judge/bulk; #182 adds code. Guard against drift."""
+    assert ROLES == ("generate", "judge", "bulk", "code")
 
 
 def test_drift_deployed_subagent_slot_is_generate_not_bulk() -> None:
@@ -247,12 +250,16 @@ def test_select_lane_missing_state_entry_is_skipped() -> None:
 
 def test_role_chains_anthropic_absent_from_bulk() -> None:
     """Structural guard: Anthropic must not appear in the bulk chain; GLM (the
-    floor) is present in every chain so there's always a cheap fallback."""
+    floor) is present in every TIER-based chain so there's always a cheap
+    fallback. "code" is a class-based offload (#182), not a cost floor — its
+    chain (codex -> anthropic -> deepseek) deliberately has no GLM leg."""
     assert "anthropic" not in ROLE_CHAINS["bulk"]
     assert "anthropic" in ROLE_CHAINS["generate"]
     assert "anthropic" in ROLE_CHAINS["judge"]
-    for role in ROLES:
+    for role in ("generate", "judge", "bulk"):
         assert "glm" in ROLE_CHAINS[role]
+    assert "glm" not in ROLE_CHAINS["code"]
+    assert ROLE_CHAINS["code"][0] == "codex"
 
 
 # ─── gauge logic: bearer_usable / lane_usable ───────────────────────────────
@@ -562,6 +569,76 @@ def test_body_has_tools_invalid_json_returns_false() -> None:
     assert body_has_tools(b"") is False
 
 
+# ─── #182 "code" role — is_small_agentic_code classifier ────────────────────────────
+
+
+def _agentic_body(*, max_tokens: int | None, tools: bool = True, filler: str = "") -> bytes:
+    obj: dict = {"model": "claude-opus-5", "messages": [{"role": "user", "content": filler}]}
+    if tools:
+        obj["tools"] = [{"name": "get_time", "input_schema": {"type": "object"}}]
+    if max_tokens is not None:
+        obj["max_tokens"] = max_tokens
+    return json.dumps(obj).encode()
+
+
+def test_is_small_agentic_code_tools_small_max_tokens_is_code() -> None:
+    assert is_small_agentic_code(_agentic_body(max_tokens=1024)) is True
+    assert is_small_agentic_code(_agentic_body(max_tokens=CODE_MAX_TOKENS)) is True
+
+
+def test_is_small_agentic_code_tools_large_max_tokens_is_not_code() -> None:
+    """Tools + big max_tokens = a real generation, not a quick agentic turn —
+    stays on the existing generate floor."""
+    assert is_small_agentic_code(_agentic_body(max_tokens=CODE_MAX_TOKENS + 1)) is False
+    assert is_small_agentic_code(_agentic_body(max_tokens=64_000)) is False
+
+
+def test_is_small_agentic_code_no_tools_is_not_code() -> None:
+    assert is_small_agentic_code(_agentic_body(max_tokens=1024, tools=False)) is False
+
+
+def test_is_small_agentic_code_large_body_is_not_code() -> None:
+    """A big body (large tool schema / long history) stays off the code lane
+    even with a small max_tokens — CODE_MAX_BODY_BYTES is the other half of
+    "small"."""
+    big = _agentic_body(max_tokens=64, filler="x" * (CODE_MAX_BODY_BYTES + 1))
+    assert len(big) > CODE_MAX_BODY_BYTES
+    assert is_small_agentic_code(big) is False
+
+
+def test_is_small_agentic_code_missing_or_invalid_max_tokens_is_not_code() -> None:
+    assert is_small_agentic_code(_agentic_body(max_tokens=None)) is False
+    assert is_small_agentic_code(_agentic_body(max_tokens=0)) is False
+    assert is_small_agentic_code(_agentic_body(max_tokens=-1)) is False
+
+
+def test_is_small_agentic_code_invalid_json_or_empty_is_not_code() -> None:
+    assert is_small_agentic_code(b"not json") is False
+    assert is_small_agentic_code(b"") is False
+
+
+def test_code_role_chain_leads_with_codex() -> None:
+    """#182: the code chain is class-based offload, not saturation spill —
+    codex first (idle meter), anthropic/deepseek as fallback if codex is down.
+    Not gated behind GENERATE_OVERFLOW (role != "generate")."""
+    assert ROLE_CHAINS["code"] == ("codex", "anthropic", "deepseek")
+    assert effective_chain("code", overflow=False) == ("codex", "anthropic", "deepseek")
+    assert effective_chain("code", overflow=True) == ("codex", "anthropic", "deepseek")
+
+
+def test_select_lane_code_prefers_codex_then_anthropic_then_deepseek() -> None:
+    state = {
+        "codex": _st(True),
+        "anthropic": _st(True),
+        "deepseek": _st(True),
+    }
+    assert select_lane("code", state) == "codex"
+    state["codex"] = _st(False)
+    assert select_lane("code", state) == "anthropic"
+    state["anthropic"] = _st(False)
+    assert select_lane("code", state) == "deepseek"
+
+
 def test_empty_lane_url_retires_the_lane(monkeypatch):
     """A cancelled subscription leaves the router by URL, not by code edit.
 
@@ -572,14 +649,15 @@ def test_empty_lane_url_retires_the_lane(monkeypatch):
     monkeypatch.setenv("INGRESS_KIMI_LANE_URL", "")
     monkeypatch.setenv("INGRESS_GLM_LANE_URL", "   ")
     lanes = routing.default_lanes()
-    assert set(lanes) == {"anthropic", "deepseek"}
+    assert set(lanes) == {"anthropic", "deepseek", "codex"}
 
 
 def test_unset_lane_url_keeps_the_default(monkeypatch):
     monkeypatch.delenv("INGRESS_KIMI_LANE_URL", raising=False)
     monkeypatch.delenv("INGRESS_GLM_LANE_URL", raising=False)
     monkeypatch.delenv("INGRESS_DEEPSEEK_LANE_URL", raising=False)
-    assert set(routing.default_lanes()) == {"anthropic", "kimi", "glm", "deepseek"}
+    monkeypatch.delenv("INGRESS_CODEX_LANE_URL", raising=False)
+    assert set(routing.default_lanes()) == {"anthropic", "kimi", "glm", "deepseek", "codex"}
 
 
 def test_a_retired_lane_can_never_be_selected(monkeypatch):
