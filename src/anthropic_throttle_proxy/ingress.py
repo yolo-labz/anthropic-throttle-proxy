@@ -38,6 +38,7 @@ from .routing import (
     body_has_tools,
     default_lanes,
     infer_role_from_body,
+    is_small_agentic_code,
     lane_usable,
     remap_body_model,
     select_lane,
@@ -283,7 +284,7 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         role = header_role or infer_role_from_body(prefix)
         # Agentic safety floor: a request with `tools` needs a tools-capable
         # lane. Kimi aborts multi-turn tool-use streaming; GLM has path+key
-        # blockers. Force "generate" (Anthropic) regardless of model tier or
+        # blockers. Force a tools-capable role regardless of model tier or
         # header hint — a consumer must not overflow agentic to a lane that
         # can't handle it (nix w1W:p4 pre-flip gate finding).
         #
@@ -297,8 +298,16 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         # widening them would migrate live non-agentic traffic between lanes,
         # which is a routing decision, not this bug. A body too large to buffer
         # at all can't be inspected, so it fails CLOSED to the capable lane.
-        if full_body is None or body_has_tools(full_body):
+        #
+        # #182: a SMALL agentic turn (short max_tokens, small body) becomes
+        # "code" instead of "generate" — Codex is proven tools-capable (real
+        # Codex is agentic by design), so the floor's job (route only to a
+        # lane that can handle tools) is satisfied by "code" too. Everything
+        # else agentic keeps the existing "generate" floor unchanged.
+        if full_body is None:
             role = "generate"
+        elif body_has_tools(full_body):
+            role = "code" if is_small_agentic_code(full_body) else "generate"
         sess_key = session_key_from_body(prefix)
 
     spillable = is_messages and full_body is not None

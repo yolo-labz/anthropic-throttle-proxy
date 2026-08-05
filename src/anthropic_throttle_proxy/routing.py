@@ -13,6 +13,9 @@ infers the request's *role* from the model tier to pick the lane chain later
 - ``generate``  — premium generate: ``opus`` / ``fable``
 - ``judge``     — eval/judge: ``sonnet-5``  (never the small tier)
 - ``bulk``      — subagent/fan-out: ``sonnet-4-6`` / ``haiku``-slot
+- ``code``      — small agentic code task (#182): tool-use + ``max_tokens`` ≤
+  ``CODE_MAX_TOKENS`` + a small body, classified from the BODY not the model
+  tier — offloaded to the (idle) Codex lane ahead of any tier-based role
 
 ### Known drift (NixOS #1330) — resolved at deployment (S7), NOT here
 
@@ -34,11 +37,14 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Final
 
 __all__ = [
     "ROLES",
     "ROLE_CHAINS",
     "GENERATE_OVERFLOW_ENABLED",
+    "CODE_MAX_TOKENS",
+    "CODE_MAX_BODY_BYTES",
     "Lane",
     "LaneState",
     "body_has_tools",
@@ -46,6 +52,7 @@ __all__ = [
     "effective_chain",
     "infer_role",
     "infer_role_from_body",
+    "is_small_agentic_code",
     "bearer_usable",
     "lane_usable",
     "select_lane",
@@ -53,7 +60,7 @@ __all__ = [
     "session_key_from_body",
 ]
 
-ROLES = ("generate", "judge", "bulk")
+ROLES = ("generate", "judge", "bulk", "code")
 
 # Spec 093 S5 invariant 6: don't silently serve a weaker model as Opus. Pre
 # kimi-k3 GA (27/07), the Kimi generate model is kimi-k2.6 — a downgrade from
@@ -89,11 +96,28 @@ GENERATE_OVERFLOW_ENABLED: bool = os.environ.get(
 # (agentic requests forced to "generate") now lands on a lane proven to handle
 # it. Still gated behind GENERATE_OVERFLOW_ENABLED (effective_chain), so the
 # guard is doing its job — this is an explicit opt-in, not a silent downgrade.
+# The Codex lane (#182, 05/08/2026, Pedro-directed) is a CLASS-based offload,
+# not a saturation spill: Codex's own usage meter sits idle while Claude's 7d
+# window is tight, so a "code" request (small agentic turn — see
+# ``is_small_agentic_code``) goes there FIRST regardless of whether Anthropic
+# is capped. Anthropic/DeepSeek stay as fallback in case the Codex lane itself
+# is down. Deliberately NOT gated behind GENERATE_OVERFLOW_ENABLED — that flag
+# only guards the "generate" branch of ``effective_chain``, so "code" always
+# walks its full chain.
 ROLE_CHAINS: dict[str, tuple[str, ...]] = {
     "generate": ("anthropic", "deepseek", "kimi", "glm"),
     "judge": ("anthropic", "glm", "kimi"),
     "bulk": ("deepseek", "kimi", "glm"),  # Anthropic deliberately absent
+    "code": ("codex", "anthropic", "deepseek"),
 }
+
+# #182: thresholds for the "code" role classifier (see ``is_small_agentic_code``).
+# "Small agentic code task" = a short, cheap agentic turn Codex's idle meter can
+# absorb — NOT the large tool-schema/long-history turns generate/judge/bulk
+# already route correctly. Both env-overridable so the fleet can retune the
+# class boundary without a code change.
+CODE_MAX_TOKENS: Final[int] = int(os.environ.get("INGRESS_CODE_MAX_TOKENS", "4096"))
+CODE_MAX_BODY_BYTES: Final[int] = int(os.environ.get("INGRESS_CODE_MAX_BODY_BYTES", str(32 * 1024)))
 
 
 @dataclass(frozen=True)
@@ -132,8 +156,8 @@ class LaneState:
 
 
 def default_lanes() -> dict[str, Lane]:
-    """The four-lane fleet (Spec 093 + #169 + #181). URLs env-overridable for
-    test/non-local deploys.
+    """The five-lane fleet (Spec 093 + #169 + #181 + #182). URLs env-overridable
+    for test/non-local deploys.
 
     Egress model ids (S4 remap): Anthropic keeps the client's ``claude-*``; Kimi
     expects Moonshot ids (kimi-k3 for generate — GA 27/07; kimi-k2.6 for bulk/judge,
@@ -178,6 +202,19 @@ def default_lanes() -> dict[str, Lane]:
             os.environ.get("INGRESS_DEEPSEEK_LANE_URL", "http://127.0.0.1:8768"),
             frozenset({"bulk", "generate"}),
             models=deepseek_models,
+            proxy_owns_key=True,
+        ),
+        # #182: the claude-code-proxy sidecar (raine/claude-code-proxy) speaks
+        # Anthropic Messages and translates to the OpenAI Responses API itself
+        # (claude-* -> gpt-* alias table), so no ``models`` remap on our side
+        # — empty mapping (like Anthropic) forwards the client's id verbatim
+        # and the sidecar does the rest. proxy_owns_key=True: the sidecar holds
+        # its own OAuth/ChatGPT session (device-flow consent, Pedro's step),
+        # not a per-client bearer.
+        "codex": Lane(
+            "codex",
+            os.environ.get("INGRESS_CODEX_LANE_URL", "http://127.0.0.1:8769"),
+            frozenset({"code"}),
             proxy_owns_key=True,
         ),
     }
@@ -435,6 +472,42 @@ def body_has_tools(raw: bytes) -> bool:
         return False
     tools = obj.get("tools")
     return isinstance(tools, list) and len(tools) > 0
+
+
+def is_small_agentic_code(raw: bytes) -> bool:
+    """True when ``raw`` is a "small agentic code task" (#182 "code" role).
+
+    Requires ALL of:
+    - ``body_has_tools(raw)`` (agentic — Codex's whole reason to exist here)
+    - ``len(raw) <= CODE_MAX_BODY_BYTES`` (small body — large tool-schema/
+      long-history turns stay on the existing generate/judge/bulk chains)
+    - a present, positive, integer ``max_tokens`` ≤ ``CODE_MAX_TOKENS`` (a
+      short turn, not a big generation Codex's meter shouldn't eat)
+
+    Any parse failure, or a body too large to even hold under
+    ``CODE_MAX_BODY_BYTES``, returns False — fails INTO the existing
+    body_has_tools floor (generate), never claims the "code" role on
+    ambiguous input. Callers must pass the FULL buffered body, not a
+    truncated prefix (same truncation-safety reasoning as the
+    ``body_has_tools`` call site in ``ingress.py``): a prefix cut mid-JSON is
+    invalid, and this function already fails closed on that, but a truncated
+    ``tools``/``max_tokens`` read could otherwise misclassify a large body as
+    small.
+    """
+    if not raw or len(raw) > CODE_MAX_BODY_BYTES:
+        return False
+    if not body_has_tools(raw):
+        return False
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return False
+    if not isinstance(obj, dict):
+        return False
+    max_tokens = obj.get("max_tokens")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
+        return False
+    return 0 < max_tokens <= CODE_MAX_TOKENS
 
 
 # The role-override header may only DOWNGRADE to a cheaper lane, never CLAIM the

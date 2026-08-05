@@ -1034,6 +1034,47 @@ async def test_agentic_bulk_stays_on_anthropic_not_kimi(tool_description, monkey
         await anth.close()
 
 
+@pytest.mark.parametrize(
+    "max_tokens,expect_lane,expect_role",
+    [(512, "codex", "code"), (64_000, "anthropic", "generate")],
+    ids=["small-max-tokens-goes-code", "large-max-tokens-stays-generate"],
+)
+async def test_agentic_turn_floor_splits_code_vs_generate_by_size(
+    max_tokens, expect_lane, expect_role, monkeypatch
+) -> None:
+    """#182: the agentic safety floor routes a small tool-use turn to the idle
+    Codex lane ("code") and a large one to the original "generate" floor — it
+    must not fall through to code just because tools are present."""
+
+    async def echo_lane(_request: web.Request) -> web.Response:
+        return web.Response(status=200, body=b"ok")
+
+    codex = await _start_lane(echo_lane)
+    anth = await _start_lane(echo_lane)
+    lanes = {
+        "codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"})),
+        "anthropic": Lane(
+            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
+        ),
+    }
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex", "anthropic"}))
+    try:
+        body = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": max_tokens,
+            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
+            assert r.status == 200
+            assert r.headers["x-anthropic-throttle-lane"] == expect_lane
+            assert r.headers["x-anthropic-throttle-role"] == expect_role
+    finally:
+        await ing.close()
+        await codex.close()
+        await anth.close()
+
+
 async def test_generate_queue_wait_retries_on_saturation_503(monkeypatch) -> None:
     """The nix w1W:p4 flip-gate requirement: when the Anthropic lane returns a
     saturation-503 (queue full), the ingress must RETRY (queue-and-wait), not
