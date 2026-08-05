@@ -588,7 +588,14 @@ async def _collect_view() -> dict[str, object]:
                 # Retry-After, so every "idlest account" ranking reads it as
                 # the freest thing on the fleet. The proxy already quarantines
                 # it (#168); the page has to say so.
-                "credential": bstate.get("credential"),
+                # `_bearer_credential`, not `bstate["credential"]`: a restart
+                # restores the quarantine into `_restored_credentials` and
+                # leaves bearer_state clean, so reading bstate alone showed a
+                # 403-refused account as healthy until it happened to be
+                # re-probed. /__throttle/health already reads it this way —
+                # measured live 05/08/2026, the page offered the org-dead
+                # account as "takes traffic next" right after a restart.
+                "credential": _proxy._bearer_credential(bid) or None,
                 "limiter": lim.snapshot() if lim is not None else None,
             }
         )
