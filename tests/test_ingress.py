@@ -1034,6 +1034,26 @@ async def test_agentic_bulk_stays_on_anthropic_not_kimi(tool_description, monkey
         await anth.close()
 
 
+def _small_agentic_body(max_tokens: int) -> dict:
+    """Shared #182/#184 fixture: a tool-use POST /v1/messages body, size-varied
+    only by max_tokens (the axis is_small_agentic_code classifies on)."""
+    return {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": max_tokens,
+        "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+
+
+def _codex_and_anthropic_lanes(codex_url: str, anth_url: str) -> dict:
+    """Shared #182/#184 fixture: the two-lane {codex, anthropic} config the code
+    role's floor/spill tests exercise."""
+    return {
+        "codex": Lane("codex", codex_url.rstrip("/"), frozenset({"code"})),
+        "anthropic": Lane("anthropic", anth_url.rstrip("/"), frozenset({"generate", "judge"})),
+    }
+
+
 @pytest.mark.parametrize(
     "max_tokens,expect_lane,expect_role",
     [(512, "codex", "code"), (64_000, "anthropic", "generate")],
@@ -1051,20 +1071,10 @@ async def test_agentic_turn_floor_splits_code_vs_generate_by_size(
 
     codex = await _start_lane(echo_lane)
     anth = await _start_lane(echo_lane)
-    lanes = {
-        "codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"})),
-        "anthropic": Lane(
-            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
-        ),
-    }
+    lanes = _codex_and_anthropic_lanes(str(codex.make_url("")), str(anth.make_url("")))
     ing = await _boot_ingress(monkeypatch, lanes, _open_state({"codex", "anthropic"}))
     try:
-        body = {
-            "model": "claude-sonnet-4-6",
-            "max_tokens": max_tokens,
-            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
-            "messages": [{"role": "user", "content": "hi"}],
-        }
+        body = _small_agentic_body(max_tokens)
         async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
             assert r.status == 200
             assert r.headers["x-anthropic-throttle-lane"] == expect_lane
@@ -1164,23 +1174,17 @@ async def test_code_role_on_codex_429(with_anthropic_fallback, monkeypatch) -> N
         return web.Response(status=200, body=b"ok")
 
     codex = await _start_lane(codex_429)
-    lanes = {"codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"}))}
-    open_ids = {"codex"}
     anth = None
+    open_ids = {"codex"}
     if with_anthropic_fallback:
         anth = await _start_lane(anthropic_ok)
-        lanes["anthropic"] = Lane(
-            "anthropic", str(anth.make_url("")).rstrip("/"), frozenset({"generate", "judge"})
-        )
+        lanes = _codex_and_anthropic_lanes(str(codex.make_url("")), str(anth.make_url("")))
         open_ids.add("anthropic")
+    else:
+        lanes = {"codex": Lane("codex", str(codex.make_url("")).rstrip("/"), frozenset({"code"}))}
     ing = await _boot_ingress(monkeypatch, lanes, _open_state(open_ids))
     try:
-        body = {
-            "model": "claude-sonnet-4-6",
-            "max_tokens": 512,
-            "tools": [{"name": "get_time", "input_schema": {"type": "object"}}],
-            "messages": [{"role": "user", "content": "hi"}],
-        }
+        body = _small_agentic_body(512)
         async with ing.post("/v1/messages", json=body, headers={"Authorization": "Bearer t"}) as r:
             if with_anthropic_fallback:
                 assert r.status == 200  # spilled from codex (429) → anthropic
