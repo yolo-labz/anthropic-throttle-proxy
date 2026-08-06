@@ -6,6 +6,50 @@ host activation. Latest incident first.
 
 ---
 
+## 05-06/08/2026 - S7 SHIPPED: the fleet is on the :8760 ingress; lane reality table + codex health-404 finding
+
+The Spec 093 S7 "Nix deploy + fleet flip" that the section below still calls
+Pedro-gated is DONE: NixOS #1339 deployed the ingress consumer and #1379 cut the
+fleet base URL over to :8760 (uptime ~19.5 h at 06/08 14:00 BRT, 2880 served,
+status ok, default lane :8765). Read the sections below as history — the flip
+happened off-impact, without an incident.
+
+### Lane reality table (06/08 14:00 BRT — probe each before trusting any doc)
+
+| Lane | Port | Service | Live state |
+|---|---|---|---|
+| ingress | 8760 | `ingress-throttle-proxy.service` | ok, uptime ~19.5 h, 2880 served, default lane :8765 |
+| anthropic | 8765 | `anthropic-throttle-proxy.service` | egress ok, fair, max_concurrent 5, 2326 served |
+| deepseek | 8768 | `deepseek-throttle-proxy.service` | egress + auth ok, fair, max 6, 627 served (`https://api.deepseek.com/anthropic`) |
+| codex | 8769 | `codex-lane-proxy.service` (claude-code-proxy 0.1.30, CCP) | RUNNING, but the ingress marks it **closed: health-404** — see finding below |
+| glm/z.ai | 8766 | retired (z.ai cancelled 31/07) | **not listening** |
+| kimi | 8767 | suspended (Moonshot account) | **not listening** |
+
+Ingress lane verdicts at probe time: `codex: closed (health-404)`, `deepseek:
+open`, `anthropic: open`. The retirement path (empty `INGRESS_*_LANE_URL` drops
+the lane, #166) is what keeps glm/kimi out of the payload entirely.
+
+### Finding — codex lane health-probe shape mismatch (health-404)
+
+The ingress probes every lane's `url + /__throttle/health` (`Lane.health_url`
+default in `routing.py`). claude-code-proxy on :8769 serves `/healthz` → 200
+with `{"ok": true}` and 404s `/__throttle/health`, and `lane_usable` expects the
+throttle-proxy `upstream_egress_ok` shape — so the codex lane NEVER opens and
+`code`-role traffic never reaches it, which defeats #182/#184. Fix: per-lane
+health URL override (codex defaults to `/healthz`) + body-shape normalization at
+the probe boundary. The docs-side reconciliation (this table) is the THRTL-2
+slice; the code fix is the THRTL-6 slice.
+
+### Corrections applied 06/08
+
+- S3/S4/S5 bullets + the "verified models" line below still name the kimi/glm
+  chains; updated to the live chain set (anthropic / deepseek / codex;
+  bulk+generate → deepseek, code → codex, generate → anthropic).
+- NixOS canon already reflects reality (`codex-lane-proxy.nix` port map); the
+  throttle repo docs were the laggards.
+
+---
+
 ## 23-24/07/2026 - Spec 093 unified `:8760` ingress — proxy-side COMPLETE (S1–S6 merged), S7 = Nix deploy (Pedro-gated)
 
 The "never run out of AI" router. **Proxy-side done: 6 merged PRs (#132–#137).**
@@ -16,12 +60,12 @@ claude-code tab; the Nix tab stated ":8760 stays on its schedule").
 ### What shipped (all in `src/anthropic_throttle_proxy/{ingress,routing}.py`)
 - **S1 #132** — `:8760` ingress skeleton; forwards to a default lane byte-identical; opt-in, no-op-when-unset.
 - **S2 #133** — role inference (generate/judge/bulk) from the model; bounded body read.
-- **S3 #134** — gauge-driven lane selection; walks the role's chain (anthropic→kimi→glm; bulk never anthropic); polls each lane's `/__throttle/health`; auto-advances on a lock.
-- **S4 #135** — model-remap on egress (`claude-*`→`kimi-k2.6`/`glm-5.2`); session stickiness (`metadata.user_id`); **root fix: strip `Content-Length`** (remap changes body length → stale CL hung the lane).
-- **S5 #136** — `GENERATE_OVERFLOW_ENABLED` (default false = pre-kimi-k3 GA): generate is Anthropic-only, HOLDs (`503 ingress-generate-held`) rather than silently downgrading to kimi/GLM as Opus. Bulk/judge keep full chains.
+- **S3 #134** — gauge-driven lane selection; walks the role's chain; polls each lane's health endpoint; auto-advances on a lock. (Lane set as of 06/08: anthropic/deepseek/codex — glm/kimi retired via #166; see the top handoff entry.)
+- **S4 #135** — model-remap on egress (`claude-*`→`kimi-k2.6`/`glm-5.2` at the time; deepseek-v4-flash for the deepseek lane today); session stickiness (`metadata.user_id`); **root fix: strip `Content-Length`** (remap changes body length → stale CL hung the lane).
+- **S5 #136** — `GENERATE_OVERFLOW_ENABLED` (default false): generate is Anthropic-only, HOLDs (`503 ingress-generate-held`) rather than silently downgrading as Opus. Bulk/judge keep full chains.
 - **S6 #137** — `ingress_route_decisions_total{role,lane}` counter + `GET /metrics`.
 
-Verified models (23/07 live probes): Kimi accepts `kimi-k2.6`; GLM accepts `glm-5.2`; `kimi-k3` (generate overflow) GA 27/07.
+Verified models (23/07 live probes, historical): Kimi accepted `kimi-k2.6`; GLM accepted `glm-5.2`; `kimi-k3` (generate overflow) GA 27/07. **Both lanes are retired as of 31/07–05/08 — see the top handoff entry for the live lane table.**
 
 ### Gate calibration (IMPORTANT)
 Cross-family gate ran on **GROQ `openai/gpt-oss-120b`** (codex quota-dead till 28/07, Anthropic lane degraded). GROQ is weaker than codex/claude: it **missed a real CodeQL-high ReDoS** (`\s*` regex anchors on S2) that **CodeQL caught** — fixed. It also issued a false-read BLOCKER on S4 (claimed the `content-length` filter is case-sensitive; it does `.lower()`). **S1–S6 flagged for the mandatory codex re-review when it recovers (28/07).** Lean on CodeQL, not GROQ, for the bar.
