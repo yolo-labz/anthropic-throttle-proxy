@@ -3,6 +3,13 @@
 **Status:** slice 2 of the "invisible throttle" north-star (slice 1 = PR #91,
 usage-poller self-429 backoff, merged `dffd56e`).
 
+**Triage 06/08/2026 (THRTL-4): KEEP OPEN — not superseded.** #149–#151
+(reroute-on-pushback) and #184 (codex 429-spill) cover the *reroute/spill*
+half — a sibling lane to escape to. The keepalive-hold mechanism covers the
+other half: ALL lanes capped/backing off, park internally while the SSE
+stream stays alive, emit a terminal SSE error on budget exhaustion. Still
+unshipped; T001–T003 remain the slice-2 backlog.
+
 ## Problem (live-diagnosed 10/07/2026, `/metrics` + journal)
 
 Claude Code shows two retry banners whenever the proxy hands the SDK a
