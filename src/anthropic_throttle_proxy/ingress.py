@@ -549,8 +549,10 @@ async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
             # CCP sidecar (codex lane) reports {"ok": bool} instead of the
             # throttle-proxy upstream_egress_ok shape (health-404 finding,
             # 06/08) — normalize at the boundary so lane_usable's shared
-            # verdict logic sees one schema. Only fires for non-proxy shapes.
-            if "upstream_egress_ok" not in body and "ok" in body:
+            # verdict logic sees one schema. Scoped to the codex lane (codex
+            # review MINOR): a non-codex lane with {"ok": ...} must NOT flip
+            # to healthy.
+            if lane.id == "codex" and "upstream_egress_ok" not in body and "ok" in body:
                 body = {**body, "upstream_egress_ok": body.get("ok") is True}
     except aiohttp.ClientError:
         lane_state[lane.id] = LaneState(False, now, "unreachable")

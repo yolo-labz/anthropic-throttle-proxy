@@ -679,6 +679,33 @@ async def test_s3_ccp_health_shape_not_ok_closed(monkeypatch) -> None:
     assert st.detail == "upstream-egress-down"
 
 
+async def test_s3_ccp_shape_not_normalized_for_non_codex_lane(monkeypatch) -> None:
+    """Codex review MINOR (06/08): the {"ok": ...} normalization is scoped to
+    the codex lane — a non-codex lane answering {"ok": true} must stay closed
+    (upstream-egress-down), not flip to healthy."""
+    import aiohttp as _aiohttp
+
+    async def ccp_health(_request: web.Request) -> web.Response:
+        return web.Response(status=200, content_type="application/json", text='{"ok": true}')
+
+    app = web.Application()
+    app.router.add_get("/healthz", ccp_health)
+    lane = TestClient(TestServer(app))
+    await lane.start_server()
+    target_lane = Lane(
+        "anthropic",
+        str(lane.make_url("")).rstrip("/"),
+        frozenset({"generate"}),
+        health_url=str(lane.make_url("")).rstrip("/") + "/healthz",
+    )
+    async with _aiohttp.ClientSession() as session:
+        await ingress._poll_one_lane(session, target_lane)
+    await lane.close()
+    st = ingress.lane_state.get("anthropic")
+    assert st is not None and st.open is False
+    assert st.detail == "upstream-egress-down"
+
+
 async def test_s3_all_lanes_capped_yields_503(monkeypatch) -> None:
     """S5: a bulk role with every lane closed → 503 all-lanes-capped (no downgrade
     possible — bulk is already the cheap lanes). Generate-all-capped is the S5
