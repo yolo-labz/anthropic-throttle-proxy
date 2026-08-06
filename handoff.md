@@ -16,12 +16,12 @@ claude-code tab; the Nix tab stated ":8760 stays on its schedule").
 ### What shipped (all in `src/anthropic_throttle_proxy/{ingress,routing}.py`)
 - **S1 #132** — `:8760` ingress skeleton; forwards to a default lane byte-identical; opt-in, no-op-when-unset.
 - **S2 #133** — role inference (generate/judge/bulk) from the model; bounded body read.
-- **S3 #134** — gauge-driven lane selection; walks the role's chain (anthropic→kimi→glm; bulk never anthropic); polls each lane's `/__throttle/health`; auto-advances on a lock.
-- **S4 #135** — model-remap on egress (`claude-*`→`kimi-k2.6`/`glm-5.2`); session stickiness (`metadata.user_id`); **root fix: strip `Content-Length`** (remap changes body length → stale CL hung the lane).
-- **S5 #136** — `GENERATE_OVERFLOW_ENABLED` (default false = pre-kimi-k3 GA): generate is Anthropic-only, HOLDs (`503 ingress-generate-held`) rather than silently downgrading to kimi/GLM as Opus. Bulk/judge keep full chains.
+- **S3 #134** — gauge-driven lane selection; walks the role's chain; polls each lane's health endpoint; auto-advances on a lock. (Lane set as of 06/08: anthropic/deepseek/codex — glm/kimi retired via #166; see the top handoff entry.)
+- **S4 #135** — model-remap on egress (`claude-*`→`kimi-k2.6`/`glm-5.2` at the time; deepseek-v4-flash for the deepseek lane today); session stickiness (`metadata.user_id`); **root fix: strip `Content-Length`** (remap changes body length → stale CL hung the lane).
+- **S5 #136** — `GENERATE_OVERFLOW_ENABLED` (default false): generate is Anthropic-only, HOLDs (`503 ingress-generate-held`) rather than silently downgrading as Opus. Bulk/judge keep full chains.
 - **S6 #137** — `ingress_route_decisions_total{role,lane}` counter + `GET /metrics`.
 
-Verified models (23/07 live probes): Kimi accepts `kimi-k2.6`; GLM accepts `glm-5.2`; `kimi-k3` (generate overflow) GA 27/07.
+Verified models (23/07 live probes, historical): Kimi accepted `kimi-k2.6`; GLM accepted `glm-5.2`; `kimi-k3` (generate overflow) GA 27/07. **Both lanes are retired as of 31/07–05/08 — see the top handoff entry for the live lane table.**
 
 ### Gate calibration (IMPORTANT)
 Cross-family gate ran on **GROQ `openai/gpt-oss-120b`** (codex quota-dead till 28/07, Anthropic lane degraded). GROQ is weaker than codex/claude: it **missed a real CodeQL-high ReDoS** (`\s*` regex anchors on S2) that **CodeQL caught** — fixed. It also issued a false-read BLOCKER on S4 (claimed the `content-length` filter is case-sensitive; it does `.lower()`). **S1–S6 flagged for the mandatory codex re-review when it recovers (28/07).** Lean on CodeQL, not GROQ, for the bar.
