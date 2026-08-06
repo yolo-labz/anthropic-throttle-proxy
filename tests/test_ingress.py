@@ -624,6 +624,61 @@ async def test_s3_oversized_lane_health_marked_closed(monkeypatch) -> None:
     assert st.detail == "health-oversized"
 
 
+async def test_s3_ccp_health_shape_normalized_open(monkeypatch) -> None:
+    """06/08 health-404 finding: a lane answering {"ok": true} (CCP sidecar
+    shape) at its health URL must be marked open — the probe normalizes the
+    body to the throttle-proxy upstream_egress_ok schema at the boundary."""
+    import aiohttp as _aiohttp
+
+    async def ccp_health(_request: web.Request) -> web.Response:
+        return web.Response(status=200, content_type="application/json", text='{"ok": true}')
+
+    app = web.Application()
+    app.router.add_get("/healthz", ccp_health)
+    lane = TestClient(TestServer(app))
+    await lane.start_server()
+    target_lane = Lane(
+        "codex",
+        str(lane.make_url("")).rstrip("/"),
+        frozenset({"code"}),
+        proxy_owns_key=True,
+        health_url=str(lane.make_url("")).rstrip("/") + "/healthz",
+    )
+    async with _aiohttp.ClientSession() as session:
+        await ingress._poll_one_lane(session, target_lane)
+    await lane.close()
+    st = ingress.lane_state.get("codex")
+    assert st is not None and st.open is True
+    assert st.detail == "no-bearers-proxy-owns-key"
+
+
+async def test_s3_ccp_health_shape_not_ok_closed(monkeypatch) -> None:
+    """The CCP shape with ok: false must close the lane (upstream-egress-down),
+    not read as healthy."""
+    import aiohttp as _aiohttp
+
+    async def ccp_health(_request: web.Request) -> web.Response:
+        return web.Response(status=200, content_type="application/json", text='{"ok": false}')
+
+    app = web.Application()
+    app.router.add_get("/healthz", ccp_health)
+    lane = TestClient(TestServer(app))
+    await lane.start_server()
+    target_lane = Lane(
+        "codex",
+        str(lane.make_url("")).rstrip("/"),
+        frozenset({"code"}),
+        proxy_owns_key=True,
+        health_url=str(lane.make_url("")).rstrip("/") + "/healthz",
+    )
+    async with _aiohttp.ClientSession() as session:
+        await ingress._poll_one_lane(session, target_lane)
+    await lane.close()
+    st = ingress.lane_state.get("codex")
+    assert st is not None and st.open is False
+    assert st.detail == "upstream-egress-down"
+
+
 async def test_s3_all_lanes_capped_yields_503(monkeypatch) -> None:
     """S5: a bulk role with every lane closed → 503 all-lanes-capped (no downgrade
     possible — bulk is already the cheap lanes). Generate-all-capped is the S5

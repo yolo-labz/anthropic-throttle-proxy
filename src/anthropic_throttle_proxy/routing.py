@@ -216,6 +216,12 @@ def default_lanes() -> dict[str, Lane]:
             os.environ.get("INGRESS_CODEX_LANE_URL", "http://127.0.0.1:8769"),
             frozenset({"code"}),
             proxy_owns_key=True,
+            # The CCP sidecar does not serve /__throttle/health (health-404
+            # finding, 06/08): it answers /healthz -> 200 {"ok": true}. The
+            # probe normalizes that shape at the boundary (ingress._poll_one_lane).
+            health_url=os.environ.get(
+                "INGRESS_CODEX_LANE_HEALTH_URL", "http://127.0.0.1:8769/healthz"
+            ),
         ),
     }
     # An EXPLICITLY empty lane URL retires that lane: it is not built, so it
