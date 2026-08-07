@@ -2445,6 +2445,12 @@ async def _keepalive_hold_and_retry(
             # round-3 MAJOR — the same post-prepare footgun, one level down).
             log(f"keepalive-emitter-error bid={bid}: {ka_err!r}")
 
+    # Counted from HERE, not from function entry: everything above (prepare,
+    # emitter spawn) can still raise, and a raise before the try never reaches
+    # the finally that decrements. Health reads this to answer "is the proxy
+    # holding streams open right now" — the one hold signal a scrape cannot get
+    # from the terminal-only holds_total counter (spec 092 T003).
+    state["keepalive_holds_active"] = int(state["keepalive_holds_active"]) + 1
     try:
         # The throttle that triggered the hold is a real throttle event: apply
         # its AIMD once (canonical _aimd_feedback — 529 + a marked queue-timeout
@@ -2587,6 +2593,12 @@ async def _keepalive_hold_and_retry(
         attempt.response = sse_resp
         return sse_resp
     finally:
+        # The floor is not covering a double-decrement (increment and decrement
+        # pair exactly, one statement each, neither behind an await). It covers
+        # the counter being zeroed underneath an open hold — which no production
+        # path does, but the per-test `state.update({...})` resetters do — where
+        # a bare decrement would leave a negative that sticks forever.
+        state["keepalive_holds_active"] = max(0, int(state["keepalive_holds_active"]) - 1)
         # Belt-and-suspenders: the emitter must NEVER outlive this call (leaked
         # task / SSE dribble to a dead client). Every normal exit already awaited
         # its cancel; this covers any path that did not.
@@ -4151,6 +4163,11 @@ async def health(_request: web.Request) -> web.Response:
         "inflight": state["inflight"],
         "queued": state["queued"],
         "served": state["served"],
+        # Streams currently parked in a keepalive-hold. Distinct from inflight:
+        # a held request has already been answered 200 and is being kept alive
+        # while the proxy retries behind it, so it is invisible to every other
+        # counter here (spec 092 T003).
+        "keepalive_holds_active": state["keepalive_holds_active"],
         "client_disconnects": state["client_disconnects"],
         "upstream_retries": state["upstream_retries"],
         "max_concurrent": config.MAX_CONCURRENT,

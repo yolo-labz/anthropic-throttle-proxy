@@ -6,6 +6,38 @@ host activation. Latest incident first.
 
 ---
 
+## 07/08/2026 - spec 092 was shipped a month ago; the checkboxes lied (THRTL-4)
+
+THRTL-4 asked for "Spec 092 T001 execution". T001 was already in `main` — and so
+were T002 and most of T003. `git log -S'_keepalive_hold_and_retry'` returns a
+single commit, `9effe22` (PR #92, 11/07/2026), which carried the emitter, the
+forward-path wiring, both config knobs, the `/ui/config` hot-tune entries, the
+`anthropic_keepalive_holds_total` counter, and the 36-test acceptance file.
+`uv run pytest tests/test_keepalive_hold.py` passes 36/36 on that untouched
+code. What actually drove the mis-triage: `specs/092-sse-keepalive-hold/tasks.md`
+still had `- [ ]` on all three tasks, and the spec header said "Still unshipped",
+so every reader since has re-filed the same work. **Before implementing from a
+spec in this repo, grep `src/` for the symbols the task names.** I nearly rebuilt
+the emitter from scratch.
+
+One real gap survived the check: T003's *"surface an active in-flight-holds gauge
+in `/__throttle/health`"*. The knobs were hot-tunable but health had no hold
+field, so during a saturation window nothing could answer "is the proxy holding
+streams open right now" — `anthropic_keepalive_holds_total` only moves when a
+hold ENDS. PR #187 adds `state["keepalive_holds_active"]` (incremented at the
+hold's `try`, decremented in its existing `finally`, floored at 0) and renders it
+in health. Falsifier, run both ways: with the increment stubbed out the new test
+fails `assert 0 == 1` while a hold is demonstrably open; with it, 37/37 pass.
+
+Also re-checked this pass (next-3 item 3, no drift): `~/NixOS/modules/home/
+codex-lane-proxy.nix:139` documents the port block as 8765 Anthropic / 8766 z.ai
+(retired) / 8767 Kimi / 8768 DeepSeek / 8769 Codex, which matches the lane table
+below exactly. Live `:8760/__throttle/health` now reports `codex open=true`
+(`no-bearers-proxy-owns-key`), `deepseek open`, `anthropic open` — so the #186 /
+NixOS #1681 codex-lane fix is deployed and the health-404 row below is history.
+
+---
+
 ## 05-06/08/2026 - S7 SHIPPED: the fleet is on the :8760 ingress; lane reality table + codex health-404 finding
 
 The Spec 093 S7 "Nix deploy + fleet flip" that the section below still calls
