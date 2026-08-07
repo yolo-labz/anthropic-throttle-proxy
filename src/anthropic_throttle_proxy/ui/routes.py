@@ -640,6 +640,11 @@ async def _collect_view() -> dict[str, object]:
         "status": status,
         "inflight": _proxy.state["inflight"],
         "queued": _proxy.state["queued"],
+        # Streams parked in an SSE keepalive-hold. Peer of inflight/queued, not
+        # a total: a held request is already answered 200 and is counted by
+        # neither, so without this row the operator's screen shows an idle proxy
+        # while it is holding streams open (spec 092 T003).
+        "holds": _proxy.state["keepalive_holds_active"],
         "served": _proxy.state["served"],
         "disconnects": _proxy.state["client_disconnects"],
         "retries": _proxy.state["upstream_retries"],

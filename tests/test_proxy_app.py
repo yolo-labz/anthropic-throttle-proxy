@@ -1847,6 +1847,32 @@ async def test_ui_stats_partial_renders(client: TestClient) -> None:
     assert resp.status == 200
 
 
+async def test_ui_stats_shows_open_keepalive_holds(client: TestClient) -> None:
+    """A held stream is legible on the operator's screen, not just in health.
+
+    A hold is answered 200 and counted by neither inflight nor queued, so with
+    holds open the dashboard read as an idle proxy. Falsifier: drop the `holds`
+    row from the view or the template and the "held" figure disappears while a
+    hold is demonstrably open.
+    """
+    from anthropic_throttle_proxy import config
+
+    # Anchor on the rendered fragment, not the bare word: the partial also says
+    # "fleet has held this verdict" in the status strip.
+    before = await (await client.get("/ui/stats")).text()
+    assert "</b> held" not in before, "held figure rendered with no hold open"
+
+    config.state["keepalive_holds_active"] = 2
+    try:
+        during = await (await client.get("/ui/stats")).text()
+        assert ">2</b> held" in during, f"open holds not rendered: {during[:400]!r}"
+    finally:
+        config.state["keepalive_holds_active"] = 0
+
+    after = await (await client.get("/ui/stats")).text()
+    assert "</b> held" not in after
+
+
 async def test_ui_advisor_disabled_renders_inline_error(client: TestClient, monkeypatch) -> None:
     """Disabled advisor returns 200 with an HTML error partial so HTMX swaps
     it into #advisor-out instead of silently dropping the response on
