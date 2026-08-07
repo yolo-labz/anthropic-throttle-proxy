@@ -4,7 +4,16 @@ Dependency-ordered. Each task is one atomic PR (plan → eval → build+verify �
 multi-model adversarial panel → squash-merge). Flip `[ ]`→`[x]` only on a
 merged slice.
 
-- [ ] T001 Keepalive-emitter primitive — add a helper that, given a `.prepared`
+**All three shipped.** T001+T002 and the hot-tune half of T003 landed together
+in `9effe22` (PR #92, 11/07/2026); the boxes were simply never flipped, which
+is what made the 06/08 THRTL-4 triage read the slice as unshipped backlog. The
+only piece genuinely missing was T003's in-flight-holds gauge — added in PR
+#187 along with these ticks. Evidence: `uv run pytest tests/test_keepalive_hold.py`
+= 37 passed; `_emit_keepalive_frames` / `_keepalive_hold_and_retry` in
+`proxy.py`, reached from the forward path at the `config.KEEPALIVE_HOLD` gate;
+both knobs in `config.EDITABLE_KNOBS`.
+
+- [x] T001 Keepalive-emitter primitive — add a helper that, given a `.prepared`
   aiohttp `StreamResponse`, writes SSE `: keepalive\n\n` comment frames every
   `THROTTLE_KEEPALIVE_INTERVAL_MS` (new config knob, default 10000) until
   cancelled, and a helper that writes a terminal SSE `event: error\ndata: {…}`
@@ -17,7 +26,7 @@ merged slice.
   stops cleanly on cancellation (no partial write). No behavior change to the
   request path.
 
-- [ ] T002 Wire the keepalive-hold into the forward path (depends: T001) — for a
+- [x] T002 Wire the keepalive-hold into the forward path (depends: T001) — for a
   STREAMING `POST /v1/messages` (parsed `stream:true`) within a non-zero
   wait-budget facing a TRANSIENT throttle (529, central queue-timeout 503, or
   concurrency 503/429), prepare the 200 `text/event-stream` client response,
@@ -37,7 +46,7 @@ merged slice.
   bound-exhausted→SSE error not socket close) are REQUIRED and must fail without
   the fix.
 
-- [ ] T003 Hot-tune the knobs (depends: T002) — expose `THROTTLE_KEEPALIVE_HOLD`
+- [x] T003 Hot-tune the knobs (depends: T002) — expose `THROTTLE_KEEPALIVE_HOLD`
   + `THROTTLE_KEEPALIVE_INTERVAL_MS` in `POST /ui/config` (and `/ui/config/reset`)
   so the hold can be disabled or retuned in-process without a restart (matches
   the existing hot-tune pattern for the other limiter knobs). Surface an active

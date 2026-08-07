@@ -3,12 +3,20 @@
 **Status:** slice 2 of the "invisible throttle" north-star (slice 1 = PR #91,
 usage-poller self-429 backoff, merged `dffd56e`).
 
-**Triage 06/08/2026 (THRTL-4): KEEP OPEN — not superseded.** #149–#151
-(reroute-on-pushback) and #184 (codex 429-spill) cover the *reroute/spill*
-half — a sibling lane to escape to. The keepalive-hold mechanism covers the
-other half: ALL lanes capped/backing off, park internally while the SSE
-stream stays alive, emit a terminal SSE error on budget exhaustion. Still
-unshipped; T001–T003 remain the slice-2 backlog.
+**Status 07/08/2026: SHIPPED — the 06/08 triage below was wrong.** T001+T002
+and the hot-tune half of T003 landed in `9effe22` (PR #92, 11/07/2026); only
+T003's in-flight-holds gauge was missing, added in PR #187. Verified live, not
+inferred: `tests/test_keepalive_hold.py` = 37 passed, and the hold is reached
+from the forward path behind the `config.KEEPALIVE_HOLD` gate. The stale `[ ]`
+boxes in `tasks.md` were the whole basis of the "unshipped" reading — a spec
+whose checkboxes lag its code will keep re-filing work that already exists.
+
+**Triage 06/08/2026 (THRTL-4) — superseded, kept for the record:** *KEEP OPEN
+— not superseded.* #149–#151 (reroute-on-pushback) and #184 (codex 429-spill)
+cover the *reroute/spill* half — a sibling lane to escape to. The keepalive-hold
+mechanism covers the other half: ALL lanes capped/backing off, park internally
+while the SSE stream stays alive, emit a terminal SSE error on budget
+exhaustion. (That split is still accurate; "still unshipped" was not.)
 
 ## Problem (live-diagnosed 10/07/2026, `/metrics` + journal)
 

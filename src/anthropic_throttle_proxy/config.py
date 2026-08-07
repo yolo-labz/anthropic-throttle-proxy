@@ -448,6 +448,10 @@ state: dict[str, object] = {
     "inflight": 0,
     "queued": 0,
     "served": 0,
+    # Streams parked in an SSE keepalive-hold right now (spec 092 T003). The
+    # holds_total counter only moves when a hold ENDS, so an operator watching a
+    # saturation window has no way to see the holds that are still open.
+    "keepalive_holds_active": 0,
     "client_disconnects": 0,
     "upstream_retries": 0,
     "central_status": "unknown",

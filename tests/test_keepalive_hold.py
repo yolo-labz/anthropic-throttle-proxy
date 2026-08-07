@@ -49,6 +49,7 @@ def _reset_state() -> None:
             "inflight": 0,
             "queued": 0,
             "served": 0,
+            "keepalive_holds_active": 0,
             "client_disconnects": 0,
             "upstream_retries": 0,
             "central_status": "unknown",
@@ -1060,3 +1061,53 @@ def test_keepalive_holds_counter_registered() -> None:
     # prometheus-client stores Counters under the base name (without _total);
     # the _total suffix appears in the exported text but not in m.name.
     assert "anthropic_keepalive_holds" in names
+
+
+async def test_health_reports_active_holds_during_hold(monkeypatch) -> None:
+    """T003: /__throttle/health counts streams parked in a hold, and only those.
+
+    Falsifier for the gauge: without the counter the field is absent (or stuck
+    at 0) exactly while a hold is open, which is the only window an operator
+    cares about — `anthropic_keepalive_holds_total` moves when the hold ENDS, so
+    it cannot answer "is the proxy holding right now".
+    """
+    # 1.5 s success delay keeps the hold open long enough to scrape health.
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=1.5)
+    test_client, upstream_server = await _make_client_with_upstream(monkeypatch, upstream_app)
+    try:
+        before = await (await test_client.get("/__throttle/health")).json()
+        assert before["keepalive_holds_active"] == 0
+
+        body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
+        post = asyncio.ensure_future(
+            test_client.post(
+                "/v1/messages",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer test-holds-gauge",
+                },
+            )
+        )
+
+        peak = 0
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+            snapshot = await (await test_client.get("/__throttle/health")).json()
+            peak = max(peak, snapshot["keepalive_holds_active"])
+            if peak >= 1:
+                break
+        assert peak == 1, f"health never reported the open hold (peak={peak})"
+
+        resp = await post
+        assert resp.status == 200
+        await resp.read()
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        after = await (await test_client.get("/__throttle/health")).json()
+        assert after["keepalive_holds_active"] == 0, "hold leaked after the stream finished"
+    finally:
+        await test_client.close()
+        await upstream_server.close()
