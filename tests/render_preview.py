@@ -168,6 +168,8 @@ def _context() -> dict:
         ],
         "inflight": 3,
         "queued": 2,
+        # Non-zero so the preview shows the hold row; at rest it is hidden.
+        "holds": 2,
         "served": 5258,
         "disconnects": 9,
         "retries": 4,

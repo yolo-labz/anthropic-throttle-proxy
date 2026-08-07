@@ -53,6 +53,7 @@
     <span class="sig-label">since start</span>
     <div class="sig-row"><span class="sig-value">{{ "{:,}".format(served) }}</span></div>
     <span class="sig-detail">{{ inflight }} in-flight · {{ queued }} queued
+      {%- if holds %} · <b class="warn-text" title="Streams answered 200 and held open with SSE keepalives while the proxy retries behind them — counted by neither in-flight nor queued">{{ holds }}</b> held{% endif %}
       {%- if retries %} · <b class="is-crit-text">{{ retries }}</b> retries{% endif %}
       {%- if disconnects %} · <b class="is-crit-text">{{ disconnects }}</b> disconnects{% endif %}</span>
   </div>
