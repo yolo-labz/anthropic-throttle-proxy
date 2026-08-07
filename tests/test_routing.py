@@ -22,6 +22,7 @@ from anthropic_throttle_proxy.routing import (
     LaneState,
     bearer_usable,
     body_has_tools,
+    default_lanes,
     effective_chain,
     infer_role,
     infer_role_from_body,
@@ -624,6 +625,16 @@ def test_code_role_chain_leads_with_codex() -> None:
     assert ROLE_CHAINS["code"] == ("codex", "anthropic", "deepseek")
     assert effective_chain("code", overflow=False) == ("codex", "anthropic", "deepseek")
     assert effective_chain("code", overflow=True) == ("codex", "anthropic", "deepseek")
+
+
+def test_codex_lane_health_url_defaults_to_ccp_healthz() -> None:
+    """06/08 health-404 finding: the CCP sidecar does not serve
+    /__throttle/health; the codex lane must probe /healthz instead, or the
+    lane never opens and code-role traffic never reaches it."""
+    lanes = default_lanes()
+    assert lanes["codex"].health_url == "http://127.0.0.1:8769/healthz"
+    assert lanes["anthropic"].health_url == "http://127.0.0.1:8765/__throttle/health"
+    assert lanes["deepseek"].health_url == "http://127.0.0.1:8768/__throttle/health"
 
 
 def test_select_lane_code_prefers_codex_then_anthropic_then_deepseek() -> None:
