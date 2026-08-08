@@ -2107,3 +2107,24 @@ async def test_handler_drops_client_disconnects_before_upstream(
                 assert lim.try_begin_retry_probe() is True
         assert [config.state[key] for key in keys] == [1, 0, 0, 0, 0]
         assert _disconnect_request_count(metric_model) == previous_total + 1
+
+
+async def test_health_publishes_the_running_build(client: TestClient) -> None:
+    """Health names the code in memory, so drift is one command, not two.
+
+    `systemctl cat` answers what the NEXT start runs and `show` what the current
+    one was launched with; neither proves the PROCESS is running the merged
+    code. Measured 08/08/2026: a pin was merged, activated, and the persistent
+    unit was already correct, yet the live proxy served the previous build for
+    hours because nothing had restarted it — the third incident of that shape in
+    this repo. Falsifier: drop the field and the deploy check has nothing to
+    compare ExecStart against.
+    """
+    from anthropic_throttle_proxy import __build__, __version__
+
+    body = await (await client.get("/__throttle/health")).json()
+    assert body["version"] == __version__
+    # Non-empty and the real import location — on a deploy host this is the
+    # /nix/store path, which is exactly the string ExecStart carries.
+    assert body["build"] == __build__
+    assert body["build"].endswith("anthropic_throttle_proxy")

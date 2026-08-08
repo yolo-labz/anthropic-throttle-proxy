@@ -134,6 +134,17 @@ journalctl --user -u anthropic-throttle-proxy.service -n 80 --no-pager
 pid=$(systemctl --user show anthropic-throttle-proxy.service -p MainPID --value)
 tr '\0' '\n' </proc/$pid/cmdline | grep anthropic-throttle-proxy
 
+# 7b. RUNNING vs PERSISTED in one command. `cat` says what the next start will
+# execute and `show` what this one was launched with; neither proves the code in
+# MEMORY is the code you merged. Health publishes its own import path, so a
+# mismatch here is an activated-but-never-restarted service (08/08/2026).
+running=$(curl -fsS http://127.0.0.1:8765/__throttle/health | jq -r .build)
+persisted=$(systemctl --user cat anthropic-throttle-proxy.service |
+  grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-[0-9.]+' | head -1)
+case "$running" in "$persisted"*) echo "OK  running == persisted" ;;
+  *) echo "DRIFT  running=$running  persisted=$persisted  -> systemctl --user restart" ;;
+esac
+
 # 8. HM profile pointer vs activated NixOS toplevel's HM closure
 readlink -f ~/.local/state/nix/profiles/home-manager
 nix-store -qR "$(readlink /run/current-system)" | grep home-manager-generation
