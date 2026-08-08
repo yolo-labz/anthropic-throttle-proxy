@@ -127,6 +127,32 @@ def _reset_in(resets_at: float | None, now: float) -> str:
     return _accounts._fmt_duration(resets_at - now)
 
 
+def _exhausted_reason(meters: list[dict[str, Any]]) -> str:
+    """Name the full meter and when it reopens — measured numbers, no paraphrase.
+
+    Not simply ``meters[0]``: the sort is fullest-first but stable, so when two
+    meters are BOTH full it keeps whatever order the probe wrote, and naming the
+    one that happens to reopen first would promise the lane back while the other
+    is still walled. Pick the full meter that reopens LAST — the pessimistic one
+    is the only honest one. A meter with no reset reading sorts last of all,
+    since "unknown" cannot be claimed to reopen at any time.
+    """
+    full = [m for m in meters if (m.get("used_pct") or 0.0) >= 100.0]
+    if not full:
+        return ""
+    binding = max(full, key=lambda m: (m.get("resets_at") is None, m.get("resets_at") or 0.0))
+    label = str(binding.get("label") or "?")
+    # Report the measured figure, not the threshold: a provider can publish
+    # over-quota usage (130%), and rounding that down to "100%" would understate
+    # the breach on the one screen meant to prevent exactly that.
+    pct = binding.get("used_pct")
+    pct_text = f"{pct:.0f}%" if isinstance(pct, int | float) else "100%"
+    reset_in = str(binding.get("reset_in") or "")
+    if reset_in:
+        return f"{label} meter at {pct_text} — reopens in {reset_in}"
+    return f"{label} meter at {pct_text}"
+
+
 def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     kind = str(lane.get("kind") or "?")
     status = str(lane.get("status") or "unknown")
@@ -164,8 +190,18 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     # while chat and completions keep serving, and calling that lane dead would
     # be the opposite lie.
     has_unlimited = any(m.get("unlimited") for m in meters)
+    # .strip() before the truthiness test below: a probe that writes "   "
+    # would otherwise win the `or` and render a blank tooltip — the exact bug
+    # this reason exists to close.
+    reason = str(lane.get("reason") or "").strip()
     if status == "ok" and not has_unlimited and binding_pct is not None and binding_pct >= 100.0:
         status = "exhausted"
+        # #189 derives this verdict from the meter, so the row arrived with an
+        # empty tooltip: EXHAUSTED and nothing to say why or until when. State
+        # what was measured — which meter is full and when it reopens — and
+        # never paraphrase the provider; if the probe DID carry the upstream's
+        # own words, those win, because they are first-hand.
+        reason = reason or _exhausted_reason(meters)
     return {
         "id": str(lane.get("id") or "?"),
         "kind": kind,
@@ -174,7 +210,7 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
         "plan": plan,
         "meters": meters,
         "binding_pct": binding_pct,
-        "reason": str(lane.get("reason") or ""),
+        "reason": reason,
     }
 
 
