@@ -150,6 +150,22 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     # The binding meter is the fullest one — that is the number that decides
     # whether this lane can take the next request.
     filled = [m["used_pct"] for m in meters if m["used_pct"] is not None]
+    binding_pct = max(filled) if filled else None
+    # A full meter REFUSES. Measured 07/08/2026: with the shared `codex` meter
+    # at 100%, `codex exec` answers "You've hit your usage limit ... try again
+    # at Aug 8th, 2026 12:48 PM" — yet the row still read `ok`, because the
+    # status came verbatim from the probe report and never looked at the
+    # meters. That is the one thing this table must never do: render a lane
+    # with no capacity as healthy. Guarded on `ok` so a worse verdict
+    # (refused/error/stale) still wins — a stale 100% is untrusted, not proven
+    # exhausted, and could already have reset.
+    # An `unlimited` meter is live capacity that no percentage can express, so a
+    # lane holding one is never exhausted — Copilot's premium bucket runs to 0
+    # while chat and completions keep serving, and calling that lane dead would
+    # be the opposite lie.
+    has_unlimited = any(m.get("unlimited") for m in meters)
+    if status == "ok" and not has_unlimited and binding_pct is not None and binding_pct >= 100.0:
+        status = "exhausted"
     return {
         "id": str(lane.get("id") or "?"),
         "kind": kind,
@@ -157,7 +173,7 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
         "status": status,
         "plan": plan,
         "meters": meters,
-        "binding_pct": max(filled) if filled else None,
+        "binding_pct": binding_pct,
         "reason": str(lane.get("reason") or ""),
     }
 

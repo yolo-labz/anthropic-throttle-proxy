@@ -118,12 +118,14 @@ def _context() -> dict:
                 "family": "openai",
                 "plan": "pro",
                 "src": "report",
-                "meters": [_meter("codex 7d", 21, "4d 11h")],
+                # Full meter: the preview must show what an exhausted lane looks
+                # like, because that is the state the table used to render `ok`.
+                "meters": [_meter("codex", 100, "14h 59m"), _meter("codex_bengalfox", 54, "17h")],
                 "pace": None,
                 "pace_warn": False,
                 "eta": "",
-                "status": "ok",
-                "detail": "",
+                "status": "exhausted",
+                "detail": "binding meter at 100% — upstream answers 'you've hit your usage limit'",
             },
             {
                 "id": "copilot:personal",

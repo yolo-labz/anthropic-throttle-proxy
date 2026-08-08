@@ -526,6 +526,8 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
 .lane-ok        { color: var(--ok); }
 .lane-stale     { color: var(--warn); }
 .lane-unknown   { color: var(--crit); }
+/* A full meter refuses just as hard as a rejected window — same weight. */
+.lane-exhausted { color: var(--crit); font-weight: 600; }
 .lane-delegated { color: var(--ctp-subtext0); }
 
 /* ── copilot panel ──────────────────────────────────────────────────── */
