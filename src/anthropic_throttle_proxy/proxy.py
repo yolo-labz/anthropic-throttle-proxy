@@ -54,6 +54,8 @@ from urllib.parse import urlsplit
 import aiohttp
 from aiohttp import web
 
+from . import __build__ as _build_identity
+from . import __version__ as _version
 from . import config
 from . import history as _history
 from . import limiter as _limiter
@@ -4160,6 +4162,11 @@ async def health(_request: web.Request) -> web.Response:
         account_identity = None
     _publish_brake_enabled()
     body = {
+        # What the PROCESS is actually running, resolved at import. Compare it
+        # against the unit's ExecStart to catch an activated-but-not-restarted
+        # service in one command instead of two (see __init__.__build__).
+        "build": _build_identity,
+        "version": _version,
         "inflight": state["inflight"],
         "queued": state["queued"],
         "served": state["served"],
