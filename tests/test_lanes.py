@@ -191,3 +191,88 @@ def test_report_age_seconds_tracks_the_writer(tmp_path, monkeypatch):
         age_s=timedelta(minutes=5).total_seconds(),
     )
     assert lanes.view(NOW)["age_s"] == pytest.approx(300.0, abs=1.0)
+
+
+def _codex_lane(used_pct, **extra):
+    return {
+        "lanes": [
+            {
+                "id": "codex:b",
+                "kind": "codex",
+                "status": "ok",
+                "meters": [
+                    {"limitId": "codex", "usedPercent": used_pct, "resetsAt": NOW + 3600},
+                    {"limitId": "codex_bengalfox", "usedPercent": 10, "resetsAt": NOW + 7200},
+                ],
+                **extra,
+            }
+        ]
+    }
+
+
+def test_full_meter_is_never_reported_as_ok(tmp_path, monkeypatch):
+    """A lane whose binding meter reads 100% REFUSES — it must not render ok.
+
+    Measured 07/08/2026: both ChatGPT `codex` meters sat at 100% (A resets
+    08/08 12:48, B 10/08 17:00) and `codex exec` answered "You've hit your
+    usage limit", while the Subscriptions table rendered both rows `ok` — the
+    status came verbatim from the probe report and never looked at the meters.
+    """
+    _write(tmp_path, monkeypatch, _codex_lane(100))
+    assert lanes.view(NOW)["lanes"][0]["status"] == "exhausted"
+
+
+def test_partly_used_meter_still_reads_ok(tmp_path, monkeypatch):
+    """The rule fires on a FULL meter only — no invented warn threshold."""
+    _write(tmp_path, monkeypatch, _codex_lane(42))
+    assert lanes.view(NOW)["lanes"][0]["status"] == "ok"
+
+
+def test_stale_full_meter_reads_stale_not_exhausted(tmp_path, monkeypatch):
+    """Staleness wins: an untrusted 100% may already have reset."""
+    _write(tmp_path, monkeypatch, _codex_lane(100), age_s=1801)
+    assert lanes.view(NOW)["lanes"][0]["status"] == "stale"
+
+
+def test_unlimited_quota_keeps_a_lane_out_of_exhausted(tmp_path, monkeypatch):
+    """Copilot burns premium to 0 while chat/completions keep serving.
+
+    Calling that lane exhausted would be the mirror-image lie of calling a full
+    one healthy: the operator would stop routing base-model work that still
+    works. The 100% premium row stays visible in the meters column.
+    """
+    _write(
+        tmp_path,
+        monkeypatch,
+        {
+            "lanes": [
+                {
+                    "id": "copilot:personal",
+                    "kind": "copilot",
+                    "status": "ok",
+                    "quotas": {
+                        "chat": {"unlimited": True, "percentRemaining": 100.0},
+                        "premium_interactions": {"percentRemaining": 0.0, "entitlement": 200},
+                    },
+                }
+            ]
+        },
+    )
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "ok"
+    assert lane["binding_pct"] == 100.0
+
+
+def test_a_failed_probe_status_is_never_upgraded_to_exhausted(tmp_path, monkeypatch):
+    """Only `ok` is downgradable — a worse verdict already says more than `exhausted`.
+
+    Adversarial-review NIT: nothing asserted that the `== "ok"` guard holds, so
+    a future refactor could let a full meter overwrite the reason a probe gave.
+    """
+    payload = _codex_lane(100)
+    payload["lanes"][0]["status"] = "probe failed"
+    payload["lanes"][0]["reason"] = "connection refused"
+    _write(tmp_path, monkeypatch, payload)
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "probe failed"
+    assert lane["reason"] == "connection refused"
