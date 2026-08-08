@@ -71,23 +71,28 @@ def test_codex_meters_and_binding_pct(tmp_path, monkeypatch):
     assert lane["meters"][0]["reset_in"] == "1h 00m"
 
 
+def _copilot_lane():
+    """The measured shape: premium burnt to 0% while chat stays unlimited."""
+    return {
+        "lanes": [
+            {
+                "id": "copilot:personal",
+                "kind": "copilot",
+                "status": "ok",
+                "quotas": {
+                    "chat": {"unlimited": True, "percentRemaining": 100.0},
+                    "premium_interactions": {"percentRemaining": 0.0, "entitlement": 200},
+                },
+            }
+        ]
+    }
+
+
 def test_copilot_remaining_is_inverted_and_unlimited_is_not_zero(tmp_path, monkeypatch):
     _write(
         tmp_path,
         monkeypatch,
-        {
-            "lanes": [
-                {
-                    "id": "copilot:personal",
-                    "kind": "copilot",
-                    "status": "ok",
-                    "quotas": {
-                        "chat": {"unlimited": True, "percentRemaining": 100.0},
-                        "premium_interactions": {"percentRemaining": 0.0, "entitlement": 200},
-                    },
-                }
-            ]
-        },
+        _copilot_lane(),
     )
     meters = {m["label"]: m for m in lanes.view(NOW)["lanes"][0]["meters"]}
     # An unlimited quota has no fill level; rendering it as 0% used would claim
@@ -244,19 +249,7 @@ def test_unlimited_quota_keeps_a_lane_out_of_exhausted(tmp_path, monkeypatch):
     _write(
         tmp_path,
         monkeypatch,
-        {
-            "lanes": [
-                {
-                    "id": "copilot:personal",
-                    "kind": "copilot",
-                    "status": "ok",
-                    "quotas": {
-                        "chat": {"unlimited": True, "percentRemaining": 100.0},
-                        "premium_interactions": {"percentRemaining": 0.0, "entitlement": 200},
-                    },
-                }
-            ]
-        },
+        _copilot_lane(),
     )
     lane = lanes.view(NOW)["lanes"][0]
     assert lane["status"] == "ok"
