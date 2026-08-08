@@ -269,3 +269,72 @@ def test_a_failed_probe_status_is_never_upgraded_to_exhausted(tmp_path, monkeypa
     lane = lanes.view(NOW)["lanes"][0]
     assert lane["status"] == "probe failed"
     assert lane["reason"] == "connection refused"
+
+
+def test_an_exhausted_lane_says_which_meter_and_when_it_reopens(tmp_path, monkeypatch):
+    """EXHAUSTED with an empty tooltip is a verdict the operator can't act on.
+
+    #189 derives the verdict from the meter, so nothing populated `reason` and
+    the row rendered a bare EXHAUSTED. Name the measured facts instead.
+    """
+    _write(tmp_path, monkeypatch, _codex_lane(100))
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "exhausted"
+    assert lane["reason"] == "codex meter at 100% — reopens in 1h 00m"
+
+
+def test_the_probes_own_reason_outranks_the_derived_one(tmp_path, monkeypatch):
+    """First-hand beats inferred: the upstream's words win when the probe has them."""
+    payload = _codex_lane(100)
+    payload["lanes"][0]["reason"] = "You've hit your usage limit."
+    _write(tmp_path, monkeypatch, payload)
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "exhausted"
+    assert lane["reason"] == "You've hit your usage limit."
+
+
+def test_a_healthy_lane_gains_no_invented_reason(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, _codex_lane(42))
+    assert lanes.view(NOW)["lanes"][0]["reason"] == ""
+
+
+def test_two_full_meters_name_the_one_that_reopens_last(tmp_path, monkeypatch):
+    """Adversarial-review MAJOR: the fullest-first sort is STABLE, so with two
+    meters at 100% `meters[0]` is just whichever the probe wrote first. Naming
+    the earlier reset would promise the lane back while the other is walled.
+    """
+    payload = _codex_lane(100)
+    payload["lanes"][0]["meters"] = [
+        {"limitId": "codex_bengalfox", "usedPercent": 100, "resetsAt": NOW + 1800},
+        {"limitId": "codex", "usedPercent": 100, "resetsAt": NOW + 7200},
+    ]
+    _write(tmp_path, monkeypatch, payload)
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "exhausted"
+    assert lane["reason"] == "codex meter at 100% — reopens in 2h 00m"
+
+
+def test_over_quota_usage_is_reported_not_rounded_down(tmp_path, monkeypatch):
+    """Adversarial-review MAJOR: the branch fires at >=100, so hardcoding
+    "100%" understates a provider that publishes 130%."""
+    _write(tmp_path, monkeypatch, _codex_lane(130))
+    assert lanes.view(NOW)["lanes"][0]["reason"] == "codex meter at 130% — reopens in 1h 00m"
+
+
+def test_a_whitespace_probe_reason_does_not_win(tmp_path, monkeypatch):
+    """Adversarial-review MINOR: "   " is truthy, so it beat the derived reason
+    and rendered a blank tooltip on an exhausted lane."""
+    payload = _codex_lane(100)
+    payload["lanes"][0]["reason"] = "   "
+    _write(tmp_path, monkeypatch, payload)
+    assert lanes.view(NOW)["lanes"][0]["reason"] == "codex meter at 100% — reopens in 1h 00m"
+
+
+def test_an_elapsed_reset_drops_the_reopens_clause(tmp_path, monkeypatch):
+    """`reset_in` is recomputed at VIEW time and is empty once elapsed, so the
+    message degrades to the fact it still knows rather than a stale countdown.
+    """
+    payload = _codex_lane(100)
+    payload["lanes"][0]["meters"] = [{"limitId": "codex", "usedPercent": 100, "resetsAt": NOW - 1}]
+    _write(tmp_path, monkeypatch, payload)
+    assert lanes.view(NOW)["lanes"][0]["reason"] == "codex meter at 100%"
