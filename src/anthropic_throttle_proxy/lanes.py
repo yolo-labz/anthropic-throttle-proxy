@@ -48,6 +48,9 @@ _FAMILY = {
     "groq": "openai",
     "deepinfra": "chinese-frontier",
     "kimi": "chinese-frontier",
+    # DeepSeek is the same lineage as Kimi/GLM/Qwen for the gate's purposes:
+    # a Chinese-frontier generator may not be reviewed by another one.
+    "deepseek": "chinese-frontier",
 }
 
 _cache: tuple[float, dict[str, Any]] | None = None
@@ -120,6 +123,42 @@ def _copilot_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _balance_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
+    """Pay-go lanes meter in money, and money has no ceiling to be a % of.
+
+    DeepSeek/DeepInfra/Groq publish a remaining balance, not a utilisation. A
+    percentage would have to invent the denominator, so the amount renders as a
+    note with ``used_pct=None`` — the same shape Copilot's ``unlimited`` rows
+    already use, which is why the template needs no new branch.
+
+    This matters as much as any window: on 07/08/2026 this lane fell to $0.15
+    with two Anthropic accounts 7d-rejected, and the panel that is supposed to
+    show every subscription's remaining budget had no row for it at all.
+    """
+    balance = lane.get("balance")
+    if not isinstance(balance, dict):
+        return []
+    total = balance.get("total")
+    if isinstance(total, str):
+        try:
+            total = float(total)
+        except ValueError:
+            total = None
+    if not isinstance(total, int | float):
+        return []
+    currency = str(balance.get("currency") or "USD").upper()
+    symbol = "$" if currency == "USD" else f"{currency} "
+    return [
+        {
+            "label": "balance",
+            "used_pct": None,
+            "resets_at": None,
+            "note": f"{symbol}{total:.2f}",
+            "balance_total": float(total),
+        }
+    ]
+
+
 def _reset_in(resets_at: float | None, now: float) -> str:
     """Humanized countdown to a meter's reset; empty when unknown or elapsed."""
     if resets_at is None or resets_at <= now:
@@ -161,6 +200,10 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     meters = _codex_meters(lane) if kind == "codex" else []
     if kind == "copilot":
         meters = _copilot_meters(lane)
+    if not meters:
+        # Any lane may carry a balance; kind decides only which OTHER meters it
+        # has. Checked last so a window-metered lane keeps its windows.
+        meters = _balance_meters(lane)
     for meter in meters:
         meter["reset_in"] = _reset_in(meter.get("resets_at"), now)
     # Fullest first: the meter that decides whether this lane can take the next
@@ -202,6 +245,21 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
         # never paraphrase the provider; if the probe DID carry the upstream's
         # own words, those win, because they are first-hand.
         reason = reason or _exhausted_reason(meters)
+    # A drained wallet refuses exactly like a full window: DeepSeek answers 402
+    # at zero. It cannot reach the branch above because money has no
+    # percentage, so it needs its own — otherwise the lane that actually died
+    # is the one row still reading `ok`.
+    drained = next(
+        (
+            m
+            for m in meters
+            if isinstance(m.get("balance_total"), float) and m["balance_total"] <= 0
+        ),
+        None,
+    )
+    if status == "ok" and drained is not None:
+        status = "exhausted"
+        reason = reason or f"balance {drained['note']} — the lane refuses at zero"
     return {
         "id": str(lane.get("id") or "?"),
         "kind": kind,
