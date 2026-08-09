@@ -111,12 +111,18 @@ def _copilot_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         remaining = _pct(quota.get("percentRemaining"))
         unlimited = bool(quota.get("unlimited"))
+        spent = remaining is not None and not unlimited and remaining <= 0
         out.append(
             {
                 "label": str(name),
                 "used_pct": None if unlimited or remaining is None else 100.0 - remaining,
                 "resets_at": None,
                 "unlimited": unlimited,
+                # A finite quota that is fully spent does not kill a lane that
+                # also carries unlimited windows (Copilot premium_interactions
+                # vs chat/completions). The meter row says "spent"; the lane
+                # badge says "ok" — two different subjects, no contradiction.
+                "exhausted_ok": spent,
                 "entitlement": quota.get("entitlement"),
             }
         )

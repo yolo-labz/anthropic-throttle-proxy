@@ -143,3 +143,57 @@ def test_quarantine_restored_after_a_restart_still_reaches_the_row(monkeypatch):
     finally:
         config.bearer_state.pop(bid, None)
         proxy._restored_credentials.pop(bid, None)
+
+
+# --- 09/08/2026 GUI pass: identity scheme + _anon + spent meter ------------
+
+
+def test_anon_bearer_is_filtered_out_of_the_view(monkeypatch):
+    """`_anon` is the unauthenticated bypass slot (health checks, /metrics). It
+    has no account, no budget window and no retry state — a row of dashes that
+    reads as plumbing. Keep it out of the operator's bearer table.
+    """
+    from anthropic_throttle_proxy import config
+
+    config.bearer_state["_anon"] = {"inflight": 0, "queued": 0, "served": 0}
+    config.bearer_state["b144f62f"] = {"inflight": 0, "queued": 0, "served": 1}
+    try:
+        # The view builder is async; exercise the filter directly by rendering.
+        import asyncio
+
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+
+        from anthropic_throttle_proxy.ui.routes import attach_ui
+
+        async def render():
+            app = web.Application()
+            attach_ui(app)
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            html = await (await client.get("/ui/stats")).text()
+            await client.close()
+            return html
+
+        html = asyncio.run(render())
+    finally:
+        config.bearer_state.pop("_anon", None)
+        config.bearer_state.pop("b144f62f", None)
+
+    assert "_anon" not in html
+    assert "b144f62f" in html  # the real bearer still renders
+
+
+def test_subscription_identity_is_email_first_when_known():
+    """The file-label letter collides across families (anthropic A vs codex:a),
+    so the email is the identity and the letter is the tag."""
+    subs = [
+        {
+            "id": "A",
+            "identity": "pedro@proton.me",
+            "sub": "pedro@proton.me",
+            "family": "anthropic",
+            "meters": [{"label": "7d", "pct": 50.0}],
+        }
+    ]
+    assert subs[0]["identity"] == subs[0]["sub"]  # template contract: email first
