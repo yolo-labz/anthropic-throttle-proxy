@@ -540,13 +540,55 @@ def _build_subscriptions(
             }
         )
 
-    # Fullest first: the row that decides where the next request can go leads.
+    # Pace answers "will this last the window". Once the window has already
+    # refused, it did not, and the columns become noise: account B rendered
+    # `1.08× · exhausts in <1m` next to a REJECTED badge, which reads like a
+    # prediction about a thing that has already happened. The reopen time is
+    # the live fact for those rows, and the binding strip already carries it.
+    for row in rows:
+        if row.get("status") in _CLOSED_STATUSES:
+            row["pace"], row["pace_warn"], row["eta"] = None, False, ""
+
+    # Grouped by family, fullest first WITHIN each group. A single global
+    # fullest-first sort interleaved the providers (`B · copilot · A · codex:b ·
+    # C · codex:a`), so the eye could not scan "how is Anthropic doing" without
+    # reading every row. Which family is most pressed still leads, because a
+    # group sorts by its own fullest member.
     def _binding(row: dict) -> float:
         readings = [m["pct"] for m in row["meters"] if m.get("pct") is not None]
         return max(readings) if readings else -1.0
 
-    rows.sort(key=_binding, reverse=True)
+    worst_in_family: dict[str, float] = {}
+    for row in rows:
+        family = row.get("family") or ""
+        worst_in_family[family] = max(worst_in_family.get(family, -1.0), _binding(row))
+    rows.sort(
+        key=lambda r: (
+            -worst_in_family.get(r.get("family") or "", -1.0),
+            r.get("family") or "",
+            -_binding(r),
+            r.get("id") or "",
+        )
+    )
     return rows
+
+
+# Statuses where the subscription is already refusing, so a burn projection is
+# a prediction about the past. `locked` is deliberately absent: a usage cooldown
+# is temporary and the window itself still has budget.
+_CLOSED_STATUSES = frozenset({"rejected", "exhausted", "refused", "error"})
+
+
+def _retry_after_text(last_ratelimit: dict | None) -> str:
+    """Humanize the honoured Retry-After; empty when there is none to show."""
+    raw = (last_ratelimit or {}).get("retry-after")
+    if raw in (None, ""):
+        return ""
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    return _accounts._fmt_duration(seconds) if seconds > 0 else "0s"
 
 
 def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
@@ -612,6 +654,9 @@ async def _collect_view() -> dict[str, object]:
                 "queued": bstate.get("queued", 0),
                 "served": bstate.get("served", 0),
                 "last_ratelimit": bstate.get("last_ratelimit"),
+                # `148806` in a column headed "retry-after" is a number the
+                # operator has to divide by 3600 mid-incident. It is 41h 20m.
+                "retry_after_in": _retry_after_text(bstate.get("last_ratelimit")),
                 "unified": unified,
                 # 5h reading frozen from before its own reset — render as
                 # "0% · reset" so the bearer column matches the accounts panel.

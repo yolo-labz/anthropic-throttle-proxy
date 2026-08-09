@@ -177,3 +177,88 @@ def test_build_providers_appends_fleet_siblings():
     assert glm["ok"] is False and glm["level"] == "idle" and glm["err"] == "sibling unreachable"
     assert glm["level"] != rows[0]["level"]  # dead sibling != rate-limited primary
     assert glm["served"] == 0  # missing numeric fields coerce to 0, never KeyError
+
+
+def _rows(lane_ids_by_family, statuses=None):
+    """Build subscription rows straight from _build_subscriptions."""
+    from anthropic_throttle_proxy.ui import routes
+
+    statuses = statuses or {}
+    lanes_view = {
+        "lanes": [
+            {
+                "id": lane_id,
+                "kind": family,
+                "family": family,
+                "status": statuses.get(lane_id, "ok"),
+                "meters": [{"label": "w", "used_pct": pct, "reset_in": "", "resets_at": None}],
+                "reason": "",
+            }
+            for family, lane_id, pct in lane_ids_by_family
+        ]
+    }
+    return routes._build_subscriptions([], lanes_view, 1_760_000_000.0)
+
+
+def test_subscription_rows_group_by_family():
+    """A single global fullest-first sort interleaved the providers.
+
+    Live on 09/08 the order was `B · copilot · A · codex:b · C · codex:a`, so
+    "how is Anthropic doing" could not be answered without reading every row.
+    Families stay together; the most-pressed family still leads.
+    """
+    # Chosen so the two orders DISAGREE: a global fullest-first sort gives
+    # codex:b(95) · copilot(50) · codex:a(10) — github wedged between the two
+    # openai rows. Grouping keeps the openai pair adjacent.
+    rows = _rows(
+        [
+            ("openai", "codex:a", 10.0),
+            ("github", "copilot:personal", 50.0),
+            ("openai", "codex:b", 95.0),
+        ]
+    )
+    assert [r["id"] for r in rows] == ["codex:b", "codex:a", "copilot:personal"]
+
+
+def test_a_refusing_subscription_shows_no_burn_projection():
+    """`1.08× · exhausts in <1m` beside a REJECTED badge predicts the past."""
+    from anthropic_throttle_proxy.ui import routes
+
+    lanes_view = {
+        "lanes": [
+            {
+                "id": "codex:b",
+                "kind": "codex",
+                "family": "openai",
+                "status": "exhausted",
+                "meters": [
+                    {
+                        "label": "codex",
+                        "used_pct": 100.0,
+                        "reset_in": "2h",
+                        "resets_at": 1_760_003_600,
+                        "window_mins": 10080,
+                    }
+                ],
+                "reason": "codex meter at 100%",
+            }
+        ]
+    }
+    row = routes._build_subscriptions([], lanes_view, 1_760_000_000.0)[0]
+    assert row["status"] == "exhausted"
+    assert row["pace"] is None
+    assert row["eta"] == ""
+    assert row["pace_warn"] is False
+
+
+def test_retry_after_renders_as_a_duration_not_raw_seconds():
+    """`148806` in a retry-after column is 41h the operator has to divide out."""
+    from anthropic_throttle_proxy.ui import routes
+
+    assert routes._retry_after_text({"retry-after": "148806"}) == "1d 17h"
+    # Whole minutes, matching _fmt_duration everywhere else on the page.
+    assert routes._retry_after_text({"retry-after": 90}) == "1m"
+    assert routes._retry_after_text({}) == ""
+    assert routes._retry_after_text(None) == ""
+    # Never swallow a value it cannot parse — show it rather than blank it.
+    assert routes._retry_after_text({"retry-after": "soon"}) == "soon"
