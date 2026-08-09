@@ -179,7 +179,11 @@
           </div>
           {% endfor %}
         {% else %}
-          <span class="muted">{{ s.detail or "—" }}</span>
+          {# The meters column is for readings. A row with none says so in three
+             words; the provider's sentence stays on the status badge's tooltip,
+             where prose belongs — account C's OAuth paragraph used to be pasted
+             across this cell. #}
+          <span class="muted">{{ "no reading" if s.detail else "—" }}</span>
         {% endif %}
       </td>
       <td class="num{% if s.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(s.pace) if s.pace is not none else "—" }}</td>
@@ -256,7 +260,7 @@
       <th scope="col" class="th-center" title="AIMD: live cap / hard ceiling. Live shrinks below hard on 429/503.">aimd</th>
       <th scope="col" title="5h unified-window utilisation (OAuth/Max only).">5h window</th>
       <th scope="col" title="anthropic-ratelimit-requests-remaining (API-key tiers only)">req left</th>
-      <th scope="col" title="seconds the proxy is honouring from the upstream Retry-After header">retry-after</th>
+      <th scope="col" title="how long the proxy is honouring the upstream's Retry-After header for">retry-after</th>
       <th scope="col" title="distinct client_id values currently sharing this bearer's queue">clients</th>
     </tr>
   </thead>
@@ -295,7 +299,7 @@
         {% else %}<span class="muted">—</span>{% endif %}
       </td>
       <td class="num">{{ (b.last_ratelimit or {}).get("anthropic-ratelimit-requests-remaining", "—") }}</td>
-      <td class="num">{{ (b.last_ratelimit or {}).get("retry-after", "—") }}</td>
+      <td class="num">{{ b.retry_after_in or "—" }}</td>
       <td class="num">{% if b.limiter %}{{ (b.limiter.queued_per_client or {}) | length }}{% else %}—{% endif %}</td>
     </tr>
     {% endfor %}
