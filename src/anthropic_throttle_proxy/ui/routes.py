@@ -492,6 +492,11 @@ def _build_subscriptions(
         rows.append(
             {
                 "id": account.get("label") or "?",
+                # One identity scheme across every table. The file-label is a
+                # letter (A/B/C) that collides across families — anthropic A is
+                # pedrobalbino@proton.me while codex:a is phsb5321@gmail.com —
+                # so the EMAIL is the identity and the letter is the tag.
+                "identity": account.get("email") or account.get("label") or "?",
                 "sub": account.get("email") or "",
                 # Carried so the status strip can point at THIS row as the
                 # binding constraint instead of naming a bare hash.
@@ -520,6 +525,7 @@ def _build_subscriptions(
                 # A meter may carry its own note (a pay-go lane's remaining
                 # balance); `unlimited` is just the oldest one.
                 "note": m.get("note") or ("unlimited" if m.get("unlimited") else ""),
+                "exhausted_ok": bool(m.get("exhausted_ok")),
             }
             for m in lane.get("meters") or []
         ]
@@ -527,6 +533,7 @@ def _build_subscriptions(
         rows.append(
             {
                 "id": lane.get("id") or "?",
+                "identity": lane.get("id") or "?",
                 "sub": "",
                 "family": lane.get("family") or "",
                 "plan": lane.get("plan") or "",
@@ -643,7 +650,13 @@ async def _collect_view() -> dict[str, object]:
     labels = _accounts.bearer_labels()
     now = time.time()
     bearers = []
+    # _anon is the unauthenticated bypass slot (health checks, /metrics). It
+    # has no account, no budget window and no retry state — a row of dashes
+    # that reads as plumbing. Keep it out of the operator's bearer table.
+    anon_bid = "_anon"  # ratelimit._bearer_id's unauthenticated bypass slot
     for bid, bstate in _proxy.bearer_state.items():
+        if bid == anon_bid or bid == "_anon":
+            continue
         lim = _proxy.bearer_limiters.get(bid)
         unified = bstate.get("unified")
         bearers.append(
@@ -679,6 +692,12 @@ async def _collect_view() -> dict[str, object]:
         )
     endpoint = await _accounts.refresh_endpoint(now)
     accounts_view = _accounts.account_view(bearers, now, endpoint)
+    # Same identity scheme as the subscriptions table: email first.
+    email_by_bid = {
+        a["bearer_id"]: a["email"] for a in accounts_view if a.get("bearer_id") and a.get("email")
+    }
+    for b in bearers:
+        b["identity"] = email_by_bid.get(b["bearer_id"]) or b.get("account")
     identity = _accounts.identity_state(accounts_view)
     _publish_account_gauges(endpoint, identity)
     # Fleet + Copilot are concurrent with the account refresh — both are

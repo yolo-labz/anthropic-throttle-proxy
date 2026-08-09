@@ -154,9 +154,9 @@
     {% for s in subscriptions %}
     <tr{% if s.is_binding %} class="row-binding"{% endif %}>
       <td>
-        <span class="acct">{{ s.id }}</span>
+        <span class="acct">{{ s.identity }}</span>
+        {% if s.id != s.identity %}<span class="id-tag" title="Local credential-file label — the email is the identity">({{ s.id }})</span>{% endif %}
         {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
-        {% if s.sub %}<div class="email">{{ s.sub }}</div>{% endif %}
       </td>
       <td class="muted">{{ s.family or "—" }}</td>
       <td class="muted">{{ s.plan or "—" }}</td>
@@ -171,6 +171,7 @@
                 <span class="pct">{{ "%.0f" | format(m.pct) }}%</span>
               </span>
               {% if m.rejected %}<span class="tag-rejected">rejected</span>
+              {% elif m.exhausted_ok %}<span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
               {% elif m.note %}<span class="reset-in">{{ m.note }}</span>
               {% elif m.reset_in %}<span class="reset-in">resets {{ m.reset_in }}</span>{% endif %}
             {% else %}
@@ -268,7 +269,7 @@
     {% for b in bearers %}
     <tr>
       <td><code title="sha256-truncated bearer hash">{{ b.bearer_id }}</code></td>
-      <td>{% if b.account %}<span class="acct">{{ b.account }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{% if b.identity %}<span class="acct">{{ b.identity }}</span>{% if b.account and b.account != b.identity %}<span class="id-tag" title="Local credential-file label">({{ b.account }})</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="num">
         {% set lcap = (b.limiter.max_concurrent if b.limiter else 0) %}
         {% set sat = ((b.inflight / lcap) * 100) | round(0) | int if lcap > 0 else 0 %}

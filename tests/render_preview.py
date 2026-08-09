@@ -88,6 +88,7 @@ def _context() -> dict:
         "subscriptions": [
             {
                 "id": "A",
+                "identity": "pedro@pm.me",
                 "sub": "pedro@pm.me",
                 "family": "anthropic",
                 "plan": "max20",
@@ -101,6 +102,7 @@ def _context() -> dict:
             },
             {
                 "id": "B",
+                "identity": "pedro@proton.me",
                 "sub": "pedro@proton.me",
                 "family": "anthropic",
                 "plan": "max20",
@@ -114,6 +116,7 @@ def _context() -> dict:
             },
             {
                 "id": "chatgpt:work",
+                "identity": "chatgpt:work",
                 "sub": "",
                 "family": "openai",
                 "plan": "pro",
@@ -133,6 +136,7 @@ def _context() -> dict:
             },
             {
                 "id": "deepseek",
+                "identity": "deepseek",
                 "sub": "",
                 "family": "chinese-frontier",
                 "plan": "pay-go",
@@ -147,11 +151,34 @@ def _context() -> dict:
             },
             {
                 "id": "copilot:personal",
+                "identity": "copilot:personal",
                 "sub": "",
                 "family": "github",
                 "plan": "individual",
                 "src": "report",
-                "meters": [_meter("seats", None, note="unlimited")],
+                "meters": [
+                    {
+                        "label": "premium_interactions",
+                        "pct": 100.0,
+                        "reset_in": "",
+                        "note": "",
+                        "exhausted_ok": True,
+                    },
+                    {
+                        "label": "chat",
+                        "pct": None,
+                        "reset_in": "",
+                        "note": "unlimited",
+                        "exhausted_ok": False,
+                    },
+                    {
+                        "label": "completions",
+                        "pct": None,
+                        "reset_in": "",
+                        "note": "unlimited",
+                        "exhausted_ok": False,
+                    },
+                ],
                 "pace": None,
                 "pace_warn": False,
                 "eta": "",
@@ -166,6 +193,7 @@ def _context() -> dict:
             {
                 "bearer_id": "b144f62f",
                 "account": "A",
+                "identity": "pedro@pm.me",
                 "inflight": 3,
                 "queued": 2,
                 "served": 4102,
@@ -177,6 +205,7 @@ def _context() -> dict:
             {
                 "bearer_id": "c0de9a11",
                 "account": "B",
+                "identity": "pedro@proton.me",
                 "inflight": 0,
                 "queued": 0,
                 "served": 1156,

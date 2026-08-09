@@ -505,7 +505,9 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
   /* The bar earns width the removed page cap used to waste, but only up to a
      length the eye can still compare across rows — a 1100px bar at 2560px is
      not more legible than a 24rem one, it is just longer. */
-  grid-template-columns: 6.5rem minmax(60px, 24rem) 3rem minmax(8rem, 1fr);
+  /* 6.5rem clipped `premium_interactions` to `premium_intera…` — a label the
+     operator cannot read is noise. 10rem fits it; anything longer wraps. */
+  grid-template-columns: 10rem minmax(60px, 24rem) 3rem minmax(8rem, 1fr);
   align-items: baseline;
   gap: 0.5rem;
 }
@@ -514,13 +516,37 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
   font-family: var(--mono);
   font-size: 0.7rem;
   color: var(--ctp-subtext0);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .lane-meter .util { display: contents; }
 .lane-meter > .muted { grid-column: 2 / 4; }
 .lane-meter .util .pct { text-align: right; }
 .lane-meter .reset-in { display: inline; margin-top: 0; }
+/* ── identity scheme ────────────────────────────────────────────────── */
+/* The email is the identity; a credential-file letter (A/B/C) is a local tag
+   that collides across families and never appears alone. */
+.id-tag {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--ctp-subtext0);
+  margin-left: 0.25rem;
+}
+.acct { font-family: var(--mono); font-weight: 600; color: var(--accent); }
+
+/* A finite meter that is spent but not the lane's lifeline: red bar says the
+   meter's fact, "spent" names it, the lane badge keeps its own verdict. */
+.tag-exhausted {
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ctp-red);
+  border: 1px solid color-mix(in srgb, var(--ctp-red) 40%, var(--ctp-surface0));
+  border-radius: var(--radius-sm);
+  padding: 0.02rem 0.28rem;
+  margin-left: 0.3rem;
+}
+
 /* Status carries its meaning in TEXT (WCAG 1.4.1) — colour only reinforces. */
 .lane-status { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .lane-ok        { color: var(--ok); }
