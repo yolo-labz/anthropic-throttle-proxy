@@ -121,9 +121,11 @@ def _context() -> dict:
                 # Full meter: the preview must show what an exhausted lane looks
                 # like, because that is the state the table used to render `ok`.
                 "meters": [_meter("codex", 100, "14h 59m"), _meter("codex_bengalfox", 54, "17h")],
-                "pace": None,
-                "pace_warn": False,
-                "eta": "",
+                # Report lanes carry pace + ETA too now; both columns were
+                # em-dashes while the same figure printed at the shell.
+                "pace": 1.67,
+                "pace_warn": True,
+                "eta": "14h",
                 "status": "exhausted",
                 "detail": "binding meter at 100% — upstream answers 'you've hit your usage limit'",
             },

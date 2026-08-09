@@ -425,7 +425,37 @@ def _account_status(account: dict) -> tuple[str, str]:
     return "ok", detail
 
 
-def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> list[dict]:
+def _lane_pace_eta(lane: dict[str, Any], now: float) -> tuple[float | None, str | None]:
+    """Burn pace + projected exhaustion for a report lane's binding meter.
+
+    The Anthropic rows have carried these two columns since the account panel
+    existed; the report lanes rendered them as em-dashes, so the table answered
+    "how full is it" for a Codex subscription but never "will it last the
+    week". `codex-usage` prints the same figure at the shell, so the gap was
+    only that nothing carried it into the view: the meters already publish
+    utilisation, reset instant, and window length.
+
+    Measured worth: ChatGPT B went 0%→100% in a single day on 07/08 at pace
+    1.67×. A blank column cannot say that; `1.67× · in 14h` can.
+
+    Paced on the binding (fullest) meter, matching the status rules, and only
+    when that meter carries a real reading — a balance has no window, so a
+    pay-go lane keeps its em-dash rather than gaining an invented one.
+    """
+    for meter in lane.get("meters") or []:
+        used_pct, resets_at = meter.get("used_pct"), meter.get("resets_at")
+        window_mins = meter.get("window_mins")
+        if used_pct is None or resets_at is None or not window_mins:
+            continue
+        return _accounts._pace_eta(
+            used_pct / 100.0, int(resets_at), now, window_s=float(window_mins) * 60.0
+        )
+    return None, None
+
+
+def _build_subscriptions(
+    accounts: list[dict], lanes_view: dict[str, Any], now: float
+) -> list[dict]:
     """One row per subscription, whatever measures it.
 
     The Accounts and Subscriptions tables answered the SAME question — how much
@@ -493,6 +523,7 @@ def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> li
             }
             for m in lane.get("meters") or []
         ]
+        pace, eta = _lane_pace_eta(lane, now)
         rows.append(
             {
                 "id": lane.get("id") or "?",
@@ -501,9 +532,9 @@ def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> li
                 "plan": lane.get("plan") or "",
                 "src": "report",
                 "meters": meters,
-                "pace": None,
-                "pace_warn": False,
-                "eta": "",
+                "pace": pace,
+                "pace_warn": pace is not None and pace >= _accounts.PACE_WARN,
+                "eta": eta or "",
                 "status": lane.get("status") or "unknown",
                 "detail": lane.get("reason") or "",
             }
@@ -630,7 +661,7 @@ async def _collect_view() -> dict[str, object]:
     )
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
-    subscriptions = _build_subscriptions(accounts_view, lanes_view)
+    subscriptions = _build_subscriptions(accounts_view, lanes_view, now)
     _attach_binding(status, subscriptions)
     return {
         "signals": _signals.collect(),

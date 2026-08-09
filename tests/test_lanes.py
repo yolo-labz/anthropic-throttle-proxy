@@ -401,3 +401,84 @@ def test_a_windowed_lane_keeps_its_windows_when_it_also_has_a_balance(tmp_path, 
     _write(tmp_path, monkeypatch, payload)
     labels = [m["label"] for m in lanes.view(NOW)["lanes"][0]["meters"]]
     assert labels == ["codex", "codex_bengalfox"]
+
+
+def _sub_rows(lane_payload, tmp_path, monkeypatch, now=NOW):
+    """Render lane payload the way /ui does, returning subscription rows."""
+    from anthropic_throttle_proxy.ui import routes
+
+    _write(tmp_path, monkeypatch, lane_payload)
+    return routes._build_subscriptions([], lanes.view(now), now)
+
+
+def test_a_codex_lane_reports_its_burn_pace_and_eta(tmp_path, monkeypatch):
+    """The pace + exhausts columns were em-dashes for every report lane.
+
+    The table answered "how full is it" for a Codex subscription but never
+    "will it last the week" — while `codex-usage` prints exactly that figure at
+    the shell. Measured worth: ChatGPT B went 0%->100% in one day on 07/08 at
+    pace 1.67x; a blank column cannot say that.
+    """
+    # Half the 7d window elapsed, 90% burnt -> pace 1.8x, exhausts before reset.
+    half = NOW + (7 * 86400) / 2
+    payload = {
+        "lanes": [
+            {
+                "id": "codex:b",
+                "kind": "codex",
+                "status": "ok",
+                "meters": [
+                    {
+                        "limitId": "codex",
+                        "usedPercent": 90,
+                        "resetsAt": half,
+                        "windowMins": 10080,
+                    }
+                ],
+            }
+        ]
+    }
+    row = _sub_rows(payload, tmp_path, monkeypatch)[0]
+    assert row["pace"] == 1.8
+    assert row["pace_warn"] is True  # >= 1.15
+    assert row["eta"], "a lane burning at 1.8x exhausts before its reset"
+
+
+def test_an_on_budget_codex_lane_shows_pace_but_no_eta(tmp_path, monkeypatch):
+    """On-budget lanes never exhaust early by definition — no ETA to show."""
+    half = NOW + (7 * 86400) / 2
+    payload = {
+        "lanes": [
+            {
+                "id": "codex:b",
+                "kind": "codex",
+                "status": "ok",
+                "meters": [
+                    {
+                        "limitId": "codex",
+                        "usedPercent": 50,
+                        "resetsAt": half,
+                        "windowMins": 10080,
+                    }
+                ],
+            }
+        ]
+    }
+    row = _sub_rows(payload, tmp_path, monkeypatch)[0]
+    assert row["pace"] == 1.0
+    assert row["pace_warn"] is False
+    assert row["eta"] == ""
+
+
+def test_a_balance_lane_gains_no_invented_pace(tmp_path, monkeypatch):
+    """Money has no window, so a pay-go lane keeps its em-dash."""
+    row = _sub_rows(_balance_lane("15.20"), tmp_path, monkeypatch)[0]
+    assert row["pace"] is None
+    assert row["eta"] == ""
+
+
+def test_a_lane_with_no_reading_gains_no_pace(tmp_path, monkeypatch):
+    payload = {"lanes": [{"id": "codex:a", "kind": "codex", "status": "unknown", "meters": []}]}
+    row = _sub_rows(payload, tmp_path, monkeypatch)[0]
+    assert row["pace"] is None
+    assert row["eta"] == ""
