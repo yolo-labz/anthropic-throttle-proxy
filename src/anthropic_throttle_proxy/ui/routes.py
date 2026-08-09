@@ -487,7 +487,9 @@ def _build_subscriptions(accounts: list[dict], lanes_view: dict[str, Any]) -> li
                 "label": m.get("label") or "?",
                 "pct": m.get("used_pct"),
                 "reset_in": m.get("reset_in") or "",
-                "note": "unlimited" if m.get("unlimited") else "",
+                # A meter may carry its own note (a pay-go lane's remaining
+                # balance); `unlimited` is just the oldest one.
+                "note": m.get("note") or ("unlimited" if m.get("unlimited") else ""),
             }
             for m in lane.get("meters") or []
         ]

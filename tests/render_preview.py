@@ -128,6 +128,20 @@ def _context() -> dict:
                 "detail": "binding meter at 100% — upstream answers 'you've hit your usage limit'",
             },
             {
+                "id": "deepseek",
+                "sub": "",
+                "family": "chinese-frontier",
+                "plan": "pay-go",
+                "src": "report",
+                # Money, not a percentage — the row a windowed table could not show.
+                "meters": [_meter("balance", None, note="$15.20")],
+                "pace": None,
+                "pace_warn": False,
+                "eta": "",
+                "status": "ok",
+                "detail": "",
+            },
+            {
                 "id": "copilot:personal",
                 "sub": "",
                 "family": "github",

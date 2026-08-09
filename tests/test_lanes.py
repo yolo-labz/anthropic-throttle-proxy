@@ -338,3 +338,66 @@ def test_an_elapsed_reset_drops_the_reopens_clause(tmp_path, monkeypatch):
     payload["lanes"][0]["meters"] = [{"limitId": "codex", "usedPercent": 100, "resetsAt": NOW - 1}]
     _write(tmp_path, monkeypatch, payload)
     assert lanes.view(NOW)["lanes"][0]["reason"] == "codex meter at 100%"
+
+
+def _balance_lane(total, *, currency="USD", status="ok", **extra):
+    return {
+        "lanes": [
+            {
+                "id": "deepseek",
+                "kind": "deepseek",
+                "status": status,
+                "balance": {"currency": currency, "total": total},
+                **extra,
+            }
+        ]
+    }
+
+
+def test_a_pay_go_lane_reports_its_remaining_balance(tmp_path, monkeypatch):
+    """Money is a limit too, and this panel had no row for it.
+
+    On 07/08/2026 the DeepSeek lane fell to $0.15 while two Anthropic accounts
+    were 7d-rejected, and the table that exists to show every subscription's
+    remaining budget could not render it: `_normalize` built meters for `codex`
+    and `copilot` only, so a pay-go lane arrived with an empty meter list.
+    """
+    _write(tmp_path, monkeypatch, _balance_lane("15.20"))
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["family"] == "chinese-frontier"  # same gate family as Kimi/GLM
+    assert lane["status"] == "ok"
+    assert [(m["label"], m["used_pct"], m["note"]) for m in lane["meters"]] == [
+        ("balance", None, "$15.20")
+    ]
+    # No invented denominator: a balance has no ceiling to be a percentage of.
+    assert lane["binding_pct"] is None
+
+
+def test_a_drained_balance_is_exhausted_not_ok(tmp_path, monkeypatch):
+    """Zero balance refuses (DeepSeek answers 402) — the % branch can't see it."""
+    _write(tmp_path, monkeypatch, _balance_lane("0.00"))
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "exhausted"
+    assert lane["reason"] == "balance $0.00 — the lane refuses at zero"
+
+
+def test_a_non_usd_balance_keeps_its_currency(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, _balance_lane(7.5, currency="eur"))
+    assert lanes.view(NOW)["lanes"][0]["meters"][0]["note"] == "EUR 7.50"
+
+
+def test_an_unreadable_balance_renders_no_meter_rather_than_zero(tmp_path, monkeypatch):
+    """ "couldn't read it" must never render as "you have nothing left"."""
+    _write(tmp_path, monkeypatch, _balance_lane("not-a-number"))
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["meters"] == []
+    assert lane["status"] == "ok"
+
+
+def test_a_windowed_lane_keeps_its_windows_when_it_also_has_a_balance(tmp_path, monkeypatch):
+    """Kind decides the primary meters; balance only fills an empty list."""
+    payload = _codex_lane(42)
+    payload["lanes"][0]["balance"] = {"currency": "USD", "total": "9.00"}
+    _write(tmp_path, monkeypatch, payload)
+    labels = [m["label"] for m in lanes.view(NOW)["lanes"][0]["meters"]]
+    assert labels == ["codex", "codex_bengalfox"]
