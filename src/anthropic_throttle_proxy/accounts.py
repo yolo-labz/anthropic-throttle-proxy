@@ -210,21 +210,29 @@ def _window_view(
 
 
 def _pace_eta(
-    util_7d: float | None, reset_7d: int | None, now: float
+    util_7d: float | None,
+    reset_7d: int | None,
+    now: float,
+    window_s: float = WINDOW_7D_S,
 ) -> tuple[float | None, str | None]:
-    """7d burn pace (1.0 = exactly on budget) + projected exhaustion time.
+    """Burn pace (1.0 = exactly on budget) + projected exhaustion time.
 
     ``pace = utilization ÷ elapsed-cycle-fraction``; ETA extrapolates the same
     linear burn to 100% and is only shown when it lands BEFORE the cycle
     resets (pace > 1) — on-budget accounts never exhaust early by definition.
+
+    ``window_s`` defaults to the Anthropic 7d cycle this was written for, but
+    the arithmetic is window-agnostic: any metered subscription that publishes
+    a utilisation and a reset instant can be paced with it, which is what lets
+    the Codex lanes reuse it instead of growing a second copy.
     """
-    if util_7d is None or reset_7d is None or reset_7d <= now:
+    if util_7d is None or reset_7d is None or reset_7d <= now or window_s <= 0:
         return None, None
-    elapsed = WINDOW_7D_S - (reset_7d - now)
+    elapsed = window_s - (reset_7d - now)
     if elapsed < _MIN_PACE_ELAPSED_S or util_7d <= 0:
         return None, None
-    pace = util_7d / (elapsed / WINDOW_7D_S)
-    eta_epoch = (reset_7d - WINDOW_7D_S) + elapsed / util_7d
+    pace = util_7d / (elapsed / window_s)
+    eta_epoch = (reset_7d - window_s) + elapsed / util_7d
     eta = _fmt_duration(eta_epoch - now) if eta_epoch < reset_7d else None
     return round(pace, 2), eta
 
