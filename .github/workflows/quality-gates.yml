@@ -38,9 +38,15 @@ jobs:
           fetch-depth: 0          # full history so the gates can diff the PR
           persist-credentials: false
 
-      # wa PRs target main; the action diffs the PR against origin/main (its default).
+      # PRs here target main; the action diffs the PR against origin/main (its default).
+      #
+      # SHA, not the v1 tag: v1 still points at ee170b7 and several repos pin it,
+      # so retagging would change all of them at once with no PR anywhere. This
+      # SHA adds the dependency-audit ratchet, the Gherkin MUST-rule gate (a
+      # silent no-op until a repo has .feature files), an alignment-gate
+      # path-mode fix, and that gate's first test suite.
       - name: Quality gates on the PR diff
-        uses: yolo-labz/quality-gates@ee170b7ba5bcda421182196472b52f8a10dab332 # v1
+        uses: yolo-labz/quality-gates@ea9275ddd10518dfccc3607186f2055d1947ac7d # v1 + #2..#7
         with:
           base-ref: origin/main
           # HONEST accounting (a prior version of this comment falsely claimed
