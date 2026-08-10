@@ -262,3 +262,70 @@ def test_retry_after_renders_as_a_duration_not_raw_seconds():
     assert routes._retry_after_text(None) == ""
     # Never swallow a value it cannot parse — show it rather than blank it.
     assert routes._retry_after_text({"retry-after": "soon"}) == "soon"
+
+
+def _render_meter(meter: dict) -> str:
+    """Render one subscription row's meters cell through the real template."""
+    import jinja2
+
+    from anthropic_throttle_proxy.ui import routes
+
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(routes._TEMPLATES)), autoescape=True
+    )
+    tpl = env.get_template("partials/stats.html")
+    row = {
+        "id": "x",
+        "identity": "x",
+        "sub": "",
+        "family": "anthropic",
+        "plan": "",
+        "src": "proxy",
+        "meters": [meter],
+        "pace": None,
+        "pace_warn": False,
+        "eta": "",
+        "status": "rejected" if meter.get("rejected") else "ok",
+        "detail": "",
+    }
+    return tpl.render(
+        subscriptions=[row],
+        bearers=[],
+        providers=[],
+        signals=[],
+        status=None,
+        lanes=None,
+        last_advisor=None,
+        served=0,
+        inflight=0,
+        queued=0,
+        holds=0,
+        retries=0,
+        disconnects=0,
+    )
+
+
+def test_a_rejected_window_still_says_when_it_reopens():
+    """The one row where "when does it come back" is the ONLY question.
+
+    `{% if rejected %}…{% elif reset_in %}` made the state tag and the countdown
+    mutually exclusive, so a rejected meter rendered `rejected` and nothing
+    else — while `reset_in` sat populated in the same dict. Live on 09/08 the
+    7d row read `100% rejected` with the reset (5.5 h away) nowhere on screen.
+    """
+    html = _render_meter({"label": "7d", "pct": 100, "rejected": True, "reset_in": "5h 30m"})
+    assert "rejected" in html
+    assert "5h 30m" in html, "a rejected window must still show its reopen time"
+    assert "reopens in 5h 30m" in html
+
+
+def test_a_healthy_window_keeps_the_plain_resets_wording():
+    html = _render_meter({"label": "5h", "pct": 12, "rejected": False, "reset_in": "1h 04m"})
+    assert "resets 1h 04m" in html
+    assert "reopens" not in html
+
+
+def test_a_spent_meter_shows_both_its_tag_and_its_reopen():
+    html = _render_meter({"label": "codex", "pct": 100, "exhausted_ok": True, "reset_in": "2d 5h"})
+    assert "spent" in html
+    assert "reopens in 2d 5h" in html

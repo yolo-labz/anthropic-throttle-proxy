@@ -170,10 +170,16 @@
                 <span class="bar"><i class="{% if m.rejected or m.pct >= 90 %}crit{% elif m.pct >= 75 %}warn{% endif %}" style="width: {{ m.pct }}%"></i></span>
                 <span class="pct">{{ "%.0f" | format(m.pct) }}%</span>
               </span>
+              {# The state tag and the countdown are DIFFERENT facts, so they are
+                 not an if/elif chain. Chaining them meant a rejected meter — the
+                 one row where "when does this come back" is the only question
+                 the operator has — rendered `rejected` and nothing else, while
+                 `reset_in` sat populated in the same dict. #}
               {% if m.rejected %}<span class="tag-rejected">rejected</span>
               {% elif m.exhausted_ok %}<span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
-              {% elif m.note %}<span class="reset-in">{{ m.note }}</span>
-              {% elif m.reset_in %}<span class="reset-in">resets {{ m.reset_in }}</span>{% endif %}
+              {% endif %}
+              {% if m.reset_in %}<span class="reset-in">{{ "reopens in" if m.rejected or m.exhausted_ok else "resets" }} {{ m.reset_in }}</span>
+              {% elif m.note %}<span class="reset-in">{{ m.note }}</span>{% endif %}
             {% else %}
               <span class="muted">{{ m.note or "no reading" }}</span>
             {% endif %}
