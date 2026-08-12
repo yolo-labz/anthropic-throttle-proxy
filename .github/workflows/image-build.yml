@@ -45,13 +45,14 @@ jobs:
         with:
           persist-credentials: false
 
-      # Same build invocation shape as attest.yml (build args included) so a PR
-      # that breaks the release build also breaks this one. No --push, no
-      # --provenance/--sbom output: the image is built and discarded. Layer
-      # caching is deliberately omitted: type=gha cache would require the
-      # actions:write permission, which is not worth granting a PR-time job;
-      # the cold multi-stage build is a few minutes and runs in parallel with
-      # the rest of CI.
+      # Same Dockerfile context and build-arg shape as attest.yml's release
+      # build (GIT_SHA, BUILD_DATE; APP_VERSION uses its Dockerfile default),
+      # so a PR that breaks the release build also breaks this one. No --push,
+      # no attestation/SBOM output, no labels, no SOURCE_DATE_EPOCH: the image
+      # is built and discarded. Layer caching is deliberately omitted:
+      # type=gha cache would require the actions:write permission, which is not
+      # worth granting a PR-time job; the cold multi-stage build is a few
+      # minutes and runs in parallel with the rest of CI.
       - name: Build image
         run: |
           docker build \
