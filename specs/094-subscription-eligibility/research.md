@@ -54,12 +54,16 @@ something the request did not verify (ADR-6a §1.3, AC-21 defect class).
 refusal is a policy verdict; retrying walks into the same wall and would shrink
 a healthy lane for a reason unrelated to load.
 
-## Decision 6: Stamp every response with the actual class
+## Decision 6: Stamp constrained responses only (r1/C3)
 
-**Decision**: Every forwarded response carries
-`x-anthropic-throttle-credential-mode: subscription|direct_key|proxy_key|unknown`;
-`unknown` always pairs with a stable `-reason` token. Reserved headers from
-client/upstream are stripped.
+**Decision**: Only responses to requests carrying the requirement header get
+the stamp — `subscription` on a served 2xx, `unknown` on the 403 refusal. The
+full four-value vocabulary is normative for per-lane health only, where a
+consumer sees a lane's true class (`direct_key`/`proxy_key`/`unknown`).
+Unconstrained traffic is behaviorally unchanged (Pedro 12:17 boundary
+correction; fleet-orch overruled universal stamping because adding a header to
+100 % of fleet traffic is itself a behavioral change). Reserved headers from
+client/upstream are stripped in both directions.
 
 **Rationale**: `unknown` and absent are different operator answers (fix the
 adapter vs accept the classification); neither may be representable as silence.
@@ -98,5 +102,5 @@ The initially implemented Spec 094 used a different wire shape (request
 object, `503` refusal, location/custody/account-routing/staleness gates). The
 frozen ADR-6a interface superseded it; the implementation, tests, and docs were
 reconciled to the frozen wire contract (header names, `enforcement` capability,
-`403` policy refusal, E1/E2/E3 predicate, per-request E3 freshness, actual-mode
-stamping on every response).
+`403` policy refusal, two-level E1∧E2∧E4 (CLASS) / E3 (CAPACITY) predicate,
+per-request E3 freshness, constrained-only stamping per r1/C3).

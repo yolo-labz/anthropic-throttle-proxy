@@ -85,10 +85,10 @@ A caller can discover whether an ingress supports the enforcement contract befor
 - **FR-010**: When no eligible subscription lane can serve the inferred role, the ingress MUST return a stable 403 refusal and MUST NOT call an ineligible route.
 - **FR-011**: The 403 refusal MUST distinguish `no_eligible_lane` from `eligible_lanes_exhausted` (with `reset_hint_epoch` when known) and MUST NOT enter capacity/AIMD/retry channels.
 - **FR-012**: Every successful constrained response MUST carry ingress-authored `credential_mode=subscription` plus lane and role evidence.
-- **FR-013**: Every forwarded response MUST carry the actual `credential_mode` of the serving lane; `unknown` MUST also carry a stable `-reason`. Credential attestation headers received from a lane or upstream MUST be stripped before relay.
+- **FR-013**: Every CONSTRAINED 2xx response MUST carry the ingress-authored `credential_mode=subscription` stamp; the 403 refusal carries `unknown` (r1/C3 — the response enum collapses to these two by construction; the full four-value vocabulary is normative for per-lane health). Credential attestation headers received from a lane or upstream MUST be stripped before relay.
 - **FR-014**: Ingress health MUST advertise the enforcement capability (versioned contract + allowlist count/digest) and expose O(lanes) per-lane credential mode + reason.
 - **FR-015**: Ingress health MUST remain local-only, perform no request-path upstream I/O, expose no bearer or client map, and stay bounded/fast.
-- **FR-016**: Requests that omit the credential requirement MUST retain existing routing, spill, pinning, and response behavior except that newly reserved credential headers cannot be relayed from an upstream and every response gains the actual credential-mode stamp.
+- **FR-016**: Requests that omit the credential requirement MUST retain existing routing, spill, pinning, and response behavior with NO credential-mode stamp on the response (r1/C3 — constrained-only stamping; unconstrained traffic is behaviorally unchanged) except that newly reserved credential headers cannot be relayed from an upstream.
 - **FR-017**: Raw credentials, bearer values, API keys, and client topology MUST NOT appear in the new health, error, logging, or attestation surfaces.
 - **FR-018**: The implementation MUST add no vendor SDK, provider dependency, deployment configuration, Nix change, or production mutation.
 

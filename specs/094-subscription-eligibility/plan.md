@@ -8,9 +8,9 @@
 Extend the existing `:8760` ingress with one opt-in credential requirement.
 The ingress derives a fixed per-lane credential class from each configured
 lane's trusted health response, filters every selection path before egress,
-returns a stable 403 policy refusal instead of spilling, and stamps every
-forwarded response with the actual credential class. Unconstrained requests
-keep the existing router behavior.
+returns a stable 403 policy refusal instead of spilling, and stamps
+`credential-mode: subscription` on constrained 2xx responses (r1/C3).
+Unconstrained requests keep the existing router behavior byte-identical.
 
 ## Technical Context
 
@@ -113,9 +113,9 @@ configured lane, adds only scalar credential fields. It never copies source
 
 ### 6. Compatibility
 
-Header absence takes the current code path. The only unconstrained-visible
-change is the credential-mode stamp on every response and removal of newly
-reserved attestation headers if a lane attempts to spoof them.
+Header absence takes the current code path with no response stamp (r1/C3).
+The only visible changes are the per-lane health credential fields and removal
+of newly reserved attestation headers if a lane attempts to spoof them.
 
 ## Threat / Failure Trace
 
