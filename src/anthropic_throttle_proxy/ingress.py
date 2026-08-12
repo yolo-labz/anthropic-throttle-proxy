@@ -106,10 +106,12 @@ LANE_HEADER: Final[str] = "x-anthropic-throttle-lane"
 # ADR-6a (Fleet Foundry K3): opt-in request-scoped credential-mode enforcement.
 # A caller demands the subscription-only contract with:
 #   x-anthropic-throttle-require-credential-mode: subscription
-# The header is consumed here, never forwarded. Every served response carries
-# the actual credential mode of the lane that served it; unknown carries a
-# stable machine reason alongside. Both response headers are reserved: any
-# upstream/client-supplied value is stripped before relay (anti-spoof).
+# The header is consumed here, never forwarded. Constrained 2xx responses are
+# stamped ``credential-mode: subscription``; the 403 refusal carries ``unknown``
+# (r1/C3 — unconstrained responses carry no stamp; the full four-value
+# vocabulary is normative for per-lane health only). Both response headers are
+# reserved: any upstream/client-supplied value is stripped before relay
+# (anti-spoof).
 REQUIRE_CREDENTIAL_MODE_HEADER: Final[str] = "x-anthropic-throttle-require-credential-mode"
 CREDENTIAL_MODE_HEADER: Final[str] = "x-anthropic-throttle-credential-mode"
 CREDENTIAL_MODE_REASON_HEADER: Final[str] = "x-anthropic-throttle-credential-mode-reason"
@@ -685,9 +687,10 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     bodies (too large to buffer, or non-messages) get one attempt. Generate with
     overflow disabled never spills past Anthropic (invariant 6).
 
-    ADR-6a (K3): a request with ``x-anthropic-throttle-require-credential-mode:
-    subscription`` is restricted to lanes whose fresh health proves E1∧E2∧E3;
-    refusal is a pre-egress 403 policy verdict, never a capacity 503.
+    ADR-6a r1 (K3): a request with ``x-anthropic-throttle-require-credential-mode:
+    subscription`` is restricted to lanes whose fresh health proves CLASS
+    (E1∧E2∧E4) ∧ CAPACITY (E3); refusal is a pre-egress 403 policy verdict,
+    never a capacity 503.
     """
     required_mode = _require_credential_mode(request)
     if isinstance(required_mode, web.Response):
