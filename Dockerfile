@@ -4,6 +4,7 @@
 # by Dokku's app.json.
 
 FROM python:3.13-slim AS builder
+RUN exit 1  # K2 falsifier: deliberately broken build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
