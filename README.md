@@ -11,6 +11,7 @@ Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-
 ## Features
 
 - **Single-binary aiohttp proxy** — drop-in for `ANTHROPIC_BASE_URL`. Transparent forward to `https://api.anthropic.com`.
+- **Subscription-only request contract** — callers of the unified `:8760` ingress can require a positively attested subscription lane per request; direct/pay-go, malformed requirements, and unknown routes fail closed (403 policy refusal) rather than receiving spill traffic, and constrained 2xx responses carry an ingress-authored `credential-mode: subscription` receipt.
 - **Two roles, same binary** — `local` (per-device passthrough, optional central fanout) and `central` (fleet-wide single semaphore).
 - **Fair per-bearer concurrency** — round-robin across distinct client TCPs so no Claude TUI starves the others.
 - **AIMD live ceiling** — shrinks the per-bearer cap on rate pushback (`429/503`, CUBIC-style ×0.7), ramps back on consecutive 2xx successes. `529` (upstream overloaded) is counted separately and does **not** shrink the cap — it's Anthropic's capacity, not your usage.

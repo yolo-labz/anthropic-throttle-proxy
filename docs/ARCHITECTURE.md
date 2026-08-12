@@ -40,6 +40,48 @@ api.anthropic.com
 The proxy deliberately returns local fast-fail responses for known long-window
 blocks instead of letting every tab rediscover the same upstream rejection.
 
+## Subscription-constrained ingress requests (ADR-6a)
+
+The unified `:8760` ingress supports an opt-in pre-egress contract for
+callers that must not spend direct/pay-go capacity:
+
+```http
+X-Anthropic-Throttle-Require-Credential-Mode: subscription
+```
+
+A compliant caller first checks `GET /__throttle/health` for the
+`enforcement` capability object (`credential_mode:true`, `contract="adr6a-credential-mode/1"`,
+`subscription_upstreams_count` + `subscription_upstreams_digest`). That
+discovery step is mandatory: an old ingress cannot know that an unknown
+header should fail closed, so absence of the capability means **do not send the
+model request**.
+
+The ingress classifies each lane from trusted health facts, never its name,
+`detail` string, or credential custody. Eligibility is the frozen conjunction:
+
+- CLASS (E1∧E2∧E4): `api_key.enabled=false`; canonical upstream ∈
+  `INGRESS_SUBSCRIPTION_UPSTREAMS` (https, allowlisted host, port 443/absent,
+  empty path, no userinfo/query/fragment; empty allowlist ⇒ no lane eligible);
+  lane URL loopback ∧ `central_url==""`.
+- CAPACITY (E3): ≥1 usable bearer carrying fresh 5h/7d window state.
+
+The predicate is applied to session pins, initial selection, spill, and retry
+without replacing shared unconstrained pins. For a constrained request the
+candidate lane's health is re-probed at selection time so the decision is
+attributable to the request served. No eligible capacity returns a pre-egress
+`403` policy verdict (`x-anthropic-throttle-refusal: no_eligible_lane |
+eligible_lanes_exhausted`), never a capacity 503; reset hints appear only for a
+genuine all-bearer budget closure. Widened constrained failures stay
+request-local and cannot poison shared lane availability.
+
+Constrained responses only (r1/C3): a request carrying the requirement header
+gets `X-Anthropic-Throttle-Credential-Mode: subscription` on a served 2xx and
+`unknown` on the 403 refusal — unconstrained traffic is behaviorally unchanged.
+The full four-value vocabulary lives in per-lane health. Same-named upstream
+headers are always stripped (anti-spoof). Full wire
+contract and falsifiers:
+[`specs/094-subscription-eligibility/contracts/credential-eligibility-v1.md`](../specs/094-subscription-eligibility/contracts/credential-eligibility-v1.md).
+
 ## Limiting Model
 
 Limiter state is keyed by bearer id. Each bearer gets:
