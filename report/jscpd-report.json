@@ -1,0 +1,321 @@
+{
+  "duplicates": [
+    {
+      "firstFile": {
+        "end": 285,
+        "endLoc": {
+          "column": 8,
+          "line": 285,
+          "position": 11362
+        },
+        "name": "",
+        "start": 281,
+        "startLoc": {
+          "column": 47,
+          "line": 281,
+          "position": 11117
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 5,
+      "secondFile": {
+        "end": 343,
+        "endLoc": {
+          "column": 8,
+          "line": 343,
+          "position": 13784
+        },
+        "name": "",
+        "start": 339,
+        "startLoc": {
+          "column": 67,
+          "line": 339,
+          "position": 13539
+        }
+      },
+      "tokens": 62
+    },
+    {
+      "firstFile": {
+        "end": 289,
+        "endLoc": {
+          "column": 46,
+          "line": 289,
+          "position": 11543
+        },
+        "name": "",
+        "start": 281,
+        "startLoc": {
+          "column": 47,
+          "line": 281,
+          "position": 11117
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 9,
+      "secondFile": {
+        "end": 614,
+        "endLoc": {
+          "column": 18,
+          "line": 614,
+          "position": 25510
+        },
+        "name": "",
+        "start": 607,
+        "startLoc": {
+          "column": 54,
+          "line": 607,
+          "position": 25128
+        }
+      },
+      "tokens": 89
+    },
+    {
+      "firstFile": {
+        "end": 287,
+        "endLoc": {
+          "column": 22,
+          "line": 287,
+          "position": 11454
+        },
+        "name": "",
+        "start": 282,
+        "startLoc": {
+          "column": 22,
+          "line": 282,
+          "position": 11162
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 6,
+      "secondFile": {
+        "end": 366,
+        "endLoc": {
+          "column": 75,
+          "line": 366,
+          "position": 14802
+        },
+        "name": "",
+        "start": 362,
+        "startLoc": {
+          "column": 19,
+          "line": 362,
+          "position": 14526
+        }
+      },
+      "tokens": 67
+    },
+    {
+      "firstFile": {
+        "end": 323,
+        "endLoc": {
+          "column": 72,
+          "line": 323,
+          "position": 12953
+        },
+        "name": "",
+        "start": 310,
+        "startLoc": {
+          "column": 47,
+          "line": 310,
+          "position": 12349
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 14,
+      "secondFile": {
+        "end": 415,
+        "endLoc": {
+          "column": 34,
+          "line": 415,
+          "position": 16733
+        },
+        "name": "",
+        "start": 404,
+        "startLoc": {
+          "column": 55,
+          "line": 404,
+          "position": 16284
+        }
+      },
+      "tokens": 95
+    },
+    {
+      "firstFile": {
+        "end": 320,
+        "endLoc": {
+          "column": 35,
+          "line": 320,
+          "position": 12762
+        },
+        "name": "",
+        "start": 312,
+        "startLoc": {
+          "column": 35,
+          "line": 312,
+          "position": 12432
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 9,
+      "secondFile": {
+        "end": 347,
+        "endLoc": {
+          "column": 40,
+          "line": 347,
+          "position": 13927
+        },
+        "name": "",
+        "start": 340,
+        "startLoc": {
+          "column": 52,
+          "line": 340,
+          "position": 13614
+        }
+      },
+      "tokens": 67
+    },
+    {
+      "firstFile": {
+        "end": 350,
+        "endLoc": {
+          "column": 18,
+          "line": 350,
+          "position": 13999
+        },
+        "name": "",
+        "start": 341,
+        "startLoc": {
+          "column": 73,
+          "line": 341,
+          "position": 13689
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 10,
+      "secondFile": {
+        "end": 416,
+        "endLoc": {
+          "column": 73,
+          "line": 416,
+          "position": 16807
+        },
+        "name": "",
+        "start": 407,
+        "startLoc": {
+          "column": 73,
+          "line": 407,
+          "position": 16442
+        }
+      },
+      "tokens": 62
+    },
+    {
+      "firstFile": {
+        "end": 442,
+        "endLoc": {
+          "column": 46,
+          "line": 442,
+          "position": 17865
+        },
+        "name": "",
+        "start": 433,
+        "startLoc": {
+          "column": 61,
+          "line": 433,
+          "position": 17574
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 10,
+      "secondFile": {
+        "end": 466,
+        "endLoc": {
+          "column": 46,
+          "line": 466,
+          "position": 18969
+        },
+        "name": "",
+        "start": 457,
+        "startLoc": {
+          "column": 62,
+          "line": 457,
+          "position": 18678
+        }
+      },
+      "tokens": 57
+    },
+    {
+      "firstFile": {
+        "end": 443,
+        "endLoc": {
+          "column": 35,
+          "line": 443,
+          "position": 17920
+        },
+        "name": "",
+        "start": 433,
+        "startLoc": {
+          "column": 61,
+          "line": 433,
+          "position": 17574
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 11,
+      "secondFile": {
+        "end": 572,
+        "endLoc": {
+          "column": 35,
+          "line": 572,
+          "position": 23631
+        },
+        "name": "",
+        "start": 562,
+        "startLoc": {
+          "column": 63,
+          "line": 562,
+          "position": 23285
+        }
+      },
+      "tokens": 63
+    }
+  ],
+  "statistics": {
+    "detectionDate": "2026-08-12T15:54:35.709Z",
+    "formats": {
+      "python": {
+        "clones": 8,
+        "duplicatedLines": 66,
+        "duplicatedTokens": 562,
+        "lines": 631,
+        "newClones": 0,
+        "newDuplicatedLines": 0,
+        "percentage": 10.45958795562599,
+        "percentageTokens": 12.463960966954978,
+        "sources": 1,
+        "tokens": 4509
+      }
+    },
+    "total": {
+      "clones": 8,
+      "duplicatedLines": 66,
+      "duplicatedTokens": 562,
+      "lines": 631,
+      "newClones": 0,
+      "newDuplicatedLines": 0,
+      "percentage": 10.45958795562599,
+      "percentageTokens": 12.463960966954978,
+      "sources": 1,
+      "tokens": 4509
+    }
+  }
+}

@@ -6,6 +6,52 @@ host activation. Latest incident first.
 
 ---
 
+## 12/08/2026 - Spec 094: Fleet Foundry K3 subscription eligibility contract
+
+Fleet Foundry S3 was blocked because `:8760` exposed only lane availability:
+`{open,detail,checked_ago_s}`. Both the subscription Anthropic lane and the
+pay-go DeepSeek lane can be open with `detail=ok`, so lane/header presence did
+not prove credential economics and the existing spill chain could spend a
+direct key before a caller detected it.
+
+Spec 094 adds an opt-in v1 ingress contract:
+
+```http
+X-Anthropic-Throttle-Credential-Requirement: v1;mode=subscription
+```
+
+Callers MUST first discover the enforcement capability through
+`:8760/__throttle/health`; absence means no model request. On the upgraded
+ingress, unknown/malformed/duplicated requirement values fail before body
+read/selection. Eligibility is the frozen two-level predicate (ADR-6a r1):
+CLASS = E1∧E2∧E4 (`api_key.enabled=false`; canonical upstream host ∈
+`INGRESS_SUBSCRIPTION_UPSTREAMS`; lane loopback ∧ `central_url==""`),
+CAPACITY = E3 (≥1 fresh usable bearer with 5h/7d windows). Custody, lane name,
+and `detail` are deliberately excluded.
+
+The predicate gates a pre-existing session pin, initial selection, spill, retry,
+and connection-failure re-selection without overwriting shared unconstrained
+pins. Widened constrained transport/bare-pushback failures remain request-local;
+only sibling-stamped queue saturation changes shared availability. No eligible
+capacity yields a pre-egress `403` policy refusal (`no_eligible_lane` /
+`eligible_lanes_exhausted`, role-chain-scoped, with `reset_hint_epoch` when
+known). A constrained 2xx response carries ingress-authored
+`credential_mode=subscription` beside lane and role stamps; unconstrained
+traffic is behaviorally unchanged (r1/C3); same-named upstream headers are
+always stripped.
+
+Hermetic acceptance includes the eligibility fixtures, direct-provider trap
+zero, unknown/unupgraded semantics, request/upstream spoof stripping, pin
+preservation, request-local pushback, spill/retry near misses, per-request
+freshness (R3), stale-capacity refusal (R4), and role-scoped refusal counting
+(R2). **No live model canary, Nix edit, service restart, Dokku mutation, or
+deployment is part of this slice.** Running `:8760` remains on the pre-v1 Nix
+store path until a separately gated Nix activation.
+
+Reversal: `git revert <094-squash-sha>`.
+
+---
+
 ## 07/08/2026 - spec 092 was shipped a month ago; the checkboxes lied (THRTL-4)
 
 THRTL-4 asked for "Spec 092 T001 execution". T001 was already in `main` — and so

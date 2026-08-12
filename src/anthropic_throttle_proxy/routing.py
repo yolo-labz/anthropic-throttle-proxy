@@ -153,6 +153,20 @@ class LaneState:
     open: bool
     checked_at: float
     detail: str = ""
+    # ADR-6a (Fleet Foundry K3): the lane's credential class + reason, updated
+    # by the poll. ``unknown`` is explicit, never an absent field; the reason
+    # names why (e.g. lane-health-404 / fields-absent / no-upstream-allowlist).
+    credential_mode: str = "unknown"
+    credential_mode_reason: str = ""
+    # r1/C1 CAPACITY level: E3 (≥1 fresh usable bearer with 5h/7d windows),
+    # evaluated at poll time. The response stamp uses CLASS∧CAPACITY; refusals
+    # count CLASS here for ``eligible_configured`` and CLASS∧CAPACITY∧open for
+    # ``eligible_open`` so a capped subscription lane reads
+    # ``eligible_lanes_exhausted``.
+    credential_capacity_ok: bool = False
+    # Earliest known future reset (epoch) when every bearer is budget-blocked;
+    # used only as an optional refusal hint, never as a routing signal.
+    credential_reset_at: float | None = None
 
 
 def default_lanes() -> dict[str, Lane]:
