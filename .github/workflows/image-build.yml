@@ -1,0 +1,62 @@
+name: PR image build
+
+# Build-only validation of the Dockerfile on every pull request. The release
+# pipeline (attest.yml) publishes provenance + SBOM attestations on version
+# tags only; this job builds the SAME Dockerfile and throws the image away, so
+# a broken Dockerfile goes red in CI instead of being first discovered on the
+# Dokku host during `git push dokku main`. Keep this job build-only: no push,
+# no attestation, no SBOM — publishing provenance from unmerged PRs is exactly
+# what attest.yml's trigger comment protects against (K2/AC-20, fleet-qa F1).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Deny-all at workflow scope; the job re-grants the minimum it needs.
+permissions: {}
+
+# Cancel superseded runs on the same ref (new push to a PR voids the old run).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: docker build (throwaway)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout only
+    env:
+      # github.* values are bound to env (never interpolated into run:
+      # directly) so a crafted ref/actor cannot inject shell.
+      GIT_SHA: ${{ github.sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Same Dockerfile context and build-arg shape as attest.yml's release
+      # build (GIT_SHA, BUILD_DATE; APP_VERSION uses its Dockerfile default),
+      # so a PR that breaks the release build also breaks this one. No --push,
+      # no attestation/SBOM output, no labels, no SOURCE_DATE_EPOCH: the image
+      # is built and discarded. Layer caching is deliberately omitted:
+      # type=gha cache would require the actions:write permission, which is not
+      # worth granting a PR-time job; the cold multi-stage build is a few
+      # minutes and runs in parallel with the rest of CI.
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg GIT_SHA="$GIT_SHA" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag anthropic-throttle-proxy:ci \
+            .
