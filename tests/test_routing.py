@@ -637,6 +637,37 @@ def test_codex_lane_health_url_defaults_to_ccp_healthz() -> None:
     assert lanes["deepseek"].health_url == "http://127.0.0.1:8768/__throttle/health"
 
 
+def test_codex_code_model_unset_keeps_verbatim_passthrough(monkeypatch) -> None:
+    """Default MUST be a no-op: the CCP sidecar's own claude-* -> gpt-* alias
+    table decides. An accidental default here would silently redirect every
+    code-role turn to a small tier."""
+    monkeypatch.delenv("INGRESS_CODEX_CODE_MODEL", raising=False)
+    assert routing.default_lanes()["codex"].models == {}
+
+
+def test_codex_code_model_pins_the_egress_id(monkeypatch) -> None:
+    """Spending the under-used Spark window (22 %/12 % at pace 0.56x/0.43x on
+    15/08) requires pinning an egress id for the code role."""
+    monkeypatch.setenv("INGRESS_CODEX_CODE_MODEL", "gpt-5.3-codex-spark")
+    assert routing.default_lanes()["codex"].models == {"code": "gpt-5.3-codex-spark"}
+
+
+def test_codex_code_model_blank_is_treated_as_unset(monkeypatch) -> None:
+    """A blank/whitespace value must not remap to an empty model id, which the
+    upstream would reject — same fail-safe shape as the lane-URL retirement."""
+    monkeypatch.setenv("INGRESS_CODEX_CODE_MODEL", "")
+    assert routing.default_lanes()["codex"].models == {}
+
+
+def test_codex_pin_never_covers_judge_or_generate(monkeypatch) -> None:
+    """Spark hallucinates on open-ended work: it may serve the bounded ``code``
+    shape only, never eval/judge/done-state. No other role may be pinned here."""
+    monkeypatch.setenv("INGRESS_CODEX_CODE_MODEL", "gpt-5.3-codex-spark")
+    models = routing.default_lanes()["codex"].models
+    assert set(models) == {"code"}
+    assert "judge" not in models and "generate" not in models and "bulk" not in models
+
+
 def test_select_lane_code_prefers_codex_then_anthropic_then_deepseek() -> None:
     state = {
         "codex": _st(True),

@@ -192,6 +192,30 @@ def default_lanes() -> dict[str, Lane]:
         "bulk": os.environ.get("INGRESS_DEEPSEEK_BULK_MODEL", "deepseek-v4-flash"),
         "generate": os.environ.get("INGRESS_DEEPSEEK_GENERATE_MODEL", "deepseek-v4-flash"),
     }
+    # The codex lane is the ONLY lane whose meter is a subscription window we
+    # already pay for and currently under-spend: the Spark meter
+    # (``codex_bengalfox``) was measured 15/08 at 22 % used / pace 0.56x on
+    # account A and 12 % / 0.43x on B, i.e. ~44 % and ~57 % of two paid weekly
+    # windows heading for expiry unused, while the same class of work was
+    # being bought from DeepSeek for cash. Pinning an egress id here lets the
+    # fleet spend that window instead of discarding it.
+    #
+    # Default EMPTY = today's behaviour byte-for-byte: no remap, the client's
+    # id goes to the CCP sidecar and its own claude-* -> gpt-* alias table
+    # decides. Setting it (``gpt-5.3-codex-spark``) pins the egress id.
+    #
+    # Deliberately scoped to the ``code`` role only. Spark is a small tier that
+    # hallucinates on open-ended work, so it may serve ONLY the bounded shape
+    # ``is_small_agentic_code`` already gates: tools present, body <=
+    # CODE_MAX_BODY_BYTES, explicit positive ``max_tokens`` <= CODE_MAX_TOKENS,
+    # failing closed into ``generate`` on anything ambiguous. It must never
+    # reach eval/judge/done-state/adversarial review, which is why no
+    # ``judge``/``generate`` key is offered here.
+    codex_models = {
+        role: model
+        for role, model in (("code", os.environ.get("INGRESS_CODEX_CODE_MODEL", "")),)
+        if model
+    }
     lanes = {
         "anthropic": Lane(
             "anthropic",
@@ -229,6 +253,7 @@ def default_lanes() -> dict[str, Lane]:
             "codex",
             os.environ.get("INGRESS_CODEX_LANE_URL", "http://127.0.0.1:8769"),
             frozenset({"code"}),
+            models=codex_models,
             proxy_owns_key=True,
             # The CCP sidecar does not serve /__throttle/health (health-404
             # finding, 06/08): it answers /healthz -> 200 {"ok": true}. The
