@@ -711,3 +711,69 @@ def test_a_retired_lane_can_never_be_selected(monkeypatch):
     state = {name: routing.LaneState(True, 0.0) for name in lanes}  # every CONFIGURED lane open
     assert routing.select_lane("bulk", state) is None  # whole bulk chain retired
     assert routing.select_lane("generate", state, overflow=False) == "anthropic"
+
+
+# ─── #204 code-role rejection reason (observability for the envelope) ───────────
+
+
+def test_code_role_rejection_reason_none_when_it_qualifies() -> None:
+    assert routing.code_role_rejection_reason(_agentic_body(max_tokens=1024)) is None
+
+
+def test_code_role_rejection_reason_reports_the_live_failure_shape() -> None:
+    """The measured 15/08 cause: 3483 of 3840 requests declared max_tokens=64000,
+    15.6x the 4096 ceiling. That must be nameable, not journal-archaeology."""
+    reason = routing.code_role_rejection_reason(_agentic_body(max_tokens=64000))
+    assert reason == routing.CODE_REJECT_MAX_TOKENS_TOO_HIGH
+
+
+def test_code_role_rejection_reason_covers_each_gate() -> None:
+    r = routing.code_role_rejection_reason
+    assert r(b"") == routing.CODE_REJECT_EMPTY
+    assert r(_agentic_body(max_tokens=1024, tools=False)) == routing.CODE_REJECT_NO_TOOLS
+    assert r(_agentic_body(max_tokens=None)) == routing.CODE_REJECT_MAX_TOKENS_ABSENT
+    big = _agentic_body(max_tokens=1024, filler="x" * (routing.CODE_MAX_BODY_BYTES + 1))
+    assert r(big) == routing.CODE_REJECT_BODY_TOO_LARGE
+
+
+def test_code_role_rejection_reason_never_disagrees_with_the_predicate() -> None:
+    """The predicate is DEFINED as `reason is None`; a second copy of the ladder
+    would drift and the metric would explain a decision never made."""
+    cases = [
+        b"",
+        b"{not json",
+        _agentic_body(max_tokens=1024),
+        _agentic_body(max_tokens=64000),
+        _agentic_body(max_tokens=None),
+        _agentic_body(max_tokens=1024, tools=False),
+        _agentic_body(max_tokens=0),
+        _agentic_body(max_tokens=routing.CODE_MAX_TOKENS),
+        _agentic_body(max_tokens=1024, filler="x" * (routing.CODE_MAX_BODY_BYTES + 1)),
+    ]
+    for raw in cases:
+        assert is_small_agentic_code(raw) is (routing.code_role_rejection_reason(raw) is None)
+
+
+def test_code_role_rejection_labels_are_a_bounded_set() -> None:
+    """Metric labels must never carry request content (unbounded cardinality)."""
+    allowed = {
+        routing.CODE_REJECT_EMPTY,
+        routing.CODE_REJECT_BODY_TOO_LARGE,
+        routing.CODE_REJECT_NO_TOOLS,
+        routing.CODE_REJECT_UNPARSEABLE,
+        routing.CODE_REJECT_MAX_TOKENS_ABSENT,
+        routing.CODE_REJECT_MAX_TOKENS_TOO_HIGH,
+    }
+    probes = [
+        b"",
+        b"{not json",
+        b"[]",
+        _agentic_body(max_tokens=None),
+        _agentic_body(max_tokens=64000),
+        _agentic_body(max_tokens=-1),
+        _agentic_body(max_tokens=True),
+        _agentic_body(max_tokens=1024, tools=False),
+    ]
+    for raw in probes:
+        reason = routing.code_role_rejection_reason(raw)
+        assert reason is None or reason in allowed

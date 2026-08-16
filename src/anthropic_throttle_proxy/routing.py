@@ -52,7 +52,14 @@ __all__ = [
     "effective_chain",
     "infer_role",
     "infer_role_from_body",
+    "code_role_rejection_reason",
     "is_small_agentic_code",
+    "CODE_REJECT_EMPTY",
+    "CODE_REJECT_BODY_TOO_LARGE",
+    "CODE_REJECT_NO_TOOLS",
+    "CODE_REJECT_UNPARSEABLE",
+    "CODE_REJECT_MAX_TOKENS_ABSENT",
+    "CODE_REJECT_MAX_TOKENS_TOO_HIGH",
     "bearer_usable",
     "lane_usable",
     "select_lane",
@@ -519,8 +526,61 @@ def body_has_tools(raw: bytes) -> bool:
     return isinstance(tools, list) and len(tools) > 0
 
 
+# Why a body did NOT qualify for the "code" role. ``None`` means it did.
+# These are the only values ``code_role_rejection_reason`` returns, so they are
+# a bounded metric label set (no unbounded cardinality from request content).
+CODE_REJECT_EMPTY: Final[str] = "empty_body"
+CODE_REJECT_BODY_TOO_LARGE: Final[str] = "body_too_large"
+CODE_REJECT_NO_TOOLS: Final[str] = "no_tools"
+CODE_REJECT_UNPARSEABLE: Final[str] = "unparseable"
+CODE_REJECT_MAX_TOKENS_ABSENT: Final[str] = "max_tokens_absent"
+CODE_REJECT_MAX_TOKENS_TOO_HIGH: Final[str] = "max_tokens_too_high"
+
+
+def code_role_rejection_reason(raw: bytes) -> str | None:
+    """``None`` when ``raw`` qualifies for the "code" role, else WHY it did not.
+
+    ``ingress_route_decisions_total`` reports only what was *chosen*, so a
+    ``code`` row that stays at zero is unreadable: an operator cannot tell
+    "no agentic traffic" from "lane shut" from "envelope too tight". Measured
+    15/08/2026, with the Spark pin live and the lane open, the row was zero and
+    diagnosing it meant grepping the service journal for ``max_tokens=`` — the
+    answer being that 3483 of 3840 requests declared ``max_tokens=64000``,
+    15.6x the 4096 ceiling. The shipped design says to revisit the envelope
+    when that counter stays flat; this is the evidence that makes the envelope
+    tunable instead of guessed.
+
+    Order matters and mirrors ``is_small_agentic_code`` exactly: the cheapest
+    checks run first, and a body failing several reasons reports the first one,
+    so the reason is deterministic rather than dependent on check order.
+    """
+    if not raw:
+        return CODE_REJECT_EMPTY
+    if len(raw) > CODE_MAX_BODY_BYTES:
+        return CODE_REJECT_BODY_TOO_LARGE
+    if not body_has_tools(raw):
+        return CODE_REJECT_NO_TOOLS
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return CODE_REJECT_UNPARSEABLE
+    if not isinstance(obj, dict):
+        return CODE_REJECT_UNPARSEABLE
+    max_tokens = obj.get("max_tokens")
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
+        return CODE_REJECT_MAX_TOKENS_ABSENT
+    if not 0 < max_tokens <= CODE_MAX_TOKENS:
+        return CODE_REJECT_MAX_TOKENS_TOO_HIGH
+    return None
+
+
 def is_small_agentic_code(raw: bytes) -> bool:
     """True when ``raw`` is a "small agentic code task" (#182 "code" role).
+
+    Defined as ``code_role_rejection_reason(raw) is None`` so the predicate and
+    the reported reason can never disagree — a second copy of this ladder would
+    drift, and the drift would be invisible (the metric would explain a
+    decision the router did not actually make).
 
     Requires ALL of:
     - ``body_has_tools(raw)`` (agentic — Codex's whole reason to exist here)
@@ -539,20 +599,7 @@ def is_small_agentic_code(raw: bytes) -> bool:
     ``tools``/``max_tokens`` read could otherwise misclassify a large body as
     small.
     """
-    if not raw or len(raw) > CODE_MAX_BODY_BYTES:
-        return False
-    if not body_has_tools(raw):
-        return False
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        return False
-    if not isinstance(obj, dict):
-        return False
-    max_tokens = obj.get("max_tokens")
-    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
-        return False
-    return 0 < max_tokens <= CODE_MAX_TOKENS
+    return code_role_rejection_reason(raw) is None
 
 
 # The role-override header may only DOWNGRADE to a cheaper lane, never CLAIM the
