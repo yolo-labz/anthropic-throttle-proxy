@@ -59,6 +59,7 @@ __all__ = [
     "CODE_REJECT_NO_TOOLS",
     "CODE_REJECT_UNPARSEABLE",
     "CODE_REJECT_MAX_TOKENS_ABSENT",
+    "CODE_REJECT_MAX_TOKENS_INVALID",
     "CODE_REJECT_MAX_TOKENS_TOO_HIGH",
     "bearer_usable",
     "lane_usable",
@@ -534,6 +535,10 @@ CODE_REJECT_BODY_TOO_LARGE: Final[str] = "body_too_large"
 CODE_REJECT_NO_TOOLS: Final[str] = "no_tools"
 CODE_REJECT_UNPARSEABLE: Final[str] = "unparseable"
 CODE_REJECT_MAX_TOKENS_ABSENT: Final[str] = "max_tokens_absent"
+# Present but not a usable integer (``true``, ``"2048"``, a float). Split from
+# ABSENT because the operator actions differ: absent means the client never
+# declared a bound, invalid means it declared one this proxy cannot read.
+CODE_REJECT_MAX_TOKENS_INVALID: Final[str] = "max_tokens_invalid"
 CODE_REJECT_MAX_TOKENS_TOO_HIGH: Final[str] = "max_tokens_too_high"
 
 
@@ -541,18 +546,23 @@ def code_role_rejection_reason(raw: bytes) -> str | None:
     """``None`` when ``raw`` qualifies for the "code" role, else WHY it did not.
 
     ``ingress_route_decisions_total`` reports only what was *chosen*, so a
-    ``code`` row that stays at zero is unreadable: an operator cannot tell
-    "no agentic traffic" from "lane shut" from "envelope too tight". Measured
-    15/08/2026, with the Spark pin live and the lane open, the row was zero and
-    diagnosing it meant grepping the service journal for ``max_tokens=`` — the
-    answer being that 3483 of 3840 requests declared ``max_tokens=64000``,
-    15.6x the 4096 ceiling. The shipped design says to revisit the envelope
-    when that counter stays flat; this is the evidence that makes the envelope
-    tunable instead of guessed.
+    ``code`` row that stays at zero does not say why. Measured 15/08/2026, with
+    the Spark pin live and the lane open, the row was zero and diagnosing it
+    meant grepping the service journal for ``max_tokens=`` — the answer being
+    that 3483 of 3840 requests declared ``max_tokens=64000``, 15.6x the 4096
+    ceiling. The shipped design says to revisit the envelope when that counter
+    stays flat; this is the evidence that makes the envelope tunable instead of
+    guessed.
 
-    Order matters and mirrors ``is_small_agentic_code`` exactly: the cheapest
-    checks run first, and a body failing several reasons reports the first one,
-    so the reason is deterministic rather than dependent on check order.
+    Scope, precisely: this names why AGENTIC bodies were *rejected*. It does
+    NOT by itself distinguish "no agentic traffic at all" from "every agentic
+    body qualified" — both leave it at zero. Pair it with
+    ``ingress_route_decisions_total`` (a ``role="code"`` row proves traffic is
+    landing) to separate those two.
+
+    Order mirrors ``is_small_agentic_code`` exactly: cheapest checks first, and
+    a body failing several gates reports the FIRST one, so the reason is
+    deterministic rather than dependent on evaluation order.
     """
     if not raw:
         return CODE_REJECT_EMPTY
@@ -566,9 +576,13 @@ def code_role_rejection_reason(raw: bytes) -> str | None:
         return CODE_REJECT_UNPARSEABLE
     if not isinstance(obj, dict):
         return CODE_REJECT_UNPARSEABLE
-    max_tokens = obj.get("max_tokens")
-    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
+    if "max_tokens" not in obj:
         return CODE_REJECT_MAX_TOKENS_ABSENT
+    max_tokens = obj.get("max_tokens")
+    # ``bool`` is a subclass of ``int``, so ``max_tokens: true`` would otherwise
+    # read as 1 and qualify.
+    if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
+        return CODE_REJECT_MAX_TOKENS_INVALID
     if not 0 < max_tokens <= CODE_MAX_TOKENS:
         return CODE_REJECT_MAX_TOKENS_TOO_HIGH
     return None

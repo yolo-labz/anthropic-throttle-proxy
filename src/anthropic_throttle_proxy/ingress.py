@@ -250,9 +250,10 @@ M_ROUTE_DECISIONS = Counter(
 # Counting only agentic bodies keeps this about the code envelope: a plain
 # chat turn has no business being reported as a near-miss. The label set is
 # the fixed CODE_REJECT_* vocabulary, never request content, so cardinality is
-# bounded. Without this, a ``code`` row stuck at zero is unreadable — measured
-# 15/08/2026, telling "no agentic traffic" from "envelope too tight" required
-# grepping the service journal.
+# bounded. Without this, a zero ``code`` row gave no reason at all — measured
+# 15/08/2026, finding it meant grepping the service journal. Read it ALONGSIDE
+# ingress_route_decisions_total: this counter alone cannot separate "no agentic
+# traffic" from "everything qualified", since both leave it at zero.
 M_CODE_ROLE_REJECTED = Counter(
     "ingress_code_role_rejected_total",
     "Agentic requests that did NOT qualify for the code role, by reason.",
@@ -756,8 +757,10 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         if full_body is None:
             role = "generate"
         elif body_has_tools(full_body):
-            # One evaluation, used for both the decision and its explanation,
-            # so the metric can never describe a choice the router didn't make.
+            # One REJECTION evaluation, used for both the decision and its
+            # explanation, so the metric can never describe a choice the router
+            # didn't make. (The body is still parsed twice overall — once by
+            # body_has_tools above — exactly as before this change.)
             reject = code_role_rejection_reason(full_body)
             role = "generate" if reject else "code"
             if reject:
