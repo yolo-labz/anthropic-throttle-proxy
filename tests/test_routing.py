@@ -803,3 +803,26 @@ def test_code_role_rejection_reason_reports_the_first_fault_not_an_arbitrary_one
 
     # empty beats everything
     assert routing.code_role_rejection_reason(b"") == routing.CODE_REJECT_EMPTY
+
+
+def test_code_role_rejection_reason_explicit_null_max_tokens() -> None:
+    """`"max_tokens": null` is PRESENT-but-unreadable, not absent.
+
+    Reviewer finding (#204 re-review): the boundary between ABSENT and INVALID
+    was drawn in prose but never pinned, because `_agentic_body(max_tokens=None)`
+    omits the key rather than emitting an explicit null. Both shapes reject; the
+    distinction is which fix the label points an operator at, so it is worth a
+    test rather than a comment.
+    """
+    explicit_null = json.dumps(
+        {"model": "claude-opus-5", "messages": [], "tools": [{"name": "t"}], "max_tokens": None}
+    ).encode()
+    assert b'"max_tokens": null' in explicit_null  # the helper cannot express this
+    assert (
+        routing.code_role_rejection_reason(explicit_null) == routing.CODE_REJECT_MAX_TOKENS_INVALID
+    )
+    assert is_small_agentic_code(explicit_null) is False
+
+    missing_key = _agentic_body(max_tokens=None)
+    assert b"max_tokens" not in missing_key
+    assert routing.code_role_rejection_reason(missing_key) == routing.CODE_REJECT_MAX_TOKENS_ABSENT
