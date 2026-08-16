@@ -36,9 +36,9 @@ from .routing import (
     Lane,
     LaneState,
     body_has_tools,
+    code_role_rejection_reason,
     default_lanes,
     infer_role_from_body,
-    is_small_agentic_code,
     lane_usable,
     remap_body_model,
     select_lane,
@@ -244,6 +244,20 @@ M_ROUTE_DECISIONS = Counter(
     "ingress_route_decisions_total",
     "Requests routed by the unified ingress, by inferred role and chosen lane.",
     ["role", "lane"],
+    registry=REGISTRY,
+)
+# Why an AGENTIC request missed the "code" role and fell back to generate.
+# Counting only agentic bodies keeps this about the code envelope: a plain
+# chat turn has no business being reported as a near-miss. The label set is
+# the fixed CODE_REJECT_* vocabulary, never request content, so cardinality is
+# bounded. Without this, a zero ``code`` row gave no reason at all — measured
+# 15/08/2026, finding it meant grepping the service journal. Read it ALONGSIDE
+# ingress_route_decisions_total: this counter alone cannot separate "no agentic
+# traffic" from "everything qualified", since both leave it at zero.
+M_CODE_ROLE_REJECTED = Counter(
+    "ingress_code_role_rejected_total",
+    "Agentic requests that did NOT qualify for the code role, by reason.",
+    ["reason"],
     registry=REGISTRY,
 )
 
@@ -743,7 +757,14 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         if full_body is None:
             role = "generate"
         elif body_has_tools(full_body):
-            role = "code" if is_small_agentic_code(full_body) else "generate"
+            # One REJECTION evaluation, used for both the decision and its
+            # explanation, so the metric can never describe a choice the router
+            # didn't make. (The body is still parsed twice overall — once by
+            # body_has_tools above — exactly as before this change.)
+            reject = code_role_rejection_reason(full_body)
+            role = "generate" if reject else "code"
+            if reject:
+                M_CODE_ROLE_REJECTED.labels(reason=reject).inc()
         sess_key = session_key_from_body(prefix)
 
     spillable = is_messages and full_body is not None

@@ -711,3 +711,118 @@ def test_a_retired_lane_can_never_be_selected(monkeypatch):
     state = {name: routing.LaneState(True, 0.0) for name in lanes}  # every CONFIGURED lane open
     assert routing.select_lane("bulk", state) is None  # whole bulk chain retired
     assert routing.select_lane("generate", state, overflow=False) == "anthropic"
+
+
+# ─── #204 code-role rejection reason (observability for the envelope) ───────────
+
+
+def test_code_role_rejection_reason_none_when_it_qualifies() -> None:
+    assert routing.code_role_rejection_reason(_agentic_body(max_tokens=1024)) is None
+
+
+def test_code_role_rejection_reason_reports_the_live_failure_shape() -> None:
+    """The measured 15/08 cause: 3483 of 3840 requests declared max_tokens=64000,
+    15.6x the 4096 ceiling. That must be nameable, not journal-archaeology."""
+    reason = routing.code_role_rejection_reason(_agentic_body(max_tokens=64000))
+    assert reason == routing.CODE_REJECT_MAX_TOKENS_TOO_HIGH
+
+
+def test_code_role_rejection_reason_covers_each_gate() -> None:
+    r = routing.code_role_rejection_reason
+    assert r(b"") == routing.CODE_REJECT_EMPTY
+    assert r(_agentic_body(max_tokens=1024, tools=False)) == routing.CODE_REJECT_NO_TOOLS
+    assert r(_agentic_body(max_tokens=None)) == routing.CODE_REJECT_MAX_TOKENS_ABSENT
+    assert r(_agentic_body(max_tokens=True)) == routing.CODE_REJECT_MAX_TOKENS_INVALID
+    big = _agentic_body(max_tokens=1024, filler="x" * (routing.CODE_MAX_BODY_BYTES + 1))
+    assert r(big) == routing.CODE_REJECT_BODY_TOO_LARGE
+
+
+def test_code_role_rejection_reason_never_disagrees_with_the_predicate() -> None:
+    """The predicate is DEFINED as `reason is None`; a second copy of the ladder
+    would drift and the metric would explain a decision never made."""
+    cases = [
+        b"",
+        b"{not json",
+        _agentic_body(max_tokens=1024),
+        _agentic_body(max_tokens=64000),
+        _agentic_body(max_tokens=None),
+        _agentic_body(max_tokens=1024, tools=False),
+        _agentic_body(max_tokens=0),
+        _agentic_body(max_tokens=routing.CODE_MAX_TOKENS),
+        _agentic_body(max_tokens=1024, filler="x" * (routing.CODE_MAX_BODY_BYTES + 1)),
+    ]
+    for raw in cases:
+        assert is_small_agentic_code(raw) is (routing.code_role_rejection_reason(raw) is None)
+
+
+def test_code_role_rejection_labels_are_a_bounded_set() -> None:
+    """Metric labels must never carry request content (unbounded cardinality)."""
+    allowed = {
+        routing.CODE_REJECT_EMPTY,
+        routing.CODE_REJECT_BODY_TOO_LARGE,
+        routing.CODE_REJECT_NO_TOOLS,
+        routing.CODE_REJECT_UNPARSEABLE,
+        routing.CODE_REJECT_MAX_TOKENS_ABSENT,
+        routing.CODE_REJECT_MAX_TOKENS_INVALID,
+        routing.CODE_REJECT_MAX_TOKENS_TOO_HIGH,
+    }
+    probes = [
+        b"",
+        b"{not json",
+        b"[]",
+        _agentic_body(max_tokens=None),
+        _agentic_body(max_tokens=64000),
+        _agentic_body(max_tokens=-1),
+        _agentic_body(max_tokens=True),
+        _agentic_body(max_tokens=1024, tools=False),
+    ]
+    for raw in probes:
+        reason = routing.code_role_rejection_reason(raw)
+        assert reason is None or reason in allowed
+
+
+def test_code_role_rejection_reason_reports_the_first_fault_not_an_arbitrary_one() -> None:
+    """A body failing SEVERAL gates must report a deterministic first fault.
+
+    Reviewer finding (#204, different-family): the old ladder folded empty and
+    too-large into one branch, so a too-large body carrying tools could only
+    ever be described by a later gate. Splitting them changed which fault is
+    REPORTED for that shape (never whether it is rejected). Pin the order so a
+    future reshuffle cannot silently relabel it.
+    """
+    huge_with_tools = _agentic_body(
+        max_tokens=64000, filler="x" * (routing.CODE_MAX_BODY_BYTES + 1)
+    )
+    # size is checked before tools and before max_tokens
+    assert routing.code_role_rejection_reason(huge_with_tools) == routing.CODE_REJECT_BODY_TOO_LARGE
+    assert is_small_agentic_code(huge_with_tools) is False
+
+    # tools is checked before max_tokens
+    no_tools_bad_mt = _agentic_body(max_tokens=64000, tools=False)
+    assert routing.code_role_rejection_reason(no_tools_bad_mt) == routing.CODE_REJECT_NO_TOOLS
+
+    # empty beats everything
+    assert routing.code_role_rejection_reason(b"") == routing.CODE_REJECT_EMPTY
+
+
+def test_code_role_rejection_reason_explicit_null_max_tokens() -> None:
+    """`"max_tokens": null` is PRESENT-but-unreadable, not absent.
+
+    Reviewer finding (#204 re-review): the boundary between ABSENT and INVALID
+    was drawn in prose but never pinned, because `_agentic_body(max_tokens=None)`
+    omits the key rather than emitting an explicit null. Both shapes reject; the
+    distinction is which fix the label points an operator at, so it is worth a
+    test rather than a comment.
+    """
+    explicit_null = json.dumps(
+        {"model": "claude-opus-5", "messages": [], "tools": [{"name": "t"}], "max_tokens": None}
+    ).encode()
+    assert b'"max_tokens": null' in explicit_null  # the helper cannot express this
+    assert (
+        routing.code_role_rejection_reason(explicit_null) == routing.CODE_REJECT_MAX_TOKENS_INVALID
+    )
+    assert is_small_agentic_code(explicit_null) is False
+
+    missing_key = _agentic_body(max_tokens=None)
+    assert b"max_tokens" not in missing_key
+    assert routing.code_role_rejection_reason(missing_key) == routing.CODE_REJECT_MAX_TOKENS_ABSENT
