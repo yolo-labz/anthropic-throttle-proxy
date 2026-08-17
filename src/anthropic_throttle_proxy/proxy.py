@@ -129,6 +129,7 @@ from .metrics import (
     M_INFLIGHT,
     M_INFLIGHT_BEARER,
     M_KEEPALIVE_HOLDS,
+    M_OAUTH_ENTITLEMENT_REFUSALS,
     M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
@@ -152,6 +153,7 @@ from .ratelimit import (
     _extract_model_from_body,
     _extract_ratelimit,
     _extract_zai_ratelimit_from_body,
+    _is_oauth_entitlement_refusal,
     _is_zai_quota_gate,
     _parse_retry_after,
     _parse_sse_usage,
@@ -209,6 +211,7 @@ __all__ = [
     "_extract_model_from_body",
     "_extract_ratelimit",
     "_extract_zai_ratelimit_from_body",
+    "_is_oauth_entitlement_refusal",
     "_is_zai_quota_gate",
     "_parse_retry_after",
     "_parse_sse_usage",
@@ -2047,6 +2050,21 @@ def _is_oauth_telemetry_path(path: str) -> bool:
     return p in _OAUTH_TELEMETRY_PATHS
 
 
+def _is_entitlement_refusal_attempt(attempt: _Attempt) -> bool:
+    """True when THIS attempt's throttle is Anthropic's OAuth entitlement gate.
+
+    The gate refuses a subscription bearer whose request does not carry the
+    Claude Code identity as its first ``system`` block, and it masks the refusal
+    as a bare 429 (see ``_is_oauth_entitlement_refusal``). It is PERMANENT for
+    that request shape: retrying, pausing, or shrinking the bearer only converts
+    an instant client-side error into a ~60 s stall plus a collapsed cap on an
+    account that is still serving 200s (17/08/2026 incident — three
+    ``max_tokens=1`` diagnostic probes on healthy `allowed_warning` bearers
+    drove ``max_concurrent`` to the floor and stalled the fleet).
+    """
+    return _is_oauth_entitlement_refusal(attempt.final_status, attempt.meta, attempt.captured)
+
+
 def _should_retry_pushback(
     response: web.StreamResponse | web.Response | None,
     attempt: _Attempt,
@@ -2057,7 +2075,9 @@ def _should_retry_pushback(
     A relayed queue-wait-timeout 503 is exempt: central's queue is FULL, so a
     pushback retry would only re-park this request against the same saturated
     queue and burn the client's remaining patience — relay it instead so the
-    SDK retries on its own clock.
+    SDK retries on its own clock. An OAuth entitlement refusal is exempt for the
+    opposite reason: no amount of waiting can change the request's shape, so the
+    retry budget would only be spent proving that.
     """
     return (
         response is not None
@@ -2065,6 +2085,7 @@ def _should_retry_pushback(
         and attempt.final_status in THROTTLE_STATUSES
         and pushback_retries < config.RATE_PUSHBACK_RETRIES
         and not _is_queue_timeout_response(response)
+        and not _is_entitlement_refusal_attempt(attempt)
     )
 
 
@@ -2210,6 +2231,7 @@ def _is_transient_throttle(
     meta: dict[str, str] | None,
     bid: str,
     response: web.StreamResponse | web.Response | None = None,
+    body: bytes | bytearray | None = None,
 ) -> bool:
     """True when this throttle is TRANSIENT (hold candidate), not BUDGET.
 
@@ -2226,6 +2248,11 @@ def _is_transient_throttle(
     * Budget-rejected / long Retry-After / non-streaming → NOT held.
     """
     if status not in THROTTLE_STATUSES:
+        return False
+    # An OAuth entitlement refusal never clears: committing a 200 SSE hold for it
+    # would spend the client's whole wait budget and then still have to error,
+    # which is strictly worse than relaying the 429 the instant it arrives.
+    if _is_oauth_entitlement_refusal(status, meta, body):
         return False
     # Central-queue-depth 503: always transient (central queue is full, will
     # drain) — the hold is exactly the banner-killer for it. Its Retry-After is
@@ -2550,7 +2577,7 @@ async def _keepalive_hold_and_retry(
             attempt.final_status = status
             attempt.response = retry_fake
 
-            if _is_transient_throttle(status, meta, bid, retry_fake):
+            if _is_transient_throttle(status, meta, bid, retry_fake, attempt.captured):
                 # Still transient: the canonical _aimd_feedback already does the
                 # right thing per status (529 + a marked central queue-timeout
                 # never shrink — invariants 7, 9; a budget/Retry-After 429 shrinks,
@@ -2719,7 +2746,9 @@ async def _forward_with_retry(
             and _is_streaming_body(body)
             and wait_deadline is not None
             and time.time() < wait_deadline
-            and _is_transient_throttle(attempt.final_status, attempt.meta, bid, response)
+            and _is_transient_throttle(
+                attempt.final_status, attempt.meta, bid, response, attempt.captured
+            )
         ):
             _schedule_advisor(bid, attempt.final_status, path)
             return await _keepalive_hold_and_retry(
@@ -2772,6 +2801,15 @@ async def _forward_with_retry(
             _schedule_advisor(bid, attempt.final_status, path)
             await limiter.wait_retry_after()
             continue
+        if (
+            response is not None
+            and not response.prepared
+            and _is_entitlement_refusal_attempt(attempt)
+        ):
+            # Relay the upstream 429 unchanged but say WHY, so the operator is
+            # not left staring at a bare `rate_limit_error` on an account whose
+            # own /__throttle/health reports it 60 % free.
+            response.headers[config.ENTITLEMENT_REFUSAL_HEADER] = "1"
         return response
 
 
@@ -2984,6 +3022,24 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         # misattribute central's queue depth to the bearer's own upstream
         # behavior and collapse a healthy local cap.
         log(f"queue-timeout-relay bid={bid} status={final_status} (no aimd shrink)")
+        return
+    if final_status in AIMD_STATUSES and _is_entitlement_refusal_attempt(attempt):
+        # Anthropic's OAuth entitlement gate, masked as a 429 (see
+        # `_is_oauth_entitlement_refusal`). The bearer is healthy — it answers
+        # 200 for the same model on the very next correctly-shaped request — so
+        # this says nothing about the right concurrency ceiling. Shrinking here
+        # is what turned three `max_tokens=1` diagnostic probes into a
+        # fleet-wide stall on 17/08/2026: cap 5 -> 1 on two `allowed_warning`
+        # bearers that were still serving. No shrink, and NO retry_after latch:
+        # a synthetic pause would park the next real turn behind a window the
+        # upstream never asked for.
+        model = attempt.context.get("model") or "unknown"
+        M_OAUTH_ENTITLEMENT_REFUSALS.labels(bearer=bid, model=model).inc()
+        log(
+            f"oauth-entitlement-refusal bid={bid} status={final_status} model={model} "
+            "(no aimd shrink, no pause) — request's first system block is not the "
+            "Claude Code identity; a subscription bearer cannot serve this shape"
+        )
         return
     if final_status in AIMD_STATUSES and _is_zai_quota_gate(attempt.meta):
         # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a

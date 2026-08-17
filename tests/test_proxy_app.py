@@ -121,6 +121,14 @@ def _make_upstream() -> web.Application:
                 },
                 status=429,
             )
+        if mode == "oauth-entitlement-429":
+            # Anthropic's OAuth entitlement gate, verbatim (measured 17/08/2026):
+            # bare rate_limit_error whose message is the literal "Error", no
+            # unified-window headers, no Retry-After.
+            return web.json_response(
+                {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}},
+                status=429,
+            )
         if mode == "zai-concurrency-1302":
             return web.json_response(
                 {"error": {"code": "1302", "message": "too many concurrent requests"}},
@@ -942,6 +950,69 @@ async def test_zai_quota_gate_pauses_without_aimd_shrink(client: TestClient, mon
     meta = config.bearer_state[bid]["last_ratelimit"]
     assert meta["zai-error-code"] == "1316"
     assert meta["zai-quota-gate"] == "true"
+
+
+async def test_oauth_entitlement_429_relays_without_shrink_retry_or_pause(
+    client: TestClient, monkeypatch
+) -> None:
+    """The 17/08/2026 incident in one test.
+
+    A subscription bearer refused on request SHAPE (first ``system`` block is
+    not the Claude Code identity) gets a bare 429. Before this classification it
+    read as budget pushback: two 30 s synthetic pauses, an AIMD shrink to the
+    floor, and a ~61 s stall — on an account that answered 200 for the same
+    model seconds later.
+    """
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 2)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 30)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+
+    t0 = time.monotonic()
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5","max_tokens":1}',
+        headers={
+            "Authorization": "Bearer entitlement-refusal",
+            "X-Stub-Mode": "oauth-entitlement-429",
+        },
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    # Relayed immediately: no pushback retry, no synthetic pause.
+    assert time.monotonic() - t0 < 1.0
+    assert resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1"
+    bid = proxy._bearer_id({"authorization": "Bearer entitlement-refusal"})
+    lim = config.bearer_limiters[bid]
+    # The ceiling is untouched and no window was latched.
+    assert lim.max_concurrent == 3
+    assert lim.retry_after_remaining() == 0
+
+
+async def test_real_budget_429_still_shrinks_despite_entitlement_check(
+    client: TestClient, monkeypatch
+) -> None:
+    """The entitlement exemption must not swallow genuine budget pushback."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 5)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5"}',
+        headers={
+            "Authorization": "Bearer real-budget-429",
+            "X-Stub-Mode": "429-unified-rejected",
+        },
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    assert config.ENTITLEMENT_REFUSAL_HEADER not in resp.headers
+    bid = proxy._bearer_id({"authorization": "Bearer real-budget-429"})
+    assert config.bearer_limiters[bid].max_concurrent < 3
 
 
 async def test_zai_concurrency_1302_still_triggers_aimd_shrink(

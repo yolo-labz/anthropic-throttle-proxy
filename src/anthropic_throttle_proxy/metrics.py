@@ -36,6 +36,7 @@ __all__ = [
     "M_AIMD_SHRINKS",
     "M_AIMD_GROWS",
     "M_AIMD_OVERLOAD",
+    "M_OAUTH_ENTITLEMENT_REFUSALS",
     "M_CREDENTIAL_NUDGE",
     "M_BODY_SHRINK_TRIMMED",
     "M_BODY_SHRINK_BYTES_SAVED",
@@ -212,6 +213,14 @@ M_AIMD_OVERLOAD = Counter(
     "Upstream 529 overloaded events (Anthropic-side capacity, not your usage). "
     "Does NOT shrink the ceiling; retry-after is still honored.",
     ["bearer"],
+    registry=REGISTRY,
+)
+M_OAUTH_ENTITLEMENT_REFUSALS = Counter(
+    "anthropic_oauth_entitlement_refusals_total",
+    "Masked 429s from Anthropic's OAuth entitlement gate: the request's first "
+    "system block was not the Claude Code identity string, so a subscription "
+    "bearer is refused regardless of quota. Never shrinks, pauses, or retries.",
+    ["bearer", "model"],
     registry=REGISTRY,
 )
 # Credential-failover nudge: when the captive broker swaps the fleet's single
