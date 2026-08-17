@@ -155,7 +155,10 @@ def _make_upstream() -> web.Application:
                     },
                 },
                 status=429,
-                headers={"x-anthropic-throttle-oauth-entitlement": "1"},
+                headers={
+                    "x-anthropic-throttle-proxy": "1",
+                    "x-anthropic-throttle-oauth-entitlement": "1",
+                },
             )
         if mode == "oauth-entitlement-429":
             # Anthropic's OAuth entitlement gate, verbatim (measured 17/08/2026):
@@ -1107,6 +1110,9 @@ async def test_sibling_tier_verdict_is_authoritative_both_ways(
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
     monkeypatch.setattr(config, "AIMD_BACKOFF_S", 30)
     monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    # A sibling verdict is only trusted when THIS process routed to central —
+    # `via`, which we set from pick_target, not a header the upstream controls.
+    monkeypatch.setattr(config, "CENTRAL_URL", config.UPSTREAM)
 
     bid = proxy._bearer_id({"authorization": f"Bearer {auth}"})
     if seed_rejected_cache:
@@ -1133,6 +1139,40 @@ async def test_sibling_tier_verdict_is_authoritative_both_ways(
     assert time.monotonic() - t0 < 1.0
     assert (resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1") is expect_stamp
     assert (config.bearer_limiters[bid].max_concurrent < 3) is expect_shrink
+
+
+@pytest.mark.parametrize(
+    ("stub_mode", "auth", "expect_stamp"),
+    [
+        # Marker only, on a body that IS the gate envelope. `via` is direct, so
+        # the marker buys nothing: we still re-derive locally and detect the gate.
+        # Trusting the header alone would have let any upstream suppress
+        # detection with one header (Codex fourth pass).
+        ("central-says-not-entitlement", "raw-marker-only", True),
+        # Marker + stamp on a body that is NOT the envelope: we do not endorse
+        # it, so the stamp must be stripped rather than relayed to the client.
+        ("spoofed-entitlement-header", "raw-marker-spoof", False),
+    ],
+    ids=["marker-cannot-suppress", "unendorsed-stamp-stripped"],
+)
+async def test_raw_upstream_marker_does_not_buy_a_sibling_verdict(
+    client: TestClient, monkeypatch, stub_mode: str, auth: str, expect_stamp: bool
+) -> None:
+    """`via != central` means no sibling spoke, whatever headers arrived."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+    assert config.CENTRAL_URL == ""
+
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5","max_tokens":1}',
+        headers={"Authorization": f"Bearer {auth}", "X-Stub-Mode": stub_mode},
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    assert (resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1") is expect_stamp
 
 
 async def test_zai_concurrency_1302_still_triggers_aimd_shrink(

@@ -2087,26 +2087,32 @@ def _is_entitlement_refusal_attempt(attempt: _Attempt, bid: str = "") -> bool:
     return _entitlement_scoped(attempt, bid, attempt.captured)
 
 
-def _relayed_entitlement_verdict(response: web.StreamResponse | None) -> bool | None:
+def _relayed_entitlement_verdict(attempt: _Attempt) -> bool | None:
     """A SIBLING proxy tier's verdict, or ``None`` when no sibling answered.
 
     Authoritative in BOTH directions, which is the whole point. With
     local→central account routing the two tiers are often talking about
     DIFFERENT accounts: central picks the credential that actually reaches
     Anthropic, while this tier's ``bearer_state`` is keyed to the client's own
-    bearer. So:
+    bearer. So, for a response that really came from central:
 
     * stamp present → central hit the gate; relay its verdict, do not shrink.
     * marker but NO stamp → central already ruled the gate out (it saw the real
       bearer's windows). Re-deriving here against OUR unrelated cache would
       manufacture a false entitlement verdict and skip a shrink the walled
-      account needs — the asymmetry Codex's third pass caught: a marker was
-      being treated as authoritative only when the answer was "yes".
-    * no marker → we talked to the upstream ourselves; re-derive locally.
+      account needs.
+    * otherwise → we talked to the upstream ourselves; re-derive locally.
 
-    ``_stream_response`` strips the stamp from any response lacking the marker,
-    so a raw upstream can never reach the first branch.
+    The "did a sibling answer" test is ``via``, which THIS process set from
+    ``pick_target`` — not a response header. Keying it on ``MARKER_HEADER``
+    alone let a raw upstream emit that one header and suppress local gate
+    detection entirely, dropping the required spoof from marker+stamp to marker
+    (Codex fourth pass). The marker is still required on top, so a non-proxy
+    error page returned by central's front door does not count as a verdict.
     """
+    if attempt.context.get("via") != "central":
+        return None
+    response = attempt.response
     if response is None or config.MARKER_HEADER not in response.headers:
         return None
     return response.headers.get(config.ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
@@ -2118,7 +2124,7 @@ def _entitlement_scoped(attempt: _Attempt, bid: str, body: bytes | bytearray | N
         return False
     if bid == API_KEY_BEARER_ID:
         return False
-    relayed = _relayed_entitlement_verdict(attempt.response)
+    relayed = _relayed_entitlement_verdict(attempt)
     if relayed is not None:
         return relayed
     if not _is_oauth_entitlement_refusal(attempt.final_status, attempt.meta, body):
@@ -2146,6 +2152,10 @@ def _stamp_entitlement_refusal(attempt: _Attempt, bid: str) -> None:
         return
     if _entitlement_scoped(attempt, bid, body):
         response.headers[config.ENTITLEMENT_REFUSAL_HEADER] = "1"
+    else:
+        # An upstream may have set the stamp itself. We did not endorse it, so it
+        # must not reach the client wearing this proxy's marker.
+        response.headers.pop(config.ENTITLEMENT_REFUSAL_HEADER, None)
 
 
 def _cached_unified_rejected(bid: str) -> bool:
@@ -2685,8 +2695,12 @@ async def _keepalive_hold_and_retry(
                 config.MARKER_HEADER,
                 config.ENTITLEMENT_REFUSAL_HEADER,
             ):
+                # Copy the VALUE, not a normalized "1": the entitlement verdict is
+                # read as `== "1"`, so flattening some other value into "1" would
+                # turn a sibling's non-verdict into a positive one (Codex fourth
+                # pass).
                 if meta and header in meta:
-                    retry_resp_headers[header] = "1"
+                    retry_resp_headers[header] = meta[header]
             retry_fake = web.Response(status=status, headers=retry_resp_headers)
             attempt.final_status = status
             attempt.response = retry_fake
