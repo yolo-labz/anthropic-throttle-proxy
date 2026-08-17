@@ -280,24 +280,27 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     ``usage`` block after the client finishes reading — the usage block lives
     in the final few KB of any claude response, even for long generations.
     """
-    # The entitlement verdict is ALWAYS this tier's own: every tier sees the
-    # same status, headers, and buffered body, so it re-derives the answer and
-    # `_stamp_entitlement_refusal` re-adds the header. Stripping it
-    # unconditionally means a raw upstream can never assert it (Codex
-    # adversarial review, finding 7) — unlike QUEUE_TIMEOUT_HEADER, which only a
-    # marker-stamped sibling tier may assert because central queue depth is not
-    # observable from here.
-    drop_headers = config.HOP_HEADERS | {config.ENTITLEMENT_REFUSAL_HEADER}
+    drop_headers = config.HOP_HEADERS
     if config.MARKER_HEADER not in upstream.headers:
         # Only a sibling proxy tier (marker-stamped) may assert the
         # queue-timeout contract. A raw upstream 429/503 carrying the header
         # verbatim would exempt REAL pushback from pushback-retry and AIMD
         # shrink (Codex MAJOR on PR #83). A double-spoof (marker + stamp) is
         # the same accepted trust boundary as the PR #81 marker itself.
-        # `|=`, not `=`: reassigning here used to drop the unconditional
-        # entitlement strip on the marker-less path — i.e. exactly the raw
-        # upstream the strip exists to distrust.
-        drop_headers |= {config.QUEUE_TIMEOUT_HEADER}
+        #
+        # The entitlement stamp rides the SAME boundary, and for a sharper
+        # reason (Codex second pass, blocking finding 2): with local→central
+        # account routing, CENTRAL chose the account that actually reached
+        # Anthropic, so central's bearer, cache, and unified windows are the
+        # authoritative evidence. The local tier's `bearer_state` may be keyed
+        # to a different account entirely, so re-deriving locally could label a
+        # genuine budget 429 as an entitlement refusal (skipping a shrink the
+        # walled account needs) or the reverse. Relay a sibling tier's verdict;
+        # strip and re-derive only for a RAW upstream, which cannot have one.
+        drop_headers = config.HOP_HEADERS | {
+            config.QUEUE_TIMEOUT_HEADER,
+            config.ENTITLEMENT_REFUSAL_HEADER,
+        }
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
     meta = _extract_ratelimit(upstream.headers)
     # Status only: reading the body here would drain the stream the client is

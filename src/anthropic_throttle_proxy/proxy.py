@@ -2087,14 +2087,37 @@ def _is_entitlement_refusal_attempt(attempt: _Attempt, bid: str = "") -> bool:
     return _entitlement_scoped(attempt, bid, attempt.captured)
 
 
+def _relayed_entitlement_verdict(response: web.StreamResponse | None) -> bool:
+    """True when a SIBLING proxy tier already classified this as the gate.
+
+    ``_stream_response`` only lets the stamp survive on a marker-stamped
+    response, so reaching here means a sibling tier said so. Its verdict wins
+    over ours: with local→central account routing, central chose the account
+    that actually reached Anthropic, so central's bearer and cached windows are
+    the authoritative evidence and ours may belong to a different account
+    entirely (Codex second pass, blocking finding 2).
+    """
+    if response is None:
+        return False
+    return response.headers.get(config.ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
+
+
 def _entitlement_scoped(attempt: _Attempt, bid: str, body: bytes | bytearray | None) -> bool:
     """Shared scope gate. ``body`` is the caller's choice of evidence."""
     if attempt.context.get("method") != "POST" or attempt.context.get("path") != "v1/messages":
         return False
     if bid == API_KEY_BEARER_ID:
         return False
+    if _relayed_entitlement_verdict(attempt.response):
+        return True
     if not _is_oauth_entitlement_refusal(attempt.final_status, attempt.meta, body):
         return False
+    # Local re-derivation only. A fresh `rejected` window on OUR bearer means a
+    # hard wall, the one case where skipping the shrink would hammer a genuinely
+    # constrained account. `allowed_warning` must NOT veto: in the 17/08 incident
+    # all three bearers were `allowed_warning` and the same bearer answered 200
+    # for the same model 3 s later, which is exactly why utilization cannot
+    # classify this 429.
     return not _cached_unified_rejected(bid)
 
 
@@ -2655,10 +2678,26 @@ async def _keepalive_hold_and_retry(
                 # retry_fake carries the anti-spoof-gated queue-timeout marker.
                 await _aimd_feedback(bid, limiter, attempt)
             else:
-                # Reclassified as BUDGET mid-hold (unified headers updated).
-                # Exit the hold and emit terminal error.
+                # Reclassified mid-hold. Two causes, and the client must be able
+                # to tell them apart: the windows tightened into BUDGET, or the
+                # retry hit the OAuth entitlement gate. The response is already
+                # prepared, so `_stamp_entitlement_refusal` can no longer add a
+                # header (Codex second pass, finding 6) — the SSE error text is
+                # the only channel left, so it must name the real cause instead
+                # of blaming a budget that is not exhausted.
                 await _await_keepalive_cancel()
                 M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+                if _entitlement_scoped(attempt, bid, attempt.captured):
+                    log(f"keepalive-hold-entitlement-refusal bid={bid} path=/{path}")
+                    await _emit_sse_error_terminal(
+                        sse_resp,
+                        "proxy keepalive hold stopped: upstream refused this request's "
+                        "shape (a subscription bearer requires the Claude Code system "
+                        "prompt as its first system block) — retrying will not help",
+                    )
+                    attempt.final_status = status
+                    attempt.response = sse_resp
+                    return sse_resp
                 log(f"keepalive-hold-budget-reclassified bid={bid} path=/{path}")
                 await _emit_sse_error_terminal(
                     sse_resp,
