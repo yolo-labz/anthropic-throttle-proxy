@@ -2087,18 +2087,28 @@ def _is_entitlement_refusal_attempt(attempt: _Attempt, bid: str = "") -> bool:
     return _entitlement_scoped(attempt, bid, attempt.captured)
 
 
-def _relayed_entitlement_verdict(response: web.StreamResponse | None) -> bool:
-    """True when a SIBLING proxy tier already classified this as the gate.
+def _relayed_entitlement_verdict(response: web.StreamResponse | None) -> bool | None:
+    """A SIBLING proxy tier's verdict, or ``None`` when no sibling answered.
 
-    ``_stream_response`` only lets the stamp survive on a marker-stamped
-    response, so reaching here means a sibling tier said so. Its verdict wins
-    over ours: with local→central account routing, central chose the account
-    that actually reached Anthropic, so central's bearer and cached windows are
-    the authoritative evidence and ours may belong to a different account
-    entirely (Codex second pass, blocking finding 2).
+    Authoritative in BOTH directions, which is the whole point. With
+    local→central account routing the two tiers are often talking about
+    DIFFERENT accounts: central picks the credential that actually reaches
+    Anthropic, while this tier's ``bearer_state`` is keyed to the client's own
+    bearer. So:
+
+    * stamp present → central hit the gate; relay its verdict, do not shrink.
+    * marker but NO stamp → central already ruled the gate out (it saw the real
+      bearer's windows). Re-deriving here against OUR unrelated cache would
+      manufacture a false entitlement verdict and skip a shrink the walled
+      account needs — the asymmetry Codex's third pass caught: a marker was
+      being treated as authoritative only when the answer was "yes".
+    * no marker → we talked to the upstream ourselves; re-derive locally.
+
+    ``_stream_response`` strips the stamp from any response lacking the marker,
+    so a raw upstream can never reach the first branch.
     """
-    if response is None:
-        return False
+    if response is None or config.MARKER_HEADER not in response.headers:
+        return None
     return response.headers.get(config.ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
 
 
@@ -2108,8 +2118,9 @@ def _entitlement_scoped(attempt: _Attempt, bid: str, body: bytes | bytearray | N
         return False
     if bid == API_KEY_BEARER_ID:
         return False
-    if _relayed_entitlement_verdict(attempt.response):
-        return True
+    relayed = _relayed_entitlement_verdict(attempt.response)
+    if relayed is not None:
+        return relayed
     if not _is_oauth_entitlement_refusal(attempt.final_status, attempt.meta, body):
         return False
     # Local re-derivation only. A fresh `rejected` window on OUR bearer means a
@@ -2472,13 +2483,19 @@ async def _forward_once_into_sse(
                         # it explicitly — and ONLY from a sibling proxy tier
                         # (MARKER_HEADER present), never a spoofing upstream
                         # (anti-spoof, matching _stream_response; Codex BLOCKER).
-                        if (
-                            config.MARKER_HEADER in upstream.headers
-                            and config.QUEUE_TIMEOUT_HEADER in upstream.headers
-                        ):
-                            meta[config.QUEUE_TIMEOUT_HEADER] = upstream.headers[
-                                config.QUEUE_TIMEOUT_HEADER
-                            ]
+                        if config.MARKER_HEADER in upstream.headers:
+                            # A sibling tier answered. Record THAT — an entitlement
+                            # verdict is authoritative in both directions (present
+                            # = gate, absent = central already ruled it out), so
+                            # the hold must be able to tell "no sibling spoke"
+                            # from "sibling said no" (Codex third pass).
+                            meta[config.MARKER_HEADER] = "1"
+                            for header in (
+                                config.QUEUE_TIMEOUT_HEADER,
+                                config.ENTITLEMENT_REFUSAL_HEADER,
+                            ):
+                                if header in upstream.headers:
+                                    meta[header] = upstream.headers[header]
                         captured = bytearray(upstream_body[: 1024 * 1024])
                         return upstream.status, meta, captured, None
                     # 2xx: stop the keepalive emitter BEFORE the first body byte
@@ -2663,8 +2680,13 @@ async def _keepalive_hold_and_retry(
             # Build a minimal response object so _is_queue_timeout_response
             # can inspect the headers from the new attempt.
             retry_resp_headers = {}
-            if meta and config.QUEUE_TIMEOUT_HEADER in meta:
-                retry_resp_headers[config.QUEUE_TIMEOUT_HEADER] = "1"
+            for header in (
+                config.QUEUE_TIMEOUT_HEADER,
+                config.MARKER_HEADER,
+                config.ENTITLEMENT_REFUSAL_HEADER,
+            ):
+                if meta and header in meta:
+                    retry_resp_headers[header] = "1"
             retry_fake = web.Response(status=status, headers=retry_resp_headers)
             attempt.final_status = status
             attempt.response = retry_fake

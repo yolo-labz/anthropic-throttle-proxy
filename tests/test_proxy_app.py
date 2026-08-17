@@ -121,6 +121,15 @@ def _make_upstream() -> web.Application:
                 },
                 status=429,
             )
+        if mode == "central-says-not-entitlement":
+            # A sibling tier answered (marker) and did NOT stamp: central saw the
+            # real bearer's windows and ruled the gate out. The body still LOOKS
+            # like the gate envelope, because central relays it verbatim.
+            return web.json_response(
+                {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}},
+                status=429,
+                headers={"x-anthropic-throttle-proxy": "1"},
+            )
         if mode == "relayed-entitlement-verdict":
             # A SIBLING PROXY TIER (marker-stamped) relaying its own entitlement
             # verdict. Central chose the account that actually reached Anthropic,
@@ -1069,49 +1078,61 @@ async def test_upstream_cannot_spoof_the_entitlement_header(
     assert config.ENTITLEMENT_REFUSAL_HEADER not in resp.headers
 
 
-async def test_sibling_tier_entitlement_verdict_beats_local_cache(
-    client: TestClient, monkeypatch
+@pytest.mark.parametrize(
+    ("stub_mode", "auth", "seed_rejected_cache", "expect_stamp", "expect_shrink"),
+    [
+        # Central hit the gate and stamped. Its verdict wins even though the
+        # LOCAL cache says `rejected` — with account routing that cache belongs
+        # to a different account than the one central actually used.
+        ("relayed-entitlement-verdict", "relayed-entitlement", True, True, False),
+        # Central answered (marker) and did NOT stamp: it saw the real bearer's
+        # windows and ruled the gate out. The body still LOOKS like the envelope
+        # because central relays it verbatim, so a one-sided "trust only yes"
+        # rule would re-derive locally and manufacture a false exemption.
+        ("central-says-not-entitlement", "central-said-no", False, False, True),
+    ],
+    ids=["central-says-gate", "central-says-not-gate"],
+)
+async def test_sibling_tier_verdict_is_authoritative_both_ways(
+    client: TestClient,
+    monkeypatch,
+    stub_mode: str,
+    auth: str,
+    seed_rejected_cache: bool,
+    expect_stamp: bool,
+    expect_shrink: bool,
 ) -> None:
-    """A relayed verdict wins over local re-derivation.
-
-    With local->central account routing the local tier's `bearer_state` can be
-    keyed to a DIFFERENT account than the one central actually used, so
-    re-deriving locally could shrink on a healthy bearer (or skip a shrink a
-    walled one needs). Here the local cache says `rejected` — which would veto a
-    locally-derived exemption — yet the stamped sibling verdict must still win.
-    """
+    """A MARKER-stamped sibling tier owns the entitlement verdict in BOTH directions."""
     monkeypatch.setattr(config, "QUEUE_MODE", "observe")
-    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 2)
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
     monkeypatch.setattr(config, "AIMD_BACKOFF_S", 30)
     monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
 
-    bid = proxy._bearer_id({"authorization": "Bearer relayed-entitlement"})
-    config.bearer_state[bid] = {
-        "unified": proxy._parse_unified(
-            {
-                "anthropic-ratelimit-unified-status": "rejected",
-                "anthropic-ratelimit-unified-5h-status": "rejected",
-                "anthropic-ratelimit-unified-5h-utilization": "1.0",
-            }
-        ),
-        "unified_at": time.time(),
-    }
+    bid = proxy._bearer_id({"authorization": f"Bearer {auth}"})
+    if seed_rejected_cache:
+        config.bearer_state[bid] = {
+            "unified": proxy._parse_unified(
+                {
+                    "anthropic-ratelimit-unified-status": "rejected",
+                    "anthropic-ratelimit-unified-5h-status": "rejected",
+                    "anthropic-ratelimit-unified-5h-utilization": "1.0",
+                }
+            ),
+            "unified_at": time.time(),
+        }
 
     t0 = time.monotonic()
     resp = await client.post(
         "/v1/messages",
         data=b'{"model":"claude-sonnet-5","max_tokens":1}',
-        headers={
-            "Authorization": "Bearer relayed-entitlement",
-            "X-Stub-Mode": "relayed-entitlement-verdict",
-        },
+        headers={"Authorization": f"Bearer {auth}", "X-Stub-Mode": stub_mode},
     )
     await resp.read()
 
     assert resp.status == 429
     assert time.monotonic() - t0 < 1.0
-    assert resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1"
-    assert config.bearer_limiters[bid].max_concurrent == 3
+    assert (resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1") is expect_stamp
+    assert (config.bearer_limiters[bid].max_concurrent < 3) is expect_shrink
 
 
 async def test_zai_concurrency_1302_still_triggers_aimd_shrink(
