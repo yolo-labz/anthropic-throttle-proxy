@@ -343,3 +343,172 @@ async def test_clean_successes_grow_from_initial_cap(monkeypatch):
     assert await lim.grow() is None
     assert await lim.grow() == 2
     assert lim.max_concurrent == 2
+
+
+# --- OAuth entitlement gate (17/08/2026) -----------------------------------
+#
+# Anthropic refuses a subscription bearer whose request does not carry the
+# Claude Code identity as its FIRST `system` block, and masks it as a 429 that
+# is otherwise indistinguishable from rate pushback. Waiting never clears it.
+
+_ENTITLEMENT_BODY = (
+    b'{"type":"error","error":{"type":"rate_limit_error","message":"Error"},'
+    b'"request_id":"req_011Ce8tF7pXGxc2uqCSdfJ6d"}'
+)
+
+
+def test_entitlement_refusal_recognized_from_bare_error_body():
+    assert proxy._is_oauth_entitlement_refusal(429, {}, _ENTITLEMENT_BODY) is True
+    # bytearray is what `_Attempt.captured` actually carries.
+    assert proxy._is_oauth_entitlement_refusal(429, {}, bytearray(_ENTITLEMENT_BODY)) is True
+
+
+def test_entitlement_refusal_needs_all_four_signals():
+    # A real Retry-After means the upstream named a window — that is pushback.
+    assert (
+        proxy._is_oauth_entitlement_refusal(429, {"retry-after": "30"}, _ENTITLEMENT_BODY) is False
+    )
+    # PRESENCE, not a positive parse: the gate never sends the header at all, so
+    # `Retry-After: 0` (or an unparseable value, which also floors to 0.0) is an
+    # upstream that DID speak about retrying — real pushback, keep shrinking.
+    assert (
+        proxy._is_oauth_entitlement_refusal(429, {"retry-after": "0"}, _ENTITLEMENT_BODY) is False
+    )
+    assert (
+        proxy._is_oauth_entitlement_refusal(429, {"retry-after": "soon"}, _ENTITLEMENT_BODY)
+        is False
+    )
+    # Unified headers on the same response mean the quota system answered.
+    unified = {
+        "anthropic-ratelimit-unified-status": "rejected",
+        "anthropic-ratelimit-unified-5h-utilization": "1.0",
+    }
+    assert proxy._is_oauth_entitlement_refusal(429, unified, _ENTITLEMENT_BODY) is False
+    # 503/529 are never this gate.
+    assert proxy._is_oauth_entitlement_refusal(503, {}, _ENTITLEMENT_BODY) is False
+    assert proxy._is_oauth_entitlement_refusal(529, {}, _ENTITLEMENT_BODY) is False
+
+
+def test_descriptive_rate_limit_bodies_are_still_pushback():
+    """A genuine budget 429 carries a sentence, not the literal "Error"."""
+    real = (
+        b'{"type":"error","error":{"type":"rate_limit_error",'
+        b'"message":"This request would exceed your organization\'s rate limit."}}'
+    )
+    assert proxy._is_oauth_entitlement_refusal(429, {}, real) is False
+    assert proxy._is_oauth_entitlement_refusal(429, {}, b"") is False
+    assert proxy._is_oauth_entitlement_refusal(429, {}, None) is False
+    assert proxy._is_oauth_entitlement_refusal(429, {}, b"not json") is False
+    # Right message, wrong error type — an overloaded_error is a 529 concern.
+    other = b'{"type":"error","error":{"type":"overloaded_error","message":"Error"}}'
+    assert proxy._is_oauth_entitlement_refusal(429, {}, other) is False
+    # A padded body that happens to contain the envelope is rejected on size.
+    assert proxy._is_oauth_entitlement_refusal(429, {}, _ENTITLEMENT_BODY + b" " * 512) is False
+
+
+def test_entitlement_refusal_is_not_a_transient_throttle():
+    """It must never win a keepalive hold: the hold would run to the deadline."""
+    assert proxy._is_transient_throttle(429, {}, "bid", None, _ENTITLEMENT_BODY) is False
+    # A concurrency 429 (windows allowed, low util) stays transient — the gate
+    # must only remove the entitlement refusal, not every headerless throttle.
+    concurrency = {
+        "anthropic-ratelimit-unified-status": "allowed",
+        "anthropic-ratelimit-unified-5h-status": "allowed",
+        "anthropic-ratelimit-unified-7d-status": "allowed",
+        "anthropic-ratelimit-unified-5h-utilization": "0.1",
+        "anthropic-ratelimit-unified-7d-utilization": "0.1",
+    }
+    assert proxy._is_transient_throttle(429, concurrency, "bid", None, b"rate limited") is True
+    # ...and unified headers beat the body fingerprint even if both are present.
+    assert proxy._is_transient_throttle(429, concurrency, "bid", None, _ENTITLEMENT_BODY) is True
+
+
+def test_entitlement_scope_is_oauth_post_v1_messages_only():
+    """The pure predicate is generic; the attempt-level gate must not be.
+
+    The envelope is small and unremarkable enough that another proxied provider
+    could emit it, and the API-key lane authenticates differently and is not
+    subject to this gate at all.
+    """
+
+    def attempt(method="POST", path="v1/messages"):
+        a = proxy._Attempt()
+        a.final_status = 429
+        a.meta = {}
+        a.captured = bytearray(_ENTITLEMENT_BODY)
+        a.context = {"method": method, "path": path, "model": "claude-opus-5"}
+        return a
+
+    assert proxy._is_entitlement_refusal_attempt(attempt(), "bid00001") is True
+    # Wrong route or verb: not the Messages entitlement gate.
+    assert proxy._is_entitlement_refusal_attempt(attempt(path="v1/complete"), "bid00001") is False
+    assert proxy._is_entitlement_refusal_attempt(attempt(method="GET"), "bid00001") is False
+    # The API-key lane keeps the conservative pushback handling.
+    assert proxy._is_entitlement_refusal_attempt(attempt(), proxy.API_KEY_BEARER_ID) is False
+
+
+def test_fresh_rejected_cache_vetoes_the_entitlement_exemption():
+    """A bearer at a hard wall must keep shrinking even on this body.
+
+    `allowed_warning` must NOT veto: in the 17/08 incident all three bearers were
+    `allowed_warning` and the same bearer answered 200 for the same model 3s
+    later, which is exactly why utilization cannot classify this 429.
+    """
+    bid = "entitle01"
+    now = time.time()
+    a = proxy._Attempt()
+    a.final_status = 429
+    a.meta = {}
+    a.captured = bytearray(_ENTITLEMENT_BODY)
+    a.context = {"method": "POST", "path": "v1/messages", "model": "claude-opus-5"}
+    proxy.bearer_state.pop(bid, None)
+    try:
+        warning = proxy._parse_unified(
+            {
+                "anthropic-ratelimit-unified-status": "allowed_warning",
+                "anthropic-ratelimit-unified-5h-status": "allowed_warning",
+                "anthropic-ratelimit-unified-5h-utilization": "0.93",
+                "anthropic-ratelimit-unified-7d-status": "allowed",
+                "anthropic-ratelimit-unified-7d-utilization": "0.11",
+            }
+        )
+        proxy.bearer_state[bid] = {"unified": warning, "unified_at": now}
+        assert proxy._is_entitlement_refusal_attempt(a, bid) is True
+
+        walled = proxy._parse_unified(
+            {
+                "anthropic-ratelimit-unified-status": "rejected",
+                "anthropic-ratelimit-unified-5h-status": "rejected",
+                "anthropic-ratelimit-unified-5h-utilization": "1.0",
+                "anthropic-ratelimit-unified-7d-status": "allowed",
+                "anthropic-ratelimit-unified-7d-utilization": "0.11",
+            }
+        )
+        proxy.bearer_state[bid] = {"unified": walled, "unified_at": now}
+        assert proxy._is_entitlement_refusal_attempt(a, bid) is False
+        # A STALE rejected sample is not trusted in either direction.
+        proxy.bearer_state[bid] = {
+            "unified": walled,
+            "unified_at": now - proxy.UNIFIED_CACHE_FRESH_S - 5,
+        }
+        assert proxy._is_entitlement_refusal_attempt(a, bid) is True
+    finally:
+        proxy.bearer_state.pop(bid, None)
+
+
+def test_credential_recheck_probe_carries_the_claude_code_system_block():
+    """A recovered OAuth account cannot clear quarantine without it.
+
+    The recheck probe talks to Anthropic directly on the account's own token; a
+    system-block-less probe would hit the entitlement gate on every premium
+    recheck model and keep a healthy account quarantined forever.
+    """
+    import inspect
+
+    from anthropic_throttle_proxy import config
+
+    src = inspect.getsource(proxy._credential_recheck_one)
+    assert "CLAUDE_CODE_SYSTEM_PROMPT" in src
+    assert config.CLAUDE_CODE_SYSTEM_PROMPT == (
+        "You are Claude Code, Anthropic's official CLI for Claude."
+    )

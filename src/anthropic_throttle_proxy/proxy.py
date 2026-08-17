@@ -79,6 +79,7 @@ from .config import (
     CENTRAL_HEALTH_PATH,
     CENTRAL_HEALTH_TIMEOUT,
     CENTRAL_URL,
+    CLAUDE_CODE_SYSTEM_PROMPT,
     HOP_HEADERS,
     LISTEN_HOST,
     LISTEN_PORT,
@@ -129,6 +130,7 @@ from .metrics import (
     M_INFLIGHT,
     M_INFLIGHT_BEARER,
     M_KEEPALIVE_HOLDS,
+    M_OAUTH_ENTITLEMENT_REFUSALS,
     M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
@@ -144,6 +146,7 @@ from .metrics import (
 )
 from .pricing import _pricing_for
 from .ratelimit import (
+    API_KEY_BEARER_ID,
     _api_key_id,
     _bearer_id,
     _binding_utilization,
@@ -152,6 +155,7 @@ from .ratelimit import (
     _extract_model_from_body,
     _extract_ratelimit,
     _extract_zai_ratelimit_from_body,
+    _is_oauth_entitlement_refusal,
     _is_zai_quota_gate,
     _parse_retry_after,
     _parse_sse_usage,
@@ -208,7 +212,9 @@ __all__ = [
     "_client_id",
     "_extract_model_from_body",
     "_extract_ratelimit",
+    "API_KEY_BEARER_ID",
     "_extract_zai_ratelimit_from_body",
+    "_is_oauth_entitlement_refusal",
     "_is_zai_quota_gate",
     "_parse_retry_after",
     "_parse_sse_usage",
@@ -1827,6 +1833,9 @@ def _attempt_for_request(
     attempt.started_at = time.time()
     attempt.context = {
         "method": request.method,
+        # match_info path, no leading slash — the same form the log lines and
+        # `_is_oauth_telemetry_path` normalize from.
+        "path": request.match_info.get("path", ""),
         "bid": bid,
         "cid": cid,
         "via": via,
@@ -2047,17 +2056,131 @@ def _is_oauth_telemetry_path(path: str) -> bool:
     return p in _OAUTH_TELEMETRY_PATHS
 
 
+def _is_entitlement_refusal_attempt(attempt: _Attempt, bid: str = "") -> bool:
+    """True when THIS attempt's throttle is Anthropic's OAuth entitlement gate.
+
+    The gate refuses a subscription bearer whose request does not carry the
+    Claude Code identity as its first ``system`` block, and it masks the refusal
+    as a bare 429 (see ``_is_oauth_entitlement_refusal``). It is PERMANENT for
+    that request shape: retrying, pausing, or shrinking the bearer only converts
+    an instant client-side error into a ~60 s stall plus a collapsed cap on an
+    account that is still serving 200s (17/08/2026 incident — three
+    ``max_tokens=1`` diagnostic probes on healthy ``allowed_warning`` bearers
+    drove ``max_concurrent`` to the floor and stalled the fleet).
+
+    Three scopes narrow the pure body/header predicate to the only traffic the
+    measurement covers (Codex adversarial review, findings 2 + 3):
+
+    * ``POST /v1/messages`` only — the gate is a Messages-API entitlement, and
+      the envelope is generic enough that another proxied provider could emit
+      it on some other route.
+    * OAuth bearers only — the API-key lane authenticates differently and is not
+      subject to this gate, so it must keep the conservative pushback handling.
+    * NOT while the bearer's FRESH cached unified state says a window is
+      ``rejected``. A hard wall is the one case where refusing to shrink would
+      hammer a genuinely constrained account, and it is cheap to give up: in the
+      incident all three bearers were ``allowed_warning``, never ``rejected``,
+      so the exemption still fires where it matters. ``allowed_warning`` alone
+      must NOT veto — the same bearer answered 200 for the same model 3 s later,
+      which is precisely why utilization cannot classify this 429.
+    """
+    return _entitlement_scoped(attempt, bid, attempt.captured)
+
+
+def _relayed_entitlement_verdict(response: web.StreamResponse | None) -> bool | None:
+    """A SIBLING proxy tier's verdict, or ``None`` when no sibling answered.
+
+    Authoritative in BOTH directions, which is the whole point. With
+    local→central account routing the two tiers are often talking about
+    DIFFERENT accounts: central picks the credential that actually reaches
+    Anthropic, while this tier's ``bearer_state`` is keyed to the client's own
+    bearer. So:
+
+    * stamp present → central hit the gate; relay its verdict, do not shrink.
+    * marker but NO stamp → central already ruled the gate out (it saw the real
+      bearer's windows). Re-deriving here against OUR unrelated cache would
+      manufacture a false entitlement verdict and skip a shrink the walled
+      account needs — the asymmetry Codex's third pass caught: a marker was
+      being treated as authoritative only when the answer was "yes".
+    * no marker → we talked to the upstream ourselves; re-derive locally.
+
+    ``_stream_response`` strips the stamp from any response lacking the marker,
+    so a raw upstream can never reach the first branch.
+    """
+    if response is None or config.MARKER_HEADER not in response.headers:
+        return None
+    return response.headers.get(config.ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
+
+
+def _entitlement_scoped(attempt: _Attempt, bid: str, body: bytes | bytearray | None) -> bool:
+    """Shared scope gate. ``body`` is the caller's choice of evidence."""
+    if attempt.context.get("method") != "POST" or attempt.context.get("path") != "v1/messages":
+        return False
+    if bid == API_KEY_BEARER_ID:
+        return False
+    relayed = _relayed_entitlement_verdict(attempt.response)
+    if relayed is not None:
+        return relayed
+    if not _is_oauth_entitlement_refusal(attempt.final_status, attempt.meta, body):
+        return False
+    # Local re-derivation only. A fresh `rejected` window on OUR bearer means a
+    # hard wall, the one case where skipping the shrink would hammer a genuinely
+    # constrained account. `allowed_warning` must NOT veto: in the 17/08 incident
+    # all three bearers were `allowed_warning` and the same bearer answered 200
+    # for the same model 3 s later, which is exactly why utilization cannot
+    # classify this 429.
+    return not _cached_unified_rejected(bid)
+
+
+def _stamp_entitlement_refusal(attempt: _Attempt, bid: str) -> None:
+    """Label a relayed entitlement 429 so the operator learns retrying is futile.
+
+    Keyed on the RESPONSE's own body, not ``attempt.captured``: a locally
+    synthesized fast-fail 429 must not inherit the verdict from a previous
+    upstream attempt. A prepared (already-streaming) response is skipped — its
+    headers went out long ago.
+    """
+    response = attempt.response
+    body = getattr(response, "body", None)
+    if response is None or response.prepared or not isinstance(body, (bytes, bytearray)):
+        return
+    if _entitlement_scoped(attempt, bid, body):
+        response.headers[config.ENTITLEMENT_REFUSAL_HEADER] = "1"
+
+
+def _cached_unified_rejected(bid: str) -> bool:
+    """True when the bearer's FRESH cached unified state shows a rejected window.
+
+    Same freshness rule as ``_budget_under_pressure``: a budget wall stops
+    producing the header-bearing successes that refresh the cache, so a stale
+    sample must not be trusted in either direction.
+    """
+    if not bid:
+        return False
+    bstate = bearer_state.get(bid) or {}
+    cached = bstate.get("unified")
+    cached_at = bstate.get("unified_at")
+    if not isinstance(cached, dict) or not isinstance(cached_at, (int, float)):
+        return False
+    if (time.time() - cached_at) > UNIFIED_CACHE_FRESH_S:
+        return False
+    return "rejected" in (cached.get("status"), cached.get("status_5h"), cached.get("status_7d"))
+
+
 def _should_retry_pushback(
     response: web.StreamResponse | web.Response | None,
     attempt: _Attempt,
     pushback_retries: int,
+    bid: str = "",
 ) -> bool:
     """True when an unprepared throttle response is still within the retry budget.
 
     A relayed queue-wait-timeout 503 is exempt: central's queue is FULL, so a
     pushback retry would only re-park this request against the same saturated
     queue and burn the client's remaining patience — relay it instead so the
-    SDK retries on its own clock.
+    SDK retries on its own clock. An OAuth entitlement refusal is exempt for the
+    opposite reason: no amount of waiting can change the request's shape, so the
+    retry budget would only be spent proving that.
     """
     return (
         response is not None
@@ -2065,6 +2188,7 @@ def _should_retry_pushback(
         and attempt.final_status in THROTTLE_STATUSES
         and pushback_retries < config.RATE_PUSHBACK_RETRIES
         and not _is_queue_timeout_response(response)
+        and not _is_entitlement_refusal_attempt(attempt, bid)
     )
 
 
@@ -2210,6 +2334,7 @@ def _is_transient_throttle(
     meta: dict[str, str] | None,
     bid: str,
     response: web.StreamResponse | web.Response | None = None,
+    body: bytes | bytearray | None = None,
 ) -> bool:
     """True when this throttle is TRANSIENT (hold candidate), not BUDGET.
 
@@ -2226,6 +2351,11 @@ def _is_transient_throttle(
     * Budget-rejected / long Retry-After / non-streaming → NOT held.
     """
     if status not in THROTTLE_STATUSES:
+        return False
+    # An OAuth entitlement refusal never clears: committing a 200 SSE hold for it
+    # would spend the client's whole wait budget and then still have to error,
+    # which is strictly worse than relaying the 429 the instant it arrives.
+    if _is_oauth_entitlement_refusal(status, meta, body):
         return False
     # Central-queue-depth 503: always transient (central queue is full, will
     # drain) — the hold is exactly the banner-killer for it. Its Retry-After is
@@ -2353,13 +2483,19 @@ async def _forward_once_into_sse(
                         # it explicitly — and ONLY from a sibling proxy tier
                         # (MARKER_HEADER present), never a spoofing upstream
                         # (anti-spoof, matching _stream_response; Codex BLOCKER).
-                        if (
-                            config.MARKER_HEADER in upstream.headers
-                            and config.QUEUE_TIMEOUT_HEADER in upstream.headers
-                        ):
-                            meta[config.QUEUE_TIMEOUT_HEADER] = upstream.headers[
-                                config.QUEUE_TIMEOUT_HEADER
-                            ]
+                        if config.MARKER_HEADER in upstream.headers:
+                            # A sibling tier answered. Record THAT — an entitlement
+                            # verdict is authoritative in both directions (present
+                            # = gate, absent = central already ruled it out), so
+                            # the hold must be able to tell "no sibling spoke"
+                            # from "sibling said no" (Codex third pass).
+                            meta[config.MARKER_HEADER] = "1"
+                            for header in (
+                                config.QUEUE_TIMEOUT_HEADER,
+                                config.ENTITLEMENT_REFUSAL_HEADER,
+                            ):
+                                if header in upstream.headers:
+                                    meta[header] = upstream.headers[header]
                         captured = bytearray(upstream_body[: 1024 * 1024])
                         return upstream.status, meta, captured, None
                     # 2xx: stop the keepalive emitter BEFORE the first body byte
@@ -2544,13 +2680,18 @@ async def _keepalive_hold_and_retry(
             # Build a minimal response object so _is_queue_timeout_response
             # can inspect the headers from the new attempt.
             retry_resp_headers = {}
-            if meta and config.QUEUE_TIMEOUT_HEADER in meta:
-                retry_resp_headers[config.QUEUE_TIMEOUT_HEADER] = "1"
+            for header in (
+                config.QUEUE_TIMEOUT_HEADER,
+                config.MARKER_HEADER,
+                config.ENTITLEMENT_REFUSAL_HEADER,
+            ):
+                if meta and header in meta:
+                    retry_resp_headers[header] = "1"
             retry_fake = web.Response(status=status, headers=retry_resp_headers)
             attempt.final_status = status
             attempt.response = retry_fake
 
-            if _is_transient_throttle(status, meta, bid, retry_fake):
+            if _is_transient_throttle(status, meta, bid, retry_fake, attempt.captured):
                 # Still transient: the canonical _aimd_feedback already does the
                 # right thing per status (529 + a marked central queue-timeout
                 # never shrink — invariants 7, 9; a budget/Retry-After 429 shrinks,
@@ -2559,10 +2700,26 @@ async def _keepalive_hold_and_retry(
                 # retry_fake carries the anti-spoof-gated queue-timeout marker.
                 await _aimd_feedback(bid, limiter, attempt)
             else:
-                # Reclassified as BUDGET mid-hold (unified headers updated).
-                # Exit the hold and emit terminal error.
+                # Reclassified mid-hold. Two causes, and the client must be able
+                # to tell them apart: the windows tightened into BUDGET, or the
+                # retry hit the OAuth entitlement gate. The response is already
+                # prepared, so `_stamp_entitlement_refusal` can no longer add a
+                # header (Codex second pass, finding 6) — the SSE error text is
+                # the only channel left, so it must name the real cause instead
+                # of blaming a budget that is not exhausted.
                 await _await_keepalive_cancel()
                 M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+                if _entitlement_scoped(attempt, bid, attempt.captured):
+                    log(f"keepalive-hold-entitlement-refusal bid={bid} path=/{path}")
+                    await _emit_sse_error_terminal(
+                        sse_resp,
+                        "proxy keepalive hold stopped: upstream refused this request's "
+                        "shape (a subscription bearer requires the Claude Code system "
+                        "prompt as its first system block) — retrying will not help",
+                    )
+                    attempt.final_status = status
+                    attempt.response = sse_resp
+                    return sse_resp
                 log(f"keepalive-hold-budget-reclassified bid={bid} path=/{path}")
                 await _emit_sse_error_terminal(
                     sse_resp,
@@ -2719,7 +2876,9 @@ async def _forward_with_retry(
             and _is_streaming_body(body)
             and wait_deadline is not None
             and time.time() < wait_deadline
-            and _is_transient_throttle(attempt.final_status, attempt.meta, bid, response)
+            and _is_transient_throttle(
+                attempt.final_status, attempt.meta, bid, response, attempt.captured
+            )
         ):
             _schedule_advisor(bid, attempt.final_status, path)
             return await _keepalive_hold_and_retry(
@@ -2743,7 +2902,7 @@ async def _forward_with_retry(
         # parked the workhorse ~58 min). The poller backs off its own
         # Retry-After (PR #101), so just relay the upstream 429 unchanged.
         if _should_retry_pushback(
-            response, attempt, pushback_retries
+            response, attempt, pushback_retries, bid
         ) and not _is_oauth_telemetry_path(path):
             pushback_retries += 1
             retry_after = _parse_retry_after(attempt.meta)
@@ -2984,6 +3143,24 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
         # misattribute central's queue depth to the bearer's own upstream
         # behavior and collapse a healthy local cap.
         log(f"queue-timeout-relay bid={bid} status={final_status} (no aimd shrink)")
+        return
+    if final_status in AIMD_STATUSES and _is_entitlement_refusal_attempt(attempt, bid):
+        # Anthropic's OAuth entitlement gate, masked as a 429 (see
+        # `_is_oauth_entitlement_refusal`). The bearer is healthy — it answers
+        # 200 for the same model on the very next correctly-shaped request — so
+        # this says nothing about the right concurrency ceiling. Shrinking here
+        # is what turned three `max_tokens=1` diagnostic probes into a
+        # fleet-wide stall on 17/08/2026: cap 5 -> 1 on two `allowed_warning`
+        # bearers that were still serving. No shrink, and NO retry_after latch:
+        # a synthetic pause would park the next real turn behind a window the
+        # upstream never asked for.
+        model = attempt.context.get("model") or "unknown"
+        M_OAUTH_ENTITLEMENT_REFUSALS.labels(bearer=bid, model=model).inc()
+        log(
+            f"oauth-entitlement-refusal bid={bid} status={final_status} model={model} "
+            "(no aimd shrink, no pause) — request's first system block is not the "
+            "Claude Code identity; a subscription bearer cannot serve this shape"
+        )
         return
     if final_status in AIMD_STATUSES and _is_zai_quota_gate(attempt.meta):
         # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
@@ -3243,6 +3420,15 @@ async def _finalize(
             await _aimd_feedback(bid, limiter, attempt)
         except Exception as aimde:
             log(f"aimd-error bid={bid}: {aimde!r}")
+
+    # Stamp the entitlement verdict HERE, not at the pushback loop's return:
+    # `_maybe_fast_fail_throttle_direct` and the direct-fallback retry return
+    # earlier, so stamping there left those relays unlabelled (Codex adversarial
+    # review, finding 6). `_finalize` runs in the handler's `finally`, before the
+    # response is serialized, so mutating headers is still in time. Test the
+    # response's OWN body rather than `attempt.captured`: a locally fabricated
+    # fast-fail 429 must not inherit the upstream attempt's fingerprint.
+    _stamp_entitlement_refusal(attempt, bid)
 
     # Credential verdict for THIS bearer. Telemetry paths are excluded on
     # purpose: /api/oauth/usage has its own endpoint-level 401/403/429 policy
@@ -3868,6 +4054,13 @@ async def _credential_recheck_one(bid: str, token: str) -> None:
     payload = {
         "model": config.CREDENTIAL_RECHECK_MODEL,
         "max_tokens": 1,
+        # REQUIRED, not decoration: an OAuth bearer is refused with a masked 429
+        # unless the FIRST system block is this exact string (see
+        # `_is_oauth_entitlement_refusal`). Without it a recovered account could
+        # never clear quarantine on a premium recheck model — the probe would
+        # 429 forever and `_touch_credential_check` would keep it dead (Codex
+        # adversarial review, finding 5).
+        "system": [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PROMPT}],
         "messages": [{"role": "user", "content": "."}],
     }
     try:

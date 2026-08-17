@@ -444,6 +444,24 @@ QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 # can never exceed the local knob), so the header needs no trust filtering.
 WAIT_BUDGET_HEADER = "x-anthropic-throttle-wait-budget-ms"
 
+# Stamped on a relayed 429 that this proxy classified as Anthropic's OAuth
+# ENTITLEMENT gate rather than rate pushback: the request's first `system` block
+# was not the Claude Code identity string, so a subscription bearer is refused
+# regardless of quota (haiku is exempt, which is what makes the failure read as
+# "premium models are being shed"). The upstream body is a bare
+# `rate_limit_error` whose message is the literal "Error", with no
+# `anthropic-ratelimit-unified-*` headers and no `Retry-After` — indistinguishable
+# from a real 429 to a client. The stamp is the only place the operator learns
+# that retrying is pointless and the fix is the request shape.
+ENTITLEMENT_REFUSAL_HEADER = "x-anthropic-throttle-oauth-entitlement"
+
+# The exact string an OAuth (subscription) bearer's request must carry as its
+# FIRST `system` block or Anthropic refuses it (see ENTITLEMENT_REFUSAL_HEADER).
+# Verbatim, including the apostrophe and trailing period — measured 17/08/2026,
+# a one-character equal-length change ("Claude Kode") 429s. Any SYNTHETIC probe
+# this proxy sends on an OAuth token must include it.
+CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
+
 state: dict[str, object] = {
     "inflight": 0,
     "queued": 0,

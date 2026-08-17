@@ -287,7 +287,20 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
         # verbatim would exempt REAL pushback from pushback-retry and AIMD
         # shrink (Codex MAJOR on PR #83). A double-spoof (marker + stamp) is
         # the same accepted trust boundary as the PR #81 marker itself.
-        drop_headers = config.HOP_HEADERS | {config.QUEUE_TIMEOUT_HEADER}
+        #
+        # The entitlement stamp rides the SAME boundary, and for a sharper
+        # reason (Codex second pass, blocking finding 2): with local→central
+        # account routing, CENTRAL chose the account that actually reached
+        # Anthropic, so central's bearer, cache, and unified windows are the
+        # authoritative evidence. The local tier's `bearer_state` may be keyed
+        # to a different account entirely, so re-deriving locally could label a
+        # genuine budget 429 as an entitlement refusal (skipping a shrink the
+        # walled account needs) or the reverse. Relay a sibling tier's verdict;
+        # strip and re-derive only for a RAW upstream, which cannot have one.
+        drop_headers = config.HOP_HEADERS | {
+            config.QUEUE_TIMEOUT_HEADER,
+            config.ENTITLEMENT_REFUSAL_HEADER,
+        }
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
     meta = _extract_ratelimit(upstream.headers)
     # Status only: reading the body here would drain the stream the client is

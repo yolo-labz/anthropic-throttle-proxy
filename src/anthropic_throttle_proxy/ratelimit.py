@@ -25,7 +25,8 @@ if TYPE_CHECKING:
     from aiohttp import web
 
 
-_API_KEY_BEARER_ID = "api-key"
+API_KEY_BEARER_ID = "api-key"
+_API_KEY_BEARER_ID = API_KEY_BEARER_ID  # legacy private alias
 
 
 def _api_key_id(_value: str) -> str:
@@ -250,6 +251,76 @@ def _is_zai_quota_gate(meta: Mapping[str, str] | None) -> bool:
     if not meta:
         return False
     return meta.get("zai-quota-gate") == "true" or meta.get("zai-error-code") in _ZAI_QUOTA_CODES
+
+
+# Anthropic masks an OAuth-entitlement refusal as a 429. The body is a fixed
+# short JSON envelope whose `message` is the literal string "Error" — a real
+# rate-limit 429 always carries a descriptive sentence instead. 512 bytes is
+# ~3x the observed envelope, so a large body short-circuits before the parse.
+_ENTITLEMENT_BODY_MAX_BYTES = 512
+
+
+def _is_entitlement_refusal_body(body: bytes | None) -> bool:
+    """True for Anthropic's masked OAuth-entitlement 429 body.
+
+    Measured 17/08/2026 on accounts A/B/C (Claude Max), models opus-5 /
+    opus-4-8 / sonnet-5: a ``POST /v1/messages`` on an OAuth (Claude Max/Pro)
+    bearer is refused unless the FIRST ``system`` block is verbatim ``You are
+    Claude Code, Anthropic's official CLI for Claude.``. Two controls rule out
+    presence/size effects — an equal-length one-character decoy ("Claude Kode")
+    429s in an alternating ABBA run, and swapping the order of two blocks whose
+    total bytes are identical flips 200 ↔ 429. The refusal is::
+
+        429 {"type":"error","error":{"type":"rate_limit_error","message":"Error"}}
+
+    with NO ``anthropic-ratelimit-unified-*`` headers and NO ``Retry-After``.
+    Haiku is exempt from the gate, which is what makes the failure read as
+    "Anthropic is shedding premium models" when it is a request-shape refusal.
+    Waiting never clears it, so callers must not pause, retry, or shrink.
+    """
+    if not body or len(body) > _ENTITLEMENT_BODY_MAX_BYTES:
+        return False
+    try:
+        payload = _json.loads(body)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict) or payload.get("type") != "error":
+        return False
+    err = payload.get("error")
+    return (
+        isinstance(err, dict)
+        and err.get("type") == "rate_limit_error"
+        and err.get("message") == "Error"
+    )
+
+
+def _is_oauth_entitlement_refusal(
+    status: int, meta: Mapping[str, str] | None, body: bytes | bytearray | None
+) -> bool:
+    """True when a 429 is Anthropic's OAuth entitlement gate, not pushback.
+
+    All four signals must agree, so a genuine budget/concurrency 429 can never
+    be mistaken for one: status 429, no ``Retry-After``, no unified-window
+    headers on the SAME response, and the fixed masked body envelope.
+
+    ``Retry-After`` is tested for PRESENCE, not for a positive parse. The gate
+    never sends the header at all, so ``Retry-After: 0`` (or an unparseable
+    value, which ``_parse_retry_after`` also floors to 0) is an upstream that
+    DID choose to speak about retrying — that is pushback, and letting it through
+    on a ``> 0`` test would hand a real immediate-retry 429 the no-shrink
+    exemption (Codex adversarial review, finding 1).
+
+    Callers must additionally scope this to OAuth ``POST /v1/messages`` traffic —
+    see ``proxy._is_entitlement_refusal_attempt``. This function is pure and
+    cannot see the path, the bearer, or the bearer's cached window state.
+    """
+    if status != 429:
+        return False
+    if meta and "retry-after" in meta:
+        return False
+    if _parse_unified(meta):
+        return False
+    return _is_entitlement_refusal_body(bytes(body) if body else None)
 
 
 def _publish_ratelimit_gauges(bid: str, meta: Mapping[str, str]) -> None:

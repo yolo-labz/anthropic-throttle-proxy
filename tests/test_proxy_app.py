@@ -121,6 +121,50 @@ def _make_upstream() -> web.Application:
                 },
                 status=429,
             )
+        if mode == "central-says-not-entitlement":
+            # A sibling tier answered (marker) and did NOT stamp: central saw the
+            # real bearer's windows and ruled the gate out. The body still LOOKS
+            # like the gate envelope, because central relays it verbatim.
+            return web.json_response(
+                {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}},
+                status=429,
+                headers={"x-anthropic-throttle-proxy": "1"},
+            )
+        if mode == "relayed-entitlement-verdict":
+            # A SIBLING PROXY TIER (marker-stamped) relaying its own entitlement
+            # verdict. Central chose the account that actually reached Anthropic,
+            # so its verdict is authoritative even though the local tier's cached
+            # windows belong to a different bearer.
+            return web.json_response(
+                {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}},
+                status=429,
+                headers={
+                    "x-anthropic-throttle-proxy": "1",
+                    "x-anthropic-throttle-oauth-entitlement": "1",
+                },
+            )
+        if mode == "spoofed-entitlement-header":
+            # A raw upstream asserting the proxy's own verdict on an ordinary
+            # rate-limit body. Must be stripped, not relayed.
+            return web.json_response(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "message": "This request would exceed your rate limit.",
+                    },
+                },
+                status=429,
+                headers={"x-anthropic-throttle-oauth-entitlement": "1"},
+            )
+        if mode == "oauth-entitlement-429":
+            # Anthropic's OAuth entitlement gate, verbatim (measured 17/08/2026):
+            # bare rate_limit_error whose message is the literal "Error", no
+            # unified-window headers, no Retry-After.
+            return web.json_response(
+                {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}},
+                status=429,
+            )
         if mode == "zai-concurrency-1302":
             return web.json_response(
                 {"error": {"code": "1302", "message": "too many concurrent requests"}},
@@ -942,6 +986,153 @@ async def test_zai_quota_gate_pauses_without_aimd_shrink(client: TestClient, mon
     meta = config.bearer_state[bid]["last_ratelimit"]
     assert meta["zai-error-code"] == "1316"
     assert meta["zai-quota-gate"] == "true"
+
+
+async def test_oauth_entitlement_429_relays_without_shrink_retry_or_pause(
+    client: TestClient, monkeypatch
+) -> None:
+    """The 17/08/2026 incident in one test.
+
+    A subscription bearer refused on request SHAPE (first ``system`` block is
+    not the Claude Code identity) gets a bare 429. Before this classification it
+    read as budget pushback: two 30 s synthetic pauses, an AIMD shrink to the
+    floor, and a ~61 s stall — on an account that answered 200 for the same
+    model seconds later.
+    """
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 2)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 30)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+
+    t0 = time.monotonic()
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5","max_tokens":1}',
+        headers={
+            "Authorization": "Bearer entitlement-refusal",
+            "X-Stub-Mode": "oauth-entitlement-429",
+        },
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    # Relayed immediately: no pushback retry, no synthetic pause.
+    assert time.monotonic() - t0 < 1.0
+    assert resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1"
+    bid = proxy._bearer_id({"authorization": "Bearer entitlement-refusal"})
+    lim = config.bearer_limiters[bid]
+    # The ceiling is untouched and no window was latched.
+    assert lim.max_concurrent == 3
+    assert lim.retry_after_remaining() == 0
+
+
+async def test_real_budget_429_still_shrinks_despite_entitlement_check(
+    client: TestClient, monkeypatch
+) -> None:
+    """The entitlement exemption must not swallow genuine budget pushback."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 5)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5"}',
+        headers={
+            "Authorization": "Bearer real-budget-429",
+            "X-Stub-Mode": "429-unified-rejected",
+        },
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    assert config.ENTITLEMENT_REFUSAL_HEADER not in resp.headers
+    bid = proxy._bearer_id({"authorization": "Bearer real-budget-429"})
+    assert config.bearer_limiters[bid].max_concurrent < 3
+
+
+async def test_upstream_cannot_spoof_the_entitlement_header(
+    client: TestClient, monkeypatch
+) -> None:
+    """Only a proxy tier may assert the verdict; raw upstream is stripped.
+
+    Each tier sees the same status, headers, and buffered body, so it re-derives
+    the answer itself — there is no reason to trust an upstream's claim, and a
+    trusted-looking header on a genuine budget 429 would mislead the operator.
+    """
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5"}',
+        headers={
+            "Authorization": "Bearer spoofed-entitlement",
+            "X-Stub-Mode": "spoofed-entitlement-header",
+        },
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    # Upstream said "1" on a response whose body is NOT the gate envelope.
+    assert config.ENTITLEMENT_REFUSAL_HEADER not in resp.headers
+
+
+@pytest.mark.parametrize(
+    ("stub_mode", "auth", "seed_rejected_cache", "expect_stamp", "expect_shrink"),
+    [
+        # Central hit the gate and stamped. Its verdict wins even though the
+        # LOCAL cache says `rejected` — with account routing that cache belongs
+        # to a different account than the one central actually used.
+        ("relayed-entitlement-verdict", "relayed-entitlement", True, True, False),
+        # Central answered (marker) and did NOT stamp: it saw the real bearer's
+        # windows and ruled the gate out. The body still LOOKS like the envelope
+        # because central relays it verbatim, so a one-sided "trust only yes"
+        # rule would re-derive locally and manufacture a false exemption.
+        ("central-says-not-entitlement", "central-said-no", False, False, True),
+    ],
+    ids=["central-says-gate", "central-says-not-gate"],
+)
+async def test_sibling_tier_verdict_is_authoritative_both_ways(
+    client: TestClient,
+    monkeypatch,
+    stub_mode: str,
+    auth: str,
+    seed_rejected_cache: bool,
+    expect_stamp: bool,
+    expect_shrink: bool,
+) -> None:
+    """A MARKER-stamped sibling tier owns the entitlement verdict in BOTH directions."""
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 30)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
+
+    bid = proxy._bearer_id({"authorization": f"Bearer {auth}"})
+    if seed_rejected_cache:
+        config.bearer_state[bid] = {
+            "unified": proxy._parse_unified(
+                {
+                    "anthropic-ratelimit-unified-status": "rejected",
+                    "anthropic-ratelimit-unified-5h-status": "rejected",
+                    "anthropic-ratelimit-unified-5h-utilization": "1.0",
+                }
+            ),
+            "unified_at": time.time(),
+        }
+
+    t0 = time.monotonic()
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5","max_tokens":1}',
+        headers={"Authorization": f"Bearer {auth}", "X-Stub-Mode": stub_mode},
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    assert time.monotonic() - t0 < 1.0
+    assert (resp.headers.get(config.ENTITLEMENT_REFUSAL_HEADER) == "1") is expect_stamp
+    assert (config.bearer_limiters[bid].max_concurrent < 3) is expect_shrink
 
 
 async def test_zai_concurrency_1302_still_triggers_aimd_shrink(
