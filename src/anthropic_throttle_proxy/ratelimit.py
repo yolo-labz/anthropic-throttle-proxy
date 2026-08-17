@@ -25,7 +25,8 @@ if TYPE_CHECKING:
     from aiohttp import web
 
 
-_API_KEY_BEARER_ID = "api-key"
+API_KEY_BEARER_ID = "api-key"
+_API_KEY_BEARER_ID = API_KEY_BEARER_ID  # legacy private alias
 
 
 def _api_key_id(_value: str) -> str:
@@ -262,11 +263,13 @@ _ENTITLEMENT_BODY_MAX_BYTES = 512
 def _is_entitlement_refusal_body(body: bytes | None) -> bool:
     """True for Anthropic's masked OAuth-entitlement 429 body.
 
-    Measured 17/08/2026, 8/8 alternating trials across three subscription
-    accounts, seconds apart: a ``POST /v1/messages`` on an OAuth (Claude
-    Max/Pro) bearer is refused unless the FIRST ``system`` block is verbatim
-    ``You are Claude Code, Anthropic's official CLI for Claude.``. The refusal
-    is::
+    Measured 17/08/2026 on accounts A/B/C (Claude Max), models opus-5 /
+    opus-4-8 / sonnet-5: a ``POST /v1/messages`` on an OAuth (Claude Max/Pro)
+    bearer is refused unless the FIRST ``system`` block is verbatim ``You are
+    Claude Code, Anthropic's official CLI for Claude.``. Two controls rule out
+    presence/size effects — an equal-length one-character decoy ("Claude Kode")
+    429s in an alternating ABBA run, and swapping the order of two blocks whose
+    total bytes are identical flips 200 ↔ 429. The refusal is::
 
         429 {"type":"error","error":{"type":"rate_limit_error","message":"Error"}}
 
@@ -299,10 +302,21 @@ def _is_oauth_entitlement_refusal(
     All four signals must agree, so a genuine budget/concurrency 429 can never
     be mistaken for one: status 429, no ``Retry-After``, no unified-window
     headers on the SAME response, and the fixed masked body envelope.
+
+    ``Retry-After`` is tested for PRESENCE, not for a positive parse. The gate
+    never sends the header at all, so ``Retry-After: 0`` (or an unparseable
+    value, which ``_parse_retry_after`` also floors to 0) is an upstream that
+    DID choose to speak about retrying — that is pushback, and letting it through
+    on a ``> 0`` test would hand a real immediate-retry 429 the no-shrink
+    exemption (Codex adversarial review, finding 1).
+
+    Callers must additionally scope this to OAuth ``POST /v1/messages`` traffic —
+    see ``proxy._is_entitlement_refusal_attempt``. This function is pure and
+    cannot see the path, the bearer, or the bearer's cached window state.
     """
     if status != 429:
         return False
-    if _parse_retry_after(meta) > 0:
+    if meta and "retry-after" in meta:
         return False
     if _parse_unified(meta):
         return False

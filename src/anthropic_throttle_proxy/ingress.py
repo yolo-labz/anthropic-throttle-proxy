@@ -139,6 +139,13 @@ _SUBSCRIPTION_UPSTREAMS: Final[frozenset[str]] = frozenset(
 # the next lane in the role chain instead of passing the 503 through. Only a
 # sibling proxy sets it, so it's a trustworthy saturation signal.
 QUEUE_TIMEOUT_HEADER: Final[str] = "x-anthropic-throttle-queue-timeout"
+
+# Stamped by :8765 on a 429 it classified as Anthropic's OAuth entitlement gate
+# (the request's first `system` block is not the Claude Code identity). The lane
+# is HEALTHY — a correctly shaped request on the same bearer succeeds — so this
+# 429 must neither spill nor mark the lane saturated. The proxy strips the header
+# from raw upstream responses, so only a proxy tier can assert it.
+ENTITLEMENT_REFUSAL_HEADER: Final[str] = "x-anthropic-throttle-oauth-entitlement"
 # How long the ingress avoids a lane that just returned a saturation 503. Covers
 # ~one health-poll cycle; a draining lane re-opens on the next poll, a still-
 # saturated lane re-marks on the next 503.
@@ -892,7 +899,18 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         is_saturation_503 = (
             upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
         )
-        is_retryable = is_saturation_503 or (upstream.status == 429 and role in _SPILL_ON_429_ROLES)
+        # An entitlement-gate 429 is a REQUEST-SHAPE refusal, not lane pressure:
+        # spilling would replay the same doomed body against a sibling lane and
+        # marking the lane saturated would take a healthy lane out of rotation
+        # (Codex adversarial review, finding 4). Relay it to the client, stamp
+        # intact, so the caller learns the shape is the problem.
+        is_entitlement_refusal = (
+            upstream.status == 429
+            and upstream.headers.get(ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
+        )
+        is_retryable = is_saturation_503 or (
+            upstream.status == 429 and role in _SPILL_ON_429_ROLES and not is_entitlement_refusal
+        )
         if is_retryable and spillable:
             upstream.release()
             upstream = None

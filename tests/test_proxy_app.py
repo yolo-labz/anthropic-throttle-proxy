@@ -121,6 +121,20 @@ def _make_upstream() -> web.Application:
                 },
                 status=429,
             )
+        if mode == "spoofed-entitlement-header":
+            # A raw upstream asserting the proxy's own verdict on an ordinary
+            # rate-limit body. Must be stripped, not relayed.
+            return web.json_response(
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "rate_limit_error",
+                        "message": "This request would exceed your rate limit.",
+                    },
+                },
+                status=429,
+                headers={"x-anthropic-throttle-oauth-entitlement": "1"},
+            )
         if mode == "oauth-entitlement-429":
             # Anthropic's OAuth entitlement gate, verbatim (measured 17/08/2026):
             # bare rate_limit_error whose message is the literal "Error", no
@@ -1013,6 +1027,33 @@ async def test_real_budget_429_still_shrinks_despite_entitlement_check(
     assert config.ENTITLEMENT_REFUSAL_HEADER not in resp.headers
     bid = proxy._bearer_id({"authorization": "Bearer real-budget-429"})
     assert config.bearer_limiters[bid].max_concurrent < 3
+
+
+async def test_upstream_cannot_spoof_the_entitlement_header(
+    client: TestClient, monkeypatch
+) -> None:
+    """Only a proxy tier may assert the verdict; raw upstream is stripped.
+
+    Each tier sees the same status, headers, and buffered body, so it re-derives
+    the answer itself — there is no reason to trust an upstream's claim, and a
+    trusted-looking header on a genuine budget 429 would mislead the operator.
+    """
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", 0)
+
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-sonnet-5"}',
+        headers={
+            "Authorization": "Bearer spoofed-entitlement",
+            "X-Stub-Mode": "spoofed-entitlement-header",
+        },
+    )
+    await resp.read()
+
+    assert resp.status == 429
+    # Upstream said "1" on a response whose body is NOT the gate envelope.
+    assert config.ENTITLEMENT_REFUSAL_HEADER not in resp.headers
 
 
 async def test_zai_concurrency_1302_still_triggers_aimd_shrink(
