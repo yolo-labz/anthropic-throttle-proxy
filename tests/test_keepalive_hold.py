@@ -22,6 +22,7 @@ import json
 import time
 
 import aiohttp
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
@@ -1108,6 +1109,96 @@ async def test_health_reports_active_holds_during_hold(monkeypatch) -> None:
 
         after = await (await test_client.get("/__throttle/health")).json()
         assert after["keepalive_holds_active"] == 0, "hold leaked after the stream finished"
+    finally:
+        await test_client.close()
+        await upstream_server.close()
+
+
+# --- OAuth entitlement gate reached mid-hold ---------------------------------
+
+_ENTITLEMENT_BODY = json.dumps(
+    {"type": "error", "error": {"type": "rate_limit_error", "message": "Error"}}
+)
+_UNIFIED_REJECTED = {
+    "anthropic-ratelimit-unified-status": "rejected",
+    "anthropic-ratelimit-unified-5h-status": "rejected",
+    "anthropic-ratelimit-unified-5h-utilization": "1.0",
+    "anthropic-ratelimit-unified-7d-status": "allowed",
+    "anthropic-ratelimit-unified-7d-utilization": "0.1",
+}
+
+
+def _make_two_phase_upstream(second_headers: dict, second_body: str) -> web.Application:
+    """529 first (so the hold engages), then a caller-chosen throttle response."""
+    calls = [0]
+
+    async def messages(request: web.Request) -> web.StreamResponse:
+        await request.read()
+        calls[0] += 1
+        if calls[0] == 1:
+            return web.Response(
+                status=529,
+                headers={"content-type": "application/json"},
+                text=json.dumps(
+                    {"type": "error", "error": {"type": "overloaded_error", "message": "fake"}}
+                ),
+            )
+        return web.Response(
+            status=429,
+            headers={"content-type": "application/json", **second_headers},
+            text=second_body,
+        )
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", messages)
+    return app
+
+
+@pytest.mark.parametrize(
+    ("second_headers", "second_body", "expect_shrink", "expect_marker"),
+    [
+        # Raw upstream, no marker: the hold re-derives locally, sees the gate, and
+        # must NOT shrink — the bearer is healthy, the request shape is not.
+        ({}, _ENTITLEMENT_BODY, False, b"first system block"),
+        # A genuine budget 429 arriving mid-hold. Before this, the terminal
+        # "budget reclassified" branch never called _aimd_feedback and
+        # `aimd_owned` made _finalize skip it too, so the shrink was lost
+        # entirely (Codex fifth pass).
+        (_UNIFIED_REJECTED, _ENTITLEMENT_BODY, True, b"budget exhausted"),
+    ],
+    ids=["entitlement-gate-mid-hold", "genuine-budget-mid-hold"],
+)
+async def test_hold_retry_classifies_entitlement_vs_budget(
+    monkeypatch,
+    second_headers: dict,
+    second_body: str,
+    expect_shrink: bool,
+    expect_marker: bytes,
+) -> None:
+    """The hold's terminal branch must name the cause AND get AIMD right."""
+    # `off` freezes the AIMD counters entirely, so the shrink assertion needs a
+    # mode where they move; MAX_CONCURRENT is the hard ceiling the initial cap is
+    # clamped to, so it has to leave room above the floor.
+    monkeypatch.setattr(config, "QUEUE_MODE", "observe")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 4)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 4)
+    upstream_app = _make_two_phase_upstream(second_headers, second_body)
+    test_client, upstream_server = await _make_client_with_upstream(monkeypatch, upstream_app)
+    try:
+        auth = f"Bearer hold-entitlement-{expect_shrink}"
+        resp = await test_client.post(
+            "/v1/messages",
+            data=json.dumps({"model": "claude-opus-5", "max_tokens": 1, "stream": True}).encode(),
+            headers={"Content-Type": "application/json", "Authorization": auth},
+        )
+        assert resp.status == 200  # the hold committed a 200 SSE before retrying
+        streamed = await resp.read()
+        for _ in range(20):
+            await asyncio.sleep(0)
+
+        assert expect_marker in streamed
+        lim = config.bearer_limiters[proxy._bearer_id({"authorization": auth})]
+        assert (lim.snapshot()["max_concurrent"] < 4) is expect_shrink
     finally:
         await test_client.close()
         await upstream_server.close()
