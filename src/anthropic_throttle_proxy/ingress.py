@@ -87,6 +87,18 @@ REMAP_BODY_MAX_BYTES: Final[int] = int(
 # ingress-served response from a direct-lane response.
 MARKER_HEADER: Final[str] = "x-anthropic-throttle-ingress"
 
+# Client-side disconnects seen while relaying a response back: the reader went
+# away mid-write. Deliberately NARROWER than proxy.py::_CLIENT_DISCONNECT_EXC,
+# which also lists asyncio.CancelledError — that one is used there to decide
+# "do not retry", never to swallow. Swallowing CancelledError here would break
+# cooperative cancellation and hang shutdown, so it stays propagating; the
+# observed failure is a ClientConnectionResetError ("Cannot write to closing
+# transport") and that is exactly what this catches.
+_CLIENT_DISCONNECT_EXC: Final[tuple[type[BaseException], ...]] = (
+    ConnectionResetError,
+    aiohttp.ClientConnectionResetError,
+)
+
 # S2: the inferred role (generate/judge/bulk) stamped on served RESPONSES for
 # observability. S6 surfaces per-(role→lane) decision counts. This is a response
 # stamp only — never read from the request (see ROLE_OVERRIDE_HEADER).
@@ -265,6 +277,17 @@ M_CODE_ROLE_REJECTED = Counter(
     "ingress_code_role_rejected_total",
     "Agentic requests that did NOT qualify for the code role, by reason.",
     ["reason"],
+    registry=REGISTRY,
+)
+# A client that closed its socket while we were relaying its response. Normal
+# in isolation (a cancelled turn, a closed tab); a RATE is the signal — it says
+# clients are giving up mid-stream, which is what a stall looks like from here.
+# Counted rather than logged because the traceback it replaces carried no
+# information a counter does not, and printed 50 times in 5.5h (18/08/2026).
+M_CLIENT_DISCONNECTS = Counter(
+    "ingress_client_disconnects_total",
+    "Responses abandoned because the client closed the connection mid-relay.",
+    ["phase"],
     registry=REGISTRY,
 )
 
@@ -975,11 +998,25 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             if required_mode is not None and 200 <= upstream.status < 300:
                 resp.headers[CREDENTIAL_MODE_HEADER] = CREDENTIAL_MODE_SUBSCRIPTION
             await resp.prepare(request)
-            async for chunk in upstream.content.iter_any():
-                if not chunk:
-                    continue
-                await resp.write(chunk)
-            await resp.write_eof()
+            try:
+                async for chunk in upstream.content.iter_any():
+                    if not chunk:
+                        continue
+                    await resp.write(chunk)
+                await resp.write_eof()
+            except _CLIENT_DISCONNECT_EXC:
+                # The client closed its socket mid-relay. The local tier already
+                # wraps the identical loop (forwarding.py::_stream_response) so
+                # "the client sees InvalidHTTPResponse" cannot happen; this tier
+                # did not, and every such disconnect escaped as an unhandled
+                # ClientConnectionResetError traceback — 50 of them in the 5.5h
+                # journal window on 18/08/2026, spread across the whole day.
+                #
+                # Nothing is recoverable here: the status and headers are on the
+                # wire and the reader is gone, so the only correct action is to
+                # stop writing and return the prepared response. Re-raising
+                # would only re-create the traceback this fixes.
+                M_CLIENT_DISCONNECTS.labels(phase="relay").inc()
             return resp
         finally:
             upstream.release()
