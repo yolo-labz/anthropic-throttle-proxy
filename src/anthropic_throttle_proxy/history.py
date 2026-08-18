@@ -62,10 +62,11 @@ _errors = 0
 # upgrade path is a fixed-bin histogram, which we do not need at this volume.
 _DURATION_SAMPLES = 4096
 _durations: deque[float] = deque(maxlen=_DURATION_SAMPLES)
-# Level → the instant it was first observed, so the status strip can say
-# "THROTTLED for 12m" instead of an undated verdict (S4.4).
-_level = ""
-_level_at = 0.0
+# track → (level, the instant it was first observed), so the status strip can
+# say "THROTTLED for 12m" instead of an undated verdict (S4.4). Keyed by track
+# because two consumers read two different level vocabularies — see
+# :func:`level_since`.
+_level_at: dict[str, tuple[str, float]] = {}
 
 
 def observe(status: int | None, duration: float) -> None:
@@ -123,26 +124,33 @@ def series() -> list[Point]:
     return list(_ring)
 
 
-def level_since(level: str, now: float | None = None) -> float:
-    """Seconds the fleet has been at ``level``; 0 the first time it is seen.
+def level_since(level: str, now: float | None = None, *, track: str = "fleet") -> float:
+    """Seconds the caller has been at ``level``; 0 the first time it is seen.
 
     Idempotent per level: calling it every render keeps the timestamp of the
     TRANSITION, not of the last call.
+
+    ``track`` names an independent vocabulary. The dashboard strip reads
+    ``idle|healthy|pacing|throttled`` and the statusline endpoint reads
+    ``down|exhausted|throttled|queued|warn|ok`` — two alphabets over one
+    process. Sharing a single slot would make each statusline poll look like a
+    transition to the strip and reset its ``THROTTLED for 12m`` duration at
+    render cadence, which is exactly the signal that duration exists to carry.
     """
-    global _level, _level_at
     if now is None:
         now = time.time()
-    if level != _level:
-        _level, _level_at = level, now
-    return max(0.0, now - _level_at)
+    seen = _level_at.get(track)
+    if seen is None or seen[0] != level:
+        _level_at[track] = (level, now)
+        return 0.0
+    return max(0.0, now - seen[1])
 
 
 def reset() -> None:
     """Drop all history — tests only."""
-    global _served, _errors, _level, _level_at
+    global _served, _errors
     _ring.clear()
     _served = 0
     _errors = 0
     _durations.clear()
-    _level = ""
-    _level_at = 0.0
+    _level_at.clear()
