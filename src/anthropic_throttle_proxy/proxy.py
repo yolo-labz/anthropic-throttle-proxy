@@ -163,6 +163,8 @@ from .ratelimit import (
     _publish_ratelimit_gauges,
     _short_request_hint,
 )
+from .routing import bearer_usable as _bearer_usable
+from .routing import lane_usable as _lane_usable
 from .routing import unified_live_view as _unified_live_view
 
 if TYPE_CHECKING:
@@ -4335,6 +4337,121 @@ def _publish_brake_enabled() -> None:
     M_BRAKE_ENABLED.set(1 if UTILIZATION_TARGET > 0 else 0)
 
 
+async def admission(_request: web.Request) -> web.Response:
+    """GET /__throttle/admission — the authoritative "may a request be served now?".
+
+    This exists because every consumer that re-derives the answer from
+    ``/__throttle/health`` gets it wrong eventually, and each one gets it wrong
+    differently. The proxy is the only component that actually knows: it holds
+    the live unified windows, it applies ``Retry-After``, it pauses a
+    ``rejected`` bearer, and it is the thing that would carry the request.
+
+    Measured 19/08/2026, the cost of the duplicate: pi's own oracle refused
+    every seat in the fleet for two hours with
+
+        1/3 serving; 47f0b262 7d=76% 5h=38%; only serving bearer is warning
+
+    while THIS proxy was serving that same bearer normally. ``allowed_warning``
+    is a flag Anthropic raises long before a window is spent; the proxy has
+    never treated it as a stop, because ``bearer_usable`` gates on ``rejected``
+    and on an active retry-after — nothing else. The consumer had invented a
+    stricter rule and then enforced it fleet-wide.
+
+    So the verdict below is computed with the SAME predicates the hot path
+    uses (``routing.bearer_usable`` / ``routing.lane_usable``), not a parallel
+    copy. One owner for availability, which is the rule this repo already
+    states for pacing.
+
+    Cheap by construction (invariant #4 applies here too — a consumer polls
+    this): it reads the same in-memory dicts ``health`` renders and does no
+    I/O.
+    """
+    now = time.time()
+    bearers: dict[str, dict] = {}
+    for bid, bstate in bearer_state.items():
+        # `_anon` is the shared bypass slot for unauthenticated traffic
+        # (health/metrics) and `api-key` is pay-go, not a subscription bearer.
+        # Neither can answer the question this endpoint is asked.
+        if bid in ("_anon", API_KEY_BEARER_ID):
+            continue
+        view = dict(bstate)
+        lim = bearer_limiters.get(bid)
+        if lim is not None:
+            view["limiter"] = lim.snapshot()
+        bearers[bid] = view
+
+    usable = {bid: _bearer_usable(view, now) for bid, view in bearers.items()}
+    serving = [bid for bid, ok in usable.items() if ok]
+    lane_open, lane_detail = _lane_usable(
+        {
+            "upstream_egress_ok": bool(state["upstream_egress_ok"]),
+            "upstream_auth_ok": state.get("upstream_auth_ok"),
+            "bearers": bearers,
+        },
+        now,
+    )
+
+    # `capped` means no bearer can serve the next token — the only conclusive
+    # stop. A consumer may still queue behind it, but it must not pretend the
+    # lane is open. Anything else is `open`: a warning, a high-but-serving
+    # window and a paced bearer are all still serving.
+    allow = bool(lane_open and serving)
+    if allow:
+        state_name, reason = "open", f"{len(serving)}/{len(bearers)} bearers serving"
+    elif not bearers:
+        state_name, reason = "capped", "no bearers observed yet"
+    elif not lane_open:
+        state_name, reason = "capped", f"lane closed: {lane_detail}"
+    else:
+        state_name, reason = "capped", f"0/{len(bearers)} bearers serving"
+
+    # When nothing can serve, say WHEN — the soonest a paused bearer is due
+    # back. A consumer that knows this can wait instead of refusing outright,
+    # which is the difference between a pause and an outage.
+    retry_after_s = 0.0
+    if not allow:
+        due: list[float] = []
+        for view in bearers.values():
+            limiter = view.get("limiter") or {}
+            try:
+                until = float(limiter.get("retry_after_until", 0) or 0)
+            except (TypeError, ValueError):
+                until = 0.0
+            if until > now:
+                due.append(until - now)
+            live = _unified_live_view(view.get("unified") or {}, now)
+            for suffix in ("_5h", "_7d"):
+                if live.get(f"status{suffix}") == "rejected":
+                    reset = live.get(f"reset{suffix}")
+                    if isinstance(reset, (int, float)) and not isinstance(reset, bool):
+                        if float(reset) > now:
+                            due.append(float(reset) - now)
+        retry_after_s = round(min(due), 3) if due else 0.0
+
+    return web.json_response(
+        {
+            "allow": allow,
+            "state": state_name,
+            "reason": reason,
+            "serving": len(serving),
+            "total": len(bearers),
+            "selected": serving[0] if serving else None,
+            "retry_after_s": retry_after_s,
+            "lane": {"open": lane_open, "detail": lane_detail},
+            "bearers": {
+                bid: {
+                    "usable": ok,
+                    "status_5h": (bearers[bid].get("unified") or {}).get("status_5h"),
+                    "status_7d": (bearers[bid].get("unified") or {}).get("status_7d"),
+                    "util_5h": (bearers[bid].get("unified") or {}).get("util_5h"),
+                    "util_7d": (bearers[bid].get("unified") or {}).get("util_7d"),
+                }
+                for bid, ok in usable.items()
+            },
+        }
+    )
+
+
 async def health(_request: web.Request) -> web.Response:
     """GET /__throttle/health — fast JSON snapshot of proxy + per-bearer state."""
     # Reflect status into the gauge for /metrics scrape; encoded as 1/0/-1.
@@ -4536,6 +4653,7 @@ def main() -> None:
     app.on_response_prepare.append(stamp_proxy_marker)
     app.router.add_get("/", root_probe)
     app.router.add_get("/__throttle/health", health)
+    app.router.add_get("/__throttle/admission", admission)
     app.router.add_get("/metrics", metrics)
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
     from .ui.routes import attach_ui
