@@ -4337,6 +4337,38 @@ def _publish_brake_enabled() -> None:
     M_BRAKE_ENABLED.set(1 if UTILIZATION_TARGET > 0 else 0)
 
 
+def _bearer_due_in(view: dict, now: float) -> list[float]:
+    """Seconds until this bearer could serve again, per lock it currently holds.
+
+    Two independent locks, so both are collected and the caller takes the min:
+    an active ``Retry-After``, and a ``rejected`` window's reset. A window whose
+    reset has already passed is a stale reading rather than a lock —
+    ``unified_live_view`` has dropped it before we look.
+    """
+    due: list[float] = []
+    limiter = view.get("limiter") or {}
+    try:
+        until = float(limiter.get("retry_after_until", 0) or 0)
+    except (TypeError, ValueError):
+        until = 0.0
+    if until > now:
+        due.append(until - now)
+    live = _unified_live_view(view.get("unified") or {}, now)
+    for suffix in ("_5h", "_7d"):
+        if live.get(f"status{suffix}") != "rejected":
+            continue
+        reset = live.get(f"reset{suffix}")
+        if isinstance(reset, (int, float)) and not isinstance(reset, bool) and float(reset) > now:
+            due.append(float(reset) - now)
+    return due
+
+
+def _soonest_bearer_due(bearers: dict[str, dict], now: float) -> float:
+    """When the lane could next serve — 0 when nothing is on a timed lock."""
+    due = [d for view in bearers.values() for d in _bearer_due_in(view, now)]
+    return round(min(due), 3) if due else 0.0
+
+
 async def admission(_request: web.Request) -> web.Response:
     """GET /__throttle/admission — the authoritative "may a request be served now?".
 
@@ -4408,25 +4440,7 @@ async def admission(_request: web.Request) -> web.Response:
     # When nothing can serve, say WHEN — the soonest a paused bearer is due
     # back. A consumer that knows this can wait instead of refusing outright,
     # which is the difference between a pause and an outage.
-    retry_after_s = 0.0
-    if not allow:
-        due: list[float] = []
-        for view in bearers.values():
-            limiter = view.get("limiter") or {}
-            try:
-                until = float(limiter.get("retry_after_until", 0) or 0)
-            except (TypeError, ValueError):
-                until = 0.0
-            if until > now:
-                due.append(until - now)
-            live = _unified_live_view(view.get("unified") or {}, now)
-            for suffix in ("_5h", "_7d"):
-                if live.get(f"status{suffix}") == "rejected":
-                    reset = live.get(f"reset{suffix}")
-                    if isinstance(reset, (int, float)) and not isinstance(reset, bool):
-                        if float(reset) > now:
-                            due.append(float(reset) - now)
-        retry_after_s = round(min(due), 3) if due else 0.0
+    retry_after_s = 0.0 if allow else _soonest_bearer_due(bearers, now)
 
     return web.json_response(
         {
