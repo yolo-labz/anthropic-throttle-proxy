@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import time
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -1261,3 +1262,43 @@ def test_no_warning_while_every_role_has_a_lane(monkeypatch, capsys):
     monkeypatch.setattr(ingress, "LANES", routing.default_lanes())
     assert ingress._warn_roles_without_a_lane() == []
     assert capsys.readouterr().out == ""
+
+
+async def test_client_disconnect_midrelay_does_not_escape(
+    ingress_client: TestClient, monkeypatch
+) -> None:
+    """A reader vanishing mid-relay is counted, not raised.
+
+    The local tier wraps the identical write loop
+    (``forwarding.py::_stream_response``) precisely so a closing transport
+    cannot surface to the client as ``InvalidHTTPResponse``. The ingress did
+    not, so every disconnect escaped as an unhandled
+    ``ClientConnectionResetError`` — 50 of them in one 5.5h journal window
+    (18/08/2026). Fail the request loudly here and the fleet reads it as a
+    proxy fault instead of a client that simply went away.
+
+    Raising only on the INGRESS's own response (marker-stamped) keeps the fake
+    lane's writes working, so this exercises the relay loop under test rather
+    than the fixture.
+    """
+    original_write = web.StreamResponse.write
+
+    async def reset_on_ingress_write(self: web.StreamResponse, data: bytes, **kw):
+        if self.headers.get(ingress.MARKER_HEADER):
+            raise aiohttp.ClientConnectionResetError("Cannot write to closing transport")
+        return await original_write(self, data, **kw)
+
+    monkeypatch.setattr(web.StreamResponse, "write", reset_on_ingress_write)
+    before = ingress.M_CLIENT_DISCONNECTS.labels(phase="relay")._value.get()
+
+    async with ingress_client.post(
+        "/v1/messages",
+        json={"model": "claude-sonnet-4-6", "max_tokens": 8},
+        headers={"Authorization": "Bearer test-ok"},
+    ) as resp:
+        # Status + headers were already on the wire when the peer left, so the
+        # relay cannot become a 5xx after the fact — the tell is the counter.
+        assert resp.status == 200
+
+    after = ingress.M_CLIENT_DISCONNECTS.labels(phase="relay")._value.get()
+    assert after == before + 1
