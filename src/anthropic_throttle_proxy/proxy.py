@@ -259,6 +259,7 @@ __all__ = [
     "health",
     "metrics",
     "root_probe",
+    "statusline",
     "main",
 ]
 
@@ -4569,6 +4570,267 @@ async def health(_request: web.Request) -> web.Response:
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
 
+# ── GET /__throttle/statusline ──────────────────────────────────────────────
+#
+# A bounded PROJECTION of health for a per-render consumer (spec 205). Health
+# answers everything an operator asks mid-incident and pays for it: measured
+# 16/08/2026 it was 72,643 B, of which 84 % was the per-client topology map,
+# growing ~131 B/min because ``clients`` is keyed by ephemeral TCP port. A
+# terminal statusline redrawing at ~3 Hz on 20+ panes cannot poll that, so it
+# reads its 5h/7d numbers out of its own session JSON instead — which describes
+# the bearer the TUI LAUNCHED with, while account routing rewrites the upstream
+# credential per request. The numbers on screen name the wrong account.
+#
+# This answers one sentence: WHICH account serves my next request, HOW FULL is
+# its binding window, WHEN does it reset, and am I QUEUED or THROTTLED. Every
+# field is a scalar; nothing here is sized by client count, bearer count, or
+# request history (FR-003).
+_STATUSLINE_SCHEMA = "statusline/1"
+# Bypass slots, not accounts: ``_anon`` carries health/metrics traffic and
+# ``api-key`` the proxy-owned key lane. Neither has unified windows, so both
+# would rank as idle zero-utilization winners in any election (spec edge case).
+_STATUSLINE_PSEUDO_BEARERS = frozenset({"_anon", "api-key"})
+
+
+def _statusline_unified(bid: str) -> dict[str, object]:
+    """The RAW stored unified snapshot for ``bid`` (may describe a dead window)."""
+    bstate = config.bearer_state.get(bid)
+    unified = bstate.get("unified") if isinstance(bstate, dict) else None
+    return unified if isinstance(unified, dict) else {}
+
+
+def _statusline_best_configured(
+    snapshot: list[dict[str, object]], model: str, now: float
+) -> dict[str, object] | None:
+    """Lowest-scoring configured account, ranked exactly as the hot path ranks.
+
+    Reuses ``_account_routing_candidate_score`` rather than re-deriving it, so
+    the account this names is the account ``_route_account_if_enabled`` would
+    actually rewrite ``Authorization`` to (FR-004) — including the scoped
+    per-model weekly meter when ``model`` is supplied (FR-007).
+
+    ``incoming_bid=""`` on purpose: there is no request in hand, so no bearer
+    earns the stickiness discount. ``allow_retry_probe`` stays off because it
+    MUTATES probation state; a read-only projection must not seed it.
+    """
+
+    def score(acct: dict[str, object], *, allow_pressure: bool) -> float:
+        return _account_routing_candidate_score(
+            acct,
+            "",
+            allow_pressure=allow_pressure,
+            model=model,
+            now=now,
+        )
+
+    # Strict first, then the pressure pass — the same two-tier ladder the hot
+    # path walks, so a fleet where every account merely crossed its warning
+    # line still names the one that would take the traffic.
+    for allow_pressure in (False, True):
+        scored = [
+            (score(acct, allow_pressure=allow_pressure), i) for i, acct in enumerate(snapshot)
+        ]
+        # Rank on (score, index) so a tie falls to env order instead of
+        # comparing the account dicts themselves.
+        best = min((row for row in scored if row[0] < math.inf), default=None)
+        if best is not None:
+            return snapshot[best[1]]
+    return None
+
+
+def _statusline_best_observed(now: float) -> str | None:
+    """Least-loaded bearer the proxy has actually seen, when no account is configured.
+
+    The central tier and any local proxy without ``THROTTLE_ACCOUNT_CRED_PATHS``
+    hold no credentials to rank, but they still serve a bearer whose windows the
+    renderer wants. Ranks unblocked before blocked, then by live binding
+    utilization — the same order the configured path produces.
+    """
+    ranked: list[tuple[bool, float, str]] = []
+    for bid in list(config.bearer_state):
+        if bid in _STATUSLINE_PSEUDO_BEARERS or _bearer_credential_dead(bid):
+            continue
+        live = _unified_live_view(_statusline_unified(bid), now)
+        blocked = _bearer_retry_after_remaining(bid) > 0 or "rejected" in (
+            live.get("status_5h"),
+            live.get("status_7d"),
+        )
+        util = _binding_utilization(live)
+        ranked.append((blocked, float(util) if util is not None else 0.0, bid))
+    return min(ranked)[2] if ranked else None
+
+
+def _statusline_elect(
+    snapshot: list[dict[str, object]], now: float, model: str
+) -> tuple[str | None, str | None]:
+    """``(bearer_id, account_label)`` the hot path would serve the next call with."""
+    from . import accounts
+
+    bid: str | None = None
+    if snapshot:
+        best = _statusline_best_configured(snapshot, model, now)
+        if best is not None:
+            bid = str(best["bearer_id"])
+    if bid is None:
+        bid = _statusline_best_observed(now)
+    if bid is None:
+        return None, None
+    # Label off the snapshot already in hand; only a bearer that snapshot
+    # skipped (expired token, unreadable file) costs the second traversal.
+    labels = {str(acct["bearer_id"]): acct.get("label") for acct in snapshot}
+    label = labels.get(bid) or accounts.bearer_labels().get(bid)
+    return bid, str(label) if label else None
+
+
+def _statusline_window(bid: str | None, now: float) -> dict[str, object]:
+    """Binding-window reading for ``bid``, with dead windows dropped (FR-005/006).
+
+    ``stale`` compares the RAW snapshot's binding window against the live view's.
+    They differ exactly when the raw binding window's own reset epoch has already
+    passed — the 31/07/2026 trap where a frozen ``rejected``/``util=1.0`` sample
+    outlives the window it describes, and its mirror where a frozen ``allowed``
+    0.0 reads as free capacity. So an emitted non-null ``reset`` is ALWAYS in the
+    future, and ``stale`` is the renderer's cue that the number is unconfirmed.
+    """
+    raw = _statusline_unified(bid) if bid else {}
+    live = _unified_live_view(raw, now)
+    window = _binding_window(live)
+    if window is None:
+        # Every window dropped, or none ever observed: there is no reading to
+        # confirm, which is the same thing a renderer must not trust.
+        return {"window": None, "util": None, "status": None, "reset": None, "stale": True}
+    suffix = "_5h" if window == "5h" else "_7d"
+    util = _binding_utilization(live)
+    reset = live.get(f"reset{suffix}")
+    return {
+        "window": window,
+        # 4 decimals: the wire stays short and the precision still beats what a
+        # gauge can resolve.
+        "util": None if util is None else round(float(util), 4),
+        "status": live.get(f"status{suffix}"),
+        "reset": int(reset)
+        if isinstance(reset, (int, float)) and not isinstance(reset, bool)
+        else None,
+        "stale": _binding_window(raw) != window,
+    }
+
+
+def _statusline_queue(bid: str | None, now: float) -> tuple[dict[str, int], int | None]:
+    """``({depth, inflight, cap}, blocked_until)`` for the elected bearer.
+
+    Reads the three limiter scalars directly instead of ``snapshot()``: that one
+    also builds ``queued_per_client`` and ``rr_order``, both keyed by client.
+    """
+    lim = config.bearer_limiters.get(bid) if bid else None
+    if lim is None:
+        # No limiter allocated yet — nothing is queued, and the ceiling a first
+        # request would meet is the configured one.
+        return {"depth": 0, "inflight": 0, "cap": config.MAX_CONCURRENT}, None
+    remaining = lim.retry_after_remaining()
+    queue = {"depth": lim.queued_total, "inflight": lim.inflight, "cap": lim.max_concurrent}
+    # Derived from the remaining seconds rather than the stored epoch so the
+    # countdown is consistent with the ``now`` in this same payload.
+    return queue, int(now + remaining) if remaining > 0 else None
+
+
+def _statusline_fleet(snapshot: list[dict[str, object]], now: float) -> tuple[int, int]:
+    """``(usable, configured)`` — is there anywhere else for traffic to go.
+
+    ``configured`` is the parsed env spec, not a resolved-file count: it is the
+    denominator the operator wrote down, and parsing it costs no I/O at all. A
+    proxy with no accounts configured reports ``0/0`` rather than inventing a
+    fleet out of whatever bearers happened to call — the central tier holds no
+    credentials and should say so.
+    """
+    from . import accounts
+
+    usable = 0
+    for acct in snapshot:
+        bid = str(acct["bearer_id"])
+        if _bearer_credential_dead(bid):
+            continue
+        view = {
+            # ``bearer_usable`` reads a health-shaped dict; hand it the two
+            # fields it gates on rather than the whole limiter snapshot.
+            "limiter": {"retry_after_until": now + _bearer_retry_after_remaining(bid)},
+            "unified": _statusline_unified(bid),
+        }
+        usable += 1 if _bearer_usable(view, now) else 0
+    return usable, len(accounts.parse_spec(config.ACCOUNT_CRED_PATHS))
+
+
+def _statusline_state(
+    *,
+    account: dict[str, object],
+    depth: int,
+    blocked_until: int | None,
+    usable: int,
+    configured: int,
+) -> str:
+    """First match wins, most severe first (FR-008).
+
+    ``exhausted`` is gated on ``configured > 0`` so a freshly-started process
+    that has served nothing yet reads ``ok``, not "every account is dead".
+    """
+    if not state["upstream_egress_ok"]:
+        return "down"
+    if configured > 0 and usable == 0:
+        return "exhausted"
+    if blocked_until is not None or account["status"] == "rejected":
+        return "throttled"
+    if depth > 0:
+        return "queued"
+    util = account["util"]
+    if account["status"] == "allowed_warning" or (
+        UTILIZATION_WARN > 0 and isinstance(util, float) and util >= UTILIZATION_WARN
+    ):
+        return "warn"
+    return "ok"
+
+
+async def statusline(request: web.Request) -> web.Response:
+    """GET /__throttle/statusline — bounded per-render projection of health.
+
+    Always 200, including while upstream egress is down (FR-009): the state is
+    in the body, because a shell renderer that gets a non-2xx has to fall into
+    an error branch it cannot parse.
+    """
+    from . import accounts
+
+    now = time.time()
+    model = request.query.get("model", "")
+    # ONE credential-cache traversal per request, shared by election and fleet
+    # count. ``routing_snapshot`` hits the ``(mtime_ns, size)``-keyed cache: a
+    # stat per configured account on the steady path and no parse, which is what
+    # keeps this endpoint free of blocking credential I/O (FR-011).
+    snapshot = accounts.routing_snapshot(now)
+    bid, label = _statusline_elect(snapshot, now, model)
+    account = _statusline_window(bid, now)
+    queue, blocked_until = _statusline_queue(bid, now)
+    usable, configured = _statusline_fleet(snapshot, now)
+    level = _statusline_state(
+        account=account,
+        depth=queue["depth"],
+        blocked_until=blocked_until,
+        usable=usable,
+        configured=configured,
+    )
+    body = {
+        "schema": _STATUSLINE_SCHEMA,
+        "now": int(now),
+        "state": level,
+        "state_since_s": int(_history.level_since(level, now, track="statusline")),
+        # Only the 8-hex hash and the configured short label — never a token,
+        # a credential path, or an account email (invariant #2, FR-012).
+        "account": {"label": label, "bearer": bid, **account},
+        "queue": queue,
+        "blocked_until": blocked_until,
+        "fleet": {"usable": usable, "configured": configured},
+        "queue_mode": config.QUEUE_MODE,
+    }
+    return web.json_response(body, headers={"Cache-Control": "no-store"})
+
+
 async def metrics(
     _request: web.Request,
 ) -> web.Response:
@@ -4668,6 +4930,9 @@ def main() -> None:
     app.router.add_get("/", root_probe)
     app.router.add_get("/__throttle/health", health)
     app.router.add_get("/__throttle/admission", admission)
+    # Registered with the other infrastructure probes, ABOVE the catch-all, so
+    # it never consumes a bearer slot and never reaches upstream (FR-002).
+    app.router.add_get("/__throttle/statusline", statusline)
     app.router.add_get("/metrics", metrics)
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
     from .ui.routes import attach_ui

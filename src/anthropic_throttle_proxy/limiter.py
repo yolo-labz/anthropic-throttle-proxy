@@ -773,6 +773,18 @@ class FairBearerLimiter:
         self._priority_rr.clear()
         self._priority_queues.clear()
 
+    @property
+    def queued_total(self) -> int:
+        """Requests parked in the fair queue, summed across clients.
+
+        Exposed on its own because ``/__throttle/statusline`` needs the DEPTH
+        without the per-client breakdown ``snapshot`` builds alongside it: that
+        one is keyed by client, and the statusline is bounded to O(1) in client
+        count. An empty deque is popped on drain (:meth:`_try_dispatch`), so
+        this walks only clients with work parked right now.
+        """
+        return sum(len(q) for q in self._queues.values())
+
     def snapshot(self) -> dict[str, object]:
         """Cheap dict snapshot for /__throttle/health."""
         now = time.time()
@@ -791,7 +803,7 @@ class FairBearerLimiter:
             "retry_probe_required": self.retry_probe_required(),
             "retry_probe_inflight": self.retry_probe_inflight(),
             "retry_probe_blocks_routing": self.retry_probe_blocks_routing(),
-            "queued_total": sum(len(q) for q in self._queues.values()),
+            "queued_total": self.queued_total,
             "priority_inflight": self.priority_inflight,
             "priority_queued": sum(len(q) for q in self._priority_queues.values()),
             "queued_per_client": {cid: len(q) for cid, q in self._queues.items()},
