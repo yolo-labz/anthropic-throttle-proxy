@@ -313,6 +313,54 @@ def test_restart_restores_the_quarantine_without_a_single_dead_turn(cred_state):
     assert proxy._account_routing_candidate_score(acct, "x", allow_retry_probe=True) == math.inf
 
 
+async def test_successful_recheck_clears_restored_quarantine_without_live_row(
+    cred_state, monkeypatch
+):
+    proxy._restored_credentials["deadP0"] = {
+        "ok": False,
+        "status": 403,
+        "reason": "org-refused",
+    }
+    proxy._persist_credential_state()
+    config.bearer_state.pop("deadP0", None)
+
+    class Response:
+        status = 200
+
+        async def read(self):
+            return b'{"type":"message"}'
+
+    class ResponseContext:
+        async def __aenter__(self):
+            return Response()
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+        def post(self, *_args, **_kwargs):
+            return ResponseContext()
+
+    monkeypatch.setattr(proxy.aiohttp, "ClientSession", Session)
+    await proxy._credential_recheck_one("deadP0", "fixture-token")
+
+    assert not proxy._bearer_credential_dead("deadP0")
+    assert "deadP0" in config.bearer_state
+    assert json.loads(cred_state.read_text()) == {}
+    admission = json.loads((await proxy.admission(None)).body)
+    assert admission["allow"] is True
+    assert admission["selected"] == "deadP0"
+
+
 def test_recovery_removes_it_from_disk(cred_state):
     bstate = _bstate("deadP3")
     proxy._note_bearer_credential("deadP3", bstate, 403, bytearray(ORG_DISABLED_BODY))
