@@ -4100,7 +4100,9 @@ async def _credential_recheck_one(bid: str, token: str) -> None:
         _touch_credential_check(bid)
         return
     bstate = config.bearer_state.get(bid)
-    if 200 <= status < 300 and _is_anthropic_message(body) and isinstance(bstate, dict):
+    if 200 <= status < 300 and _is_anthropic_message(body):
+        if not isinstance(bstate, dict):
+            bstate = config.bearer_state.setdefault(bid, {})
         _clear_bearer_credential(bid, bstate)
         return
     _touch_credential_check(bid)
@@ -4502,7 +4504,13 @@ async def admission(_request: web.Request) -> web.Response:
             view["limiter"] = lim.snapshot()
         bearers[bid] = view
 
-    usable = {bid: _bearer_usable(view, now) for bid, view in bearers.items()}
+    # Window/Retry-After capacity is insufficient when the credential itself
+    # is quarantined. Use the same live+restored accessor as account routing;
+    # otherwise a restart resurrects an org-dead bearer in admission only.
+    usable = {
+        bid: _bearer_usable(view, now) and not _bearer_credential_dead(bid)
+        for bid, view in bearers.items()
+    }
     serving = [bid for bid, ok in usable.items() if ok]
     lane_open, lane_detail = _lane_usable(
         {

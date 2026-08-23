@@ -22,8 +22,10 @@ def _clean_bearers():
     """Each case owns the bearer table outright."""
     saved_state = dict(config.bearer_state)
     saved_limiters = dict(config.bearer_limiters)
+    saved_restored = dict(proxy._restored_credentials)
     config.bearer_state.clear()
     config.bearer_limiters.clear()
+    proxy._restored_credentials.clear()
     config.state["upstream_egress_ok"] = True
     config.state.pop("upstream_auth_ok", None)
     yield
@@ -31,6 +33,8 @@ def _clean_bearers():
     config.bearer_state.update(saved_state)
     config.bearer_limiters.clear()
     config.bearer_limiters.update(saved_limiters)
+    proxy._restored_credentials.clear()
+    proxy._restored_credentials.update(saved_restored)
 
 
 def _unified(**over):
@@ -134,6 +138,46 @@ async def test_anon_and_api_key_are_not_subscription_bearers():
     assert body["total"] == 0, body
     assert body["allow"] is False, body
     assert body["reason"] == "no bearers observed yet", body
+
+
+async def test_live_credential_refusal_is_not_subscription_capacity():
+    config.bearer_state["dead"] = {
+        "unified": _unified(),
+        "credential": {"ok": False, "status": 403, "reason": "org-refused"},
+    }
+    config.bearer_state["live"] = {"unified": _unified()}
+    body = await _get()
+    assert body["allow"] is True, body
+    assert body["serving"] == 1
+    assert body["selected"] == "live"
+    assert body["bearers"]["dead"]["usable"] is False
+
+
+async def test_credential_dead_bearer_does_not_false_roomy_saturation():
+    config.bearer_state["dead"] = {
+        "unified": _unified(),
+        "credential": {"ok": False, "status": 403, "reason": "org-refused"},
+    }
+    config.bearer_state["live"] = {"unified": _unified()}
+    config.bearer_limiters["dead"] = _Snap(max_concurrent=5, inflight=0, queued_total=0)
+    config.bearer_limiters["live"] = _Snap(max_concurrent=5, inflight=5, queued_total=2)
+    saturation = (await _get())["saturation"]
+    assert saturation["usable_bearers"] == 1
+    assert saturation["slots"] == 5
+    assert saturation["all_usable_bearers_would_park"] is True
+
+
+async def test_restored_credential_refusal_survives_restart_in_admission():
+    config.bearer_state["dead"] = {"unified": _unified()}
+    proxy._restored_credentials["dead"] = {
+        "ok": False,
+        "status": 403,
+        "reason": "org-refused",
+    }
+    body = await _get()
+    assert body["allow"] is False, body
+    assert body["serving"] == 0
+    assert body["bearers"]["dead"]["usable"] is False
 
 
 async def test_stale_rejected_window_does_not_lock():
