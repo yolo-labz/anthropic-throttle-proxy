@@ -514,11 +514,10 @@ def _classify_lane_class(lane: Lane, health_json: dict) -> tuple[str, str]:
 
 
 def _classify_lane_capacity(health_json: dict, now: float | None = None) -> bool:
-    """r1/C1 CAPACITY level — E3 (≥1 usable bearer with 5h/7d windows).
+    """Legacy sampled capacity projection for non-subscription lane state.
 
-    Freshness (r1 §1.3 / precheck R3): a bearer's window sample must carry
-    ``unified_at`` within the evidence age bound; a stale snapshot cannot make
-    the lane selectable for a constrained request.
+    Subscription-constrained selection replaces this value with the lane's
+    live ``/__throttle/admission`` verdict in :func:`_fresh_lane_state`.
     """
     now = time.time() if now is None else now
     bearers = health_json.get("bearers")
@@ -694,29 +693,76 @@ def _classify_state(lane: Lane, body: dict, now: float) -> tuple[bool, str, str,
     return open_, detail, mode, reason, _classify_lane_capacity(body, now)
 
 
-async def _probe_lane_health(session: aiohttp.ClientSession, lane: Lane) -> None:
-    """Per-request fresh probe of a constrained candidate (ADR-6a §1.3)."""
-    now = time.time()
-    body = await _read_lane_health(session, lane, now)
-    if body is None:
-        return
+async def _read_lane_admission(
+    session: aiohttp.ClientSession, lane: Lane
+) -> tuple[bool, float] | None:
+    """Read the lane's own current subscription admission verdict.
+
+    The lane owns window freshness, Retry-After, and usable-bearer semantics.
+    Ingress must not re-derive those from a periodically sampled health body.
+    """
+    try:
+        async with session.get(
+            f"{lane.url}/__throttle/admission",
+            timeout=aiohttp.ClientTimeout(total=LANE_HEALTH_TIMEOUT_S),
+        ) as resp:
+            if resp.status != 200 or (
+                resp.content_length is not None and resp.content_length > LANE_HEALTH_MAX_BYTES
+            ):
+                return None
+            body = await resp.json(content_type=None)
+    except (aiohttp.ClientError, TimeoutError, TypeError, ValueError):
+        return None
+    if not isinstance(body, dict) or not isinstance(body.get("allow"), bool):
+        return None
+    retry_after = body.get("retry_after_s", 0)
+    if not isinstance(retry_after, int | float) or isinstance(retry_after, bool) or retry_after < 0:
+        return None
+    return body["allow"], float(retry_after)
+
+
+async def _fresh_lane_state(
+    session: aiohttp.ClientSession, lane: Lane, body: dict, now: float
+) -> LaneState:
     open_, detail, mode, reason, capacity_ok = _classify_state(lane, body, now)
-    lane_state[lane.id] = LaneState(
+    reset_at = None
+    if mode == CREDENTIAL_MODE_SUBSCRIPTION:
+        admission = await _read_lane_admission(session, lane)
+        capacity_ok = admission is not None and admission[0]
+        if (
+            capacity_ok
+            and body.get("upstream_egress_ok") is True
+            and body.get("upstream_auth_ok") is not False
+        ):
+            open_, detail = True, "admission-open"
+        if admission is not None and not admission[0] and admission[1] > 0:
+            reset_at = now + admission[1]
+    elif not open_ and detail == "no-usable-bearer":
+        resets = [
+            candidate
+            for bearer in (body.get("bearers") or {}).values()
+            if isinstance(bearer, dict)
+            for candidate in _bearer_reset_candidates(bearer, now)
+        ]
+        if resets:
+            reset_at = min(resets)
+    return LaneState(
         open_,
         now,
         detail,
         credential_mode=mode,
         credential_mode_reason=reason,
         credential_capacity_ok=capacity_ok,
+        credential_reset_at=reset_at,
     )
 
 
-async def _fresh_probe_candidate(
-    session: aiohttp.ClientSession, lane_id: str, lane: Lane | None
-) -> None:
-    """Re-probe a constrained candidate so E3 is request-fresh (ADR-6a §1.3)."""
-    if lane is not None and lane_id in LANES:
-        await _probe_lane_health(session, lane)
+async def _probe_lane_health(session: aiohttp.ClientSession, lane: Lane) -> None:
+    """Per-request fresh CLASS + lane-owned CAPACITY probe (ADR-6a §1.3)."""
+    now = time.time()
+    body = await _read_lane_health(session, lane, now)
+    if body is not None:
+        lane_state[lane.id] = await _fresh_lane_state(session, lane, body, now)
 
 
 async def _forward(request: web.Request) -> web.StreamResponse:
@@ -810,41 +856,43 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         # selection time (per-request attribution) and only accepts a lane whose
         # fresh state is subscription-eligible and open.
         lane_id: str | None = None
-        if not used_pin and sess_key is not None and required_mode is None:
-            pinned = _session_lane.get(sess_key)
-            pin_open = (
-                pinned is not None
-                and pinned not in tried
-                and (lane_state.get(pinned) or LaneState(False, 0)).open
-            )
-            if (
-                pin_open
-                and role == "generate"
-                and pinned != "anthropic"
-                and not routing.GENERATE_OVERFLOW_ENABLED
-            ):
-                pin_open = False
-            if pin_open:
-                lane_id = pinned
-            used_pin = True
-        if lane_id is None:
-            lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
-            if lane_id is not None and lane_id in tried:
-                lane_id = None
-            elif lane_id is not None and required_mode is None and sess_key is not None:
-                _session_lane[sess_key] = lane_id
-        # ADR-6a constrained: re-probe the candidate, then re-check its class.
-        if (
-            lane_id is not None
-            and required_mode is not None
-            and lane_id not in tried
-            and (lane := LANES.get(lane_id)) is not None
-        ):
-            await _probe_lane_health(session, lane)
-            if not _mode_is_usable_eligible(lane_state.get(lane_id)):
-                tried.add(lane_id)
-                lane_id = None
-                continue  # re-select down the chain; never spill to ineligible
+        if required_mode is not None:
+            # Constrained selection cannot start from cached CAPACITY: that was
+            # the stale-health bug. Walk the role chain and ask each candidate's
+            # own admission endpoint before deciding whether it is selectable.
+            for candidate in routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED):
+                lane = LANES.get(candidate)
+                if lane is None or candidate in tried:
+                    continue
+                await _probe_lane_health(session, lane)
+                if _mode_is_usable_eligible(lane_state.get(candidate)):
+                    lane_id = candidate
+                    break
+                tried.add(candidate)
+        else:
+            if not used_pin and sess_key is not None:
+                pinned = _session_lane.get(sess_key)
+                pin_open = (
+                    pinned is not None
+                    and pinned not in tried
+                    and (lane_state.get(pinned) or LaneState(False, 0)).open
+                )
+                if (
+                    pin_open
+                    and role == "generate"
+                    and pinned != "anthropic"
+                    and not routing.GENERATE_OVERFLOW_ENABLED
+                ):
+                    pin_open = False
+                if pin_open:
+                    lane_id = pinned
+                used_pin = True
+            if lane_id is None:
+                lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+                if lane_id is not None and lane_id in tried:
+                    lane_id = None
+                elif lane_id is not None and sess_key is not None:
+                    _session_lane[sess_key] = lane_id
 
         if lane_id is None or lane_id in tried:
             if required_mode is not None:
@@ -940,14 +988,23 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             tried.add(lane_id)
             if required_mode is None or is_saturation_503:
                 _set_lane_state(lane_id, open_=False, detail="saturated")
-            # Is there a NEXT lane to spill to (bulk/judge overflow)?
-            next_lane = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
-            if (
-                next_lane is not None
-                and next_lane not in tried
-                and (required_mode is None or _mode_is_usable_eligible(lane_state.get(next_lane)))
-            ):
-                continue  # spill to the next lane in the chain
+            # Is there a NEXT lane to spill to? Constrained selection must not
+            # let a cached direct-key/unknown lane hide a later subscription
+            # candidate; the next loop performs each candidate's fresh probes.
+            if required_mode is not None:
+                has_next = any(
+                    candidate in LANES and candidate not in tried
+                    for candidate in routing.effective_chain(
+                        role, routing.GENERATE_OVERFLOW_ENABLED
+                    )
+                )
+            else:
+                next_lane = select_lane(
+                    role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED
+                )
+                has_next = next_lane is not None and next_lane not in tried
+            if has_next:
+                continue  # fresh-select/spill to the next eligible lane
             # No overflow lane. For generate, RETRY the same lane
             # (queue-and-wait) instead of 503-aborting — matching direct
             # :8765 behavior where claude-code's SDK retries on 503. The
@@ -1096,31 +1153,10 @@ async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
     body = await _read_lane_health(session, lane, now)
     if body is None:
         return
-    open_, detail, mode, reason, capacity_ok = _classify_state(lane, body, now)
-    # Optional refusal hint (ADR-6a §3): earliest future blocker across
-    # bearers, only when the lane is genuinely budget-blocked.
-    reset_at = None
-    if not open_ and detail == "no-usable-bearer":
-        resets = [
-            cand
-            for bearer in (body.get("bearers") or {}).values()
-            if isinstance(bearer, dict)
-            for cand in _bearer_reset_candidates(bearer, now)
-        ]
-        if resets:
-            reset_at = min(resets)
-    lane_state[lane.id] = LaneState(
-        open_,
-        now,
-        detail,
-        credential_mode=mode,
-        credential_mode_reason=reason,
-        credential_capacity_ok=capacity_ok,
-        credential_reset_at=reset_at,
-    )
+    lane_state[lane.id] = await _fresh_lane_state(session, lane, body, now)
     # S4: when a lane goes closed, evict sessions pinned to it so the next
     # request re-selects down the chain (stickiness must not pin to a dead lane).
-    if not open_:
+    if not lane_state[lane.id].open:
         _evict_sessions_for_closed_lanes({lane.id})
 
 
