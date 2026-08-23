@@ -4370,6 +4370,55 @@ def _soonest_bearer_due(bearers: dict[str, dict], now: float) -> float:
     return round(min(due), 3) if due else 0.0
 
 
+def _int_field(snapshot: dict, key: str) -> int:
+    try:
+        return max(0, int(snapshot.get(key, 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
+    """Slot pressure across the bearers that can actually serve.
+
+    ``allow`` answers "is a window open"; it does NOT answer "will my request
+    start, or park". Those diverge exactly when the fleet is busiest, and a
+    consumer that reads only ``allow`` cannot tell the difference. Measured
+    23/08/2026: this endpoint returned ``allow: true, "2/3 bearers serving"``
+    while the proxy held ``inflight: 11, queued: 5`` against 10 usable slots —
+    so Pi spawned one-shot ``claude -p`` children into a full queue, each of
+    which then blocked its seat for minutes (p95 651s over 515 calls).
+
+    Advisory by design. ``allow`` is deliberately unchanged: a queued request
+    IS served, and tightening the verdict here is the 19/08 mistake in the
+    docstring above, made a second time. A caller whose work is a bounded
+    one-shot can refuse on ``full``; a caller that is happy to wait ignores it.
+
+    Counts only usable bearers — a rejected bearer's idle slots are not
+    capacity, and including them would report a starved lane as roomy.
+    """
+    slots = inflight = queued = 0
+    for bid, ok in usable.items():
+        # `usable` is built from `bearers`, so the view is always present; a
+        # bearer that has served nothing yet simply has no limiter attached.
+        if not ok:
+            continue
+        snapshot = bearers[bid].get("limiter") or {}
+        slots += _int_field(snapshot, "max_concurrent")
+        inflight += _int_field(snapshot, "inflight")
+        queued += _int_field(snapshot, "queued_total")
+    free = max(0, slots - inflight)
+    return {
+        "slots": slots,
+        "inflight": inflight,
+        "queued": queued,
+        "free": free,
+        # No usable bearer has ever reported a limiter yet -> unknown, not full.
+        # Fail open: a consumer must not refuse on a reading we never took.
+        "full": bool(slots) and free == 0,
+        "queue_max_wait_s": float(config.QUEUE_MAX_WAIT_S),
+    }
+
+
 async def admission(_request: web.Request) -> web.Response:
     """GET /__throttle/admission — the authoritative "may a request be served now?".
 
@@ -4442,6 +4491,7 @@ async def admission(_request: web.Request) -> web.Response:
     # back. A consumer that knows this can wait instead of refusing outright,
     # which is the difference between a pause and an outage.
     retry_after_s = 0.0 if allow else _soonest_bearer_due(bearers, now)
+    saturation = _lane_saturation(bearers, usable)
 
     return web.json_response(
         {
@@ -4453,6 +4503,7 @@ async def admission(_request: web.Request) -> web.Response:
             "selected": serving[0] if serving else None,
             "retry_after_s": retry_after_s,
             "lane": {"open": lane_open, "detail": lane_detail},
+            "saturation": saturation,
             "bearers": {
                 bid: {
                     "usable": ok,
