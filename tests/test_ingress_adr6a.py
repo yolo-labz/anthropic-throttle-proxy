@@ -11,7 +11,8 @@ Frozen wire contract (``/tmp/fleet-foundry-adr6a-interface.md`` r1, §1–§4):
   (CLASS passes, CAPACITY does not), both scoped to the role's effective chain,
   with ``x-anthropic-throttle-refusal`` header.
 - CLASS = E1 ∧ E2 ∧ E4 (api-key off; canonical allowlisted upstream; loopback ∧
-  ``central_url==""``); CAPACITY = E3 (≥1 fresh usable bearer with 5h/7d windows).
+  ``central_url==""``); CAPACITY = E3 from the lane's fresh authoritative
+  ``/__throttle/admission`` verdict, never re-derived from sampled meters.
 - Health capability: ``enforcement`` object (``credential_mode:true``,
   ``contract:"adr6a-credential-mode/1"``, ``subscription_upstreams_count`` +
   ``subscription_upstreams_digest`` — r1/C6) + per-lane ``credential_mode`` /
@@ -118,21 +119,45 @@ async def _boot(monkeypatch, lanes: dict, state: dict, upstreams: str = "api.ant
     return client
 
 
-async def _lane_server(health: dict, status: int = 200):
-    """Fake lane serving ``health`` at /__throttle/health and /v1/messages."""
-    seen = {"health": 0, "messages": 0}
+async def _lane_server(
+    health: dict,
+    status: int = 200,
+    *,
+    admission: dict | None = None,
+    admission_status: int = 200,
+    message_status: int = 200,
+    message_headers: dict[str, str] | None = None,
+):
+    """Fake lane serving health, authoritative admission, and messages."""
+    if admission is None:
+        bearer = next(iter((health.get("bearers") or {}).values()), {})
+        unified = bearer.get("unified") if isinstance(bearer, dict) else {}
+        admission = {
+            "allow": isinstance(unified, dict)
+            and unified.get("status_5h") in {"allowed", "allowed_warning"}
+            and unified.get("status_7d") in {"allowed", "allowed_warning"},
+            "retry_after_s": 0,
+        }
+    seen = {"health": 0, "admission": 0, "messages": 0}
 
     async def health_handler(_request: web.Request) -> web.Response:
         seen["health"] += 1
         return web.json_response(health, status=status)
 
+    async def admission_handler(_request: web.Request) -> web.Response:
+        seen["admission"] += 1
+        return web.json_response(admission, status=admission_status)
+
     async def message_handler(request: web.Request) -> web.Response:
         seen["messages"] += 1
         await request.read()
-        return web.json_response({"type": "message"})
+        return web.json_response(
+            {"type": "message"}, status=message_status, headers=message_headers
+        )
 
     app = web.Application()
     app.router.add_get("/__throttle/health", health_handler)
+    app.router.add_get("/__throttle/admission", admission_handler)
     app.router.add_post("/v1/messages", message_handler)
     client = TestClient(TestServer(app))
     await client.start_server()
@@ -145,6 +170,10 @@ def _lane(name: str, url: str, *, proxy_owns_key: bool = False) -> Lane:
 
 def _url(client) -> str:
     return str(client.make_url("")).rstrip("/")
+
+
+async def _open_admission(_request: web.Request) -> web.Response:
+    return web.json_response({"allow": True, "retry_after_s": 0})
 
 
 def _post_constrained(ing, **extra_headers):
@@ -333,6 +362,7 @@ async def test_requirement_and_spoof_headers_not_forwarded(monkeypatch) -> None:
 
     app = web.Application()
     app.router.add_get("/__throttle/health", lambda _r: web.json_response(_health()))
+    app.router.add_get("/__throttle/admission", _open_admission)
     app.router.add_post("/v1/messages", handler)
     lane_client = TestClient(TestServer(app))
     await lane_client.start_server()
@@ -420,6 +450,7 @@ async def test_spoofed_upstream_stamp_is_stripped(monkeypatch) -> None:
         return web.json_response({"type": "message"}, headers=spoof)
 
     app.router.add_get("/__throttle/health", health_handler)
+    app.router.add_get("/__throttle/admission", _open_admission)
     app.router.add_post("/v1/messages", message_handler)
     lane_client = TestClient(TestServer(app))
     await lane_client.start_server()
@@ -508,7 +539,7 @@ async def test_constrained_never_spills_to_direct_key_lane(monkeypatch) -> None:
     """PO fixture (d): healthy direct-key lane with detail=ok stays ineligible."""
     monkeypatch.setattr(ingress.routing, "GENERATE_OVERFLOW_ENABLED", True)
     direct_client, direct_seen = await _lane_server(_health(api_key_enabled=True))
-    sub_client, _ = await _lane_server(_health())
+    sub_client, _ = await _lane_server(_health(), admission={"allow": False, "retry_after_s": 60})
     lanes = {
         "anthropic": _lane("anthropic", str(sub_client.make_url("")).rstrip("/")),
         "deepseek": _lane("deepseek", str(direct_client.make_url("")).rstrip("/")),
@@ -548,9 +579,8 @@ async def test_constrained_selection_reprobes_lane_health(monkeypatch) -> None:
         await lane_client.close()
 
 
-async def test_stale_cached_evidence_marks_refusal_stale(monkeypatch) -> None:
-    """R3: a dead poll task leaves stale lane evidence; a constrained refusal
-    must surface staleness so the operator checks the poll, not just waits."""
+async def test_stale_cached_evidence_does_not_hide_fresh_admission(monkeypatch) -> None:
+    """Candidate discovery walks the chain before trusting cached capacity."""
     monkeypatch.setattr(ingress.routing, "GENERATE_OVERFLOW_ENABLED", True)
     lane_client, seen = await _lane_server(_health())
     ancient = _sub_state(open_=False, credential_capacity_ok=False)
@@ -558,34 +588,107 @@ async def test_stale_cached_evidence_marks_refusal_stale(monkeypatch) -> None:
     ing = await _boot_one(monkeypatch, lane_client, state=ancient)
     try:
         async with _post_constrained(ing) as r:
-            assert r.status == 403
-            payload = await r.json()
-            assert payload["error"]["type"] == "no_eligible_lane"
-            assert payload["error"].get("credential_evidence_stale") is True
-        assert seen["messages"] == 0
+            assert r.status == 200
+            assert r.headers[MODE] == "subscription"
+        assert seen["messages"] == 1
+        assert seen["admission"] == 1
     finally:
         await ing.close()
         await lane_client.close()
 
 
-async def test_stale_capacity_never_stamps_subscription(monkeypatch) -> None:
-    """R4 (r1 fixture response-stale-capacity): CLASS passes but E3 is stale —
-    a constrained request must refuse or be unknown, never stamp subscription."""
+async def test_live_admission_overrides_stale_window_sample(monkeypatch) -> None:
+    """The lane, not ingress's sampled meter age, owns current capacity."""
     stale_at = time.time() - 10_000
-    lane_client, seen = await _lane_server(_health(unified_at=stale_at))
-    # Cached state says CLASS subscription AND capacity ok — but the fresh
-    # probe's unified_at is stale, so capacity must fail.
-    cached = _sub_state(open_=True, credential_capacity_ok=True)
+    lane_client, seen = await _lane_server(
+        _health(bearer_usable=False, unified_at=stale_at),
+        admission={"allow": True, "retry_after_s": 0},
+    )
+    cached = _sub_state(open_=False, credential_capacity_ok=False)
+    cached.checked_at = stale_at
     ing = await _boot_one(monkeypatch, lane_client, state=cached)
     try:
         async with _post_constrained(ing) as r:
+            assert r.status == 200
+            assert r.headers[MODE] == "subscription"
+        assert seen == {"health": 1, "admission": 1, "messages": 1}
+    finally:
+        await ing.close()
+        await lane_client.close()
+
+
+async def test_closed_live_admission_refuses_before_egress(monkeypatch) -> None:
+    lane_client, seen = await _lane_server(
+        _health(), admission={"allow": False, "retry_after_s": 120}
+    )
+    ing = await _boot_one(monkeypatch, lane_client)
+    try:
+        async with _post_constrained(ing) as r:
             assert r.status == 403
-            assert r.headers[MODE] == "unknown"
-            assert MODE != "subscription"
+            payload = await r.json()
+            assert payload["error"]["type"] == "eligible_lanes_exhausted"
+            assert payload["error"]["reset_hint_epoch"] > time.time()
         assert seen["messages"] == 0
     finally:
         await ing.close()
         await lane_client.close()
+
+
+async def test_invalid_admission_or_failed_auth_fails_closed(monkeypatch) -> None:
+    auth_failed = _health()
+    auth_failed["upstream_auth_ok"] = False
+    cases = (
+        (_health(), {"allow": "yes"}, 200),
+        (_health(), {"allow": True}, 503),
+        (auth_failed, {"allow": True, "retry_after_s": 0}, 200),
+    )
+    for health, admission, status in cases:
+        lane_client, seen = await _lane_server(health, admission=admission, admission_status=status)
+        ing = await _boot_one(monkeypatch, lane_client)
+        try:
+            async with _post_constrained(ing) as r:
+                assert r.status == 403
+            assert seen["messages"] == 0
+        finally:
+            await ing.close()
+            await lane_client.close()
+
+
+async def test_constrained_saturation_skips_direct_lane_for_later_subscription(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(ingress.routing, "GENERATE_OVERFLOW_ENABLED", True)
+    monkeypatch.setattr(ingress, "infer_role_from_body", lambda _body: "generate")
+    first, first_seen = await _lane_server(
+        _health(),
+        message_status=503,
+        message_headers={ingress.QUEUE_TIMEOUT_HEADER: "1"},
+    )
+    direct, direct_seen = await _lane_server(_health(api_key_enabled=True))
+    later, later_seen = await _lane_server(_health())
+    lanes = {
+        "anthropic": _lane("anthropic", _url(first)),
+        "deepseek": _lane("deepseek", _url(direct)),
+        "kimi": _lane("kimi", _url(later)),
+    }
+    states = {
+        "anthropic": _sub_state(),
+        "deepseek": _direct_state(),
+        "kimi": _sub_state(),
+    }
+    ing = await _boot(monkeypatch, lanes, states)
+    try:
+        async with _post_constrained(ing) as r:
+            assert r.status == 200
+            assert r.headers[ingress.LANE_HEADER] == "kimi"
+        assert first_seen["messages"] == 1
+        assert direct_seen["messages"] == 0
+        assert later_seen["messages"] == 1
+    finally:
+        await ing.close()
+        await first.close()
+        await direct.close()
+        await later.close()
 
 
 # ─── unconstrained compatibility ─────────────────────────────────────────────
