@@ -154,41 +154,73 @@ class _Snap:
     """A limiter stub that reports only the scheduler fields admission reads."""
 
     def __init__(self, **fields):
-        self._fields = fields
+        self._fields = {"queue_enabled": True, "priority_inflight": 0, **fields}
 
     def snapshot(self):
         return dict(self._fields)
 
 
-async def test_saturation_reports_a_full_lane_without_closing_it():
-    """The 23/08 shape: every usable slot busy, a queue behind it, `allow` true.
-
-    A queued request IS served, so tightening `allow` here would repeat the
-    19/08 mistake. The verdict stays open and the pressure is reported, which
-    is what lets a bounded one-shot pick another lane instead of parking.
-    """
+async def test_saturation_reports_all_usable_pools_park_without_closing_lane():
+    """The exact 23/08 shape remains open but warns bounded one-shots."""
     config.bearer_state["a"] = {"unified": _unified()}
     config.bearer_state["b"] = {"unified": _unified()}
     config.bearer_limiters["a"] = _Snap(max_concurrent=5, inflight=5, queued_total=3)
-    config.bearer_limiters["b"] = _Snap(max_concurrent=5, inflight=6, queued_total=2)
+    config.bearer_limiters["b"] = _Snap(max_concurrent=5, inflight=5, queued_total=2)
+
     body = await _get()
     assert body["allow"] is True, body
     assert body["state"] == "open", body
     sat = body["saturation"]
     assert sat["slots"] == 10, sat
-    assert sat["inflight"] == 11, sat
+    assert sat["normal_inflight"] == 10, sat
     assert sat["queued"] == 5, sat
     assert sat["free"] == 0, sat
-    assert sat["full"] is True, sat
+    assert sat["measured"] is True, sat
+    assert sat["all_usable_bearers_would_park"] is True, sat
+
+
+async def test_priority_traffic_does_not_fake_a_full_normal_pool():
+    """The reserve dispatches outside the normal pool and must be subtracted."""
+    config.bearer_state["a"] = {"unified": _unified()}
+    config.bearer_limiters["a"] = _Snap(
+        max_concurrent=5,
+        inflight=6,
+        priority_inflight=3,
+        queued_total=0,
+    )
+
+    sat = (await _get())["saturation"]
+    assert sat["normal_inflight"] == 3, sat
+    assert sat["priority_inflight"] == 3, sat
+    assert sat["free"] == 2, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
+
+
+async def test_a_free_slot_behind_a_queue_still_parks():
+    """Dequeue is FIFO: arriving behind a queue parks even with a slot free."""
+    config.bearer_state["a"] = {"unified": _unified()}
+    config.bearer_limiters["a"] = _Snap(max_concurrent=5, inflight=3, queued_total=4)
+
+    sat = (await _get())["saturation"]
+    assert sat["free"] == 2, sat
+    assert sat["all_usable_bearers_would_park"] is True, sat
+
+
+async def test_one_roomy_bearer_keeps_lane_parking_hint_false():
+    """A queue on one account cannot hide immediate room on a sibling."""
+    config.bearer_state["full"] = {"unified": _unified()}
+    config.bearer_state["roomy"] = {"unified": _unified()}
+    config.bearer_limiters["full"] = _Snap(max_concurrent=5, inflight=5, queued_total=3)
+    config.bearer_limiters["roomy"] = _Snap(max_concurrent=5, inflight=1, queued_total=0)
+
+    sat = (await _get())["saturation"]
+    assert sat["measured"] is True, sat
+    assert sat["free"] == 4, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
 
 
 async def test_saturation_ignores_an_unusable_bearer_s_idle_slots():
-    """A rejected bearer's free slots are not capacity.
-
-    Counting them reported the starved lane that caused this incident as
-    roomy: 47f0b262 sat at 7d=rejected with 0 inflight while the two serving
-    accounts were full.
-    """
+    """A rejected bearer's idle slots are not usable capacity."""
     now = time.time()
     config.bearer_state["serving"] = {"unified": _unified()}
     config.bearer_state["rejected"] = {
@@ -196,39 +228,78 @@ async def test_saturation_ignores_an_unusable_bearer_s_idle_slots():
     }
     config.bearer_limiters["serving"] = _Snap(max_concurrent=5, inflight=5, queued_total=4)
     config.bearer_limiters["rejected"] = _Snap(max_concurrent=3, inflight=0, queued_total=0)
+
     sat = (await _get())["saturation"]
+    assert sat["usable_bearers"] == 1, sat
     assert sat["slots"] == 5, sat
-    assert sat["inflight"] == 5, sat
-    assert sat["free"] == 0, sat
-    assert sat["full"] is True, sat
+    assert sat["all_usable_bearers_would_park"] is True, sat
 
 
-async def test_saturation_reports_free_slots_when_the_lane_has_room():
+async def test_saturation_reports_room_when_the_lane_is_idle():
     config.bearer_state["a"] = {"unified": _unified()}
     config.bearer_limiters["a"] = _Snap(max_concurrent=5, inflight=1, queued_total=0)
+
     sat = (await _get())["saturation"]
     assert sat["free"] == 4, sat
-    assert sat["full"] is False, sat
+    assert sat["measured"] is True, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
 
 
-async def test_saturation_is_not_full_when_no_limiter_has_reported():
-    """Unknown is not full. A consumer must not refuse on a reading never taken."""
+async def test_queue_disabled_is_measured_and_never_parks():
     config.bearer_state["a"] = {"unified": _unified()}
+    config.bearer_limiters["a"] = _Snap(queue_enabled=False)
+
     sat = (await _get())["saturation"]
-    assert sat["slots"] == 0, sat
-    assert sat["full"] is False, sat
+    assert sat["measured"] is True, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
+
+
+async def test_no_limiter_is_unmeasured_and_fails_open():
+    """A consumer must not act on a reading the proxy never took."""
+    config.bearer_state["a"] = {"unified": _unified()}
+
+    sat = (await _get())["saturation"]
+    assert sat["usable_bearers"] == 1, sat
+    assert sat["measured_bearers"] == 0, sat
+    assert sat["measured"] is False, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"inflight": 9, "queued_total": 6},
+        {"max_concurrent": 5, "queued_total": 6},
+    ],
+)
+async def test_partial_snapshot_is_unmeasured_not_roomy(fields):
+    """Every field in the normal-pool predicate is required."""
+    config.bearer_state["a"] = {"unified": _unified()}
+    config.bearer_limiters["a"] = _Snap(**fields)
+
+    sat = (await _get())["saturation"]
+    assert sat["measured"] is False, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
+
+
+async def test_one_unmeasured_bearer_makes_the_lane_hint_unmeasured():
+    """A full measured subset cannot speak for an unmeasured usable sibling."""
+    config.bearer_state["full"] = {"unified": _unified()}
+    config.bearer_state["unknown"] = {"unified": _unified()}
+    config.bearer_limiters["full"] = _Snap(max_concurrent=5, inflight=5, queued_total=3)
+
+    sat = (await _get())["saturation"]
+    assert sat["usable_bearers"] == 2, sat
+    assert sat["measured_bearers"] == 1, sat
+    assert sat["measured"] is False, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat
 
 
 async def test_saturation_survives_a_garbage_limiter_snapshot():
     """Invariant #4: this endpoint is polled; a bad field must not raise."""
     config.bearer_state["a"] = {"unified": _unified()}
     config.bearer_limiters["a"] = _Snap(max_concurrent="?", inflight=None, queued_total=-3)
+
     sat = (await _get())["saturation"]
-    assert sat == {
-        "slots": 0,
-        "inflight": 0,
-        "queued": 0,
-        "free": 0,
-        "full": False,
-        "queue_max_wait_s": float(config.QUEUE_MAX_WAIT_S),
-    }, sat
+    assert sat["measured"] is False, sat
+    assert sat["all_usable_bearers_would_park"] is False, sat

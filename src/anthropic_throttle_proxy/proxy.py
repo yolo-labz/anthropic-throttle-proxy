@@ -4370,51 +4370,87 @@ def _soonest_bearer_due(bearers: dict[str, dict], now: float) -> float:
     return round(min(due), 3) if due else 0.0
 
 
-def _int_field(snapshot: dict, key: str) -> int:
+def _nonnegative_int(snapshot: dict, key: str) -> int | None:
+    value = snapshot.get(key)
+    if isinstance(value, bool):
+        return None
     try:
-        return max(0, int(snapshot.get(key, 0) or 0))
+        parsed = int(value)
     except (TypeError, ValueError):
-        return 0
+        return None
+    return parsed if parsed >= 0 else None
 
 
 def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
-    """Slot pressure across the bearers that can actually serve.
+    """Whether every usable bearer's normal pool would park a new request.
 
-    ``allow`` answers "is a window open"; it does NOT answer "will my request
-    start, or park". Those diverge exactly when the fleet is busiest, and a
-    consumer that reads only ``allow`` cannot tell the difference. Measured
-    23/08/2026: this endpoint returned ``allow: true, "2/3 bearers serving"``
-    while the proxy held ``inflight: 11, queued: 5`` against 10 usable slots —
-    so Pi spawned one-shot ``claude -p`` children into a full queue, each of
-    which then blocked its seat for minutes (p95 651s over 515 calls).
+    ``allow`` answers "is a window open". It does NOT answer whether a bounded
+    one-shot starts now, and the two diverge exactly when the fleet is busiest.
+    Measured 23/08/2026: this endpoint returned ``allow: true`` while all ten
+    usable normal slots were occupied and five requests were queued, so Pi
+    spawned ``claude -p`` children that blocked their seats for minutes.
 
-    Advisory by design. ``allow`` is deliberately unchanged: a queued request
-    IS served, and tightening the verdict here is the 19/08 mistake in the
-    docstring above, made a second time. A caller whose work is a bounded
-    one-shot can refuse on ``full``; a caller that is happy to wait ignores it.
+    ``allow`` remains the ONLY go/no-go signal. This is a conservative parking
+    hint: it becomes true only when EVERY usable bearer has a complete limiter
+    snapshot and each normal pool would park. One free or unmeasured bearer
+    keeps it false, avoiding the manufactured fleet refusal from 19/08.
 
-    Counts only usable bearers — a rejected bearer's idle slots are not
-    capacity, and including them would report a starved lane as roomy.
+    The priority reserve dispatches outside the normal pool: ``inflight``
+    includes it, while ``max_concurrent`` does not. Match the limiter's own
+    admission predicate by subtracting ``priority_inflight`` before comparing
+    normal occupancy with the cap. A non-empty normal queue also means a new
+    normal request parks even if a slot has just freed, because dequeue is FIFO.
     """
-    slots = inflight = queued = 0
+    usable_count = sum(1 for ok in usable.values() if ok)
+    measured_count = 0
+    slots = normal_inflight = priority_inflight = queued = free = 0
+    all_would_park = True
+
     for bid, ok in usable.items():
-        # `usable` is built from `bearers`, so the view is always present; a
-        # bearer that has served nothing yet simply has no limiter attached.
         if not ok:
             continue
-        snapshot = bearers[bid].get("limiter") or {}
-        slots += _int_field(snapshot, "max_concurrent")
-        inflight += _int_field(snapshot, "inflight")
-        queued += _int_field(snapshot, "queued_total")
-    free = max(0, slots - inflight)
+        snapshot = bearers[bid].get("limiter")
+        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("queue_enabled"), bool):
+            continue
+
+        # Queue mode off never parks a normal request. It is still a complete
+        # observation, and therefore falsifies "every usable bearer parks".
+        if snapshot["queue_enabled"] is False:
+            measured_count += 1
+            all_would_park = False
+            continue
+
+        cap = _nonnegative_int(snapshot, "max_concurrent")
+        total = _nonnegative_int(snapshot, "inflight")
+        reserve = _nonnegative_int(snapshot, "priority_inflight")
+        depth = _nonnegative_int(snapshot, "queued_total")
+        if cap is None or cap <= 0 or total is None or reserve is None or depth is None:
+            continue
+        if reserve > total:
+            continue
+
+        measured_count += 1
+        normal = total - reserve
+        bearer_free = max(0, cap - normal)
+        slots += cap
+        normal_inflight += normal
+        priority_inflight += reserve
+        queued += depth
+        free += bearer_free
+        if bearer_free > 0 and depth == 0:
+            all_would_park = False
+
+    measured = usable_count > 0 and measured_count == usable_count
     return {
+        "usable_bearers": usable_count,
+        "measured_bearers": measured_count,
         "slots": slots,
-        "inflight": inflight,
+        "normal_inflight": normal_inflight,
+        "priority_inflight": priority_inflight,
         "queued": queued,
         "free": free,
-        # No usable bearer has ever reported a limiter yet -> unknown, not full.
-        # Fail open: a consumer must not refuse on a reading we never took.
-        "full": bool(slots) and free == 0,
+        "measured": measured,
+        "all_usable_bearers_would_park": measured and all_would_park,
         "queue_max_wait_s": float(config.QUEUE_MAX_WAIT_S),
     }
 
@@ -4443,6 +4479,10 @@ async def admission(_request: web.Request) -> web.Response:
     uses (``routing.bearer_usable`` / ``routing.lane_usable``), not a parallel
     copy. One owner for availability, which is the rule this repo already
     states for pacing.
+
+    ``saturation`` is separate and never changes ``allow``. Its only verdict is
+    a fail-open parking hint for bounded normal-pool one-shots, true only when
+    every usable bearer has a complete snapshot and would queue the request.
 
     Cheap by construction (invariant #4 applies here too — a consumer polls
     this): it reads the same in-memory dicts ``health`` renders and does no
