@@ -382,7 +382,8 @@ def _read(now: float) -> dict[str, Any]:
     lanes = [_normalize(lane, stale, now) for lane in raw["lanes"] if isinstance(lane, dict)]
     lanes.sort(key=lambda lane: (lane["family"], lane["id"]))
     registry = []
-    for provider_id in raw.get("registryProviders") or []:
+    registry_providers = raw.get("registryProviders")
+    for provider_id in registry_providers if isinstance(registry_providers, list) else []:
         if not isinstance(provider_id, str):
             continue
         icon, provider = _PROVIDER.get(provider_id, ("🤖", provider_id))

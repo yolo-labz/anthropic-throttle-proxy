@@ -212,6 +212,11 @@ def test_generated_pi_registry_is_preserved_for_dashboard_sync(tmp_path, monkeyp
     ]
 
 
+def test_malformed_registry_provider_scalar_renders_no_character_chips(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, {"registryProviders": "zai", "lanes": []})
+    assert lanes.view(NOW)["registry"] == []
+
+
 def test_fresh_report_is_not_stale(tmp_path, monkeypatch):
     _write(
         tmp_path,
