@@ -463,6 +463,12 @@ def test_zai_billing_warning_never_calls_wait_pay_a_success():
     assert "payment successful" not in html
     assert "WAIT_PAY" in html
 
+    row["billing"]["current"] = None
+    stale_html = _render_subscription(row)
+    assert "billing reading stale" in stale_html
+    assert "billing current" not in stale_html
+    assert "billing not current" not in stale_html
+
 
 def test_a_rejected_window_still_says_when_it_reopens():
     """The one row where "when does it come back" is the ONLY question.

@@ -123,6 +123,7 @@ def test_zai_plan_normalizes_windows_identity_and_billing(tmp_path, monkeypatch)
     assert lane["meters"][1]["reset_in"] == "1h 00m"
     assert lane["billing"] == {
         "current": True,
+        "stale": False,
         "plan_status": "VALID",
         "auto_renew": True,
         "cycle": "monthly",
@@ -146,7 +147,8 @@ def test_stale_zai_plan_is_not_rendered_current_capacity(tmp_path, monkeypatch):
     _write(tmp_path, monkeypatch, _zai_lane(), age_s=1801)
     lane = lanes.view(NOW)["lanes"][0]
     assert lane["status"] == "stale"
-    assert lane["billing"]["current"] is True  # measured billing fact survives
+    assert lane["billing"]["current"] is None
+    assert lane["billing"]["stale"] is True
 
 
 def _copilot_lane():

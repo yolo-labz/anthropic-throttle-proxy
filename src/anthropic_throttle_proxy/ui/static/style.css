@@ -494,6 +494,7 @@ col.c-sub-status  { width: 9rem; }
 .billing { font-family: var(--mono); font-size: 0.66rem; margin-top: 0.12rem; }
 .billing-ok { color: var(--ok); }
 .billing-warn { color: var(--crit); font-weight: 600; }
+.billing-stale { color: var(--warn); }
 .billing-meta { font-family: var(--mono); font-size: 0.62rem; color: var(--ctp-subtext0); margin-top: 0.08rem; }
 /* Status vocabulary shared with the lane rows; the account-only verdicts are
    new (a rejected window, a usage lock, a dead token, a never-seen bearer). */

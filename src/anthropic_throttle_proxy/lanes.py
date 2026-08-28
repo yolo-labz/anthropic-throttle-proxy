@@ -116,7 +116,7 @@ def _window_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-def _billing(lane: dict[str, Any]) -> dict[str, Any] | None:
+def _billing(lane: dict[str, Any], *, stale: bool) -> dict[str, Any] | None:
     """Allowlist non-secret billing facts from the report.
 
     In particular, ``paymentType=WAIT_PAY`` is preserved but never interpreted
@@ -139,7 +139,10 @@ def _billing(lane: dict[str, Any]) -> dict[str, Any] | None:
     symbol = "$" if currency == "USD" else f"{currency} "
     suffix = "/mo" if cycle == "monthly" else ("/yr" if cycle == "annual" else "")
     return {
-        "current": raw.get("current") is True,
+        # Staleness makes current-plan state unknown, not delinquent and not
+        # paid. Keep the last raw facts for diagnosis but remove the verdict.
+        "current": None if stale else raw.get("current") is True,
+        "stale": stale,
         "plan_status": str(raw.get("planStatus") or "unknown"),
         "auto_renew": raw.get("autoRenew") is True,
         "cycle": cycle,
@@ -339,7 +342,7 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
         "family": _FAMILY.get(kind, kind),
         "status": status,
         "plan": plan,
-        "billing": _billing(lane),
+        "billing": _billing(lane, stale=stale),
         "meters": meters,
         "binding_pct": binding_pct,
         "reason": reason,

@@ -173,8 +173,10 @@
       <td class="plan-cell">
         <span class="muted">{{ s.plan or "—" }}</span>
         {% if s.billing %}
-          <div class="billing {{ 'billing-ok' if s.billing.current else 'billing-warn' }}" title="Provider plan status: {{ s.billing.plan_status }} · raw payment type: {{ s.billing.payment_type }}">
-            {{ "✅ billing current" if s.billing.current else "⚠️ billing not current" }}
+          <div class="billing {% if s.billing.current is sameas true %}billing-ok{% elif s.billing.current is sameas false %}billing-warn{% else %}billing-stale{% endif %}" title="Provider plan status: {{ s.billing.plan_status }} · raw payment type: {{ s.billing.payment_type }}">
+            {% if s.billing.current is sameas true %}✅ billing current
+            {% elif s.billing.current is sameas false %}⚠️ billing not current
+            {% else %}❓ billing reading stale{% endif %}
           </div>
           <div class="billing-meta">
             {% if s.billing.renewal_label %}💳 {{ s.billing.renewal_label }}{% endif %}
