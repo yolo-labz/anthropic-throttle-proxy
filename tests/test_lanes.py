@@ -71,6 +71,86 @@ def test_codex_meters_and_binding_pct(tmp_path, monkeypatch):
     assert lane["meters"][0]["reset_in"] == "1h 00m"
 
 
+def _zai_lane(*, status="ok", current=True, five=1, weekly=2):
+    return {
+        "lanes": [
+            {
+                "id": "zai:plan",
+                "kind": "zai",
+                "status": status,
+                "plan": "Pro V3",
+                "meters": [
+                    {
+                        "limitId": "5h",
+                        "usedPercent": five,
+                        "resetsAt": NOW + 3600,
+                        "windowMins": 300,
+                        "allowance": 12000,
+                        "remaining": 11935,
+                    },
+                    {
+                        "limitId": "7d",
+                        "usedPercent": weekly,
+                        "resetsAt": NOW + 6 * 86400,
+                        "windowMins": 10080,
+                        "allowance": 60000,
+                        "remaining": 58335,
+                    },
+                ],
+                "billing": {
+                    "current": current,
+                    "planStatus": "VALID" if current else "PAST_DUE",
+                    "autoRenew": True,
+                    "cycle": "monthly",
+                    "renewalAmount": 80.0,
+                    "currency": "USD",
+                    "nextRenewDate": "2026-09-27",
+                    "paymentType": "WAIT_PAY",
+                },
+            }
+        ]
+    }
+
+
+def test_zai_plan_normalizes_windows_identity_and_billing(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, _zai_lane())
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["family"] == "chinese-frontier"
+    assert lane["provider"] == "Z.AI"
+    assert lane["icon"] == "✨"
+    assert lane["plan"] == "Pro V3"
+    assert [m["label"] for m in lane["meters"]] == ["7d", "5h"]
+    assert lane["meters"][1]["reset_in"] == "1h 00m"
+    assert lane["billing"] == {
+        "current": True,
+        "stale": False,
+        "plan_status": "VALID",
+        "auto_renew": True,
+        "cycle": "monthly",
+        "renewal_amount": 80.0,
+        "renewal_label": "$80/mo",
+        "currency": "USD",
+        "next_renew_date": "2026-09-27",
+        "next_renew_display": "27/09",
+        "payment_type": "WAIT_PAY",
+    }
+
+
+def test_zai_full_hard_window_is_exhausted_with_reopen(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, _zai_lane(five=100, weekly=2))
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "exhausted"
+    assert lane["reason"] == "5h meter at 100% — reopens in 1h 00m"
+
+
+def test_stale_zai_plan_is_not_rendered_current_capacity(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, _zai_lane(), age_s=1801)
+    lane = lanes.view(NOW)["lanes"][0]
+    assert lane["status"] == "stale"
+    assert lane["billing"]["current"] is None
+    assert lane["billing"]["stale"] is True
+
+
 def _copilot_lane():
     """The measured shape: premium burnt to 0% while chat stays unlimited."""
     return {
@@ -112,6 +192,29 @@ def test_stale_report_degrades_every_ok_lane(tmp_path, monkeypatch):
     view = lanes.view(NOW)
     assert view["stale"] is True
     assert view["lanes"][0]["status"] == "stale"
+
+
+def test_generated_pi_registry_is_preserved_for_dashboard_sync(tmp_path, monkeypatch):
+    _write(
+        tmp_path,
+        monkeypatch,
+        {
+            "registryProviders": ["claude", "codex", "deepinfra", "groq", "zai"],
+            "lanes": [],
+        },
+    )
+    assert lanes.view(NOW)["registry"] == [
+        {"id": "claude", "icon": "✳️", "provider": "Claude"},
+        {"id": "codex", "icon": "🌀", "provider": "Codex"},
+        {"id": "deepinfra", "icon": "🌙", "provider": "DeepInfra"},
+        {"id": "groq", "icon": "🚀", "provider": "Groq"},
+        {"id": "zai", "icon": "✨", "provider": "Z.AI"},
+    ]
+
+
+def test_malformed_registry_provider_scalar_renders_no_character_chips(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch, {"registryProviders": "zai", "lanes": []})
+    assert lanes.view(NOW)["registry"] == []
 
 
 def test_fresh_report_is_not_stale(tmp_path, monkeypatch):

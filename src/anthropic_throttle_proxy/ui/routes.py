@@ -293,6 +293,38 @@ def _publish_account_gauges(
     _metrics.M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in suspected.values()))
 
 
+_PROVIDER_ICONS = {
+    "anthropic": "✳️",
+    "central": "🔀",
+    "codex": "🌀",
+    "openai": "🌀",
+    "zai": "✨",
+    "z.ai": "✨",
+    "deepseek": "🐋",
+    "copilot": "🐙",
+    "groq": "🚀",
+    "deepinfra": "🌙",
+    "kimi": "🌙",
+}
+_STATUS_ICONS = {
+    "ok": "✅",
+    "healthy": "✅",
+    "stale": "⚠️",
+    "unknown": "❓",
+    "exhausted": "⛔",
+    "rejected": "⛔",
+    "refused": "🚫",
+    "error": "🚫",
+    "locked": "⏸️",
+    "unseen": "👀",
+}
+_METER_ICONS = {"5h": "⏱️", "7d": "📅"}
+
+
+def _provider_icon(name: str) -> str:
+    return _PROVIDER_ICONS.get(name.lower(), "🤖")
+
+
 def _provider_label(upstream: str) -> str:
     """Friendly provider name from an upstream URL — the host's root label.
 
@@ -327,9 +359,11 @@ def _build_providers(
     proxy can reach lives in ONE table instead of a separate optional card strip.
     """
     is_central = central_url != "(direct)"
+    primary_name = "central" if is_central else _provider_label(upstream)
     providers: list[dict] = [
         {
-            "name": "central" if is_central else _provider_label(upstream),
+            "name": primary_name,
+            "icon": _provider_icon(primary_name),
             "kind": "primary",
             "upstream": central_url if is_central else upstream,
             # The proxy itself is up (it is rendering this page); egress is only
@@ -351,9 +385,11 @@ def _build_providers(
         # "HEALTHY egress ok" for weeks that way (04/08/2026). Auth is the
         # verdict that decides whether traffic can land, so it wins.
         auth_dead = f.get("upstream_auth_ok") is False
+        sibling_name = str(f.get("name") or "?")
         providers.append(
             {
-                "name": str(f.get("name") or "?"),
+                "name": sibling_name,
+                "icon": _provider_icon(sibling_name),
                 "kind": "sibling",
                 "upstream": str(f.get("upstream") or ""),
                 "ok": ok,
@@ -492,6 +528,8 @@ def _build_subscriptions(
         rows.append(
             {
                 "id": account.get("label") or "?",
+                "provider": "Anthropic",
+                "icon": "✳️",
                 # One identity scheme across every table. The file-label is a
                 # letter (A/B/C) that collides across families — anthropic A is
                 # pedrobalbino@proton.me while codex:a is phsb5321@gmail.com —
@@ -509,7 +547,9 @@ def _build_subscriptions(
                 "pace_warn": bool(account.get("pace_warn")),
                 "eta": account.get("eta") or "",
                 "status": status,
+                "status_icon": _STATUS_ICONS.get(status, "❔"),
                 "detail": detail,
+                "billing": None,
             }
         )
     for lane in lanes_view.get("lanes") or []:
@@ -520,6 +560,7 @@ def _build_subscriptions(
         meters = [
             {
                 "label": m.get("label") or "?",
+                "icon": _METER_ICONS.get(str(m.get("label") or "").lower(), "📊"),
                 "pct": m.get("used_pct"),
                 "reset_in": m.get("reset_in") or "",
                 # A meter may carry its own note (a pay-go lane's remaining
@@ -533,17 +574,21 @@ def _build_subscriptions(
         rows.append(
             {
                 "id": lane.get("id") or "?",
-                "identity": lane.get("id") or "?",
+                "identity": lane.get("identity") or lane.get("provider") or lane.get("id") or "?",
+                "provider": lane.get("provider") or lane.get("kind") or "provider",
+                "icon": lane.get("icon") or "🤖",
                 "sub": "",
                 "family": lane.get("family") or "",
                 "plan": lane.get("plan") or "",
-                "src": "report",
+                "src": "Pi meter report",
                 "meters": meters,
                 "pace": pace,
                 "pace_warn": pace is not None and pace >= _accounts.PACE_WARN,
                 "eta": eta or "",
                 "status": lane.get("status") or "unknown",
+                "status_icon": _STATUS_ICONS.get(lane.get("status") or "unknown", "❔"),
                 "detail": lane.get("reason") or "",
+                "billing": lane.get("billing"),
             }
         )
 

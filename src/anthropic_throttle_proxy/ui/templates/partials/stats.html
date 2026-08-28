@@ -95,7 +95,7 @@
     {% for p in providers %}
     <tr>
       <td>
-        <span class="prov prov-{{ p.level }}"><span class="pdot"></span>{{ p.name }}</span>
+        <span class="prov prov-{{ p.level }}"><span class="pdot"></span><span class="provider-icon" aria-hidden="true">{{ p.icon }}</span>{{ p.name }}</span>
         {% if p.kind == "primary" %}<span class="prov-tag">primary</span>{% endif %}
       </td>
       <td class="prov-upstream" title="{{ p.upstream }}">{{ p.upstream or "—" }}</td>
@@ -120,6 +120,16 @@
   </tbody>
 </table>
 </section>
+{% endif %}
+
+{% if lanes and lanes.registry %}
+<div class="pi-lane-registry" aria-label="Providers enabled in Pi's generated lane registry">
+  <span class="registry-label">Pi routes</span>
+  {% for lane in lanes.registry %}
+    <span class="registry-provider"><span aria-hidden="true">{{ lane.icon }}</span> {{ lane.provider }}</span>
+  {% endfor %}
+  <span class="registry-note">same registry drives routing + meters</span>
+</div>
 {% endif %}
 
 {% if subscriptions %}
@@ -154,17 +164,31 @@
     {% for s in subscriptions %}
     <tr{% if s.is_binding %} class="row-binding"{% endif %}>
       <td>
+        <span class="provider-icon" aria-hidden="true">{{ s.icon or "🤖" }}</span>
         <span class="acct">{{ s.identity }}</span>
-        {% if s.id != s.identity %}<span class="id-tag" title="Local credential-file label — the email is the identity">({{ s.id }})</span>{% endif %}
+        {% if s.id != s.identity %}<span class="id-tag" title="Local credential/report label — the visible provider identity is authoritative">({{ s.id }})</span>{% endif %}
         {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
       </td>
       <td class="muted">{{ s.family or "—" }}</td>
-      <td class="muted">{{ s.plan or "—" }}</td>
+      <td class="plan-cell">
+        <span class="muted">{{ s.plan or "—" }}</span>
+        {% if s.billing %}
+          <div class="billing {% if s.billing.current is sameas true %}billing-ok{% elif s.billing.current is sameas false %}billing-warn{% else %}billing-stale{% endif %}" title="Provider plan status: {{ s.billing.plan_status }} · raw payment type: {{ s.billing.payment_type }}">
+            {% if s.billing.current is sameas true %}✅ billing current
+            {% elif s.billing.current is sameas false %}⚠️ billing not current
+            {% else %}❓ billing reading stale{% endif %}
+          </div>
+          <div class="billing-meta">
+            {% if s.billing.renewal_label %}💳 {{ s.billing.renewal_label }}{% endif %}
+            {% if s.billing.auto_renew and s.billing.next_renew_display %} · 🔄 renews {{ s.billing.next_renew_display }}{% endif %}
+          </div>
+        {% endif %}
+      </td>
       <td>
         {% if s.meters %}
           {% for m in s.meters %}
           <div class="lane-meter">
-            <span class="meter-label">{{ m.label }}</span>
+            <span class="meter-label"><span aria-hidden="true">{{ m.icon or "📊" }}</span> {{ m.label }}</span>
             {% if m.pct is not none %}
               <span class="util">
                 <span class="bar"><i class="{% if m.rejected or m.pct >= 90 %}crit{% elif m.pct >= 75 %}warn{% endif %}" style="width: {{ m.pct }}%"></i></span>
@@ -196,7 +220,7 @@
       <td class="num{% if s.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(s.pace) if s.pace is not none else "—" }}</td>
       <td class="muted">{{ "in " + s.eta if s.eta else "—" }}</td>
       <td>
-        <span class="lane-status lane-{{ s.status | replace(' ', '-') }}" {% if s.detail %}title="{{ s.detail }}"{% endif %}>{{ s.status }}</span>
+        <span class="lane-status lane-{{ s.status | replace(' ', '-') }}" {% if s.detail %}title="{{ s.detail }}"{% endif %}><span aria-hidden="true">{{ s.status_icon or "❔" }}</span> {{ s.status }}</span>
         {% if s.src %}<div class="src-note" title="Where this row's numbers come from">{{ s.src }}</div>{% endif %}
       </td>
     </tr>

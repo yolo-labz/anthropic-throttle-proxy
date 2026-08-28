@@ -220,6 +220,59 @@ def test_subscription_rows_group_by_family():
     assert [r["id"] for r in rows] == ["codex:b", "codex:a", "copilot:personal"]
 
 
+def test_zai_subscription_row_carries_provider_and_billing_metadata():
+    from anthropic_throttle_proxy.ui import routes
+
+    row = routes._build_subscriptions(
+        [],
+        {
+            "lanes": [
+                {
+                    "id": "zai:plan",
+                    "kind": "zai",
+                    "provider": "Z.AI",
+                    "icon": "✨",
+                    "family": "chinese-frontier",
+                    "status": "ok",
+                    "plan": "Pro V3",
+                    "meters": [
+                        {
+                            "label": "5h",
+                            "used_pct": 1.0,
+                            "reset_in": "1h 52m",
+                            "resets_at": 1_760_006_720,
+                            "window_mins": 300,
+                        },
+                        {
+                            "label": "7d",
+                            "used_pct": 2.0,
+                            "reset_in": "5d 05h",
+                            "resets_at": 1_760_450_000,
+                            "window_mins": 10080,
+                        },
+                    ],
+                    "billing": {
+                        "current": True,
+                        "plan_status": "VALID",
+                        "auto_renew": True,
+                        "cycle": "monthly",
+                        "renewal_amount": 80.0,
+                        "currency": "USD",
+                        "next_renew_date": "2026-09-27",
+                        "payment_type": "WAIT_PAY",
+                    },
+                    "reason": "",
+                }
+            ]
+        },
+        1_760_000_000.0,
+    )[0]
+    assert row["identity"] == "Z.AI"
+    assert row["icon"] == "✨"
+    assert row["billing"]["current"] is True
+    assert {meter["label"] for meter in row["meters"]} == {"5h", "7d"}
+
+
 def test_a_refusing_subscription_shows_no_burn_projection():
     """`1.08× · exhausts in <1m` beside a REJECTED badge predicts the past."""
     from anthropic_throttle_proxy.ui import routes
@@ -264,45 +317,157 @@ def test_retry_after_renders_as_a_duration_not_raw_seconds():
     assert routes._retry_after_text({"retry-after": "soon"}) == "soon"
 
 
-def _render_meter(meter: dict) -> str:
-    """Render one subscription row's meters cell through the real template."""
+def _render_stats(**over: object) -> str:
     import jinja2
 
     from anthropic_throttle_proxy.ui import routes
 
+    context = {
+        "subscriptions": [],
+        "bearers": [],
+        "providers": [],
+        "signals": [],
+        "status": None,
+        "lanes": None,
+        "last_advisor": None,
+        "served": 0,
+        "inflight": 0,
+        "queued": 0,
+        "holds": 0,
+        "retries": 0,
+        "disconnects": 0,
+    }
+    context.update(over)
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(routes._TEMPLATES)), autoescape=True
     )
-    tpl = env.get_template("partials/stats.html")
+    return env.get_template("partials/stats.html").render(**context)
+
+
+def _render_subscription(row: dict) -> str:
+    return _render_stats(subscriptions=[row])
+
+
+def _render_meter(meter: dict) -> str:
+    """Render one subscription row's meters cell through the real template."""
+    return _render_subscription(
+        {
+            "id": "x",
+            "identity": "x",
+            "sub": "",
+            "family": "anthropic",
+            "plan": "",
+            "src": "proxy",
+            "meters": [meter],
+            "pace": None,
+            "pace_warn": False,
+            "eta": "",
+            "status": "rejected" if meter.get("rejected") else "ok",
+            "detail": "",
+        }
+    )
+
+
+def test_pi_registry_strip_names_every_configured_provider_with_icons():
+    html = _render_stats(
+        lanes={
+            "registry": [
+                {"icon": "✳️", "provider": "Claude"},
+                {"icon": "🌀", "provider": "Codex"},
+                {"icon": "✨", "provider": "Z.AI"},
+                {"icon": "🚀", "provider": "Groq"},
+                {"icon": "🌙", "provider": "DeepInfra"},
+            ]
+        }
+    )
+    assert "Pi routes" in html
+    for text in ("✳️", "Claude", "🌀", "Codex", "✨", "Z.AI", "🚀", "Groq", "🌙", "DeepInfra"):
+        assert text in html
+    assert "same registry drives routing + meters" in html
+
+
+def test_zai_row_renders_accessible_identity_billing_and_hard_resets():
     row = {
-        "id": "x",
-        "identity": "x",
+        "id": "zai:plan",
+        "identity": "Z.AI",
+        "icon": "✨",
         "sub": "",
-        "family": "anthropic",
-        "plan": "",
-        "src": "proxy",
-        "meters": [meter],
+        "family": "chinese-frontier",
+        "plan": "Pro V3",
+        "src": "Pi meter report",
+        "meters": [
+            {"label": "5h", "pct": 1, "reset_in": "1h 52m"},
+            {"label": "7d", "pct": 2, "reset_in": "5d 05h"},
+        ],
+        "pace": 0.4,
+        "pace_warn": False,
+        "eta": "",
+        "status": "ok",
+        "detail": "",
+        "billing": {
+            "current": True,
+            "auto_renew": True,
+            "cycle": "monthly",
+            "renewal_amount": 80.0,
+            "renewal_label": "$80/mo",
+            "currency": "USD",
+            "next_renew_date": "2026-09-27",
+            "next_renew_display": "27/09",
+            "payment_type": "WAIT_PAY",
+        },
+    }
+    html = _render_subscription(row)
+    for text in (
+        "✨",
+        "Z.AI",
+        "billing current",
+        "$80/mo",
+        "renews 27/09",
+        "resets 1h 52m",
+        "resets 5d 05h",
+    ):
+        assert text in html
+    for forbidden in ("customerId", "agreementNo", "orderNo", "Authorization: Bearer"):
+        assert forbidden not in html
+
+
+def test_zai_billing_warning_never_calls_wait_pay_a_success():
+    row = {
+        "id": "zai:plan",
+        "identity": "Z.AI",
+        "icon": "✨",
+        "sub": "",
+        "family": "chinese-frontier",
+        "plan": "Pro V3",
+        "src": "Pi meter report",
+        "meters": [],
         "pace": None,
         "pace_warn": False,
         "eta": "",
-        "status": "rejected" if meter.get("rejected") else "ok",
-        "detail": "",
+        "status": "refused",
+        "detail": "PAST_DUE",
+        "billing": {
+            "current": False,
+            "auto_renew": True,
+            "cycle": "monthly",
+            "renewal_amount": 80.0,
+            "renewal_label": "$80/mo",
+            "currency": "USD",
+            "next_renew_date": "2026-09-27",
+            "next_renew_display": "27/09",
+            "payment_type": "WAIT_PAY",
+        },
     }
-    return tpl.render(
-        subscriptions=[row],
-        bearers=[],
-        providers=[],
-        signals=[],
-        status=None,
-        lanes=None,
-        last_advisor=None,
-        served=0,
-        inflight=0,
-        queued=0,
-        holds=0,
-        retries=0,
-        disconnects=0,
-    )
+    html = _render_subscription(row)
+    assert "billing not current" in html
+    assert "payment successful" not in html
+    assert "WAIT_PAY" in html
+
+    row["billing"]["current"] = None
+    stale_html = _render_subscription(row)
+    assert "billing reading stale" in stale_html
+    assert "billing current" not in stale_html
+    assert "billing not current" not in stale_html
 
 
 def test_a_rejected_window_still_says_when_it_reopens():

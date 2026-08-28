@@ -257,6 +257,8 @@ table.bearers.providers td:nth-child(7) { text-align: left; }
 .prov-status .egress { margin-left: 0.5rem; }
 .prov-err { display: block; font-family: var(--mono); font-size: 0.66rem; color: var(--crit); margin-top: 0.1rem; }
 .prov { display: inline-flex; align-items: center; gap: 0.45rem; font-family: var(--mono); font-weight: 600; color: var(--ctp-text); }
+.provider-icon { display: inline-block; min-width: 1.35em; text-align: center; margin-right: 0.22rem; }
+.prov .provider-icon { margin-right: 0; }
 .prov .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
 .prov-healthy   .pdot { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
 .prov-pacing    .pdot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
@@ -455,6 +457,20 @@ col.c-acct-num    { width: 7rem; }
 .bar > i.crit { background: var(--crit); }
 .util .pct { font-family: var(--mono); font-size: 0.74rem; min-width: 2.4rem; text-align: right; }
 
+/* ── Pi provider registry + subscription lanes ─────────────────────── */
+.pi-lane-registry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.55rem;
+  margin: 0.38rem 0 0.12rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+}
+.registry-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.registry-provider { color: var(--ctp-text); border: var(--hairline); border-radius: var(--radius-sm); padding: 0.08rem 0.38rem; }
+.registry-note { color: var(--muted); }
+
 /* ── subscription lanes (every meter the host pays for) ─────────────── */
 /* Shrink-to-fit: with a 100% width the auto column swallows every spare pixel
    and opens a void between the meters and the status badge. Let the leftover
@@ -474,6 +490,12 @@ col.c-sub-status  { width: 9rem; }
   color: var(--muted);
   margin-top: 0.1rem;
 }
+.plan-cell { white-space: normal !important; }
+.billing { font-family: var(--mono); font-size: 0.66rem; margin-top: 0.12rem; }
+.billing-ok { color: var(--ok); }
+.billing-warn { color: var(--crit); font-weight: 600; }
+.billing-stale { color: var(--warn); }
+.billing-meta { font-family: var(--mono); font-size: 0.62rem; color: var(--ctp-subtext0); margin-top: 0.08rem; }
 /* Status vocabulary shared with the lane rows; the account-only verdicts are
    new (a rejected window, a usage lock, a dead token, a never-seen bearer). */
 .lane-rejected      { color: var(--crit); }
@@ -484,7 +506,7 @@ col.c-sub-status  { width: 9rem; }
 .lane-refused       { color: var(--crit); font-weight: 600; }
 col.c-lane        { width: 13rem; }
 col.c-family      { width: 9rem; }
-col.c-plan        { width: 7rem; }
+col.c-plan        { width: 13rem; }
 /* Meters absorb the width the removed page cap used to waste: a longer bar is
    a more readable bar, and at 2560px this is where the operator is looking. */
 col.c-meters      { width: auto; min-width: 26rem; }
