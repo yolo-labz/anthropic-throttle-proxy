@@ -48,9 +48,22 @@ _FAMILY = {
     "groq": "openai",
     "deepinfra": "chinese-frontier",
     "kimi": "chinese-frontier",
-    # DeepSeek is the same lineage as Kimi/GLM/Qwen for the gate's purposes:
-    # a Chinese-frontier generator may not be reviewed by another one.
+    # Z.AI/GLM and DeepSeek are one review family with Kimi/Qwen: a
+    # Chinese-frontier generator may not be reviewed by another one.
+    "zai": "chinese-frontier",
     "deepseek": "chinese-frontier",
+}
+
+_PROVIDER = {
+    "anthropic": ("✳️", "Anthropic"),
+    "claude": ("✳️", "Claude"),
+    "codex": ("🌀", "Codex"),
+    "zai": ("✨", "Z.AI"),
+    "deepseek": ("🐋", "DeepSeek"),
+    "copilot": ("🐙", "Copilot"),
+    "groq": ("🚀", "Groq"),
+    "deepinfra": ("🌙", "DeepInfra"),
+    "kimi": ("🌙", "Kimi"),
 }
 
 _cache: tuple[float, dict[str, Any]] | None = None
@@ -78,8 +91,13 @@ def _epoch(value: Any) -> float | None:
     return float(value)
 
 
-def _codex_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
-    """Codex publishes one entry per limitId (shared bucket + the spark one)."""
+def _window_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize provider windows without inventing a common quota unit.
+
+    Codex reports request percentages; Z.AI reports Coding Plan credits. Both
+    publish the same decision fields (used %, reset epoch, window duration),
+    while allowance/remaining stay additive details for the Z.AI row.
+    """
     out = []
     for meter in lane.get("meters") or []:
         if not isinstance(meter, dict):
@@ -90,9 +108,48 @@ def _codex_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
                 "used_pct": _pct(meter.get("usedPercent")),
                 "resets_at": _epoch(meter.get("resetsAt")),
                 "window_mins": meter.get("windowMins"),
+                "allowance": meter.get("allowance"),
+                "current": meter.get("current"),
+                "remaining": meter.get("remaining"),
             }
         )
     return out
+
+
+def _billing(lane: dict[str, Any]) -> dict[str, Any] | None:
+    """Allowlist non-secret billing facts from the report.
+
+    In particular, ``paymentType=WAIT_PAY`` is preserved but never interpreted
+    as success. The Nix writer's measured current-plan predicate is the verdict.
+    """
+    raw = lane.get("billing")
+    if not isinstance(raw, dict):
+        return None
+    amount = raw.get("renewalAmount")
+    amount = (
+        float(amount) if isinstance(amount, int | float) and not isinstance(amount, bool) else None
+    )
+    currency = str(raw.get("currency") or "USD").upper()
+    cycle = str(raw.get("cycle") or "")
+    date = str(raw.get("nextRenewDate") or "")
+    try:
+        date_display = datetime.strptime(date, "%Y-%m-%d").strftime("%d/%m")
+    except ValueError:
+        date_display = date
+    symbol = "$" if currency == "USD" else f"{currency} "
+    suffix = "/mo" if cycle == "monthly" else ("/yr" if cycle == "annual" else "")
+    return {
+        "current": raw.get("current") is True,
+        "plan_status": str(raw.get("planStatus") or "unknown"),
+        "auto_renew": raw.get("autoRenew") is True,
+        "cycle": cycle,
+        "renewal_amount": amount,
+        "renewal_label": f"{symbol}{amount:.0f}{suffix}" if amount is not None else "",
+        "currency": currency,
+        "next_renew_date": date,
+        "next_renew_display": date_display,
+        "payment_type": str(raw.get("paymentType") or "unknown"),
+    }
 
 
 def _copilot_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
@@ -200,10 +257,11 @@ def _exhausted_reason(meters: list[dict[str, Any]]) -> str:
 
 def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     kind = str(lane.get("kind") or "?")
+    lane_id = str(lane.get("id") or "?")
     status = str(lane.get("status") or "unknown")
     if stale and status == "ok":
         status = "stale"
-    meters = _codex_meters(lane) if kind == "codex" else []
+    meters = _window_meters(lane) if kind in {"codex", "zai"} else []
     if kind == "copilot":
         meters = _copilot_meters(lane)
     if not meters:
@@ -266,12 +324,22 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     if status == "ok" and drained is not None:
         status = "exhausted"
         reason = reason or f"balance {drained['note']} — the lane refuses at zero"
+    icon, provider = _PROVIDER.get(kind, ("🤖", kind or "provider"))
+    identity = provider
+    if kind == "codex" and ":" in lane_id:
+        identity = f"{provider} {lane_id.rsplit(':', 1)[1].upper()}"
+    elif kind == "copilot" and ":" in lane_id:
+        identity = f"{provider} {lane_id.rsplit(':', 1)[1]}"
     return {
-        "id": str(lane.get("id") or "?"),
+        "id": lane_id,
         "kind": kind,
+        "provider": provider,
+        "identity": identity,
+        "icon": icon,
         "family": _FAMILY.get(kind, kind),
         "status": status,
         "plan": plan,
+        "billing": _billing(lane),
         "meters": meters,
         "binding_pct": binding_pct,
         "reason": reason,
@@ -289,7 +357,7 @@ def _age_s(generated: Any, now: float) -> float | None:
     return now - written.timestamp()
 
 
-EMPTY: dict[str, Any] = {"lanes": [], "age_s": None, "stale": False}
+EMPTY: dict[str, Any] = {"lanes": [], "registry": [], "age_s": None, "stale": False}
 
 
 def _read(now: float) -> dict[str, Any]:
@@ -310,7 +378,13 @@ def _read(now: float) -> dict[str, Any]:
     stale = age is not None and age > interval * _STALE_INTERVALS
     lanes = [_normalize(lane, stale, now) for lane in raw["lanes"] if isinstance(lane, dict)]
     lanes.sort(key=lambda lane: (lane["family"], lane["id"]))
-    return {"lanes": lanes, "age_s": age, "stale": stale}
+    registry = []
+    for provider_id in raw.get("registryProviders") or []:
+        if not isinstance(provider_id, str):
+            continue
+        icon, provider = _PROVIDER.get(provider_id, ("🤖", provider_id))
+        registry.append({"id": provider_id, "icon": icon, "provider": provider})
+    return {"lanes": lanes, "registry": registry, "age_s": age, "stale": stale}
 
 
 def view(now: float) -> dict[str, Any]:

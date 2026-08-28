@@ -42,7 +42,13 @@ def _seed_history() -> None:
 
 
 def _meter(label: str, pct: float | None, reset_in: str = "", note: str = "") -> dict:
-    return {"label": label, "pct": pct, "reset_in": reset_in, "note": note}
+    return {
+        "label": label,
+        "icon": {"5h": "⏱️", "7d": "📅"}.get(label, "📊"),
+        "pct": pct,
+        "reset_in": reset_in,
+        "note": note,
+    }
 
 
 def _context() -> dict:
@@ -58,6 +64,7 @@ def _context() -> dict:
         "providers": [
             {
                 "name": "anthropic",
+                "icon": "✳️",
                 "kind": "primary",
                 "level": "pacing",
                 "ok": True,
@@ -71,11 +78,12 @@ def _context() -> dict:
                 "err": "",
             },
             {
-                "name": "ingress",
+                "name": "zai",
+                "icon": "✨",
                 "kind": "sibling",
                 "level": "healthy",
                 "ok": True,
-                "upstream": "http://127.0.0.1:8760",
+                "upstream": "http://127.0.0.1:8766",
                 "served": 191,
                 "inflight": 0,
                 "queued": 0,
@@ -116,7 +124,8 @@ def _context() -> dict:
             },
             {
                 "id": "chatgpt:work",
-                "identity": "chatgpt:work",
+                "identity": "Codex A",
+                "icon": "🌀",
                 "sub": "",
                 "family": "openai",
                 "plan": "pro",
@@ -135,8 +144,33 @@ def _context() -> dict:
                 "detail": "binding meter at 100% — upstream answers 'you've hit your usage limit'",
             },
             {
+                "id": "zai:plan",
+                "identity": "Z.AI",
+                "icon": "✨",
+                "sub": "",
+                "family": "chinese-frontier",
+                "plan": "Pro V3",
+                "src": "Pi meter report",
+                "meters": [_meter("7d", 2, "5d 05h"), _meter("5h", 1, "1h 52m")],
+                "pace": 0.4,
+                "pace_warn": False,
+                "eta": "",
+                "status": "ok",
+                "status_icon": "✅",
+                "detail": "",
+                "billing": {
+                    "current": True,
+                    "auto_renew": True,
+                    "renewal_label": "$80/mo",
+                    "next_renew_display": "27/09",
+                    "plan_status": "VALID",
+                    "payment_type": "WAIT_PAY",
+                },
+            },
+            {
                 "id": "deepseek",
-                "identity": "deepseek",
+                "identity": "DeepSeek",
+                "icon": "🐋",
                 "sub": "",
                 "family": "chinese-frontier",
                 "plan": "pay-go",
@@ -186,7 +220,16 @@ def _context() -> dict:
                 "detail": "no usage API for individual seats",
             },
         ],
-        "lanes": {"stale": False},
+        "lanes": {
+            "stale": False,
+            "registry": [
+                {"icon": "✳️", "provider": "Claude"},
+                {"icon": "🌀", "provider": "Codex"},
+                {"icon": "🌙", "provider": "DeepInfra"},
+                {"icon": "🚀", "provider": "Groq"},
+                {"icon": "✨", "provider": "Z.AI"},
+            ],
+        },
         "identity": {"collapsed": False},
         "copilot": [],
         "bearers": [
