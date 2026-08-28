@@ -6,6 +6,68 @@ host activation. Latest incident first.
 
 ---
 
+## 27/08/2026 - GLM fleet migration: upstream stayed green; the 30s local queue failed
+
+Pedro moved every Herdr/Pi session off DeepSeek and made Z.AI GLM-5.3-Flash the
+preferred eligible public bulk delegation lane. The producer question was
+whether :8766 needed a new limiter. The evidence supports reusing the existing
+per-bearer fair queue and Z.AI code split, not claiming every request succeeded.
+The bounded journal window was 27/08/2026 00:00–23:30 BRT across three service
+starts:
+
+```text
+OUTCOME  completed upstream status=200        450
+OUTCOME  completed upstream status=429          0
+OUTCOME  upstream-mid-stream                     1
+OUTCOME  local queue-wait-timeout               41
+LATENCY  completed service p99 / max       60s / 136s
+CONFIG   hard max_concurrent per bearer          2
+CONFIG   additive priority reserve               0
+STATE    observed Z.AI bearer/API key count      1
+```
+
+These are observed event classes, not a proof that the journal captures every
+client outcome. They do establish that no *completed* upstream 429 was observed,
+while 41 proxy-stamped rate-limit-shaped failures were generated locally at
+`THROTTLE_QUEUE_MAX_WAIT_S=30`; the separate mid-stream transport failure is
+kept visible. The 30-second default is intentional for Claude Code, whose silent
+socket patience drove the phantom-401 incident. Pi's OpenAI-compatible adapter
+forwards caller cancellation and supplies an SDK timeout only when the caller
+overrides it, while the OpenAI SDK itself defaults to 600 seconds total.
+
+The fix belongs in the Nix consumer, not this producer: NixOS #2063 reuses the
+existing factory knobs for the Z.AI instance. It keeps hard/warm cap two and
+explicitly pins additive priority reserve zero. The evidence-based queue bound
+is 300 seconds: with the observed 136-second maximum completed service time,
+that leaves 164 seconds under the SDK default. The configured 120-second
+sock-read value is an inactivity timeout, not a total response cap, so it is not
+used as the service-time proof. A live override reports
+`queue_max_wait_s=300` through `/__throttle/admission`.
+
+The current single shared API key hashes to one bearer. Its normal AIMD ceiling
+cannot grow above `hard_max=2`, and the explicit priority reserve adds zero;
+excess callers stay in that bearer's fair queue. Under that measured topology,
+total dispatch is therefore at most two. Treat this as a falsifiable contract,
+not a universal provider guarantee: the post-merge eight-way Pi smoke must
+observe concurrency <=2 and zero 429/1302/local queue-timeout. A future second
+key/bearer requires a fresh account-level concurrency decision.
+
+Immediate rollback before the Nix revert activates: set
+`queue_max_wait_s=30` and `aimd_initial_concurrent=1`, wait for the queue to
+drain, then restart `zai-throttle-proxy.service`; the restart is required because
+lowering an initial cap does not lower an existing limiter. After the revert is
+live, reset both persisted overrides so restored declarative defaults win.
+
+Boundary: this protects the measured one-bearer path from concurrency code 1302
+and premature local 503s only after the acceptance smoke passes. It cannot make
+the finite 12,000-credit/5h and 60,000/7d Coding Plan quota available after
+codes 1308/1316/1317. Those remain correctly parsed into a persisted reset hold
+without AIMD shrink. The same acceptance also requires a live census with zero
+DeepSeek sessions. No proxy source, package pin, Dokku app, or central service
+changes are required.
+
+---
+
 ## 12/08/2026 - Spec 094: Fleet Foundry K3 subscription eligibility contract
 
 Fleet Foundry S3 was blocked because `:8760` exposed only lane availability:
