@@ -1053,11 +1053,16 @@ def test_windowed_incoming_does_not_undercut_clean_sibling(
     genuinely clean sibling via the -0.01 stickiness bonus (Codex MAJOR)."""
     bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
     monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 60.0)
-    # Incoming A: sub-millisecond window. B: clean.
-    tiny_a = FairBearerLimiter(8, "fair")
-    tiny_a.note_retry_after(0.0005)
-    config.bearer_limiters[bid_a] = tiny_a
+    # Incoming A: sub-millisecond window. B: clean. Pin the measured remaining
+    # value instead of racing a real 0.5 ms deadline against test setup — CI
+    # occasionally crossed it before scoring and tested the opposite state.
+    config.bearer_limiters[bid_a] = FairBearerLimiter(8, "fair")
     config.bearer_limiters[bid_b] = FairBearerLimiter(8, "fair")
+    monkeypatch.setattr(
+        proxy,
+        "_bearer_retry_after_remaining",
+        lambda bid: 0.0005 if bid == bid_a else 0.0,
+    )
     headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
 
     selected, label = proxy._route_account_if_enabled(
