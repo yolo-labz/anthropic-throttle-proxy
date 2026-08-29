@@ -40,11 +40,16 @@
   {% for s in signals %}
   <div class="signal{% if s.level %} is-{{ s.level }}{% endif %}">
     <span class="sig-label">{{ s.label }}</span>
+    {# Value BEFORE the trace, in the markup rather than with `order`. The
+       value used to sit at the far right of the tile via `margin-left: auto`,
+       ~500px from the label it belongs to; reordering it visually with CSS
+       alone would have left a screen reader hearing the sparkline's summary
+       before the scalar that visually precedes it (WCAG 1.3.2). #}
     <div class="sig-row">
+      <span class="sig-value">{{ s.value }}</span>
       <svg class="spark" viewBox="0 0 {{ s.spark.width }} {{ s.spark.height }}" preserveAspectRatio="none" role="img" aria-label="{{ s.label }} over the last hour, peak {{ "%.1f"|format(s.spark.peak) }}">
         {% if s.spark.points %}<polyline points="{{ s.spark.points }}" />{% else %}<line x1="0" y1="{{ s.spark.height }}" x2="{{ s.spark.width }}" y2="{{ s.spark.height }}" />{% endif %}
       </svg>
-      <span class="sig-value">{{ s.value }}</span>
     </div>
     <span class="sig-detail">{{ s.detail }}</span>
   </div>
@@ -198,12 +203,22 @@
                  not an if/elif chain. Chaining them meant a rejected meter — the
                  one row where "when does this come back" is the only question
                  the operator has — rendered `rejected` and nothing else, while
-                 `reset_in` sat populated in the same dict. #}
-              {% if m.rejected %}<span class="tag-rejected">rejected</span>
-              {% elif m.exhausted_ok %}<span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
-              {% endif %}
-              {% if m.reset_in %}<span class="reset-in">{{ "reopens in" if m.rejected or m.exhausted_ok else "resets" }} {{ m.reset_in }}</span>
-              {% elif m.note %}<span class="reset-in">{{ m.note }}</span>{% endif %}
+                 `reset_in` sat populated in the same dict.
+
+                 They share ONE wrapper because `.lane-meter` is a four-column
+                 grid and `.util` is `display: contents`, so every one of these
+                 spans was a direct grid item: a rejected meter placed the tag
+                 in column 4 and auto-flowed the countdown onto a SECOND ROW at
+                 column 1, under the label (measured: tag top=722, reset
+                 top=746). That is precisely the incident case this comment was
+                 written for. One wrapper = one cell = one line. #}
+              <span class="meter-state">
+                {% if m.rejected %}<span class="tag-rejected">rejected</span>
+                {% elif m.exhausted_ok %}<span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
+                {% endif %}
+                {% if m.reset_in %}<span class="reset-in">{{ "reopens in" if m.rejected or m.exhausted_ok else "resets" }} {{ m.reset_in }}</span>
+                {% elif m.note %}<span class="reset-in">{{ m.note }}</span>{% endif %}
+              </span>
             {% else %}
               <span class="muted">{{ m.note or "no reading" }}</span>
             {% endif %}

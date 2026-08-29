@@ -28,6 +28,17 @@ AA_NORMAL_TEXT = 4.5
 # Backgrounds a text token can land on, in the order the page stacks them.
 SURFACES = ("--ctp-base", "--ctp-mantle", "--ctp-surface0")
 
+# Table rows are not opaque surfaces: they are `color-mix(... , transparent)`
+# composited onto the panel. #216 moved the panel to mantle and the zebra to
+# crust, which changes every ratio measured above — so the composited results
+# are gated here too, rather than assumed from the opaque cases.
+COMPOSITED_ROWS = {
+    # (top colour, alpha, backdrop) -> the rule in style.css it comes from
+    "zebra (odd row on the panel)": ("--ctp-crust", 0.55, "--ctp-mantle"),
+    "row hover": ("--ctp-surface0", 0.55, "--ctp-mantle"),
+    "binding row": ("--crit", 0.07, "--ctp-mantle"),
+}
+
 # Tokens used as TEXT colour anywhere in style.css. Decorative-only tokens
 # (dots, hairlines, bar fills) are deliberately absent: a 3:1 non-text token is
 # not a 1.4.3 failure, and demanding 4.5 there would force the palette flat.
@@ -104,8 +115,45 @@ def test_text_token_meets_wcag_aa_on_every_surface(token: str, surface: str):
     )
 
 
+def _composite(top: str, alpha: float, backdrop: str) -> str:
+    """Flatten ``color-mix(in srgb, top alpha%, transparent)`` over a backdrop.
+
+    sRGB source-over, which is what a browser paints for a translucent row
+    background sitting on an opaque panel.
+    """
+    top_raw, back_raw = top.lstrip("#"), backdrop.lstrip("#")
+    channels = []
+    for offset in (0, 2, 4):
+        over = int(top_raw[offset : offset + 2], 16)
+        under = int(back_raw[offset : offset + 2], 16)
+        channels.append(round(over * alpha + under * (1 - alpha)))
+    return "#" + "".join(f"{c:02x}" for c in channels)
+
+
+def test_composite_math_matches_its_endpoints():
+    """Guard the compositor before trusting it in the gate below."""
+    assert _composite("#ffffff", 1.0, "#000000") == "#ffffff"
+    assert _composite("#ffffff", 0.0, "#000000") == "#000000"
+    assert _composite("#ffffff", 0.5, "#000000") == "#808080"
+
+
+@pytest.mark.parametrize("token", TEXT_TOKENS)
+@pytest.mark.parametrize("row", sorted(COMPOSITED_ROWS))
+def test_text_token_meets_wcag_aa_on_every_composited_row(token: str, row: str):
+    decls = _declarations()
+    top, alpha, backdrop = COMPOSITED_ROWS[row]
+    background = _composite(_resolve(top, decls), alpha, _resolve(backdrop, decls))
+    foreground = _resolve(token, decls)
+    ratio = contrast_ratio(foreground, background)
+    assert ratio >= AA_NORMAL_TEXT, (
+        f"{token} ({foreground}) on the {row} background ({background}) is "
+        f"{ratio:.2f}:1, below the WCAG 1.4.3 AA floor of {AA_NORMAL_TEXT}:1"
+    )
+
+
 def test_every_text_token_is_declared():
     """A renamed token must fail loudly here, not silently stop being checked."""
     decls = _declarations()
-    missing = [t for t in (*TEXT_TOKENS, *SURFACES) if t not in decls]
+    composited = [part for top, _, backdrop in COMPOSITED_ROWS.values() for part in (top, backdrop)]
+    missing = [t for t in (*TEXT_TOKENS, *SURFACES, *composited) if t not in decls]
     assert not missing, f"tokens missing from :root: {missing}"
