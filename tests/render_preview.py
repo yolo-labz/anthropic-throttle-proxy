@@ -286,7 +286,14 @@ def main(out: Path) -> None:
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(routes._TEMPLATES)), autoescape=True
     )
-    html = env.get_template("dashboard.html").render(**_context())
+    ctx = _context()
+    # Production derives the badge icon from the status word; the fixture used
+    # to omit it on every row but Z.AI, so the preview drew `❔ ok` — a shrug
+    # next to a healthy lane. A preview that misreports the thing it exists to
+    # let you eyeball is worse than no preview.
+    for row in ctx["subscriptions"]:
+        row.setdefault("status_icon", routes._STATUS_ICONS.get(row["status"], "❔"))
+    html = env.get_template("dashboard.html").render(**ctx)
     html = html.replace("/ui/static/style.css?v=preview", str(routes._STATIC / "style.css"))
     out.write_text(html)
     print(out)

@@ -127,6 +127,35 @@ rendered as an inline strip above the capacity table when it fires. The
 standing prose block is a paragraph explaining a feature to someone who already
 opened the page.
 
+### Finish pass (29/08/2026, #216)
+
+The structure above had landed; the page still read as unfinished, for five
+reasons that are all execution rather than arrangement:
+
+1. **#215's icons rendered as tofu boxes.** Provider, meter and status icons
+   were added inside spans inheriting `--mono` / `--sans`, and both stacks
+   ended at the bare `monospace` / `sans-serif` generic — which resolves an
+   emoji code point through a fallback with no colour-emoji glyph. The stacks
+   now name the emoji families explicitly, locked by `tests/test_ui_icons.py`.
+   This one was a live regression, not taste: it was merged and undeployed.
+2. **Three tables, three right edges, floating on the page background.** The
+   shrink-to-fit of #163 is correct and stays; each table now sits in a
+   bordered panel that *hugs* it. A full-width panel was tried first and is
+   worse — it converts the ragged edge into ~800px of empty bordered surface,
+   and the only way to fill it is to hand the slack to a column, which is the
+   #163 void again.
+3. **The signal value sat ~500px from its label**, with a stretched trace
+   between the two. A sparkline is a dataword *beside* its number (Tufte), not
+   a rule separating a label from its value.
+4. **`spent` rendered as an 8rem outlined box.** The tag is a direct grid item
+   of `.lane-meter` (its `.util` wrapper is `display: contents`), so it
+   stretched to fill its track and read as a broken text input.
+5. **The binding row was a 7% tint** next to a zebra stripe — not a difference
+   the eye finds while scanning, despite being the page's decision object.
+
+The falsifier below is unchanged, and so is every column: this pass moved no
+data and added no panel.
+
 ## Non-goals
 
 - No charting library. Sparklines are inline `<svg>` polylines rendered

@@ -36,8 +36,16 @@
      available for non-text use (hairlines, an idle dot). */
   --muted: var(--ctp-subtext0);
 
-  --mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Emoji families are LAST in both stacks, and they are load-bearing rather
+     than decoration: #215 moved provider, meter and status icons INSIDE mono
+     and sans spans, and a stack that ends at the `monospace` / `sans-serif`
+     generic resolves those code points through a fallback with no colour-emoji
+     glyph — every icon renders as a tofu box. The families are listed rather
+     than left to fontconfig because the generic is what already failed.
+     Locked by tests/test_ui_icons.py. */
+  --emoji: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Twemoji Mozilla";
+  --mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace, var(--emoji);
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif, var(--emoji);
 
   --hairline: 1px solid var(--ctp-surface0);
   --hairline-strong: 1px solid var(--ctp-surface1);
@@ -191,7 +199,12 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
   font-weight: 500;
   line-height: 1;
   color: var(--ctp-text);
-  margin-left: auto;
+  /* The value sits beside the label it belongs to. `margin-left: auto` parked
+     it at the far edge of the tile with a stretched trace filling the gap, so
+     reading `requests / min` meant scanning ~500px right to find `93`. Tufte's
+     sparkline is a dataword ALONGSIDE its number, not a rule separating a
+     label from its value; the trace now trails the number it annotates. */
+  order: -1;
 }
 .sig-detail {
   color: var(--muted);
@@ -314,6 +327,11 @@ table.bearers.providers td:nth-child(7) { text-align: left; }
   margin-left: 0.4rem;
 }
 tr.row-binding > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
+/* The binding row is the page's decision object, but a 7% tint next to the
+   zebra stripe is not a difference the eye finds while scanning. An inset
+   shadow marks the row without the layout shift a border-left would cause,
+   and the `binding` tag in the cell still carries the meaning as text. */
+tr.row-binding > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 
 /* ── section heading ────────────────────────────────────────────────── */
 h2 {
@@ -338,7 +356,28 @@ h2 .h2-note { font-family: var(--sans); font-size: 0.68rem; text-transform: none
 .bearers-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  border-radius: var(--radius-sm);
+  /* The tables shrink-to-fit on purpose (#163), which on a wide screen left
+     three different right edges floating on the page background: providers
+     stopped ~700px short of the subscriptions table directly below it, and the
+     page read as unfinished rather than as dense. The panel is where that
+     leftover width was always meant to land — `table.bearers.subs` already
+     says "let it fall OUTSIDE the table" — and a bordered surface makes the
+     space deliberate instead of ragged, without widening a single column back
+     into the void #163 removed. */
+  background: var(--ctp-mantle);
+  border: var(--hairline);
+  border-radius: var(--radius);
+  /* The panel HUGS its table rather than spanning the page. A full-width panel
+     only relocated the problem: providers then drew ~800px of EMPTY bordered
+     surface, which is more conspicuous than the bare background was. Filling
+     it instead would mean handing a column the surplus, and the columns with
+     room to take it are capped on purpose (the meter bar stops at 24rem
+     because a 1100px bar is not more legible, only longer) — so the slack
+     would land in a void INSIDE a payload cell, which is the #163 regression
+     verbatim. A card sized to its content reads as deliberate. `max-width`
+     leaves the narrow-screen horizontal scroll exactly as it was. */
+  width: fit-content;
+  max-width: 100%;
   outline: none;
 }
 .bearers-wrap:focus-visible { box-shadow: 0 0 0 2px var(--info); }
@@ -386,12 +425,19 @@ table.bearers thead th {
   border-bottom-color: var(--ctp-surface1);
   position: sticky;
   top: 0;
-  background: var(--ctp-base);
+  /* Matches the panel the table now sits in; on --ctp-base the sticky header
+     was a lighter band cutting across the surface behind it. */
+  background: var(--ctp-mantle);
   z-index: 1;
 }
 table.bearers thead th[title] { cursor: help; }
 table.bearers tbody tr { transition: background 80ms ease-out; }
-table.bearers tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--ctp-mantle) 50%, transparent); }
+/* The zebra was mantle-over-base; on the mantle panel that is the panel's own
+   colour and the stripe disappears. Crust reads as a stripe on mantle. */
+table.bearers tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--ctp-crust) 55%, transparent); }
+/* The panel draws the bottom edge, so a rule under the last row lands one
+   pixel above the border and reads as a double hairline. */
+table.bearers tbody tr:last-child > td { border-bottom: none; }
 table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 55%, transparent); }
 .bearers .num.warn-text { color: var(--warn); font-weight: 600; }
 .util.compact .bar { width: 36px; }
@@ -541,6 +587,12 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
   overflow-wrap: anywhere;
 }
 .lane-meter .util { display: contents; }
+/* Both pills are direct grid items of `.lane-meter` (the `.util` wrapper is
+   `display: contents`), and a grid item stretches to fill its track — so
+   `spent` rendered as an 8rem outlined box that reads as a broken text input
+   rather than a tag. Size them to their text. */
+.lane-meter > .tag-exhausted,
+.lane-meter > .tag-rejected { justify-self: start; }
 .lane-meter > .muted { grid-column: 2 / 4; }
 .lane-meter .util .pct { text-align: right; }
 .lane-meter .reset-in { display: inline; margin-top: 0; }
