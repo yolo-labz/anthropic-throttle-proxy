@@ -42,6 +42,16 @@
      generic resolves those code points through a fallback with no colour-emoji
      glyph — every icon renders as a tofu box. The families are listed rather
      than left to fontconfig because the generic is what already failed.
+
+     They sit AFTER the generic on purpose. CSS font matching runs per
+     CHARACTER, not per element: when a code point is missing from every family
+     tried so far the browser continues down the list, so a family after
+     `monospace` is still reached for exactly the glyphs the generic cannot
+     draw — and only for those, which is what keeps Latin text on JetBrains
+     Mono. This is the ordering Bootstrap ships for the same reason, and the
+     rendered proof is in the PR: the same file with the families removed draws
+     tofu, with them appended draws the icons.
+
      Locked by tests/test_ui_icons.py. */
   --emoji: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Twemoji Mozilla";
   --mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace, var(--emoji);
@@ -203,8 +213,9 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
      it at the far edge of the tile with a stretched trace filling the gap, so
      reading `requests / min` meant scanning ~500px right to find `93`. Tufte's
      sparkline is a dataword ALONGSIDE its number, not a rule separating a
-     label from its value; the trace now trails the number it annotates. */
-  order: -1;
+     label from its value; the trace now trails the number it annotates.
+     Reordered in the MARKUP, not with `order`, so the reading order a screen
+     reader gets still matches the visual one (WCAG 1.3.2). */
 }
 .sig-detail {
   color: var(--muted);
@@ -436,8 +447,9 @@ table.bearers tbody tr { transition: background 80ms ease-out; }
    colour and the stripe disappears. Crust reads as a stripe on mantle. */
 table.bearers tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--ctp-crust) 55%, transparent); }
 /* The panel draws the bottom edge, so a rule under the last row lands one
-   pixel above the border and reads as a double hairline. */
-table.bearers tbody tr:last-child > td { border-bottom: none; }
+   pixel above the border and reads as a double hairline. Child combinators
+   throughout: a descendant selector would also reach a future nested table. */
+table.bearers > tbody > tr:last-child > td { border-bottom: none; }
 table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 55%, transparent); }
 .bearers .num.warn-text { color: var(--warn); font-weight: 600; }
 .util.compact .bar { width: 36px; }
@@ -587,12 +599,13 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
   overflow-wrap: anywhere;
 }
 .lane-meter .util { display: contents; }
-/* Both pills are direct grid items of `.lane-meter` (the `.util` wrapper is
-   `display: contents`), and a grid item stretches to fill its track — so
-   `spent` rendered as an 8rem outlined box that reads as a broken text input
-   rather than a tag. Size them to their text. */
-.lane-meter > .tag-exhausted,
-.lane-meter > .tag-rejected { justify-self: start; }
+/* State tag + countdown share the grid's fourth cell. As direct grid items the
+   tag stretched to fill its whole track — `spent` read as a broken text input
+   — and a meter carrying BOTH pushed the countdown onto a second row under the
+   label. Flex keeps them on one baseline and sizes the pill to its text. */
+.meter-state { display: flex; align-items: baseline; gap: 0.3rem; min-width: 0; }
+.meter-state .tag-rejected,
+.meter-state .tag-exhausted { flex: none; margin-left: 0; }
 .lane-meter > .muted { grid-column: 2 / 4; }
 .lane-meter .util .pct { text-align: right; }
 .lane-meter .reset-in { display: inline; margin-top: 0; }
