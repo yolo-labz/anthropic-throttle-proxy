@@ -88,7 +88,11 @@ def test_emoji_families_come_after_the_generic_not_instead_of_it():
     """
     for name, generic in (("mono", "monospace"), ("sans", "sans-serif")):
         stack = _stack(name)
-        family = next(f for f in EMOJI_FAMILIES if f in stack)
+        # Not `next(...)` bare: a stack that lost every emoji family would raise
+        # StopIteration and report as an ERROR, hiding the assertion that was
+        # supposed to name the problem.
+        family = next((f for f in EMOJI_FAMILIES if f in stack), None)
+        assert family is not None, f"--{name} names no emoji family: {stack!r}"
         assert stack.index(generic) < stack.index(family), (
             f"--{name} puts {family!r} before {generic!r}; the generic must stay "
             "the last resort for ordinary text"
