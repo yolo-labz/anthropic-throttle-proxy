@@ -33,6 +33,23 @@ from anthropic_throttle_proxy import accounts, config, limiter, proxy
 from anthropic_throttle_proxy.forwarding import StreamCommittedError
 from anthropic_throttle_proxy.limiter import FairBearerLimiter
 
+
+def test_idle_client_pruning_preserves_live_or_replaced_state() -> None:
+    """Terminal ports disappear without deleting a live/reused client entry."""
+    original = {"queued": 1, "inflight": 0, "served": 4}
+    bstate: dict[str, object] = {"clients": {"127.0.0.1:54321": original}}
+    counters = proxy._Counters("bearer", "127.0.0.1:54321", bstate, original)
+
+    counters.prune_client_if_idle()
+    assert bstate["clients"] == {"127.0.0.1:54321": original}
+
+    original["queued"] = 0
+    replacement = {"queued": 0, "inflight": 1, "served": 0}
+    bstate["clients"] = {"127.0.0.1:54321": replacement}
+    counters.prune_client_if_idle()
+    assert bstate["clients"] == {"127.0.0.1:54321": replacement}
+
+
 # ---------------------------------------------------------------------------
 # _log_413_reason — PR #17/#20 — translate Anthropic's real 413 cause.
 # ---------------------------------------------------------------------------

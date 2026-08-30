@@ -754,6 +754,15 @@ class _Counters:
             self.c["served"] += 1
         M_INFLIGHT.set(self.s["inflight"])
         M_INFLIGHT_BEARER.labels(bearer=self.bid).set(self.b["inflight"])
+        self.prune_client_if_idle()
+
+    def prune_client_if_idle(self) -> None:
+        """Discard terminal per-connection state without touching live peers."""
+        if self.c["queued"] or self.c["inflight"]:
+            return
+        clients = self.b.get("clients")
+        if isinstance(clients, dict) and clients.get(self.cid) is self.c:
+            clients.pop(self.cid)
 
 
 class _Attempt:
@@ -3920,6 +3929,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             # transport is still open (the limiter already rolled its queue entry
             # back via acquire's cancellation path; no release is owed).
             counters.dequeue()
+            counters.prune_client_if_idle()
             finish_probe(success=False)
             return _queue_wait_timeout_response(bid, cid, path, limiter, slot_max_wait or 0.0)
         finally:
@@ -3929,6 +3939,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             # the /__throttle/health gauge.
             if counters.queued_incremented:
                 counters.dequeue()
+                counters.prune_client_if_idle()
                 log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
             finish_probe(success=False)
 
