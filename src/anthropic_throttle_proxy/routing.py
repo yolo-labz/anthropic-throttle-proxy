@@ -328,7 +328,8 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
 
     A bearer is usable unless it carries a hard lock signal:
     - ``limiter.retry_after_until`` in the future (Retry-After active), OR
-    - a unified window in ``rejected`` status (budget exhausted).
+    - any aggregate/5h/7d unified status is ``rejected`` (budget exhausted), OR
+    - either live utilization is >= 1.0 even if the accompanying status lags.
 
     Lanes without Anthropic-style unified gauges (Kimi/GLM) simply have no
     ``rejected`` field, so a reachable bearer with no retry-after is usable —
@@ -348,9 +349,12 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
     if retry_after_until > now:
         return False
     unified = unified_live_view(bearer.get("unified") or {}, now)
-    if unified.get("status_5h") == "rejected" or unified.get("status_7d") == "rejected":
+    if "rejected" in (unified.get("status"), unified.get("status_5h"), unified.get("status_7d")):
         return False
-    return True
+    return not any(
+        isinstance(util, (int, float)) and util >= 1.0
+        for util in (unified.get("util_5h"), unified.get("util_7d"))
+    )
 
 
 def lane_usable(

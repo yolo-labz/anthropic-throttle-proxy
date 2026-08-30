@@ -281,9 +281,16 @@ def test_bearer_usable_retry_after_in_future_is_locked() -> None:
 
 
 def test_bearer_usable_rejected_window_is_locked() -> None:
-    """A unified ``rejected`` window (5h or 7d) = budget exhausted = locked."""
+    """Any parser-emitted ``rejected`` slot = budget exhausted = locked."""
+    assert not bearer_usable({"limiter": {}, "unified": {"status": "rejected"}})
     assert not bearer_usable({"limiter": {}, "unified": {"status_7d": "rejected"}})
     assert not bearer_usable({"limiter": {}, "unified": {"status_5h": "rejected"}})
+
+
+def test_bearer_usable_full_window_is_locked_even_when_status_lags() -> None:
+    """Anthropic has emitted `allowed` + util=1.0; the numeric hard cap wins."""
+    assert not bearer_usable({"limiter": {}, "unified": {"status_5h": "allowed", "util_5h": 1.0}})
+    assert not bearer_usable({"limiter": {}, "unified": {"status_7d": "allowed", "util_7d": 1.0}})
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +307,7 @@ def test_bearer_usable_rejected_window_is_locked() -> None:
 def test_bearer_usable_expired_rejected_window_is_not_locked() -> None:
     """``rejected`` + reset epoch in the PAST = stale reading, not a lock."""
     past = time.time() - 600
+    assert bearer_usable({"limiter": {}, "unified": {"status": "rejected", "reset": past}})
     assert bearer_usable({"limiter": {}, "unified": {"status_5h": "rejected", "reset_5h": past}})
     assert bearer_usable({"limiter": {}, "unified": {"status_7d": "rejected", "reset_7d": past}})
 

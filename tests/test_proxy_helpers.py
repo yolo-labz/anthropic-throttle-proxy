@@ -2365,9 +2365,25 @@ _DAY = 24 * _HOUR
 
 
 class _RoutingLimiter:
+    """Stand-in for ``FairBearerLimiter``, faithful to the surface routing reads.
+
+    ``queued_total``/``priority_queued`` mirror the real properties. When this
+    double exposed only ``snapshot()``, the load score read its queue depth as
+    ZERO and a deeply-queued account ranked as the idlest in the fleet — a
+    double that lies about its interface silently inverts the thing under test.
+    """
+
     def __init__(self, *, queued: int = 0, inflight: int = 0) -> None:
         self.queued = queued
         self.inflight = inflight
+
+    @property
+    def queued_total(self) -> int:
+        return self.queued
+
+    @property
+    def priority_queued(self) -> int:
+        return 0
 
     def retry_after_remaining(self) -> float:
         return 0.0
@@ -2375,7 +2391,7 @@ class _RoutingLimiter:
     def snapshot(self) -> dict[str, int]:
         return {
             "queued_total": self.queued,
-            "priority_queued": 0,
+            "priority_queued": self.priority_queued,
             "inflight": self.inflight,
         }
 

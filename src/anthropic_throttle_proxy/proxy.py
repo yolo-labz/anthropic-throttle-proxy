@@ -1389,13 +1389,105 @@ def _account_routing_candidate_score(
 
 
 def _bearer_local_load_score(bid: str) -> float:
-    """Queue/inflight pressure only; lower is better for same-host admission."""
+    """Queue/inflight pressure only; lower is better for same-host admission.
+
+    Reads limiter properties directly rather than materializing ``snapshot``'s
+    ``queued_per_client`` and ``rr_order`` collections on every scoring pass.
+    ``queued_total`` still sums one deque per actively queued client, so CPU is
+    O(active queue clients) even though the statusline payload is O(1); maintained
+    queue counters are the documented upgrade if that measured ceiling matters.
+    """
     lim = config.bearer_limiters.get(bid)
-    snap = lim.snapshot() if lim is not None and hasattr(lim, "snapshot") else {}
-    queued = float(snap.get("queued_total") or 0)
-    priority_queued = float(snap.get("priority_queued") or 0)
-    inflight = float(snap.get("inflight") or 0)
-    return queued * 100.0 + priority_queued * 100.0 + inflight * 10.0
+    if lim is None:
+        # No limiter allocated yet is the one honest zero: nothing is parked on
+        # a bearer that has never dispatched. Read the scalars directly
+        # otherwise — a limiter that cannot report its load must raise here
+        # rather than default to 0.0, because "no data" scored as "idle" makes
+        # the loaded account look like the cheapest one in the fleet.
+        return 0.0
+    return lim.queued_total * 100.0 + lim.priority_queued * 100.0 + lim.inflight * 10.0
+
+
+def _account_selection(
+    snapshot: list[dict[str, object]],
+    incoming_bid: str,
+    *,
+    model: str = "",
+    max_tokens: int | None = None,
+    now: float,
+    allow_retry_probe: bool,
+) -> tuple[dict[str, object] | None, float]:
+    """``(account the router would pick, strict-candidate load floor)``.
+
+    PURE by construction — it only reads limiter and bearer state. The probation
+    WRITE that ``allow_retry_probe`` implies lives in the caller
+    (:func:`_route_account_if_enabled` seeds it before calling), never here, so
+    a read-only consumer can ask "who serves my next request" and get the same
+    answer the hot path is about to act on.
+
+    That shared answer is the point. ``/__throttle/statusline`` previously
+    re-derived a similar-looking ladder and diverged three ways at once: it
+    returned the strict best without ever comparing it against the pressured
+    best, never ran the spillover pass, and passed ``allow_retry_probe=False``
+    while both real callers pass ``True``. Each divergence names a different
+    account than the one that serves — the exact failure the endpoint exists to
+    fix. Parity is now structural rather than restated.
+    """
+
+    def score(
+        acct: dict[str, object], *, allow_pressure: bool = False, spillover: bool = False
+    ) -> float:
+        return _account_routing_candidate_score(
+            acct,
+            incoming_bid,
+            allow_pressure=allow_pressure,
+            allow_target_spillover=spillover,
+            allow_retry_probe=allow_retry_probe,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+        )
+
+    routable = [
+        acct
+        for acct in snapshot
+        if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
+    ]
+    strict_candidates = [acct for acct in routable if score(acct) < math.inf]
+    best_configured_load = min(
+        (_bearer_local_load_score(str(acct["bearer_id"])) for acct in strict_candidates),
+        default=math.inf,
+    )
+    spillover = bool(strict_candidates) and best_configured_load >= _QUEUE_SPILLOVER_LOAD_THRESHOLD
+
+    def ranked(acct: dict[str, object], spill: bool) -> float:
+        """The ONE key every comparison below shares, so pools stay commensurable."""
+        return score(acct, allow_pressure=True, spillover=spill)
+
+    pressure_candidates = [acct for acct in routable if ranked(acct, spillover) < math.inf]
+    candidates = strict_candidates or pressure_candidates
+    if strict_candidates and pressure_candidates:
+        # Both pools have members: the pressured pool wins only when it actually
+        # ranks BETTER on the common key. A clean-but-queued account must not
+        # beat an idle one that merely crossed its warning line.
+        strict_best = min(strict_candidates, key=lambda acct: ranked(acct, spillover))
+        pressure_best = min(pressure_candidates, key=lambda acct: ranked(acct, spillover))
+        if ranked(pressure_best, spillover) < ranked(strict_best, spillover):
+            candidates = pressure_candidates
+    if not candidates:
+        # budget_paced: "no candidates" can mean every account merely crossed
+        # its SOFT pacing target (still below hard cap, dispatchable), not that
+        # any is truly unusable. Recover those via a spillover pass before
+        # falling back, so real capacity isn't stranded behind the stale
+        # incoming bearer (Codex MAJOR). Hard-unusable accounts (util>=1,
+        # scoped full, rejected, retry-after>MAX_HOLD) still score inf here, so
+        # this never routes to a will-fail account.
+        spillover_candidates = [acct for acct in routable if ranked(acct, True) < math.inf]
+        if spillover_candidates:
+            candidates, spillover = spillover_candidates, True
+    if not candidates:
+        return None, best_configured_load
+    return min(candidates, key=lambda acct: ranked(acct, spillover)), best_configured_load
 
 
 def _route_to_selected_auth(
@@ -1419,7 +1511,7 @@ def _route_to_selected_auth(
 
 
 def _healthy_known_unconfigured_bearer(
-    incoming_bid: str, configured_bids: set[str], best_configured_load: float
+    incoming_bid: str, configured_bids: set[str], best_configured_load: float, now: float
 ) -> bool:
     """True when an incoming non-configured bearer has fresh no-pressure evidence."""
     if not incoming_bid or incoming_bid in configured_bids:
@@ -1437,7 +1529,7 @@ def _healthy_known_unconfigured_bearer(
     if not (
         isinstance(unified, dict)
         and isinstance(unified_at, (int, float))
-        and (time.time() - unified_at) <= UNIFIED_CACHE_FRESH_S
+        and (now - unified_at) <= UNIFIED_CACHE_FRESH_S
     ):
         return False
     statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
@@ -1447,6 +1539,69 @@ def _healthy_known_unconfigured_bearer(
     if binding is None or (UTILIZATION_WARN > 0 and binding >= UTILIZATION_WARN):
         return False
     return _bearer_local_load_score(incoming_bid) <= best_configured_load
+
+
+def _account_route_decision(
+    snapshot: list[dict[str, object]],
+    incoming_bid: str,
+    *,
+    explicit_api_key: bool,
+    api_key: dict[str, object] | None,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> tuple[dict[str, object] | None, bool]:
+    """Return ``(credential rewrite, used_dead_fallback)`` for one message.
+
+    This is the side-effect-free top-level routing decision shared by the hot
+    path and ``/__throttle/statusline``. ``None`` means preserve the caller's
+    credential. Keeping API-key prefer/overflow, healthy unconfigured callers,
+    and the dead-credential fallback here prevents the projection from claiming
+    parity with only the configured-OAuth middle of the real route.
+    """
+    if explicit_api_key:
+        return None, False
+    if api_key is not None and config.API_KEY_ROUTING_MODE == "prefer":
+        return api_key, False
+    if not _account_routing_enabled():
+        return api_key, False
+
+    configured_bids = {
+        str(acct["bearer_id"])
+        for acct in snapshot
+        if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
+    }
+    selected, best_configured_load = _account_selection(
+        snapshot,
+        incoming_bid,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_retry_probe=allow_retry_probe,
+    )
+    if _healthy_known_unconfigured_bearer(incoming_bid, configured_bids, best_configured_load, now):
+        return None, False
+    if selected is not None:
+        return selected, False
+    if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
+        return api_key, False
+    # Every configured account is hard-unusable. Preserve a merely throttled
+    # incoming bearer, but never hand a known-dead credential back to the client:
+    # a retryable 429 from a pressured sibling strictly dominates a terminal 403.
+    if _bearer_credential_dead(incoming_bid):
+        live = [
+            acct
+            for acct in snapshot
+            if isinstance(acct.get("token"), str)
+            and isinstance(acct.get("bearer_id"), str)
+            and not _bearer_credential_dead(str(acct["bearer_id"]))
+        ]
+        if live:
+            return min(
+                live, key=lambda acct: _bearer_local_load_score(str(acct["bearer_id"]))
+            ), True
+    return None, False
 
 
 def _route_account_if_enabled(
@@ -1469,209 +1624,45 @@ def _route_account_if_enabled(
     if method != "POST" or "v1/messages" not in path:
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
-    if "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys:
-        return incoming_bid, None
-    api_key = _api_key_candidate()
-    if api_key is not None and config.API_KEY_ROUTING_MODE == "prefer":
-        return _route_to_selected_auth(headers, incoming_bid, api_key)
-    if not _account_routing_enabled():
-        if api_key is not None:
-            return _route_to_selected_auth(headers, incoming_bid, api_key)
-        return incoming_bid, None
-    from . import accounts
-
-    # One clock for the whole selection: the snapshot AND every pacing score must
-    # measure time-to-reset against the same ``now`` (budget_paced divides by it).
+    explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
+    api_key = None if explicit_api_key else _api_key_candidate()
     now = time.time()
-    snapshot = accounts.routing_snapshot(now)
-    configured_bids = {
-        str(acct["bearer_id"])
-        for acct in snapshot
-        if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
-    }
-    if allow_retry_probe:
-        # Routing runs before limiter allocation. Seed probation for configured
-        # cold-start accounts here so selection and the winning probe claim can
-        # remain synchronous (no first-await race).
-        for configured_bid in configured_bids:
-            if configured_bid not in config.bearer_limiters:
-                _limiter.require_retry_probe(configured_bid)
-    strict_candidates = [
-        acct
-        for acct in snapshot
-        if isinstance(acct.get("token"), str)
-        and isinstance(acct.get("bearer_id"), str)
-        and _account_routing_candidate_score(
-            acct,
-            incoming_bid,
-            allow_retry_probe=allow_retry_probe,
-            model=model,
-            max_tokens=max_tokens,
-            now=now,
-        )
-        < math.inf
-    ]
-    best_configured_load = min(
-        (_bearer_local_load_score(str(acct["bearer_id"])) for acct in strict_candidates),
-        default=math.inf,
-    )
-    if _healthy_known_unconfigured_bearer(incoming_bid, configured_bids, best_configured_load):
-        return incoming_bid, None
+    snapshot: list[dict[str, object]] = []
+    if (
+        not explicit_api_key
+        and not (api_key is not None and config.API_KEY_ROUTING_MODE == "prefer")
+        and _account_routing_enabled()
+    ):
+        from . import accounts
 
-    allow_target_spillover = (
-        bool(strict_candidates) and best_configured_load >= _QUEUE_SPILLOVER_LOAD_THRESHOLD
+        # One clock for the snapshot and every pacing score: budget_paced divides
+        # by time-to-reset, so a split clock can change the winner at the edge.
+        snapshot = accounts.routing_snapshot(now)
+        if allow_retry_probe:
+            # Routing runs before limiter allocation. Seed probation for
+            # configured cold-start accounts synchronously (no first-await race).
+            for acct in snapshot:
+                configured_bid = acct.get("bearer_id")
+                if (
+                    isinstance(acct.get("token"), str)
+                    and isinstance(configured_bid, str)
+                    and configured_bid not in config.bearer_limiters
+                ):
+                    _limiter.require_retry_probe(configured_bid)
+    selected, dead_fallback = _account_route_decision(
+        snapshot,
+        incoming_bid,
+        explicit_api_key=explicit_api_key,
+        api_key=api_key,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_retry_probe=allow_retry_probe,
     )
-    pressure_candidates = [
-        acct
-        for acct in snapshot
-        if isinstance(acct.get("token"), str)
-        and isinstance(acct.get("bearer_id"), str)
-        and _account_routing_candidate_score(
-            acct,
-            incoming_bid,
-            allow_pressure=True,
-            allow_target_spillover=allow_target_spillover,
-            allow_retry_probe=allow_retry_probe,
-            model=model,
-            max_tokens=max_tokens,
-            now=now,
-        )
-        < math.inf
-    ]
-    candidates = strict_candidates or pressure_candidates
-    if strict_candidates and pressure_candidates:
-        strict_best = min(
-            strict_candidates,
-            key=lambda acct: _account_routing_candidate_score(
-                acct,
-                incoming_bid,
-                allow_pressure=True,
-                allow_target_spillover=allow_target_spillover,
-                allow_retry_probe=allow_retry_probe,
-                model=model,
-                max_tokens=max_tokens,
-                now=now,
-            ),
-        )
-        pressure_best = min(
-            pressure_candidates,
-            key=lambda acct: _account_routing_candidate_score(
-                acct,
-                incoming_bid,
-                allow_pressure=True,
-                allow_target_spillover=allow_target_spillover,
-                allow_retry_probe=allow_retry_probe,
-                model=model,
-                max_tokens=max_tokens,
-                now=now,
-            ),
-        )
-        strict_score = _account_routing_candidate_score(
-            strict_best,
-            incoming_bid,
-            allow_pressure=True,
-            allow_target_spillover=allow_target_spillover,
-            allow_retry_probe=allow_retry_probe,
-            model=model,
-            max_tokens=max_tokens,
-            now=now,
-        )
-        pressure_score = _account_routing_candidate_score(
-            pressure_best,
-            incoming_bid,
-            allow_pressure=True,
-            allow_target_spillover=allow_target_spillover,
-            allow_retry_probe=allow_retry_probe,
-            model=model,
-            max_tokens=max_tokens,
-            now=now,
-        )
-        if pressure_score < strict_score:
-            candidates = pressure_candidates
-    if not candidates:
-        # budget_paced: "no candidates" can mean every account merely crossed
-        # its SOFT pacing target (still below hard cap, dispatchable), not that
-        # any is truly unusable. Recover those via a spillover pass before
-        # falling back, so real capacity isn't stranded behind the stale
-        # incoming bearer (Codex MAJOR). Hard-unusable accounts (util>=1,
-        # scoped full, rejected, retry-after>MAX_HOLD) still score inf here, so
-        # this never routes to a will-fail account.
-        spillover_candidates = [
-            acct
-            for acct in snapshot
-            if isinstance(acct.get("token"), str)
-            and isinstance(acct.get("bearer_id"), str)
-            and _account_routing_candidate_score(
-                acct,
-                incoming_bid,
-                allow_pressure=True,
-                allow_target_spillover=True,
-                allow_retry_probe=allow_retry_probe,
-                model=model,
-                max_tokens=max_tokens,
-                now=now,
-            )
-            < math.inf
-        ]
-        if spillover_candidates:
-            candidates = spillover_candidates
-            allow_target_spillover = True
-    if not candidates:
-        if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
-            return _route_to_selected_auth(headers, incoming_bid, api_key)
-        # Even the spillover pass found nothing, so EVERY configured account is
-        # genuinely unusable right now (util>=1, scoped meter full, rejected, or
-        # retry-after > MAX_HOLD) — not just soft-target-crossed. Routing to one
-        # would only fast-fail or draw a real 429, so keep the incoming bearer;
-        # the retry-after reroute path (guarded to configured-only) still owns
-        # the "never hop to a stale incoming" invariant. Short holdable windows
-        # never land here: the candidate score keeps them routable (PR #106).
-        #
-        # ...UNLESS the incoming credential is REFUSED rather than throttled.
-        # That reasoning above weighs a 429 against a 429; a quarantined bearer
-        # is a different currency. Keeping it guarantees a terminal 403, which
-        # claude-code renders as "your organization has disabled Claude
-        # subscription access" and does NOT retry, while a merely-budget-capped
-        # sibling answers 429 — retryable, and the client already knows how to
-        # wait on it. A live-but-pressured account therefore strictly dominates
-        # a dead one, so take the least-loaded non-quarantined account and
-        # ignore the soft gates that ruled it out.
-        #
-        # Measured on the desktop 05/08/2026: the usage endpoint 429'd for all
-        # three accounts at once (its own per-endpoint limit, unrelated to
-        # whether /v1/messages would serve), which scores every account inf.
-        # With account A quarantined that left no candidates, and the fallback
-        # handed two client turns straight back to the dead credential — the
-        # exact symptom the quarantine exists to prevent, reintroduced through
-        # the back door.
-        if _bearer_credential_dead(incoming_bid):
-            live = [
-                acct
-                for acct in snapshot
-                if isinstance(acct.get("token"), str)
-                and isinstance(acct.get("bearer_id"), str)
-                and not _bearer_credential_dead(str(acct["bearer_id"]))
-            ]
-            if live:
-                selected = min(
-                    live, key=lambda acct: _bearer_local_load_score(str(acct["bearer_id"]))
-                )
-                log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
-                return _route_to_selected_auth(headers, incoming_bid, selected)
+    if selected is None:
         return incoming_bid, None
-    selected = min(
-        candidates,
-        key=lambda acct: _account_routing_candidate_score(
-            acct,
-            incoming_bid,
-            allow_pressure=True,
-            allow_target_spillover=allow_target_spillover,
-            allow_retry_probe=allow_retry_probe,
-            model=model,
-            max_tokens=max_tokens,
-            now=now,
-        ),
-    )
+    if dead_fallback:
+        log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
     return _route_to_selected_auth(headers, incoming_bid, selected)
 
 
@@ -4473,9 +4464,10 @@ async def admission(_request: web.Request) -> web.Response:
 
     while THIS proxy was serving that same bearer normally. ``allowed_warning``
     is a flag Anthropic raises long before a window is spent; the proxy has
-    never treated it as a stop, because ``bearer_usable`` gates on ``rejected``
-    and on an active retry-after — nothing else. The consumer had invented a
-    stricter rule and then enforced it fleet-wide.
+    never treated it as a stop, because ``bearer_usable`` gates on an active
+    retry-after, any live aggregate/5h/7d ``rejected`` status, or live
+    utilization at 1.0 — never on ``allowed_warning``. The consumer had
+    invented a stricter warning rule and then enforced it fleet-wide.
 
     So the verdict below is computed with the SAME predicates the hot path
     uses (``routing.bearer_usable`` / ``routing.lane_usable``), not a parallel
@@ -4698,43 +4690,37 @@ def _statusline_unified(bid: str) -> dict[str, object]:
     return unified if isinstance(unified, dict) else {}
 
 
-def _statusline_best_configured(
-    snapshot: list[dict[str, object]], model: str, now: float
-) -> dict[str, object] | None:
-    """Lowest-scoring configured account, ranked exactly as the hot path ranks.
+def _statusline_rejected(bid: str | None, now: float) -> bool:
+    """Does ``bid`` hold a LIVE ``rejected`` window, in any of the three slots?
 
-    Reuses ``_account_routing_candidate_score`` rather than re-deriving it, so
-    the account this names is the account ``_route_account_if_enabled`` would
-    actually rewrite ``Authorization`` to (FR-004) — including the scoped
-    per-model weekly meter when ``model`` is supplied (FR-007).
-
-    ``incoming_bid=""`` on purpose: there is no request in hand, so no bearer
-    earns the stickiness discount. ``allow_retry_probe`` stays off because it
-    MUTATES probation state; a read-only projection must not seed it.
+    Deliberately wider than ``account.status``, which reports only the BINDING
+    window. A snapshot carrying ``representative_claim="five_hour"`` binds to 5h
+    even while its 7d window is rejected at 1.0, so the published status reads
+    ``allowed`` for an account the router scores ``math.inf`` and refuses to
+    use. Reporting ``ok`` there is the same class of lie as rendering a dead
+    window as capacity (adversarial review MAJOR).
     """
+    if not bid:
+        return False
+    live = _unified_live_view(_statusline_unified(bid), now)
+    return "rejected" in (live.get("status"), live.get("status_5h"), live.get("status_7d"))
 
-    def score(acct: dict[str, object], *, allow_pressure: bool) -> float:
-        return _account_routing_candidate_score(
-            acct,
-            "",
-            allow_pressure=allow_pressure,
-            model=model,
-            now=now,
-        )
 
-    # Strict first, then the pressure pass — the same two-tier ladder the hot
-    # path walks, so a fleet where every account merely crossed its warning
-    # line still names the one that would take the traffic.
-    for allow_pressure in (False, True):
-        scored = [
-            (score(acct, allow_pressure=allow_pressure), i) for i, acct in enumerate(snapshot)
-        ]
-        # Rank on (score, index) so a tie falls to env order instead of
-        # comparing the account dicts themselves.
-        best = min((row for row in scored if row[0] < math.inf), default=None)
-        if best is not None:
-            return snapshot[best[1]]
-    return None
+def _statusline_bearer_usable(bid: str, now: float) -> bool:
+    """Is ``bid`` routable right now — the same question ``fleet.usable`` counts.
+
+    One definition, two callers (the fleet tally and the ``exhausted`` gate), so
+    the headline state cannot contradict the counters printed beside it.
+    """
+    if _bearer_credential_dead(bid):
+        return False
+    view = {
+        # ``bearer_usable`` reads a health-shaped dict; hand it the two fields
+        # it gates on rather than the whole limiter snapshot.
+        "limiter": {"retry_after_until": now + _bearer_retry_after_remaining(bid)},
+        "unified": _statusline_unified(bid),
+    }
+    return bool(_bearer_usable(view, now))
 
 
 def _statusline_best_observed(now: float) -> str | None:
@@ -4742,43 +4728,69 @@ def _statusline_best_observed(now: float) -> str | None:
 
     The central tier and any local proxy without ``THROTTLE_ACCOUNT_CRED_PATHS``
     hold no credentials to rank, but they still serve a bearer whose windows the
-    renderer wants. Ranks unblocked before blocked, then by live binding
-    utilization — the same order the configured path produces.
+    renderer wants. Ranks unblocked before blocked, then KNOWN utilization
+    before unknown, then by live binding utilization.
+
+    The unknown tier is load-bearing: a bearer the proxy has never read windows
+    for has no utilization at all, and scoring that absence as ``0.0`` made it
+    the cheapest candidate in the fleet — the same "no data reads as idle
+    capacity" trap the pseudo-bearer and quarantine gates above already close
+    (adversarial review MAJOR).
     """
-    ranked: list[tuple[bool, float, str]] = []
+    ranked: list[tuple[bool, bool, float, str]] = []
     for bid in list(config.bearer_state):
         if bid in _STATUSLINE_PSEUDO_BEARERS or _bearer_credential_dead(bid):
             continue
-        live = _unified_live_view(_statusline_unified(bid), now)
-        blocked = _bearer_retry_after_remaining(bid) > 0 or "rejected" in (
-            live.get("status_5h"),
-            live.get("status_7d"),
-        )
-        util = _binding_utilization(live)
-        ranked.append((blocked, float(util) if util is not None else 0.0, bid))
-    return min(ranked)[2] if ranked else None
+        blocked = _bearer_retry_after_remaining(bid) > 0 or _statusline_rejected(bid, now)
+        util = _binding_utilization(_unified_live_view(_statusline_unified(bid), now))
+        ranked.append((blocked, util is None, float(util or 0.0), bid))
+    return min(ranked)[3] if ranked else None
 
 
 def _statusline_elect(
-    snapshot: list[dict[str, object]], now: float, model: str
-) -> tuple[str | None, str | None]:
-    """``(bearer_id, account_label)`` the hot path would serve the next call with."""
+    snapshot: list[dict[str, object]],
+    now: float,
+    model: str,
+    incoming_bid: str = "",
+    max_tokens: int | None = None,
+) -> tuple[str | None, str | None, bool]:
+    """``(bearer_id, label, route_decision)`` for the supplied context.
+
+    ``bearer`` and ``max_tokens`` are optional at the HTTP surface because an
+    old renderer may not know them. When supplied, both top-level credential
+    routing and configured-account selection are shared with the real request
+    path: explicit client keys, pay-go prefer/overflow, healthy unconfigured
+    callers, retry probation, and token-size pacing all take the same branch.
+    """
     from . import accounts
 
-    bid: str | None = None
-    if snapshot:
-        best = _statusline_best_configured(snapshot, model, now)
-        if best is not None:
-            bid = str(best["bearer_id"])
+    selected, _dead_fallback = _account_route_decision(
+        snapshot,
+        incoming_bid,
+        explicit_api_key=incoming_bid == "api-key",
+        api_key=None if incoming_bid == "api-key" else _api_key_candidate(),
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        # Mirrors both real message-routing callers. The probation WRITE lives
+        # in the hot-path caller, so projection remains read-only.
+        allow_retry_probe=True,
+    )
+    selected_label = selected.get("label") if selected is not None else None
+    bid = str(selected["bearer_id"]) if selected is not None else incoming_bid or None
     if bid is None:
         bid = _statusline_best_observed(now)
     if bid is None:
-        return None, None
-    # Label off the snapshot already in hand; only a bearer that snapshot
-    # skipped (expired token, unreadable file) costs the second traversal.
+        return None, None, False
+    # Label off the decision/snapshot already in hand. Only an observed bearer
+    # outside both costs the cached label traversal.
     labels = {str(acct["bearer_id"]): acct.get("label") for acct in snapshot}
-    label = labels.get(bid) or accounts.bearer_labels().get(bid)
-    return bid, str(label) if label else None
+    label = selected_label or labels.get(bid) or accounts.bearer_labels().get(bid)
+    # A best-observed fallback keeps credential-less tiers informative, but it
+    # is not a route and therefore cannot suppress `exhausted` for a configured
+    # fleet. A selected rewrite or preserved caller context is authoritative.
+    route_decision = selected is not None or bool(incoming_bid)
+    return bid, str(label) if label else None, route_decision
 
 
 def _statusline_window(bid: str | None, now: float) -> dict[str, object]:
@@ -4826,7 +4838,14 @@ def _statusline_queue(bid: str | None, now: float) -> tuple[dict[str, int], int 
         # request would meet is the configured one.
         return {"depth": 0, "inflight": 0, "cap": config.MAX_CONCURRENT}, None
     remaining = lim.retry_after_remaining()
-    queue = {"depth": lim.queued_total, "inflight": lim.inflight, "cap": lim.max_concurrent}
+    queue = {
+        # Both lanes, matching what routing's load score weighs. A reserved
+        # priority lane backed up behind long generations is a real wait;
+        # counting only the fair queue reported depth 0 while callers waited.
+        "depth": lim.queued_total + lim.priority_queued,
+        "inflight": lim.inflight,
+        "cap": lim.max_concurrent,
+    }
     # Derived from the remaining seconds rather than the stored epoch so the
     # countdown is consistent with the ``now`` in this same payload.
     return queue, int(now + remaining) if remaining > 0 else None
@@ -4843,18 +4862,7 @@ def _statusline_fleet(snapshot: list[dict[str, object]], now: float) -> tuple[in
     """
     from . import accounts
 
-    usable = 0
-    for acct in snapshot:
-        bid = str(acct["bearer_id"])
-        if _bearer_credential_dead(bid):
-            continue
-        view = {
-            # ``bearer_usable`` reads a health-shaped dict; hand it the two
-            # fields it gates on rather than the whole limiter snapshot.
-            "limiter": {"retry_after_until": now + _bearer_retry_after_remaining(bid)},
-            "unified": _statusline_unified(bid),
-        }
-        usable += 1 if _bearer_usable(view, now) else 0
+    usable = sum(_statusline_bearer_usable(str(acct["bearer_id"]), now) for acct in snapshot)
     return usable, len(accounts.parse_spec(config.ACCOUNT_CRED_PATHS))
 
 
@@ -4865,17 +4873,25 @@ def _statusline_state(
     blocked_until: int | None,
     usable: int,
     configured: int,
+    rejected: bool,
+    elected_usable: bool,
 ) -> str:
     """First match wins, most severe first (FR-008).
 
     ``exhausted`` is gated on ``configured > 0`` so a freshly-started process
-    that has served nothing yet reads ``ok``, not "every account is dead".
+    that has served nothing yet reads ``ok``, not "every account is dead". It is
+    ALSO gated on the elected bearer being unusable: the fleet tally counts only
+    CONFIGURED accounts, while election can fall back to an unconfigured bearer
+    the proxy has served — exactly what the router does when every configured
+    account is budget-locked. Without that gate the payload announced
+    ``exhausted`` beside a healthy account it had just named, during the one
+    incident a human reads it (adversarial review MAJOR).
     """
     if not state["upstream_egress_ok"]:
         return "down"
-    if configured > 0 and usable == 0:
+    if configured > 0 and usable == 0 and not elected_usable:
         return "exhausted"
-    if blocked_until is not None or account["status"] == "rejected":
+    if blocked_until is not None or rejected:
         return "throttled"
     if depth > 0:
         return "queued"
@@ -4898,12 +4914,22 @@ async def statusline(request: web.Request) -> web.Response:
 
     now = time.time()
     model = request.query.get("model", "")
+    raw_bearer = request.query.get("bearer", "")
+    incoming_bid = (
+        raw_bearer if raw_bearer == "api-key" or re.fullmatch(r"[0-9a-f]{8}", raw_bearer) else ""
+    )
+    try:
+        max_tokens = int(request.query["max_tokens"]) if "max_tokens" in request.query else None
+    except ValueError:
+        max_tokens = None
+    if max_tokens is not None and max_tokens <= 0:
+        max_tokens = None
     # ONE credential-cache traversal per request, shared by election and fleet
     # count. ``routing_snapshot`` hits the ``(mtime_ns, size)``-keyed cache: a
-    # stat per configured account on the steady path and no parse, which is what
-    # keeps this endpoint free of blocking credential I/O (FR-011).
+    # stat per configured account on the steady path and no parse. A file-change
+    # cache miss remains synchronous and is explicitly recorded as residual risk.
     snapshot = accounts.routing_snapshot(now)
-    bid, label = _statusline_elect(snapshot, now, model)
+    bid, label, route_decision = _statusline_elect(snapshot, now, model, incoming_bid, max_tokens)
     account = _statusline_window(bid, now)
     queue, blocked_until = _statusline_queue(bid, now)
     usable, configured = _statusline_fleet(snapshot, now)
@@ -4913,14 +4939,16 @@ async def statusline(request: web.Request) -> web.Response:
         blocked_until=blocked_until,
         usable=usable,
         configured=configured,
+        rejected=_statusline_rejected(bid, now),
+        elected_usable=route_decision and bool(bid) and _statusline_bearer_usable(str(bid), now),
     )
     body = {
         "schema": _STATUSLINE_SCHEMA,
         "now": int(now),
         "state": level,
         "state_since_s": int(_history.level_since(level, now, track="statusline")),
-        # Only the 8-hex hash and the configured short label — never a token,
-        # a credential path, or an account email (invariant #2, FR-012).
+        # Only the 8-hex OAuth hash (or fixed `api-key` pseudonym) and configured
+        # short label — never a token, path, or email (invariant #2, FR-012).
         "account": {"label": label, "bearer": bid, **account},
         "queue": queue,
         "blocked_until": blocked_until,
