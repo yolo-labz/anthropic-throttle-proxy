@@ -92,10 +92,10 @@ Line numbers are against the sibling's in-flight tree (17/08/2026 12:57 BRT) and
 | FR-001 | route `GET /__throttle/statusline`, **above** the catch-all | `proxy.py:4589` (catch-all is `:4595`) | — |
 | FR-002 | no bearer slot, no `served`, never forwarded | route placement beside `root_probe`/`health` | `root_probe` precedent |
 | FR-003 | ≤1024 B, no client/bearer-scaled collection | `statusline` handler body, `proxy.py:4446+` | — |
-| FR-004 | selection = what the hot path would pick now | `_statusline_elect` `:4318`, `_statusline_best_configured` `:4257`, `_statusline_best_observed` `:4296` | `_account_routing_candidate_score` |
+| FR-004 | selection = what the hot path would pick now | `_statusline_elect` + `_account_route_decision` | `_account_selection`, `_account_routing_candidate_score` |
 | FR-005 | binding window via **live-viewed** unified | `_statusline_window` `:4340` | `ratelimit._binding_utilization`, `_binding_window`, `_unified_live_view` |
 | FR-006 | `stale` when raw binding window is past reset | `_statusline_window` `:4340` | `_unified_live_view` |
-| FR-007 | optional `?model=` → scoped per-model meter | `statusline` handler `:4446` → `_statusline_elect` | `_account_routing_candidate_score(model=…)` |
+| FR-007 | optional `?bearer=`/`?model=`/`?max_tokens=` request context | `statusline` handler → `_statusline_elect` | `_account_route_decision` + `_account_selection` |
 | FR-008 | `state` enum + severity resolution | `_statusline_state` `:4417` | `config.UTILIZATION_WARN` |
 | FR-009 | HTTP 200 in **every** state, incl. egress down | `web.json_response(body, …)` (defaults 200) | — |
 | FR-010 | `Cache-Control: no-store` | same `json_response` call | — |
@@ -167,10 +167,11 @@ is the real remaining work and belongs to T-13.
 - [x] **T-09 · Route ABOVE the catch-all.** (FR-001) `proxy.py:4589`, catch-all at `:4595`. Gate
   evidence: CHECK 0 reports 200, `schema=statusline/1`, zero upstream edge headers. T-02 is the
   evidence for why the ordering is load-bearing.
-- [x] **T-10 · Handler gathers readings and delegates.** (FR-004, FR-007) Handler at `:4446`;
-  `model = request.query.get("model", "")` → `_statusline_elect`, which calls the existing ranker so
-  selection cannot drift from the hot path. **Owed:** the `?model=` scoped-selection test — the gate
-  does not exercise the query parameter.
+- [x] **T-10 · Handler gathers readings and delegates.** (FR-004, FR-007) The handler validates
+  optional non-secret `bearer`, `model`, and positive `max_tokens` context, then delegates to the
+  same `_account_route_decision` and `_account_selection` as the hot path. Tests cover model/token
+  pacing, healthy-unconfigured preservation, explicit client API keys, and configured pay-go
+  `prefer`/`overflow`; malformed context is never treated as a credential.
 - [x] **T-11 · Always 200 + `no-store`.** (FR-009, FR-010) Gate evidence: `Cache-Control: no-store`
   present, 60/60 responses HTTP 200. **Owed:** an egress-down `state:"down"` case — the gate cannot
   induce that safely against a live host.
@@ -184,7 +185,7 @@ is the real remaining work and belongs to T-13.
 
 ## Phase 4 — Tests + gates
 
-- [x] **T-13 · `tests/test_statusline.py`.** 22 tests. Covers: ≤1024 B **and byte-identical** across
+- [x] **T-13 · `tests/test_statusline.py`.** 42 tests. Covers: ≤1024 B **and byte-identical** across
   a 0-client and a 1,000-client-per-bearer fixture; exact 18-leaf key set (via a `_leaves` walker
   that keeps `false`/`null`, which `paths(scalars)` drops); every FR-008 state **and the severity
   ordering** (`test_state_resolution_is_most_severe_first` — all five preconditions true at once,
@@ -253,9 +254,50 @@ is the real remaining work and belongs to T-13.
   coin flip — it failed on noise (0.001091s vs 0.001063s) against a correct implementation. A
   projection can only be proven cheaper than the blob it projects when a blob exists. spec.md SC-002
   now carries this precondition; the absolute 50 ms ceiling still applies unconditionally.
-- [ ] **T-18 · Mandatory Codex adversarial review** (repo CLAUDE.md). This slice touches the request
-  path's route table and reads limiter state, so it is in scope. Provide symptom, hypothesis, live
-  evidence, diff, tests, deployment plan.
+- [x] **T-18 · Mandatory Codex adversarial review** (repo CLAUDE.md). The 17/08/2026 review returned
+  **DO-NOT-MERGE** with 5 MAJOR, 3 MINOR, and 2 NIT findings. PR #208 nevertheless merged unchanged;
+  follow-up branch `217-statusline-parity` addresses the review before the feature is treated as done:
+  - findings 1–2: `_account_selection` is now the single side-effect-free selector used by both the
+    request router and statusline, including pressure-vs-strict comparison, soft-target spillover,
+    and `allow_retry_probe=True` parity;
+  - findings 4–5: unknown-window bearers rank behind measured ones, rejection is derived across both
+    live windows, and `exhausted` cannot contradict a healthy elected bearer;
+  - findings 7–8: routing reads limiter scalars directly and queue depth includes the priority lane;
+  - finding 10: a router-vs-statusline parity test plus six mutation checks prove each repaired
+    predicate discriminates. Fresh follow-up evidence: `ruff` clean, **967 passed**, warm isolated
+    gate **21 PASS / 0 FAIL / 0 SKIP**, 340 B / 18 leaves, p95 0.914 ms < health 1.329 ms;
+  - MAJOR finding 3 was initially deferred, but the 30/08/2026 exact-diff Codex re-review correctly
+    BLOCKED the remaining overclaim. The endpoint now accepts non-secret `bearer` and `max_tokens`
+    context and shares the router's top-level decision, covering healthy-unconfigured preservation,
+    explicit client keys, configured pay-go `prefer`/`overflow`, and token-size pacing;
+  - MINOR finding 6 is deliberately not implemented: `fleet.configured` remains the operator-declared
+    `THROTTLE_ACCOUNT_CRED_PATHS` denominator. Counting only readable snapshots would hide a missing,
+    expired, or unreadable configured credential; a separate `misconfigured` leaf would break the
+    frozen 18-leaf schema and belongs in a new version;
+  - NIT finding 9 remains an accepted cache-miss risk: the warm p95 proves only the steady cached
+    path, not a slow filesystem. Moving credential refresh/I/O off the event loop is a separate
+    architectural change; this follow-up adds no upstream I/O and preserves the existing cache path;
+  - the 30/08/2026 Codex re-review's second MAJOR found that unsuffixed `status="rejected"` was
+    throttled but still counted in `fleet.usable`. `_statusline_bearer_usable` now shares the all-slot
+    rejection predicate, with a parser-valid regression fixture;
+  - the subsequent different-family exact-diff review found two more MAJORs: a display-only
+    best-observed fallback could suppress `exhausted`, and `allowed` + `util=1.0` still counted as
+    usable although routing hard-gates it. Election now returns authoritative route provenance and
+    only selected/preserved context can suppress exhaustion; all live 5h/7d util slots hard-fail at
+    1.0. Both review reproductions are permanent red-capable tests;
+  - the root availability owner, `routing.bearer_usable`, now rejects all live aggregate/5h/7d
+    `rejected` statuses and 5h/7d util ≥ 1.0, while preserving its stale-reset unlock rule. Health,
+    admission, lane routing, and statusline therefore share the same hard-availability predicate
+    instead of leaving the sibling surfaces contradictory;
+  - final exact-diff Codex review: **ALLOW**, no BLOCKER/MAJOR. Its queue-depth MINOR is documented
+    honestly: direct properties avoid per-client snapshot allocations, but `queued_total` remains
+    O(active queued clients); the response stays O(1), and maintained counters are the upgrade if
+    measured CPU warrants the added mutation bookkeeping;
+  - final different-family review of the OpenAI repair delta: **ALLOW**, no BLOCKER/MAJOR. Its
+    request-context MINOR is router-faithful and explicit in the spec: a supplied, well-formed but
+    unobserved bearer may be preserved with null/stale gauges while `fleet` still exposes 0/N. Bool
+    utilization remains fail-closed, short Retry-After precedence and API-key cache-miss I/O are
+    documented residual semantics. Source merge is not runtime activation.
 
 ## Phase 5 — Consumer (separate repo, NOT this PR)
 
@@ -279,7 +321,7 @@ is the real remaining work and belongs to T-13.
 - Reshaping / shrinking / paginating `/__throttle/health` — FR-013 forbids it here. The `clients`
   map's unbounded growth (**1,006 → 1,369 entries and 69,408 → 91,118 B observed across 16–17/08**)
   is real but a separate slice.
-- Per-client request attribution — impossible by construction: the statusline is a distinct process
-  from its TUI and cannot share its TCP peer port, so `_client_id` cannot join them. "Serving me" is
-  defined as next-hop selection.
+- Implicit per-client attribution from TCP identity — impossible by construction because the
+  statusline is a distinct process from its TUI. Exact caller-specific election instead uses the
+  consumer-supplied non-secret bearer hash; no `_client_id` join or raw credential is introduced.
 - Prometheus changes, fleet/multi-proxy aggregation, any Nix or deployment mutation.

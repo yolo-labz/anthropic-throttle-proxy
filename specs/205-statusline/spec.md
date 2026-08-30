@@ -43,18 +43,20 @@ now=$(date +%s); curl -q -fsS http://127.0.0.1:8765/__throttle/health | jq -r --
 
 ### User Story 1 — A pane shows the account that will actually serve it (Priority: P1)
 
-A statusline render asks the local proxy which account its next request would land on, and renders that account's binding window fullness and reset. The number on screen describes the credential the proxy will actually spend, not the one the TUI booted with.
+A statusline render asks the local proxy which account its next request would land on, passing the caller's non-secret bearer id and the next request's model/token ceiling when known. The number on screen describes the credential this proxy's hot path will actually spend, not the one the TUI booted with.
 
 **Why this priority**: This is the entire premise. A quota bar that names the wrong account is worse than no bar — it is confidently wrong, and Pedro routes real work off it.
 
-**Independent Test**: With ≥2 configured accounts at different utilizations, assert the endpoint names the same bearer that `_account_routing_candidate_score` ranks best for the same `(now, model)` inputs, and that the reported `util`/`window` equal `_binding_utilization`/`_binding_window` over the **live-viewed** unified block.
+**Independent Test**: With ≥2 configured accounts at different utilizations, assert the endpoint names the same bearer as `_route_account_if_enabled` for the same `(now, incoming bearer, credential kind, model, max_tokens)` inputs, and that the reported `util`/`window` equal `_binding_utilization`/`_binding_window` over the **live-viewed** unified block.
 
 **Acceptance Scenarios**:
 
 1. **Given** two usable accounts with different binding utilizations, **when** the endpoint is read, **then** `account.bearer` equals the lowest-scoring candidate and `account.util` equals that bearer's binding-window utilization.
-2. **Given** the caller passes `?model=<id>` matching an account's scoped weekly meter, **when** the endpoint is read, **then** selection reflects the scoped meter exactly as the hot path would rank it.
-3. **Given** the selected bearer's binding window reset epoch has already passed, **when** the endpoint is read, **then** `account.stale` is `true` and the dead window never presents as fresh capacity.
-4. **Given** `THROTTLE_ACCOUNT_CRED_PATHS` is unset (central tier), **when** the endpoint is read, **then** `account.label` is `null` and every other field still resolves.
+2. **Given** the caller passes `?model=<id>&max_tokens=<n>` matching an account's scoped/paced budget, **when** the endpoint is read, **then** selection prices both inputs exactly as the hot path does.
+3. **Given** `?bearer=<8-hex>` names a healthy unconfigured caller, **when** it is no more loaded than the configured fleet, **then** the endpoint preserves it exactly as the hot path does.
+4. **Given** the hot path would preserve an explicit client key or select a configured pay-go key in `prefer`/`overflow` mode, **when** the endpoint is read with the same context, **then** it names the `api-key` lane rather than a subscription account.
+5. **Given** the selected bearer's binding window reset epoch has already passed, **when** the endpoint is read, **then** `account.stale` is `true` and the dead window never presents as fresh capacity.
+6. **Given** `THROTTLE_ACCOUNT_CRED_PATHS` is unset (central tier), **when** the endpoint is read, **then** `account.label` is `null` and every other field still resolves.
 
 ---
 
@@ -91,11 +93,13 @@ A render distinguishes *the proxy is admitting me but I am behind other work* fr
 
 ### Edge Cases
 
-- `_anon` and `api-key` pseudo-bearers carry `unified: null` — they must never be elected as "the account serving me".
+- `_anon` carries no request credential and must never be elected. `api-key` also has no unified windows, but it MUST be elected when caller context or configured `prefer`/`overflow` routing says the hot path will use that lane.
 - A quarantined credential (`_bearer_credential_dead`, `proxy.py:1160-1162`) is unusable but carries no windows and no Retry-After; it must not read as an idle zero-utilization winner.
 - Both windows present with no `representative_claim` — `_binding_window` tie-breaks to `7d` only when strictly greater (`ratelimit.py:325-346`).
 - Process restart: history is process-local, so `state_since_s` legitimately restarts at 0.
 - Central tier (`CENTRAL_URL` set) — the local proxy holds no credentials; `account` degrades to nulls rather than lying.
+- A supplied, well-formed but unobserved `?bearer=` is router context, not proof of capacity: the hot path preserves it when no managed candidate exists, so `account` may name it with null/stale gauges while `fleet` still reports 0/N.
+- A fleet with only short active Retry-After holds reports `exhausted` before `throttled` because shared `bearer_usable` treats every live hold as unavailable; this severity precedence is conservative and predates the endpoint.
 
 ## Requirements
 
@@ -104,15 +108,15 @@ A render distinguishes *the proxy is admitting me but I am behind other work* fr
 - **FR-001**: The proxy MUST expose `GET /__throttle/statusline` returning JSON, registered alongside the other infrastructure probes (`proxy.py:4322-4324`) and therefore **above** the catch-all route.
 - **FR-002**: The endpoint MUST NOT consume a bearer slot, MUST NOT increment `served`, and MUST NOT be forwarded upstream — it is an infrastructure probe in the same class as `root_probe` and `health`.
 - **FR-003**: The response MUST be ≤ **1024 bytes** and MUST NOT contain any collection whose length scales with client count, bearer count, or request history.
-- **FR-004**: `account` MUST describe the bearer the hot path would select **now**, computed from the same ranking inputs as `_account_routing_candidate_score`, not a first/default/most-recent bearer.
+- **FR-004**: `account` MUST describe the bearer this proxy's hot path would select **now**, using the same top-level credential decision and configured-account selector as `_route_account_if_enabled`, not a first/default/most-recent bearer. When caller context is supplied, parity includes healthy-unconfigured preservation and API-key `prefer`/`overflow`; without it, the result is explicitly the context-free fleet decision.
 - **FR-005**: `account.util`, `account.window`, and `account.status` MUST be derived via `_binding_utilization` / `_binding_window` applied to `unified_live_view(unified, now)` — never to the raw stored snapshot.
 - **FR-006**: `account.stale` MUST be `true` when the RAW stored snapshot's binding window has a reset epoch already in the past at read time — i.e. when FR-005's live-view drops a window. It reports *"the proxy's knowledge of this account is aged; it has not been re-probed since its window rolled"*, so a renderer can mark the number as unconfirmed rather than trusting it. When every window is dropped, `window`/`util`/`status`/`reset` are `null` and `stale` is `true`. Consequence, and the point of the pairing: an emitted non-null `account.reset` is ALWAYS in the future.
-- **FR-007**: The endpoint MUST accept an optional `?model=<id>` query parameter and, when present, apply the scoped per-model weekly meter to selection exactly as the hot path does.
-- **FR-008**: `state` MUST be one of exactly `down | exhausted | throttled | queued | warn | ok`, resolved by **first match in that order, most severe first**. Normative resolution: `down` ⇐ `upstream_egress_ok` false; `exhausted` ⇐ `fleet.usable == 0`; `throttled` ⇐ selected bearer has `retry_after_until` in the future or a `rejected` binding window; `queued` ⇐ `queue.depth > 0`; `warn` ⇐ binding `status == allowed_warning` or `util >= THROTTLE_UTILIZATION_WARN` (live `brake.warn`, default 0.9); else `ok`.
+- **FR-007**: The endpoint MUST accept optional `?bearer=<8-hex|api-key>`, `?model=<id>`, and positive `?max_tokens=<n>` context. Valid values MUST feed the same hot-path decision; malformed values MUST be ignored rather than echoed or parsed as credentials. The 8-hex id and `api-key` pseudonym are non-secret; raw credentials remain forbidden.
+- **FR-008**: `state` MUST be one of exactly `down | exhausted | throttled | queued | warn | ok`, resolved by **first match in that order, most severe first**. Normative resolution: `down` ⇐ `upstream_egress_ok` false; `exhausted` ⇐ a configured fleet has `usable == 0` and no usable bearer was authoritatively selected/preserved from supplied route context (a display-only best-observed fallback does not count); `throttled` ⇐ selected bearer has `retry_after_until` in the future or `rejected` in any live aggregate/5h/7d status slot; `queued` ⇐ `queue.depth > 0`; `warn` ⇐ binding `status == allowed_warning` or `util >= THROTTLE_UTILIZATION_WARN` (live `brake.warn`, default 0.9); else `ok`.
 - **FR-009**: The endpoint MUST return HTTP **200 in every state**, including upstream-egress failure (which health signals as 503). State is carried in the body, never in the status code.
 - **FR-010**: The response MUST carry `Cache-Control: no-store` and MUST NOT be served from a stale cached body.
-- **FR-011**: The endpoint MUST perform no upstream I/O, no blocking file read, and no per-request credential-file parse; account labels MUST come from the existing `(mtime_ns, size)`-keyed cache in `accounts.account_snapshot`.
-- **FR-012**: Raw bearer tokens, credential paths, and account emails MUST NOT appear (invariant #2). Only the 8-hex `bearer_id` and the configured short label may be published.
+- **FR-011**: The endpoint MUST perform no upstream I/O and no steady-path credential-file parse/read. Account and configured API-key lookups MUST reuse their `(mtime_ns, size)` caches; each configured file still costs a synchronous `stat`, and the first read or a rotation cache miss may synchronously read once. Moving that residual filesystem I/O off the event loop requires a separate cache-refresh architecture.
+- **FR-012**: Raw bearer tokens, credential paths, and account emails MUST NOT appear (invariant #2). Only the 8-hex OAuth `bearer_id` (or the fixed `api-key` pseudonym) and the configured short label may be published.
 - **FR-013**: `/__throttle/health` MUST remain byte-identical in schema — this feature adds a surface, it does not reshape the existing one.
 - **FR-014**: The payload MUST carry `schema: "statusline/1"`; any future breaking field change requires a new version string rather than silent reshaping.
 
@@ -149,13 +153,13 @@ A render distinguishes *the proxy is admitting me but I am behind other work* fr
 | `state` | `enum` | derived, FR-008 | "am I throttled or queued" |
 | `state_since_s` | `int` | `history.level_since` | "how long has this held" — the `THROTTLED for 12m` signal |
 | `account.label` | `str\|null` | `accounts.bearer_labels()` | **which account** (`A`/`B`/`C`) |
-| `account.bearer` | `str\|null` | `_bearer_id` hash, 8 hex | joins to health/metrics for drill-down |
+| `account.bearer` | `str\|null` | `_bearer_id` hash (8 hex) or fixed `api-key` pseudonym | joins to health/metrics for drill-down |
 | `account.window` | `"5h"\|"7d"\|null` | `_binding_window` | **which** window binds |
 | `account.util` | `float\|null` | `_binding_utilization` | **how full** |
 | `account.status` | `str\|null` | live-viewed `status_{5h,7d}` | `allowed` / `allowed_warning` / `rejected` |
 | `account.reset` | `int\|null` | live-viewed `reset_{5h,7d}` | **when does it reset** |
 | `account.stale` | `bool` | reset epoch vs `now` | is this reading describing a dead window (FR-006) |
-| `queue.depth` | `int` | `limiter.queued_total` | how deep the line is |
+| `queue.depth` | `int` | `limiter.queued_total + limiter.priority_queued` | how deep both dispatch lanes are |
 | `queue.inflight` | `int` | `limiter.inflight` | how many are moving |
 | `queue.cap` | `int` | `limiter.max_concurrent` | live AIMD ceiling (shows the shrink) |
 | `blocked_until` | `int\|null` | `limiter.retry_after_until` | hard pause epoch, `null` when unpaused |

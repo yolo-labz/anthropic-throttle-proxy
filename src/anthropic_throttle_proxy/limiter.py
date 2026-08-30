@@ -777,13 +777,23 @@ class FairBearerLimiter:
     def queued_total(self) -> int:
         """Requests parked in the fair queue, summed across clients.
 
-        Exposed on its own because ``/__throttle/statusline`` needs the DEPTH
-        without the per-client breakdown ``snapshot`` builds alongside it: that
-        one is keyed by client, and the statusline is bounded to O(1) in client
-        count. An empty deque is popped on drain (:meth:`_try_dispatch`), so
-        this walks only clients with work parked right now.
+        Exposed on its own because ``/__throttle/statusline`` needs the depth
+        without allocating the per-client breakdown ``snapshot`` builds beside
+        it. This still sums one deque per actively queued client (O(active queue
+        clients)); the payload is O(1), but a maintained counter is the upgrade
+        if measured queue-depth CPU becomes material.
         """
         return sum(len(q) for q in self._queues.values())
+
+    @property
+    def priority_queued(self) -> int:
+        """Requests parked in the priority lane, summed across clients.
+
+        The sibling of :attr:`queued_total` for the reserved lane. Routing's
+        load score weighs both the same, and a caller that read only the fair
+        queue would score a bearer whose reserve lane is backed up as idle.
+        """
+        return sum(len(q) for q in self._priority_queues.values())
 
     def snapshot(self) -> dict[str, object]:
         """Cheap dict snapshot for /__throttle/health."""
@@ -805,7 +815,7 @@ class FairBearerLimiter:
             "retry_probe_blocks_routing": self.retry_probe_blocks_routing(),
             "queued_total": self.queued_total,
             "priority_inflight": self.priority_inflight,
-            "priority_queued": sum(len(q) for q in self._priority_queues.values()),
+            "priority_queued": self.priority_queued,
             "queued_per_client": {cid: len(q) for cid, q in self._queues.items()},
             "rr_order": list(self._rr_order),
             # PR #53 adaptive ramp visibility — operator can read whether this

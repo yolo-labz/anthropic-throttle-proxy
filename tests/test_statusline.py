@@ -15,6 +15,7 @@ of the assertion.
 from __future__ import annotations
 
 import asyncio
+import collections
 import hashlib
 import json
 import string
@@ -183,14 +184,20 @@ def _isolate(monkeypatch):
     ):
         reset()
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "off")
+    monkeypatch.setattr(config, "API_KEY_FILE", "")
+    monkeypatch.setattr(config, "API_KEY_ROUTING_MODE", "off")
+    monkeypatch.setattr(config, "API_KEY_LABEL", "API")
     monkeypatch.setattr(config, "QUEUE_MODE", "fair")
     monkeypatch.setattr(config, "MAX_CONCURRENT", 5)
+    monkeypatch.setattr(proxy, "_api_key_cache", None)
     config.state["upstream_egress_ok"] = True
     config.state["served"] = 0
     yield
     config.bearer_state.clear()
     config.bearer_limiters.clear()
     accounts._cache.clear()
+    proxy._api_key_cache = None
     history.reset()
 
 
@@ -372,6 +379,38 @@ async def test_every_window_dead_reports_nulls_rather_than_capacity(
     assert body["state"] != "throttled"
 
 
+async def test_a_rejected_non_binding_window_still_reads_throttled(
+    client: TestClient,
+) -> None:
+    """`representative_claim` can bind 5h while the 7d window is rejected.
+
+    `_binding_window` honours the claim, so `account.status` publishes the 5h
+    `allowed` — truthfully, that IS the binding window. But the router scores
+    this account `math.inf` on the rejected 7d and will not use it, so a
+    headline of `ok` sends a human to an account that cannot serve them. The
+    published status stays binding-scoped (FR-005); only `state` widens.
+    """
+    wall = time.time()
+    _seed_bearer(
+        "47f0b262",
+        _unified(
+            util_5h=0.2,
+            status_5h="allowed",
+            reset_5h=wall + HOUR,
+            util_7d=1.0,
+            status_7d="rejected",
+            reset_7d=wall + 48 * HOUR,
+            claim="five_hour",
+        ),
+    )
+
+    body = await (await client.get("/__throttle/statusline")).json()
+
+    assert body["account"]["window"] == "5h"
+    assert body["account"]["status"] == "allowed"  # binding-scoped, unchanged
+    assert body["state"] == "throttled"  # but the account is not usable
+
+
 async def test_a_live_rejected_window_is_not_stale(client: TestClient) -> None:
     """The mirror case: `stale` must not become "anything I dislike"."""
     wall = time.time()
@@ -513,6 +552,8 @@ async def test_state_resolution_is_most_severe_first() -> None:
         "blocked_until": int(time.time() + 120),
         "usable": 0,
         "configured": 2,
+        "rejected": True,
+        "elected_usable": False,
     }
 
     config.state["upstream_egress_ok"] = False
@@ -525,6 +566,7 @@ async def test_state_resolution_is_most_severe_first() -> None:
     assert proxy._statusline_state(**kwargs) == "throttled"
 
     kwargs["blocked_until"] = None
+    kwargs["rejected"] = False
     kwargs["account"] = {"status": "allowed_warning", "util": 0.99}
     assert proxy._statusline_state(**kwargs) == "queued"
 
@@ -533,6 +575,91 @@ async def test_state_resolution_is_most_severe_first() -> None:
 
     kwargs["account"] = {"status": "allowed", "util": 0.12}
     assert proxy._statusline_state(**kwargs) == "ok"
+
+
+async def test_exhausted_never_contradicts_the_account_it_names() -> None:
+    """`fleet.usable` counts CONFIGURED accounts; election can outrun that.
+
+    When every configured account is budget-locked the router falls back to an
+    unconfigured bearer it has served, and the payload then named that healthy
+    account beside the word `exhausted` — a self-contradicting headline during
+    the one incident a human actually reads it.
+    """
+    locked: dict[str, object] = {
+        "account": {"status": "allowed", "util": 0.3},
+        "depth": 0,
+        "blocked_until": None,
+        "usable": 0,
+        "configured": 3,
+        "rejected": False,
+    }
+
+    # Nothing else to fall back to: the fleet really is spent.
+    assert proxy._statusline_state(**locked, elected_usable=False) == "exhausted"
+    # A healthy route-context bearer WAS elected, so it is the one that serves.
+    assert proxy._statusline_state(**locked, elected_usable=True) == "ok"
+
+
+async def test_display_only_fallback_cannot_hide_an_exhausted_configured_fleet(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """An observed-bearer display heuristic is not a routing decision."""
+    (configured_bid,) = _configure_accounts(tmp_path, monkeypatch, "token-a")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    _seed_bearer(
+        configured_bid,
+        _unified(
+            util_7d=1.0,
+            status_7d="rejected",
+            reset_7d=time.time() + HOUR,
+            claim="seven_day",
+        ),
+    )
+    _seed_bearer("deadbeef")
+
+    body = await (await client.get("/__throttle/statusline")).json()
+
+    assert body["account"]["bearer"] == "deadbeef", "display fallback stays informative"
+    assert body["fleet"] == {"usable": 0, "configured": 1}
+    assert body["state"] == "exhausted"
+
+
+async def test_full_utilization_is_hard_unusable_even_when_status_says_allowed(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """The wild allowed+util=1 shape is a router hard gate, not a warning."""
+    (bid,) = _configure_accounts(tmp_path, monkeypatch, "token-a")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    _seed_bearer(
+        bid,
+        _unified(
+            util_5h=1.0,
+            status_5h="allowed",
+            reset_5h=time.time() + HOUR,
+            claim="five_hour",
+        ),
+    )
+
+    body = await (await client.get("/__throttle/statusline")).json()
+
+    assert body["fleet"] == {"usable": 0, "configured": 1}
+    assert body["state"] == "exhausted"
+
+
+async def _assert_measured_bearer_wins(client: TestClient, util: float) -> None:
+    """Seed one measured bearer and assert the endpoint elects its reading."""
+    _seed_bearer(
+        "666a53af",
+        _unified(
+            util_5h=util,
+            status_5h="allowed",
+            reset_5h=time.time() + HOUR,
+            claim="five_hour",
+        ),
+    )
+    body = await (await client.get("/__throttle/statusline")).json()
+    assert body["account"]["bearer"] == "666a53af"
+    assert body["account"]["util"] == util
 
 
 @pytest.mark.parametrize(
@@ -557,20 +684,47 @@ async def test_a_bearer_with_no_windows_is_never_elected(
     proxy.py:1265-1270); electing a bypass slot would render a statusline for a
     credential that serves nothing.
     """
-    wall = time.time()
     for bid in unelectable:
         _seed_bearer(bid)
     if "deadbeef" in unelectable:
         _quarantine("deadbeef", status=403, reason="org_policy")
+    await _assert_measured_bearer_wins(client, 0.83)
+
+
+async def test_a_never_probed_bearer_does_not_outrank_a_measured_one(
+    client: TestClient,
+) -> None:
+    """Absent utilization is not zero utilization.
+
+    A bearer the proxy has served but never read windows for has no binding
+    utilization at all. Scoring that absence as `0.0` made it the cheapest
+    candidate in the fleet and it won every election — the same trap the
+    pseudo-bearer and quarantine gates already close, arriving through an
+    ordinary bearer instead.
+    """
+    _seed_bearer("1111aaaa")  # served, never probed: unified is None
+    await _assert_measured_bearer_wins(client, 0.61)
+
+
+async def test_the_priority_lane_counts_toward_queue_depth(client: TestClient) -> None:
+    """A reserved-lane backlog is a real wait, and it was invisible.
+
+    `queued_total` sums only the fair queue, so a bearer whose priority lane was
+    parked behind long generations reported `depth: 0` and `state: ok` while its
+    callers waited. Routing's load score weighs both lanes; so must this.
+    """
+    wall = time.time()
     _seed_bearer(
         "666a53af",
-        _unified(util_5h=0.83, status_5h="allowed", reset_5h=wall + HOUR, claim="five_hour"),
+        _unified(util_5h=0.2, status_5h="allowed", reset_5h=wall + HOUR, claim="five_hour"),
     )
+    lim = _seed_limiter("666a53af", max_concurrent=1)
+    lim._priority_queues["c9"] = collections.deque([object(), object()])
 
     body = await (await client.get("/__throttle/statusline")).json()
 
-    assert body["account"]["bearer"] == "666a53af"
-    assert body["account"]["util"] == 0.83
+    assert body["queue"]["depth"] == 2
+    assert body["state"] == "queued"
 
 
 async def test_a_quarantined_account_is_not_counted_usable(
@@ -669,6 +823,264 @@ async def test_health_keeps_its_own_schema(client: TestClient) -> None:
     assert set(bearer) >= {"clients", "unified", "unified_at", "limiter"}
     assert len(bearer["clients"]) == 3
     assert "queued_per_client" in bearer["limiter"]
+
+
+# ---------------------------------------------------------------------------
+# Election parity with the router (FR-004)
+# ---------------------------------------------------------------------------
+
+
+def _routing_acct(bid: str, token: str, label: str, **usage: object) -> dict[str, object]:
+    """One ``routing_snapshot`` row, shaped as the account router consumes it."""
+    return {"bearer_id": bid, "token": token, "label": label, "endpoint": {"usage": usage}}
+
+
+def _router_pick(model: str) -> str:
+    """The bearer ``_route_account_if_enabled`` actually rewrites Authorization to."""
+    bid, _ = proxy._route_account_if_enabled(
+        {"Authorization": "Bearer inc"},
+        "inc",
+        method="POST",
+        path="/v1/messages",
+        model=model,
+        allow_retry_probe=True,
+    )
+    return bid
+
+
+@pytest.mark.parametrize("scenario", ["idle", "pressure-beats-strict", "probe-armed"])
+async def test_election_names_the_account_the_router_will_use(monkeypatch, scenario: str) -> None:
+    """The endpoint and the router must agree — that agreement IS the feature.
+
+    Both call one selector now, so this is a parity assertion rather than a
+    comparison of two ladders. It is worth keeping because the first
+    implementation restated the ladder, drifted three ways at once, and nothing
+    in the suite noticed:
+
+    * ``pressure-beats-strict`` — the router ranks the best STRICT candidate
+      against the best PRESSURED one on a common key and takes the pressured one
+      when it scores lower, so a clean account with a deep local queue loses to
+      an idle account that merely crossed its warning line. Returning the strict
+      best unconditionally named the queued account instead.
+    * ``probe-armed`` — both real callers of the router pass
+      ``allow_retry_probe=True``. Passing False scores every probation-armed
+      account ``inf``, which is every configured account in the seconds after a
+      restart — precisely when a human is watching the recovery.
+    """
+    now = 1_800_000_000.0
+    monkeypatch.setattr(proxy.time, "time", lambda: now)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x,B:/y")
+    snapshot = [
+        _routing_acct("aaa", "TOKA", "A", util_5h=0.10, util_7d=0.10, reset_5h=now + HOUR),
+        _routing_acct("bbb", "TOKB", "B", util_5h=0.50, util_7d=0.10, reset_5h=now + HOUR),
+    ]
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: snapshot)
+
+    if scenario == "pressure-beats-strict":
+        # A is strictly cleaner but has work parked; B only crossed its warning
+        # line. The router spends B.
+        _seed_limiter("aaa")._queues["c1"] = collections.deque([object()])
+        _seed_bearer(
+            "bbb",
+            {
+                "status": "allowed_warning",
+                "util_5h": 0.50,
+                "util_7d": 0.75,
+                "reset_5h": now + HOUR,
+                "reset_7d": now + 3 * 24 * HOUR,
+            },
+        )
+    elif scenario == "probe-armed":
+        # The shape of a fresh process: every configured account holds a
+        # cold-start probe and none has a limiter yet.
+        for bid in ("aaa", "bbb"):
+            limiter.require_retry_probe(bid)
+
+    # Statusline FIRST, against pristine state: the router seeds probation as a
+    # side effect, so asking it first would hand the projection an easier
+    # question than the one it answers in production.
+    elected, _, route_decision = proxy._statusline_elect(snapshot, now, "claude-opus-4-8")
+
+    assert elected == _router_pick("claude-opus-4-8")
+    assert route_decision is True
+    expected = "bbb" if scenario == "pressure-beats-strict" else "aaa"
+    assert elected == expected
+
+
+async def test_request_bearer_context_preserves_a_healthy_unconfigured_account(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """FR-004: a known idle caller beats an equally idle configured account."""
+    wall = time.time()
+    _configure_accounts(tmp_path, monkeypatch, "token-a")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    incoming = "c0ffee00"
+    _seed_bearer(
+        incoming,
+        _unified(
+            util_5h=0.2,
+            status_5h="allowed",
+            reset_5h=wall + HOUR,
+            util_7d=0.3,
+            status_7d="allowed",
+            reset_7d=wall + 24 * HOUR,
+        ),
+    )
+    config.bearer_state[incoming]["unified_at"] = wall
+    _seed_limiter(incoming)
+
+    body = await (await client.get(f"/__throttle/statusline?bearer={incoming}")).json()
+    routed, _ = proxy._route_account_if_enabled(
+        {"Authorization": "Bearer known"},
+        incoming,
+        method="POST",
+        path="/v1/messages",
+        allow_retry_probe=True,
+    )
+
+    assert body["account"]["bearer"] == routed == incoming
+    assert body["account"]["label"] is None
+
+
+@pytest.mark.parametrize("mode", ["prefer", "overflow"])
+async def test_proxy_api_key_routing_is_part_of_statusline_election(
+    client: TestClient, tmp_path, monkeypatch, mode: str
+) -> None:
+    """FR-004 includes the router's pay-go prefer/overflow branches."""
+    (oauth_bid,) = _configure_accounts(tmp_path, monkeypatch, "token-a")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    key_file = tmp_path / "api-key"
+    key_file.write_text("sk-ant-api03-statusline-test")
+    monkeypatch.setattr(config, "API_KEY_FILE", str(key_file))
+    monkeypatch.setattr(config, "API_KEY_ROUTING_MODE", mode)
+    monkeypatch.setattr(config, "API_KEY_LABEL", "metered")
+    if mode == "overflow":
+        _seed_bearer(oauth_bid, {"status": "rejected", "util_5h": 1.0})
+
+    body = await (await client.get(f"/__throttle/statusline?bearer={oauth_bid}")).json()
+    routed, _ = proxy._route_account_if_enabled(
+        {"Authorization": "Bearer token-a"},
+        oauth_bid,
+        method="POST",
+        path="/v1/messages",
+        allow_retry_probe=True,
+    )
+
+    assert body["account"]["bearer"] == routed == "api-key"
+    assert body["account"]["label"] == "metered"
+    assert body["state"] != "exhausted"
+
+
+async def test_explicit_client_api_key_is_preserved(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """An x-api-key-only caller bypasses configured OAuth routing in the hot path."""
+    _configure_accounts(tmp_path, monkeypatch, "token-a")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+
+    body = await (await client.get("/__throttle/statusline?bearer=api-key")).json()
+    routed, _ = proxy._route_account_if_enabled(
+        {"x-api-key": "client-owned"},
+        "api-key",
+        method="POST",
+        path="/v1/messages",
+        allow_retry_probe=True,
+    )
+
+    assert body["account"]["bearer"] == routed == "api-key"
+    assert body["account"]["label"] is None
+
+
+async def test_max_tokens_context_matches_budget_router(client: TestClient, monkeypatch) -> None:
+    """Request size can flip the paced account; the projection must price it too."""
+    now = 1_800_000_000.0
+    monkeypatch.setattr(proxy.time, "time", lambda: now)
+    monkeypatch.setattr(proxy, "UTILIZATION_TARGET", 0.9)
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "budget_paced")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x,B:/y")
+    snapshot = [
+        _routing_acct(
+            "aaa",
+            "TOKA",
+            "A",
+            util_5h=0.20,
+            util_7d=0.10,
+            reset_5h=now + 4 * HOUR,
+            reset_7d=now + 6 * 24 * HOUR,
+        ),
+        _routing_acct(
+            "bbb",
+            "TOKB",
+            "B",
+            util_5h=0.88,
+            util_7d=0.10,
+            reset_5h=now + 5 * 60,
+            reset_7d=now + 6 * 24 * HOUR,
+        ),
+    ]
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: snapshot)
+
+    body = await (
+        await client.get("/__throttle/statusline?model=claude-opus-4-8&max_tokens=64000")
+    ).json()
+    routed, _ = proxy._route_account_if_enabled(
+        {"Authorization": "Bearer inc"},
+        "inc",
+        method="POST",
+        path="/v1/messages",
+        model="claude-opus-4-8",
+        max_tokens=64000,
+        allow_retry_probe=True,
+    )
+
+    assert body["account"]["bearer"] == routed == "aaa"
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["bearer=_anon", "bearer=not-a-hash", "bearer=ABCDEF12", "max_tokens=-1", "max_tokens=nope"],
+)
+async def test_malformed_request_context_is_ignored(client: TestClient, query: str) -> None:
+    """FR-007: query context is a non-secret hint, never an identity parser."""
+    wall = time.time()
+    _seed_bearer(
+        "666a53af",
+        _unified(
+            util_5h=0.2,
+            status_5h="allowed",
+            reset_5h=wall + HOUR,
+            claim="five_hour",
+        ),
+    )
+
+    response = await client.get(f"/__throttle/statusline?{query}")
+    body = await response.json()
+
+    assert response.status == 200
+    assert body["account"]["bearer"] == "666a53af"
+
+
+async def test_unsuffixed_rejected_status_is_not_counted_as_usable(
+    client: TestClient, tmp_path, monkeypatch
+) -> None:
+    """The parser's aggregate status gates routing just like either window slot."""
+    (bid,) = _configure_accounts(tmp_path, monkeypatch, "token-a")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    _seed_bearer(
+        bid,
+        {
+            "status": "rejected",
+            "status_5h": "allowed",
+            "util_5h": 0.2,
+            "reset_5h": time.time() + HOUR,
+        },
+    )
+
+    body = await (await client.get("/__throttle/statusline")).json()
+
+    assert body["fleet"] == {"usable": 0, "configured": 1}
+    assert body["state"] == "exhausted"
 
 
 # ---------------------------------------------------------------------------
