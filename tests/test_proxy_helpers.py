@@ -35,19 +35,40 @@ from anthropic_throttle_proxy.limiter import FairBearerLimiter
 
 
 def test_idle_client_pruning_preserves_live_or_replaced_state() -> None:
-    """Terminal ports disappear without deleting a live/reused client entry."""
-    original = {"queued": 1, "inflight": 0, "served": 4}
-    bstate: dict[str, object] = {"clients": {"127.0.0.1:54321": original}}
-    counters = proxy._Counters("bearer", "127.0.0.1:54321", bstate, original)
+    """Terminal ports disappear without deleting a live/reused client entry.
 
-    counters.prune_client_if_idle()
-    assert bstate["clients"] == {"127.0.0.1:54321": original}
+    Registration claims a synchronous ``hold`` (Codex BLOCK on PR #217): a
+    sibling that registered but has not yet incremented queued/inflight keeps
+    the shared entry pop-proof until its own attempt's finally releases it.
+    """
+    shared = {"queued": 0, "inflight": 1, "served": 0}
+    bstate: dict[str, object] = {"clients": {"127.0.0.1:54321": shared}}
+    live = proxy._Counters("bearer", "127.0.0.1:54321", bstate, shared)
+    parked = proxy._Counters("bearer", "127.0.0.1:54321", bstate, shared)
+    assert shared["hold"] == 2  # both attempts claimed liveness, synchronously
 
-    original["queued"] = 0
-    replacement = {"queued": 0, "inflight": 1, "served": 0}
+    # The inflight request finalizes while a sibling is still parked: the
+    # sibling's hold keeps the entry alive even though queued/inflight read 0.
+    live.c["inflight"] = 0
+    live.release_client_hold()
+    assert bstate["clients"] == {"127.0.0.1:54321": shared}
+
+    # Queued work also blocks the prune, hold or not.
+    shared["queued"] = 1
+    parked.release_client_hold()
+    assert bstate["clients"] == {"127.0.0.1:54321": shared}
+
+    # A REPLACED entry (fresh dict for a reused cid) is never popped.
+    shared["queued"] = 0
+    replacement = {"queued": 0, "inflight": 0, "served": 0}
     bstate["clients"] = {"127.0.0.1:54321": replacement}
-    counters.prune_client_if_idle()
+    parked.release_client_hold()
     assert bstate["clients"] == {"127.0.0.1:54321": replacement}
+
+    # The last live attempt departing a fully idle entry prunes it.
+    last = proxy._Counters("bearer", "127.0.0.1:54321", bstate, replacement)
+    last.release_client_hold()
+    assert bstate["clients"] == {}
 
 
 # ---------------------------------------------------------------------------

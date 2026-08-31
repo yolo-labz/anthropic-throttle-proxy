@@ -709,6 +709,12 @@ class _Counters:
         self.b = bstate
         self.c = cstate
         self.queued_incremented = False
+        # Synchronous liveness claim, made before the caller's first await:
+        # from construction the entry is prune-immune, so a sibling's exit
+        # cannot pop a request that registered but has not yet incremented
+        # queued/inflight (Codex BLOCK on PR #217 — shared client-id over-prune
+        # in the off/observe park window).
+        self.c["hold"] = self.c.get("hold", 0) + 1
 
     def enqueue(self, request: web.Request, path: str) -> None:
         """Increment the queue counters (queue modes only) + publish gauges."""
@@ -754,11 +760,22 @@ class _Counters:
             self.c["served"] += 1
         M_INFLIGHT.set(self.s["inflight"])
         M_INFLIGHT_BEARER.labels(bearer=self.bid).set(self.b["inflight"])
+
+    def release_client_hold(self) -> None:
+        """Drop this attempt's liveness hold; prune the entry if fully idle.
+
+        Called from the handler's guaranteed per-attempt ``finally``, so every
+        post-registration path (return, cancellation, QueueWaitTimeout,
+        reroute-continue) releases exactly once. This is the single prune
+        authority: while the owning attempt lives, ``hold`` keeps its entry
+        pop-proof regardless of counter timing.
+        """
+        self.c["hold"] = max(0, self.c.get("hold", 0) - 1)
         self.prune_client_if_idle()
 
     def prune_client_if_idle(self) -> None:
         """Discard terminal per-connection state without touching live peers."""
-        if self.c["queued"] or self.c["inflight"]:
+        if self.c["queued"] or self.c["inflight"] or self.c.get("hold"):
             return
         clients = self.b.get("clients")
         if isinstance(clients, dict) and clients.get(self.cid) is self.c:
@@ -3785,15 +3802,17 @@ async def handler(request: web.Request) -> web.StreamResponse:
             ) is not None:
                 return fast_fail
         bstate = bearer_state[bid]
-        cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
-        counters = _Counters(bid, cid, bstate, cstate)
-
         slot_max_wait = None
         if wait_deadline is not None:
             slot_max_wait = wait_deadline - time.time()
             if slot_max_wait <= 0.0:
                 finish_probe(success=False)
+                # Before registration: an expired budget must not create a
+                # client entry no terminal path would ever prune (Codex BLOCK
+                # on PR #217).
                 return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
+        cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
+        counters = _Counters(bid, cid, bstate, cstate)
 
         if limiter.queue_enabled:
             counters.enqueue(request, path)
@@ -3929,7 +3948,6 @@ async def handler(request: web.Request) -> web.StreamResponse:
             # transport is still open (the limiter already rolled its queue entry
             # back via acquire's cancellation path; no release is owed).
             counters.dequeue()
-            counters.prune_client_if_idle()
             finish_probe(success=False)
             return _queue_wait_timeout_response(bid, cid, path, limiter, slot_max_wait or 0.0)
         finally:
@@ -3939,8 +3957,8 @@ async def handler(request: web.Request) -> web.StreamResponse:
             # the /__throttle/health gauge.
             if counters.queued_incremented:
                 counters.dequeue()
-                counters.prune_client_if_idle()
                 log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
+            counters.release_client_hold()
             finish_probe(success=False)
 
 
