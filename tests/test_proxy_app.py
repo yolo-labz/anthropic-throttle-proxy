@@ -570,6 +570,8 @@ async def test_post_messages_streams_and_mints_bearer(client: TestClient) -> Non
     bid = next(iter(config.bearer_state))
     assert bid != "_anon"
     assert len(bid) == 8
+    # A peer port is ephemeral; completed work must not retain it indefinitely.
+    assert config.bearer_state[bid]["clients"] == {}
 
 
 async def test_expiry_burst_makes_exactly_one_half_open_b_attempt(
@@ -1838,11 +1840,39 @@ async def test_queue_wait_timeout_fails_fast_with_clean_503(
     assert resp_headers[config.QUEUE_TIMEOUT_HEADER] == "1"
     assert b"queue wait exceeded" in streamed
     assert (config.state["queued"], config.state["inflight"]) == (0, 0)
+    assert config.bearer_state[bid]["clients"] == {}
     snap = lim.snapshot()
     # queue rolled back, no slot consumed, and — because an admission timeout
     # is not upstream pushback — the live cap untouched, no throttle recorded.
     assert (snap["queued_total"], snap["inflight"], snap["max_concurrent"]) == (0, 0, 1)
     assert snap["last_throttle_at"] == 0.0
+
+
+async def test_spent_wait_budget_creates_no_client_entry(client: TestClient, monkeypatch) -> None:
+    """A pre-registration 503 (budget already spent upstream) leaves no residue.
+
+    Codex BLOCK on PR #217: registration used to precede the in-loop
+    ``slot_max_wait <= 0`` re-check, so an expired budget created a client
+    entry no terminal path would prune. The check now runs before
+    registration, and nothing enters ``clients``.
+    """
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+    bid = proxy._bearer_id({"authorization": "Bearer spent-budget"})
+
+    resp = await client.post(
+        "/v1/messages",
+        data=b'{"model":"claude-opus-4-8"}',
+        headers={
+            "Authorization": "Bearer spent-budget",
+            config.WAIT_BUDGET_HEADER: "0",
+        },
+    )
+
+    assert resp.status == 503
+    assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    assert config.bearer_state[bid]["clients"] == {}
 
 
 async def test_queue_wait_budget_forwarded_minus_local_spend(
