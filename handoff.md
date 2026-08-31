@@ -6,6 +6,41 @@ host activation. Latest incident first.
 
 ---
 
+## 31/08/2026 — issue #205 clients-map leak: prune shipped after a Codex round-1 BLOCK
+
+Symptom: `bearers[].clients` was insert-only, keyed by the peer's ephemeral
+TCP port (or `X-Throttle-Client-Id`), and grew forever — measured +319.6 B/min
+on the live desktop proxy (~5.1 entries/min, ≈ +3 MB/week), with `_anon`
+alone at 397 entries from unauthenticated probes.
+
+PR #217's first slice pruned a client entry when its request reached a
+terminal state with nothing queued/inflight. The mandatory Codex adversarial
+review (owed — two earlier delegate attempts died before a verdict, per the
+[pending] gate in the PR body) returned **BLOCK** with one root cause behind
+three findings: the `setdefault` registration and the first counter update
+are separated by an await, so (a) in off/observe a parked sibling's (0,0)
+entry could be popped by another request's exit prune (shared client-id), and
+(b) the in-loop spent-budget 503 returned after registration with no prune
+path — a residual leak.
+
+Fix (`c85e80f`): `_Counters.__init__` claims a synchronous liveness `hold`
+(no await after registration); the handler's guaranteed per-attempt `finally`
+releases it and prunes — the single prune authority; the `slot_max_wait <= 0`
+re-check moved before registration so an expired budget creates no entry at
+all. The `exit_inflight`/rollback prunes were removed as inert under the
+hold. Live health entries carry a transient `hold` key.
+
+Codex round 2: **MERGE**, A–D PASS, no new findings; documented caveat that
+`release_client_hold`'s `max(0, …)` clamp would conceal a future
+double-release — exactly one production release site today.
+
+Verified: 969 pytest + ruff clean; 9/9 CI green on `c85e80f`; merged as
+`419dd7f4` (31/08 19:06 BRT). NixOS #2088 pinned `419dd7f` (hash
+`06olAQXz…`; the built package was grep-verified to contain
+`release_client_hold`). Host activation is the standing follow-up
+(niri-guard host — the next `nh os boot` picks the pin up; verify with the
+running-vs-persisted health `build` chain before trusting it).
+
 ## 27/08/2026 - GLM fleet migration: upstream stayed green; the 30s local queue failed
 
 Pedro moved every Herdr/Pi session off DeepSeek and made Z.AI GLM-5.3-Flash the
