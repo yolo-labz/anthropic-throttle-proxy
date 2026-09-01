@@ -645,6 +645,34 @@ def test_codex_lane_health_url_defaults_to_ccp_healthz() -> None:
     assert lanes["deepseek"].health_url == "http://127.0.0.1:8768/__throttle/health"
 
 
+def test_protocol_prefixed_glm_lane_uses_explicit_root_health(monkeypatch) -> None:
+    """A prefixed Anthropic-compatible endpoint must not move the throttle probe.
+
+    Forwarding stays under ``/api/anthropic`` while admission comes from the
+    per-lane proxy root; this keeps exact ``/v1/messages`` model remapping live.
+    """
+    monkeypatch.setenv("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766/api/anthropic")
+    monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "http://127.0.0.1:8766/__throttle/health")
+    monkeypatch.setenv("INGRESS_GLM_MODEL", "glm-5.3")
+
+    lane = default_lanes()["glm"]
+    assert lane.url == "http://127.0.0.1:8766/api/anthropic"
+    assert lane.health_url == "http://127.0.0.1:8766/__throttle/health"
+    assert set(lane.models.values()) == {"glm-5.3"}
+
+
+def test_blank_health_override_keeps_derived_default(monkeypatch) -> None:
+    monkeypatch.setenv("INGRESS_GLM_LANE_URL", "http://127.0.0.1:9999/prefix")
+    monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "   ")
+    assert default_lanes()["glm"].health_url == "http://127.0.0.1:9999/prefix/__throttle/health"
+
+
+def test_health_override_cannot_resurrect_retired_lane(monkeypatch) -> None:
+    monkeypatch.setenv("INGRESS_GLM_LANE_URL", "")
+    monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "http://127.0.0.1:8766/__throttle/health")
+    assert "glm" not in default_lanes()
+
+
 def test_codex_code_model_unset_keeps_verbatim_passthrough(monkeypatch) -> None:
     """Default MUST be a no-op: the CCP sidecar's own claude-* -> gpt-* alias
     table decides. An accidental default here would silently redirect every

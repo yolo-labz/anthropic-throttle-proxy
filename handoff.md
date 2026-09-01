@@ -6,6 +6,31 @@ host activation. Latest incident first.
 
 ---
 
+## 01/09/2026 — issue #220: protocol-prefixed GLM forwarding needs root health
+
+Hypothesis: a dedicated subscription-constrained GLM ingress can pin exact
+Flash/full models only if clients keep the exact `/v1/messages` path for role
+inference/remapping while the lane forwards under Z.AI's `/api/anthropic`
+prefix and probes throttle health at the queue root.
+
+Live disposable probes established the discriminator: a GLM-only ingress with
+`api.z.ai` subscription enforcement returned HTTP 200 and same-response
+`lane=glm`/`credential_mode=subscription`, but calling the ingress at
+`/api/anthropic/v1/messages` bypassed the exact-path remapper and returned
+`glm-5.3-flash` even when `INGRESS_GLM_MODEL=glm-5.3`; a direct queued request
+reported full `glm-5.3`. The fix is configuration separation, not a model-name
+claim.
+
+Issue #220 adds `INGRESS_<LANE>_LANE_HEALTH_URL` to every lane while preserving
+derived health behavior when unset, Codex's `/healthz` default, and empty-URL
+lane retirement. A regression test sends client `/v1/messages` through a
+prefixed GLM lane and proves the forwarded path plus exact model remap; unit
+controls prove a health override cannot resurrect a retired lane.
+
+Verification at the feature head: 150 focused routing/ingress tests and all 973
+pytest tests pass; Ruff format/lint is clean. No service, credential, provider
+route, Nix pin, or deployment changed. Reversal is one squash-revert PR.
+
 ## 31/08/2026 — issue #205 clients-map leak: prune shipped after a Codex round-1 BLOCK
 
 Symptom: `bearers[].clients` was insert-only, keyed by the peer's ephemeral

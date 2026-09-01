@@ -224,29 +224,45 @@ def default_lanes() -> dict[str, Lane]:
         for role, model in (("code", os.environ.get("INGRESS_CODEX_CODE_MODEL", "")),)
         if model
     }
+    lane_urls = {
+        "anthropic": os.environ.get("INGRESS_ANTHROPIC_LANE_URL", "http://127.0.0.1:8765"),
+        "kimi": os.environ.get("INGRESS_KIMI_LANE_URL", "http://127.0.0.1:8767"),
+        "glm": os.environ.get("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766"),
+        "deepseek": os.environ.get("INGRESS_DEEPSEEK_LANE_URL", "http://127.0.0.1:8768"),
+        "codex": os.environ.get("INGRESS_CODEX_LANE_URL", "http://127.0.0.1:8769"),
+    }
+
+    def health_url(lane: str, default: str = "") -> str:
+        """Keep protocol-prefixed forwarding separate from root lane health."""
+        return os.environ.get(f"INGRESS_{lane.upper()}_LANE_HEALTH_URL", "").strip() or default
+
     lanes = {
         "anthropic": Lane(
             "anthropic",
-            os.environ.get("INGRESS_ANTHROPIC_LANE_URL", "http://127.0.0.1:8765"),
+            lane_urls["anthropic"],
             frozenset({"generate", "judge"}),
+            health_url=health_url("anthropic"),
         ),
         "kimi": Lane(
             "kimi",
-            os.environ.get("INGRESS_KIMI_LANE_URL", "http://127.0.0.1:8767"),
+            lane_urls["kimi"],
             frozenset({"generate", "bulk"}),
+            health_url=health_url("kimi"),
             models=kimi_models,
             proxy_owns_key=True,
         ),
         "glm": Lane(
             "glm",
-            os.environ.get("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766"),
+            lane_urls["glm"],
             frozenset({"generate", "judge", "bulk"}),
+            health_url=health_url("glm"),
             models=glm_models,
         ),
         "deepseek": Lane(
             "deepseek",
-            os.environ.get("INGRESS_DEEPSEEK_LANE_URL", "http://127.0.0.1:8768"),
+            lane_urls["deepseek"],
             frozenset({"bulk", "generate"}),
+            health_url=health_url("deepseek"),
             models=deepseek_models,
             proxy_owns_key=True,
         ),
@@ -259,16 +275,14 @@ def default_lanes() -> dict[str, Lane]:
         # not a per-client bearer.
         "codex": Lane(
             "codex",
-            os.environ.get("INGRESS_CODEX_LANE_URL", "http://127.0.0.1:8769"),
+            lane_urls["codex"],
             frozenset({"code"}),
             models=codex_models,
             proxy_owns_key=True,
             # The CCP sidecar does not serve /__throttle/health (health-404
             # finding, 06/08): it answers /healthz -> 200 {"ok": true}. The
             # probe normalizes that shape at the boundary (ingress._poll_one_lane).
-            health_url=os.environ.get(
-                "INGRESS_CODEX_LANE_HEALTH_URL", "http://127.0.0.1:8769/healthz"
-            ),
+            health_url=health_url("codex", "http://127.0.0.1:8769/healthz"),
         ),
     }
     # An EXPLICITLY empty lane URL retires that lane: it is not built, so it
