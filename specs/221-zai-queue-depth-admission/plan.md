@@ -53,22 +53,23 @@ The inflight term is the load-bearing part for the measured incident: at
 estimator would have been blind to them. Elapsed hold time is a hard lower
 bound on that request's service time — evidence, not a guess.
 
-### 3. Admission math
+### 3. Admission math (revised twice under adversarial review)
 
-For an arrival in lane L with `slots` (live cap for the lane), `busy`,
-`queued`, `free = max(0, slots - busy)`:
+Position is the **round-robin** rank, not raw depth: a client's next request
+dispatches on its turn `own + 1`, by which time each sibling ahead of it in
+`_rr_order` has had at most `own + 1` turns and each sibling behind it at most
+`own`. Counting total depth would refuse a fresh client stuck behind a chatty
+client's backlog — traffic the fair queue exists to serve promptly.
 
-```
-position = queued + 1
-rounds   = 0 if position <= free else ceil((position - free) / slots)
-wait_s   = rounds * service_time_s
-admits   = wait_s <= max_wait
-max_depth = max(0, free - 1 + floor(max_wait / service_time_s) * slots)
-```
-
-`rounds` is the number of service rounds the arrival must wait through;
-`max_depth` inverts the same inequality to the largest still-admissible queue
-depth, which is what `/__throttle/admission` publishes.
+The wait is then a scheduled estimate rather than round arithmetic. Each server
+is modelled as "free at T" (idle slots now; a held slot after its own residual:
+`typical - age`, or a full service estimate once it is overdue), requests take
+the earliest free slot, and the arrival starts at the `ahead + 1`-th such
+event. Closed-form rounds cannot express an uneven schedule — two slots aged
+200 s and 34 s free at very different times, and one scalar for the pair errs
+in both directions. Inverting the same simulation over the horizon gives the
+largest admissible `ahead`, which is what `/__throttle/admission` publishes.
+Both loops are bounded at 1024 simulated dispatches.
 
 ### 4. Rejection path
 

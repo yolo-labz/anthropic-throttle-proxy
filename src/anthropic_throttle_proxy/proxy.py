@@ -4438,7 +4438,7 @@ def _nonnegative_int(snapshot: dict, key: str) -> int | None:
     return parsed if parsed >= 0 else None
 
 
-def _aggregate_drain(drains: list[object]) -> tuple[int, dict]:
+def _aggregate_drain(drains: list[object], bypass_bearers: int = 0) -> tuple[int, dict]:
     """Lane-wide queue-depth bound + the estimator inputs behind it.
 
     Depth sums across measured bearers, matching the ``slots``/``free``/
@@ -4456,6 +4456,11 @@ def _aggregate_drain(drains: list[object]) -> tuple[int, dict]:
     With nothing measured (a freshly restarted process that has not seen a
     request yet) the bound comes from config, flagged ``source: config`` — a
     consumer must never read "0" and conclude the lane admits nothing.
+
+    A bearer in ``off``/``observe`` mode has no queue and therefore no depth to
+    admit against. It contributes ``bypass_bearers`` instead of a bound, and
+    any bypass forces ``enforced: false`` — publishing a fair-queue number for
+    a lane that never enforces one would be fabricated capacity.
     """
     valid = [
         d
@@ -4471,11 +4476,12 @@ def _aggregate_drain(drains: list[object]) -> tuple[int, dict]:
         return cold.max_depth, {
             "service_time_s": cold.service_time_s,
             "samples": 0,
-            "source": "config",
+            "source": "bypass" if bypass_bearers else "config",
             "slots": cold.slots,
             "free": cold.free,
             "max_wait_s": cold.max_wait_s,
-            "enforced": cold.enforced,
+            "enforced": cold.enforced and not bypass_bearers,
+            "bypass_bearers": bypass_bearers,
         }
     slowest = max(valid, key=lambda d: float(d["service_time_s"]))
     return sum(int(d["max_depth"]) for d in valid), {
@@ -4485,7 +4491,8 @@ def _aggregate_drain(drains: list[object]) -> tuple[int, dict]:
         "slots": sum(int(d.get("slots") or 0) for d in valid),
         "free": sum(int(d.get("free") or 0) for d in valid),
         "max_wait_s": float(slowest.get("max_wait_s", config.QUEUE_MAX_WAIT_S)),
-        "enforced": bool(slowest.get("enforced", False)),
+        "enforced": bool(slowest.get("enforced", False)) and not bypass_bearers,
+        "bypass_bearers": bypass_bearers,
     }
 
 
@@ -4514,6 +4521,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
     slots = normal_inflight = priority_inflight = queued = free = 0
     all_would_park = True
     drains: list[object] = []
+    bypass_count = 0
 
     for bid, ok in usable.items():
         if not ok:
@@ -4527,6 +4535,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
         if snapshot["queue_enabled"] is False:
             measured_count += 1
             all_would_park = False
+            bypass_count += 1
             continue
 
         cap = _nonnegative_int(snapshot, "max_concurrent")
@@ -4551,7 +4560,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
             all_would_park = False
 
     measured = usable_count > 0 and measured_count == usable_count
-    admit_max_depth, admit_inputs = _aggregate_drain(drains)
+    admit_max_depth, admit_inputs = _aggregate_drain(drains, bypass_count)
     return {
         "usable_bearers": usable_count,
         "measured_bearers": measured_count,

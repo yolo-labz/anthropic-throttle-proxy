@@ -14,6 +14,7 @@ plain constants (never patched) and so are safe to centralize.
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 
@@ -229,6 +230,7 @@ RATE_PUSHBACK_RETRIES = max(0, int(os.environ.get("THROTTLE_RATE_PUSHBACK_RETRIE
 # fast with 429 instead of sleeping behind the proxy.
 MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_AFTER_S", "60")))
 
+
 # Upper bound on time a request may WAIT IN THE FAIR QUEUE for a slot before
 # the proxy fails fast with a clean 503 + Retry-After. Claude Code shows
 # "Waiting for API response" after ~20 s of silence and aborts the socket at
@@ -241,7 +243,21 @@ MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_
 # 503 · Retrying…") and re-enters the round-robin fairly. 0 disables the bound
 # (historical unbounded wait). Orthogonal to MAX_HOLD_RETRY_AFTER_S above,
 # which gates only upstream Retry-After holds, not queue time.
-QUEUE_MAX_WAIT_S = max(0.0, float(os.environ.get("THROTTLE_QUEUE_MAX_WAIT_S", "30")))
+def _finite_env_float(name: str, default: str, fallback: float) -> float:
+    """Non-negative finite float from the environment.
+
+    ``float("1e400")`` is ``inf`` and ``float("nan")`` parses fine, and both
+    reach ``/__throttle/health`` as ``Infinity``/``NaN`` — which is not JSON —
+    and turn seconds arithmetic into an ``OverflowError`` on a request path.
+    """
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return fallback
+    return max(0.0, value) if math.isfinite(value) else fallback
+
+
+QUEUE_MAX_WAIT_S = _finite_env_float("THROTTLE_QUEUE_MAX_WAIT_S", "30", 30.0)
 # FLOOR for the Retry-After attached to the queue-wait-timeout 503, and the
 # value used when the lane cannot estimate anything worse. The real interval is
 # the limiter's drain estimate (see QUEUE_DRAIN_DEFAULT_S); this only keeps the
@@ -251,13 +267,13 @@ QUEUE_MAX_WAIT_S = max(0.0, float(os.environ.get("THROTTLE_QUEUE_MAX_WAIT_S", "3
 QUEUE_TIMEOUT_RETRY_AFTER_S = 5
 # Service-time estimate used by queue-depth admission before the lane has
 # completed enough requests to measure its own. Queue admission bounds WAIT;
-# without a service rate it cannot bound DEPTH, so it would park requests that
-# provably cannot reach a slot in time (01/09/2026 :8766 incident:
+# without a service rate it cannot bound DEPTH, so it would park requests whose
+# estimated wait is already past the budget (01/09/2026 :8766 incident:
 # max_concurrent=2, queue depth 3, 30 s budget, occupied slots completing after
 # 113.7 s and 221.2 s — the arrival needed two service rounds). Conservative but
 # not punitive: a fresh lane with a free slot is never rejected, and three
 # completions replace this with the measured p90.
-QUEUE_DRAIN_DEFAULT_S = max(0.001, float(os.environ.get("THROTTLE_QUEUE_DRAIN_DEFAULT_S", "10")))
+QUEUE_DRAIN_DEFAULT_S = max(0.001, _finite_env_float("THROTTLE_QUEUE_DRAIN_DEFAULT_S", "10", 10.0))
 # Ceiling on the advertised queue-timeout Retry-After. The drain estimate is
 # honest but can be large on a stalled lane; an unbounded hint is not actionable
 # for a client, so cap what we advertise while still never claiming a delay

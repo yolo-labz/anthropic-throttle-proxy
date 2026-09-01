@@ -26,8 +26,8 @@ it was ever parked.
 - **FR-1 — Depth admission.** Before parking a request in the fair queue,
   reject it when the estimated time to reach a slot exceeds this tier's
   effective max wait. The estimate uses only live lane facts: the live slot
-  count, current occupancy, the arrival's **round-robin** position (not raw
-  queue depth — a new client overtakes a chatty client's backlog by design, and
+  count, each held slot's own modelled remaining time, the arrival's
+  **round-robin** position (not raw queue depth — a new client overtakes a chatty client's backlog by design, and
   counting the whole depth would refuse traffic the fair queue exists to serve
   promptly), and a conservative recent service-time estimate. Accepted requests
   keep the existing per-client ordering; rejection happens strictly before
@@ -43,6 +43,9 @@ it was ever parked.
   against that shorter horizon on the hot path, so `max_wait_s` states which
   horizon the published bound describes. The endpoint stays cheap — no I/O, no
   new locks, `/__throttle/health` remains < 50 ms (invariant #4).
+- **FR-2a — Bypass lanes.** A bearer in `off`/`observe` mode enforces no queue
+  admission at all; the published block must say so (`enforced: false`,
+  `bypass_bearers`) rather than advertise a fair-queue bound it never applies.
 - **FR-3 — Truthful Retry-After.** The queue-timeout `503` carries a bounded
   integer drain estimate instead of the constant `5`, never shorter than the
   historical 5 s floor. A request refused **before** it waited is additionally

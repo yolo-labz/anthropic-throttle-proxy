@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import heapq
 import json
 import math
 import os
@@ -34,6 +35,9 @@ _SERVICE_QUANTILE = 0.9
 # Floor on the estimated service time. Zero would make every depth admissible
 # while publishing a zero bound — two contradictory answers from one number.
 _MIN_SERVICE_TIME_S = 0.001
+# Upper bound on simulated dispatch events per drain estimate. Bounds both the
+# per-request check and the published bound; health calls this per bearer.
+_DRAIN_SIM_STEPS = 1024
 # Held-slot bookkeeping is keyed by lease, so it is bounded by real in-flight
 # count. This cap only exists so a leaked lease (a bug) degrades the estimate
 # instead of growing memory forever — the #205 failure shape.
@@ -424,14 +428,19 @@ def _service_estimate(
       not completed yet, so a completion-only estimator was blind to exactly
       the requests doing the blocking.
 
-    Also returns the RESIDUAL: how long the current wave of held slots still
-    needs before every one of them has turned over. A slot younger than a
-    typical request has that much of a typical request left, which is what
-    keeps an arrival behind nearly-finished slots from being refused over a
-    whole round it will not wait. A slot that is already OVERDUE has an unknown
-    remainder, and service times here are heavy-tailed — a 200 s generation is
-    likelier to keep running than a 2 s one — so it is priced at a full
-    estimated service rather than at zero.
+    Also returns a PER-HOLDER residual: how much longer each currently-held
+    slot is modelled to run. A slot younger than a typical request has that
+    much of a typical request left, which keeps an arrival behind a
+    nearly-finished slot from being refused over time it will not wait. A slot
+    that is already OVERDUE has an unknown remainder, and service times here
+    are heavy-tailed — a 200 s generation is likelier to keep running than a
+    2 s one — so it is priced at a full estimated service rather than at zero.
+
+    Per holder, not a single scalar: two slots aged 200 s and 34 s free at very
+    different times, and collapsing them either lets an arrival through on the
+    nearly-done one (when the other is what it will actually wait for) or
+    refuses it on the stuck one (when the other is about to free). Both were
+    reachable with one number (Codex round-2 BLOCKER).
     """
     stamp = time.monotonic() if now is None else now
     count = len(samples)
@@ -440,18 +449,59 @@ def _service_estimate(
     else:
         typical, source = _finite(config.QUEUE_DRAIN_DEFAULT_S, 10.0), "cold"
     typical = max(_MIN_SERVICE_TIME_S, typical)
-    service, residual = typical, typical
-    if holds:
-        ages = [max(0.0, stamp - started) for started in holds]
-        youngest_age, oldest_age = min(ages), max(ages)
-        if oldest_age > service:
-            # A slot held longer than any completed request IS evidence the
-            # lane is slower than its history says.
-            service, source = oldest_age, "inflight"
-        # Every held slot must turn over before the next wave starts, so the
-        # wave is paced by the one with the most left: the YOUNGEST.
-        residual = typical - youngest_age if youngest_age < typical else service
-    return max(_MIN_SERVICE_TIME_S, service), max(0.0, residual), count, source
+    service = typical
+    ages = sorted(max(0.0, stamp - started) for started in holds)
+    if ages and ages[-1] > service:
+        # A slot held longer than any completed request IS evidence the lane is
+        # slower than its history says.
+        service, source = ages[-1], "inflight"
+    service = max(_MIN_SERVICE_TIME_S, service)
+    residuals = [typical - age if age < typical else service for age in ages]
+    return service, residuals, count, source
+
+
+def _wait_for_position(available: list[float], service_time_s: float, ahead: int) -> float:
+    """When the ``ahead + 1``-th dispatch starts, given each slot's free time.
+
+    Greedy earliest-slot assignment over a min-heap of "this slot is free at
+    T" — the same order the dispatcher produces. Closed-form round arithmetic
+    cannot express it: with slots free at 0 s and 100 s and a 1 s service, the
+    first slot serves a hundred requests before the second serves one.
+
+    Beyond ``_DRAIN_SIM_STEPS`` the schedule is regular enough that the
+    remaining requests are priced as full rounds; a lane that deep is far past
+    any wait bound anyway.
+    """
+    if not available:
+        return math.inf
+    heap = list(available)
+    heapq.heapify(heap)
+    simulated = min(ahead, _DRAIN_SIM_STEPS)
+    for _ in range(simulated):
+        heapq.heappush(heap, heapq.heappop(heap) + service_time_s)
+    start = heap[0]
+    if ahead > simulated:
+        start += math.ceil((ahead - simulated) / len(available)) * service_time_s
+    return start
+
+
+def _admissible_ahead(available: list[float], service_time_s: float, horizon: float) -> int:
+    """Largest ``ahead`` whose dispatch still starts within ``horizon``.
+
+    Counts the dispatches that begin inside the horizon on the same schedule;
+    the last of them is the arrival itself, hence ``count - 1``. Saturates at
+    ``_DRAIN_SIM_STEPS``: a lane that can drain a thousand queued requests
+    inside its wait bound is not the failure this guard exists for.
+    """
+    if not available:
+        return 0
+    heap = list(available)
+    heapq.heapify(heap)
+    count = 0
+    while count < _DRAIN_SIM_STEPS and heap[0] <= horizon:
+        heapq.heappush(heap, heapq.heappop(heap) + service_time_s)
+        count += 1
+    return max(0, count - 1)
 
 
 def _compute_drain(
@@ -461,7 +511,7 @@ def _compute_drain(
     queued: int,
     ahead: int | None = None,
     service_time_s: float,
-    residual_s: float | None = None,
+    residuals: list[float] | None = None,
     samples: int,
     source: str,
     evidenced: bool,
@@ -476,13 +526,13 @@ def _compute_drain(
     the round-robin-aware count; ``None`` falls back to ``queued`` (strict
     FIFO), which is the conservative reading used when no client is named.
 
-    With ``free`` idle slots and ``slots`` servers, the arrival is served
-    immediately while ``ahead + 1`` fits in the free slots; otherwise it waits
-    ``ceil((position - free) / slots)`` service rounds. When every slot is
-    already busy the FIRST of those rounds is partly served — ``residual_s``
-    prices what the current wave has left instead of a full round, so an
-    arrival behind slots that are nearly finished is not refused over a whole
-    round it will not wait.
+    Each server is modelled as "free at T": idle slots now, held slots after
+    their own ``residuals`` entry. Requests take the earliest free slot, which
+    is what the dispatcher does, and the arrival's start time is the
+    ``ahead + 1``-th such event. Per-holder residuals matter: two slots aged
+    200 s and 34 s free at very different times, and one scalar for the pair
+    either lets an arrival through on the nearly-done slot or refuses it on
+    the stuck one.
 
     This is a conservative POLICY, not a proof. A holder's age bounds its total
     service time from below, never its remaining time; it may return in the
@@ -496,47 +546,33 @@ def _compute_drain(
     queued = max(0, int(queued))
     ahead = queued if ahead is None else max(0, int(ahead))
     service_time_s = max(_MIN_SERVICE_TIME_S, _finite(service_time_s, _MIN_SERVICE_TIME_S))
-    raw_horizon = 0.0 if not max_wait or max_wait < 0 else _finite(max_wait, 0.0)
-    horizon = raw_horizon
+    horizon = 0.0 if not max_wait or max_wait < 0 else _finite(max_wait, 0.0)
     enforced = horizon > 0.0
 
     free = max(0, slots - busy)
-    position = ahead + 1
-    saturated = busy >= slots
-    residual = (
-        service_time_s
-        if residual_s is None
-        else min(max(0.0, _finite(residual_s, service_time_s)), service_time_s)
-    )
+    held = [
+        min(max(0.0, _finite(value, service_time_s)), service_time_s) for value in (residuals or [])
+    ][:busy]
+    if len(held) < min(busy, slots):
+        # No per-slot evidence (a synthetic estimate, or a slot taken before
+        # leases existed): price the unknown holders at a full service.
+        held += [service_time_s] * (min(busy, slots) - len(held))
+    available = [0.0] * free + held
 
-    if position <= free:
-        rounds = 0
-    elif slots <= 0:
-        # No server can ever dispatch; every request is its own dead round.
-        rounds = position
-    else:
-        rounds = math.ceil((position - free) / slots)
-
-    if rounds == 0:
-        wait_s = 0.0
-        residual = 0.0
-    elif saturated and slots > 0:
-        wait_s = residual + (rounds - 1) * service_time_s
-    else:
-        # Free slots exist, so the next wave starts now and costs a full round.
-        wait_s = rounds * service_time_s
-
+    wait_s = _wait_for_position(available, service_time_s, ahead)
     admits = (not enforced) or (slots > 0 and wait_s <= horizon)
     rejects = enforced and evidenced and not admits
+    max_depth = _admissible_ahead(available, service_time_s, horizon) if enforced else 0
 
-    # Largest `ahead` still admissible under the same model, inverted.
-    if not enforced or slots <= 0:
-        rounds_max = 0
-    elif saturated:
-        rounds_max = 0 if horizon < residual else 1 + int((horizon - residual) // service_time_s)
-    else:
-        rounds_max = int(horizon // service_time_s)
-    max_depth = max(0, free - 1 + rounds_max * slots)
+    # Coarse descriptor kept for logs and dashboards: how many service rounds
+    # deep the arrival is. The wait above is the scheduled answer, not this.
+    rounds = (
+        0 if ahead + 1 <= free else math.ceil((ahead + 1 - free) / slots) if slots else ahead + 1
+    )
+    residual = min(held) if held else 0.0
+    if not math.isfinite(wait_s):
+        # Only reachable with zero servers: nothing will ever dispatch.
+        wait_s = horizon + service_time_s
 
     # The advertised retry is the drain estimate, never shorter than the
     # historical constant, and HARD-capped: an unbounded hint is not actionable.
@@ -594,7 +630,6 @@ def cold_drain_estimate(max_wait: float | None = None) -> DrainEstimate:
     return _compute_drain(
         slots=_initial_live_cap(config.MAX_CONCURRENT),
         busy=0,
-        residual_s=0.0,
         queued=0,
         service_time_s=float(config.QUEUE_DRAIN_DEFAULT_S),
         samples=0,
@@ -769,8 +804,15 @@ class FairBearerLimiter:
         race: it never ran upstream, and recording its ~0 s "duration" would
         teach the estimator that the lane is instant.
         """
-        held = self._holds.pop(lease, None) if lease is not None else None
-        if held is None:
+        if lease is not None:
+            held = self._holds.pop(lease, None)
+            if held is None:
+                # An unknown lease is a bug or a soft-cap eviction. Popping
+                # "something else" would price a LIVE request as finished, so
+                # take nothing and leave the estimate conservative.
+                log(f"drain-lease-miss bid={self.bearer_id} lease={lease}")
+                return
+        else:
             oldest = min(
                 (item for item in self._holds.items() if item[1][0] == priority),
                 key=lambda item: item[1][1],
@@ -794,8 +836,10 @@ class FairBearerLimiter:
         The dispatcher rotates across clients, so an arrival does not queue
         behind the whole backlog — it queues behind at most one request per
         other active client per turn it has to take. For a client with ``own``
-        requests already parked, its next one dispatches on turn ``own + 1``,
-        by which time each sibling has been served at most ``own + 1`` times.
+        requests already parked, its next one dispatches on turn ``own + 1``.
+        A sibling AHEAD of it in the current rotation gets one more turn than a
+        sibling behind it, so the two are counted differently: up to
+        ``own + 1`` versus up to ``own``.
 
         Counting the whole depth instead would refuse a brand-new client stuck
         behind one chatty client's backlog — traffic the fair queue exists to
@@ -804,9 +848,18 @@ class FairBearerLimiter:
         consumer asking "can I be served".
         """
         queues = self._priority_queues if priority else self._queues
+        order = self._priority_rr if priority else self._rr_order
         own = len(queues.get(client_id, ())) if client_id is not None else 0
-        others = sum(min(len(q), own + 1) for cid, q in queues.items() if cid != client_id)
-        return own + others
+        # A client not yet in the rotation joins at the tail, so every listed
+        # client is "ahead" of it.
+        position = order.index(client_id) if client_id in order else len(order)
+        ahead = own
+        for index, cid in enumerate(order):
+            if cid == client_id:
+                continue
+            turns = own + 1 if index < position else own
+            ahead += min(len(queues.get(cid, ())), turns)
+        return ahead
 
     def drain_estimate(
         self,
@@ -837,7 +890,7 @@ class FairBearerLimiter:
             busy = self.inflight - self.priority_inflight
             queued = self.queued_total
             samples = self._samples
-        service_time_s, residual_s, count, source = _service_estimate(
+        service_time_s, residuals, count, source = _service_estimate(
             samples, self._lane_holds(priority), now
         )
         return _compute_drain(
@@ -846,7 +899,7 @@ class FairBearerLimiter:
             queued=queued,
             ahead=self._ahead_of(client_id, priority),
             service_time_s=service_time_s,
-            residual_s=residual_s,
+            residuals=residuals,
             samples=count,
             source=source,
             evidenced=source != "cold",

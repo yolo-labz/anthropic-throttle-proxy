@@ -73,19 +73,45 @@ because it was refuted with evidence rather than accepted.
 | MAJOR — the Retry-After "ceiling" was not a ceiling; the elapsed path charged already-spent budget again | **Accepted.** Hard cap in both paths; the budget floor now applies only to the pre-queue refusal (`budget_floored_retry_after`). |
 | MINOR — non-finite / zero inputs | **Accepted.** `_finite()` guards, `_MIN_SERVICE_TIME_S` floor, regression tests for `1e400`/`nan`/negative budgets and a zero service estimate. |
 
-## 5. Scope of the causal claim (narrowed after review)
+## 5. Scope of the causal claim (narrowed twice, after both review rounds)
 
 This change would **not** necessarily have refused the very first arrival of
-the incident. With fewer than three completions and holders only seconds old,
-the estimator is cold and does not enforce at all. What it does establish:
+the incident, and the incident record is not sufficient to decide it. Two
+inputs the estimator needs were never captured: the per-client round-robin rank
+of the arrival (only the total depth of 3 was recorded) and the holders' AGES
+at that instant (only their eventual 113.7 s / 221.2 s totals). With fewer than
+three completions and young holders the estimator is cold and does not enforce
+at all.
 
-- With the lane's own measured rate from the ledger's 29/08 observation
-  (~35 s/req on 2 slots), the measured shape refuses at once: 2 rounds × 35 s =
-  70 s against a 30 s budget (`test_rejects_at_the_lanes_own_measured_service_rate`).
-- By the second of the four retries the holders were already ~100 s old, which
-  is evidence on its own, so the retry storm is cut at the first repeat.
+The two arithmetic tests are therefore **synthetic bounds under stated
+assumptions**, not a replay of the event:
+`test_incident_arithmetic_at_the_measured_scale` and
+`test_rejects_at_the_lanes_own_measured_service_rate` both assume `ahead = 3`
+(true when the three queued requests belong to distinct clients, or to the same
+client as the arrival) and fresh holders (`residual = service`).
+
+What the change does establish:
+
+- At the lane's own measured rate from the ledger's 29/08 observation
+  (~35 s/req on 2 slots) with those assumptions, the shape refuses at once:
+  70 s of scheduled wait against a 30 s budget.
+- By the second of the four retries the holders were already ~100 s old —
+  evidence on its own — so a repeat of the storm is cut at the first retry.
 - The client's outcome changes from *four silent 30 s stalls then an abort* to
   an immediate 503 carrying an honest interval.
+
+## 5a. Codex adversarial review, round 2 (BLOCK at `c16cf21`)
+
+| Finding | Disposition |
+|---|---|
+| BLOCKER — a scalar residual misprices staggered holders in BOTH directions (waves an arrival through on a nearly-done slot when the stuck one is what it waits for; refuses one that the other slot serves in a second) | **Accepted.** Residuals are now per holder, and the wait is a scheduled estimate: each server is "free at T", requests take the earliest slot (`_wait_for_position` / `_admissible_ahead`, min-heap, bounded at 1024 simulated dispatches). Both directions pinned by `test_staggered_holders_are_priced_per_slot`. |
+| MAJOR — RR position ignored `_rr_order`, so a client already at the head was over-counted | **Accepted.** Siblings ahead of the arrival's rotation position contribute up to `own + 1`, siblings behind contribute up to `own`. Pinned by `test_round_robin_counts_the_rotation_not_just_the_clients`. |
+| MAJOR — an `off`/`observe` bearer published fabricated enforced capacity | **Accepted.** Bypass bearers are counted and force `enforced: false` with `source: bypass`; the number stays positive but is explicitly advisory. |
+| MAJOR — the narrowed incident claim was still unsupported | **Accepted**, narrowed again — see §5 above. |
+| MINOR — an unknown non-null lease popped another LIVE lease | **Accepted.** The oldest-hold fallback is now reachable only for a leaseless caller; an unknown lease logs and takes nothing. |
+| MINOR — a configured `1e400` still reached the published JSON as `Infinity` | **Accepted.** `config._finite_env_float` validates at parse time, which also fixes the pre-existing `saturation.queue_max_wait_s` field. |
+| MINOR — docs contradicted the repaired behavior | **Accepted.** README, CLAUDE.md and the spec now describe the lease model, the schedule, and the two Retry-After floors; "provably/by construction" removed. |
+| Verified positively by round 2 | The round-1 atomicity refutation stands (no reachable yield between estimate and enqueue); lease migration across a priority-reserve `1→0` hot-tune finishes with zero holds and correct per-lane attribution; retry hard-capping and the elapsed/pre-queue floor split are correct. |
 
 ## 6. Post-change results
 

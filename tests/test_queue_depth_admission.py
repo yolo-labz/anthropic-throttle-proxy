@@ -77,7 +77,7 @@ def test_incident_arithmetic_at_the_measured_scale() -> None:
         queued=3,
         ahead=3,
         service_time_s=113.7,
-        residual_s=113.7,
+        residuals=[113.7, 113.7],
         samples=8,
         source="measured",
         evidenced=True,
@@ -101,7 +101,7 @@ def test_rejects_at_the_lanes_own_measured_service_rate() -> None:
         queued=3,
         ahead=3,
         service_time_s=35.0,
-        residual_s=35.0,
+        residuals=[35.0, 35.0],
         samples=16,
         source="measured",
         evidenced=True,
@@ -120,7 +120,7 @@ def test_nearly_finished_slots_are_not_charged_a_whole_round() -> None:
         queued=0,
         ahead=0,
         service_time_s=40.0,
-        residual_s=2.0,  # both holders are 38 s into a 40 s typical request
+        residuals=[2.0, 2.0],  # both holders are 38 s into a 40 s typical request
         samples=16,
         source="measured",
         evidenced=True,
@@ -522,3 +522,115 @@ def test_retry_after_ceiling_is_a_hard_cap(monkeypatch) -> None:
     estimate = lim.drain_estimate(600.0)
     assert budget_floored_retry_after(estimate) == 300
     assert estimate.retry_after_s <= 300
+
+
+def test_staggered_holders_are_priced_per_slot() -> None:
+    """Two slots free at very different times; one scalar gets both cases wrong.
+
+    Codex round-2 BLOCKER, both directions:
+
+    * a nearly-done slot must not wave through an arrival whose real wait is
+      the OTHER, stuck slot;
+    * a stuck slot must not refuse an arrival that the other slot serves in a
+      second.
+    """
+    stuck_then_predecessor = _compute_drain(
+        slots=2,
+        busy=2,
+        queued=1,
+        ahead=1,  # one queued predecessor takes the first freed slot
+        service_time_s=200.0,
+        residuals=[1.0, 200.0],  # aged 34 s of a 35 s typical, and aged 200 s
+        samples=16,
+        source="inflight",
+        evidenced=True,
+        max_wait=30.0,
+    )
+    assert stuck_then_predecessor.wait_s > 30.0
+    assert stuck_then_predecessor.rejects is True
+
+    one_slot_about_to_free = _compute_drain(
+        slots=2,
+        busy=2,
+        queued=0,
+        ahead=0,
+        service_time_s=35.0,
+        residuals=[1.0, 34.0],
+        samples=16,
+        source="measured",
+        evidenced=True,
+        max_wait=30.0,
+    )
+    assert one_slot_about_to_free.wait_s == pytest.approx(1.0)
+    assert one_slot_about_to_free.rejects is False
+
+
+def test_residual_cannot_exceed_a_full_service() -> None:
+    """A slot cannot have more left than a whole modelled request.
+
+    `_service_estimate` already guarantees it (an overdue holder is priced at
+    exactly the service estimate); this pins the guard for a caller that
+    passes inconsistent numbers.
+    """
+    estimate = _compute_drain(
+        slots=2,
+        busy=2,
+        queued=0,
+        ahead=0,
+        service_time_s=1.0,
+        residuals=[0.0, 100.0],
+        samples=16,
+        source="measured",
+        evidenced=True,
+        max_wait=30.0,
+    )
+    assert estimate.residual_s <= estimate.service_time_s
+    assert estimate.wait_s == pytest.approx(0.0)
+
+
+async def test_round_robin_counts_the_rotation_not_just_the_clients(monkeypatch) -> None:
+    """A client at the head of the rotation is one turn ahead of its siblings."""
+    monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 0.05)
+    lim = FairBearerLimiter(1, "fair")
+    lim.max_concurrent = 1
+    await lim.acquire("holder")
+    a = asyncio.create_task(lim.acquire("A"))
+    b = [asyncio.create_task(lim.acquire("B")) for _ in range(2)]
+    await asyncio.sleep(0.01)
+    assert list(lim.snapshot()["rr_order"]) == ["A", "B"]
+
+    # A is at the head with one parked request: its next one waits for its own
+    # request plus ONE of B's, not both.
+    assert lim.drain_estimate(5.0, client_id="A").ahead == 2
+    # B is behind A, so its next one waits for both of its own plus A's turn.
+    assert lim.drain_estimate(5.0, client_id="B").ahead == 3
+    # A newcomer joins the tail: one turn each for A and B.
+    assert lim.drain_estimate(5.0, client_id="C").ahead == 2
+
+    for task in (a, *b):
+        task.cancel()
+    await asyncio.gather(a, *b, return_exceptions=True)
+    await lim.release()
+
+
+def test_bypass_bearer_publishes_no_enforced_capacity() -> None:
+    """An `off`-mode bearer never enforces admission — say so, don't invent it."""
+    lim = FairBearerLimiter(2, "off")
+    block = proxy._lane_saturation({"b": {"limiter": lim.snapshot()}}, {"b": True})
+    inputs = block["queue_admit"]
+    assert inputs["bypass_bearers"] == 1
+    assert inputs["enforced"] is False
+    assert inputs["source"] == "bypass"
+    assert block["queue_admit_max_depth"] > 0  # advisory, still never a bare 0
+
+
+async def test_unknown_lease_never_completes_another_live_slot() -> None:
+    """A stale lease must not price a request that is still running."""
+    lim = FairBearerLimiter(2, "fair")
+    lim.max_concurrent = 2
+    async with lim.slot("c1", max_wait=5.0):
+        held_before = dict(lim._holds)
+        async with lim._lock:
+            lim._note_completion(999_999, False)
+        assert lim._holds == held_before
+        assert lim.drain_estimate(5.0).samples == 0
