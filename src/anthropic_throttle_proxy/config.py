@@ -270,7 +270,7 @@ QUEUE_TIMEOUT_RETRY_AFTER_S = 5
 # without a service rate it cannot bound DEPTH, so it would park requests whose
 # estimated wait is already past the budget (01/09/2026 :8766 incident:
 # max_concurrent=2, queue depth 3, 30 s budget, occupied slots completing after
-# 113.7 s and 221.2 s — the arrival needed two service rounds). Conservative but
+# 113.7 s and 221.2 s, with a 30 s budget). Conservative but
 # not punitive: a fresh lane with a free slot is never rejected, and three
 # completions replace this with the measured p90.
 QUEUE_DRAIN_DEFAULT_S = max(0.001, _finite_env_float("THROTTLE_QUEUE_DRAIN_DEFAULT_S", "10", 10.0))
@@ -1190,6 +1190,10 @@ def _coerce(spec: dict[str, _Any], raw: _Any) -> _Any:
         v = int(raw)
     elif t == "float":
         v = float(raw)
+        if not math.isfinite(v):
+            # `nan` compares false against both bounds, so it would sail past
+            # the checks below and land in seconds arithmetic and health JSON.
+            raise ValueError(f"{spec['label']}: value {raw!r} is not a finite number")
     else:
         raise ValueError(f"unsupported knob type: {t!r}")
     lo, hi = spec.get("min"), spec.get("max")

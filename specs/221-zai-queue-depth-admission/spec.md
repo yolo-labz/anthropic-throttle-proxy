@@ -10,16 +10,18 @@ expires the proxy answers `503` with a hardcoded `Retry-After: 5`.
 Measured 01/09/2026 14:20–14:24 BRT on the live `:8766` Z.AI lane:
 `max_concurrent=2`, queue depth 3, inherited effective wait budget 30 s, and
 the two requests holding the slots completed after **113.7 s** and **221.2 s**.
-The arriving request therefore could not reach a slot within 30 s *by
-construction* — it needed two service rounds behind three queued peers. The
-proxy still admitted it, burned the full budget in silence, emitted the
-`queue-wait-timeout` 503, and advertised a 5 s retry that is off by roughly two
-orders of magnitude. The client (Pi) retried the same lane four times and
-aborted. Live health later showed queue/inflight 0: this was saturation, not a
-dead proxy and not an upstream quota wall.
+Three requests were already parked behind them. The record does not fix the
+arrival's per-client rotation rank or the holders' ages at that instant, so its
+exact wait is not recoverable — but the proxy admitted it without estimating
+that wait at all, burned the full budget in silence, emitted the
+`queue-wait-timeout` 503, and advertised a 5 s retry against a lane whose slots
+were turning over in minutes. The client (Pi) retried the same lane four times
+and aborted. Live health later showed queue/inflight 0: this was saturation,
+not a dead proxy and not an upstream quota wall.
 
-The lane's own numbers were sufficient to know the request was hopeless before
-it was ever parked.
+Every input needed to estimate that wait — slot count, occupancy, per-client
+queue, and how long each slot had already been held — was live in the lane and
+none of it was consulted.
 
 ## Requirements
 

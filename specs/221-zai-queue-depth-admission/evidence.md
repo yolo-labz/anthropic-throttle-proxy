@@ -16,11 +16,12 @@ content, credential, or client payload appears here or anywhere in this slice.
 | Persisted service knob | `THROTTLE_QUEUE_MAX_WAIT_S=180` |
 | Health after the window | queue 0 / inflight 0 |
 
-The arriving request needed two service rounds behind three queued peers. With
-a service time of ~113 s the earliest possible start was ~227 s — 7.6× the
-30 s budget. It was hopeless before it was parked, and the lane already held
-every number needed to know that. This was saturation, not a dead proxy and
-not an upstream quota wall.
+Three requests were already parked and neither occupied slot freed for 113.7 s
+and 221.2 s after it started, against a 30 s budget. The record does not say where the arrival sat in the per-client rotation, nor how old the two holders were at that instant, so the exact wait it faced is not recoverable; what is recorded is that neither slot freed for 113.7 s and 221.2 s after it started, and that the proxy answered only after burning the whole budget. The
+lane's own live numbers — slot count, occupancy, per-client queue, and how long
+its slots had already been held — were sufficient to estimate that wait before
+parking anything, and none of them were consulted. This was saturation, not a
+dead proxy and not an upstream quota wall.
 
 ## 2. Falsifier replay on current `main` (01/09/2026, offline, no service touched)
 
@@ -112,6 +113,17 @@ What the change does establish:
 | MINOR — a configured `1e400` still reached the published JSON as `Infinity` | **Accepted.** `config._finite_env_float` validates at parse time, which also fixes the pre-existing `saturation.queue_max_wait_s` field. |
 | MINOR — docs contradicted the repaired behavior | **Accepted.** README, CLAUDE.md and the spec now describe the lease model, the schedule, and the two Retry-After floors; "provably/by construction" removed. |
 | Verified positively by round 2 | The round-1 atomicity refutation stands (no reachable yield between estimate and enqueue); lease migration across a priority-reserve `1→0` hot-tune finishes with zero holds and correct per-lane attribution; retry hard-capping and the elapsed/pre-queue floor split are correct. |
+
+## 5b. Codex adversarial review, round 3 (BLOCK at `1878590`)
+
+| Finding | Disposition |
+|---|---|
+| BLOCKER — the schedule treated every busy holder as a server, but `busy > slots` is normal after an AIMD shrink, and `_try_dispatch` stays shut until occupancy falls back UNDER the cap. With `slots=1`, `busy=2`, residuals `[1, 100]` the model admitted on a completion the dispatcher ignores | **Accepted.** The earliest `busy - slots` completions are dropped before scheduling — they only pay down the overshoot. Pinned twice: `test_oversubscribed_pool_waits_for_the_cap_not_the_first_completion` (arithmetic) and `test_shrunk_limiter_does_not_dispatch_on_the_first_release` (real limiter, shrink 2→1). |
+| MAJOR — the round-2 narrowing was applied only to `evidence.md` §5; spec/plan/CLAUDE.md/config/test docstring and the PR body still said the arrival needed two rounds or was impossible "by construction" | **Accepted.** Every one of those statements now carries the same caveat: the record fixes neither the rotation rank nor the holders' ages, so the exact wait is not recoverable. What is claimed is only what was recorded. PR body rewritten to the RR-schedule + lease design. |
+| MINOR — hot-tuning still accepted `nan` (it compares false against both bounds) | **Accepted.** `config._coerce` rejects non-finite floats before the bounds check; `test_hot_tuned_knob_rejects_a_non_finite_float`. |
+| MINOR — a mixed fair+bypass lane did not set `source: bypass` | **Accepted.** Any bypass bearer sets `source: bypass` and keeps the queueing bearers' provenance as `fair_source`; `test_mixed_fair_and_bypass_lane_reports_bypass`. |
+| NIT — stale `_service_estimate` return annotation | Fixed. |
+| Verified positively by round 3 | RR position matches `_try_dispatch` including tail re-append, emptied deques, newcomers and `_priority_rr`; unknown leases no longer consume another hold; residual clamping, zero-slot normalization order and the `busy <= slots` heap are correct; the 1024-step bound costs ~1.14 ms for a synthetic worst-case bearer. |
 
 ## 6. Post-change results
 

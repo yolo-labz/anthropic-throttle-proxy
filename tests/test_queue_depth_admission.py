@@ -4,10 +4,14 @@ The wait bound (PR #83) answers "how long may a request wait". It never asked
 whether the wait was possible. Measured 01/09/2026 14:20-14:24 BRT on the
 `:8766` Z.AI lane: ``max_concurrent=2``, queue depth 3, inherited wait budget
 30 s, and the two occupied slots completed after 113.7 s and 221.2 s. The
-arriving request needed two service rounds behind three queued peers — it could
-not start inside 30 s by construction. The proxy parked it anyway, burned the
-whole budget in silence, and advertised ``Retry-After: 5`` against a >= 442 s
-drain, so the client retried the same wall four times and aborted.
+proxy parked the arrival without consulting any of that, burned the whole
+budget in silence, and advertised ``Retry-After: 5``, so the client retried the
+same wall four times and aborted.
+
+The record fixes neither the arrival's per-client rotation rank nor the
+holders' ages at that instant, so the tests below that use the measured numbers
+are bounds under stated assumptions, not a replay of the event (see
+``specs/221-zai-queue-depth-admission/evidence.md`` §5).
 
 Timings here are the incident replayed at 1/100 scale.
 """
@@ -83,7 +87,7 @@ def test_incident_arithmetic_at_the_measured_scale() -> None:
         evidenced=True,
         max_wait=30.0,
     )
-    assert estimate.rounds == 2, "4th in line behind 3 queued on 2 servers"
+    assert estimate.rounds == 2, "4th in line on 2 servers, ASSUMING ahead == depth"
     assert estimate.wait_s == pytest.approx(227.4)
     assert estimate.admits is False
     assert estimate.rejects is True
@@ -634,3 +638,75 @@ async def test_unknown_lease_never_completes_another_live_slot() -> None:
             lim._note_completion(999_999, False)
         assert lim._holds == held_before
         assert lim.drain_estimate(5.0).samples == 0
+
+
+def test_oversubscribed_pool_waits_for_the_cap_not_the_first_completion() -> None:
+    """After an AIMD shrink, inflight can exceed the live cap.
+
+    `_try_dispatch` stays shut until normal occupancy falls back UNDER the cap,
+    so the earliest completions only pay down the overshoot — they dispatch
+    nobody. Treating every holder as a server let an arrival through on a
+    completion the dispatcher ignores (Codex round-3 BLOCKER).
+    """
+    estimate = _compute_drain(
+        slots=1,  # live cap shrank to 1
+        busy=2,  # two requests still in flight from before the shrink
+        queued=0,
+        ahead=0,
+        service_time_s=100.0,
+        residuals=[1.0, 100.0],
+        samples=16,
+        source="measured",
+        evidenced=True,
+        max_wait=30.0,
+    )
+    assert estimate.wait_s == pytest.approx(100.0)
+    assert estimate.rejects is True
+
+
+async def test_shrunk_limiter_does_not_dispatch_on_the_first_release() -> None:
+    """The same shape against the real limiter, so the model matches dispatch."""
+    lim = FairBearerLimiter(2, "fair")
+    lim.max_concurrent = 2
+    first = await lim.acquire_lease("h1")
+    second = await lim.acquire_lease("h2")
+    lim.max_concurrent = 1  # AIMD shrink under two in-flight requests
+    parked = asyncio.create_task(lim.acquire("waiter"))
+    await asyncio.sleep(0.01)
+    assert lim.snapshot()["queued_total"] == 1
+
+    await lim.release(priority=first[0], lease=first[1])
+    await asyncio.sleep(0.01)
+    assert not parked.done(), "occupancy is still at the cap; nothing dispatches"
+
+    await lim.release(priority=second[0], lease=second[1])
+    await asyncio.wait_for(parked, timeout=1.0)
+    assert lim.snapshot()["inflight"] == 1
+    await lim.release()
+
+
+def test_mixed_fair_and_bypass_lane_reports_bypass() -> None:
+    """One bearer that never queues makes the lane's bound advisory."""
+    fair = FairBearerLimiter(2, "fair")
+    fair.max_concurrent = 2
+    bypass = FairBearerLimiter(2, "off")
+    block = proxy._lane_saturation(
+        {"a": {"limiter": fair.snapshot()}, "b": {"limiter": bypass.snapshot()}},
+        {"a": True, "b": True},
+    )
+    inputs = block["queue_admit"]
+    assert inputs["bypass_bearers"] == 1
+    assert inputs["enforced"] is False
+    assert inputs["source"] == "bypass"
+    assert inputs["fair_source"] == "cold"
+    assert block["queue_admit_max_depth"] > 0
+
+
+def test_hot_tuned_knob_rejects_a_non_finite_float() -> None:
+    """`nan` compares false against both bounds and would sail past them."""
+    spec = config.EDITABLE_KNOBS["queue_max_wait_s"]
+    with pytest.raises(ValueError):
+        config._coerce(spec, "nan")
+    with pytest.raises(ValueError):
+        config._coerce(spec, "1e400")
+    assert config._coerce(spec, "45") == 45.0

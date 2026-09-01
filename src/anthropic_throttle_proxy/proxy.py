@@ -4484,10 +4484,14 @@ def _aggregate_drain(drains: list[object], bypass_bearers: int = 0) -> tuple[int
             "bypass_bearers": bypass_bearers,
         }
     slowest = max(valid, key=lambda d: float(d["service_time_s"]))
+    fair_source = str(slowest.get("source", "cold"))
     return sum(int(d["max_depth"]) for d in valid), {
         "service_time_s": float(slowest["service_time_s"]),
         "samples": sum(int(d.get("samples") or 0) for d in valid),
-        "source": str(slowest.get("source", "cold")),
+        # A mixed lane is a bypass lane: an arrival can land on the bearer that
+        # never queues, so the queueing bearers' bound is not the lane's answer.
+        "source": "bypass" if bypass_bearers else fair_source,
+        "fair_source": fair_source,
         "slots": sum(int(d.get("slots") or 0) for d in valid),
         "free": sum(int(d.get("free") or 0) for d in valid),
         "max_wait_s": float(slowest.get("max_wait_s", config.QUEUE_MAX_WAIT_S)),

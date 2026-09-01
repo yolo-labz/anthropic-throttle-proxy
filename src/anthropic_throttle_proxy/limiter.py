@@ -414,7 +414,7 @@ def _service_estimate(
     samples: collections.deque[float],
     holds: list[float],
     now: float | None = None,
-) -> tuple[float, float, int, str]:
+) -> tuple[float, list[float], int, str]:
     """Conservative seconds-per-request for one lane, with its provenance.
 
     Two independent sources, and the larger wins:
@@ -550,13 +550,19 @@ def _compute_drain(
     enforced = horizon > 0.0
 
     free = max(0, slots - busy)
-    held = [
+    held = sorted(
         min(max(0.0, _finite(value, service_time_s)), service_time_s) for value in (residuals or [])
-    ][:busy]
-    if len(held) < min(busy, slots):
+    )[:busy]
+    if len(held) < busy:
         # No per-slot evidence (a synthetic estimate, or a slot taken before
         # leases existed): price the unknown holders at a full service.
-        held += [service_time_s] * (min(busy, slots) - len(held))
+        held += [service_time_s] * (busy - len(held))
+    if busy > slots:
+        # Oversubscribed: a live cap that just shrank below inflight. The
+        # dispatcher stays shut until occupancy falls back UNDER the cap, so
+        # the earliest `busy - slots` completions buy the arrival nothing —
+        # they only pay down the overshoot (Codex round-3 BLOCKER).
+        held = held[busy - slots :]
     available = [0.0] * free + held
 
     wait_s = _wait_for_position(available, service_time_s, ahead)
