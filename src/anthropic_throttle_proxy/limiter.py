@@ -11,13 +11,36 @@ from __future__ import annotations
 import asyncio
 import collections
 import json
+import math
 import os
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import config
 from .config import log
 from .metrics import M_AIMD_MAX
+
+# Completed slot durations kept per lane. Small on purpose: the estimator wants
+# what this lane is doing NOW, not its lifetime average.
+_SERVICE_SAMPLES = 64
+# Below this many completions the lane has not measured itself yet and the
+# configured cold default is used instead.
+_MIN_SERVICE_SAMPLES = 3
+# Nearest-rank quantile of recent service times. p90 rather than the median:
+# admission is a safety bound, and under-estimating the lane's service time is
+# what parks a request that cannot be drained.
+_SERVICE_QUANTILE = 0.9
+# Floor on the estimated service time. Zero would make every depth admissible
+# while publishing a zero bound — two contradictory answers from one number.
+_MIN_SERVICE_TIME_S = 0.001
+# Bisection steps when inverting the dispatch schedule for one arrival. Each
+# step is O(slots); the search collapses long before this on real budgets.
+_DRAIN_BISECT_STEPS = 96
+# Held-slot bookkeeping is keyed by lease, so it is bounded by real in-flight
+# count. This cap only exists so a leaked lease (a bug) degrades the estimate
+# instead of growing memory forever — the #205 failure shape.
+_HOLDS_SOFT_CAP = 4096
 
 # Late-bound in main() (needs the running loop) — guards the registry below.
 bearer_limiter_lock: asyncio.Lock | None = None
@@ -322,6 +345,342 @@ async def kick_existing_limiters() -> None:
             lim._try_dispatch()
 
 
+@dataclass(frozen=True)
+class DrainEstimate:
+    """Can this lane still drain one more queued request inside the budget?
+
+    Every field is a live lane fact or arithmetic over live lane facts, so the
+    answer is reproducible from ``/__throttle/admission`` without re-deriving
+    it (the duplicate-oracle failure this repo already documents for
+    availability).
+
+    ``max_depth`` is the largest queue depth still admissible under
+    ``max_wait_s``; it is advisory when ``enforced`` is false (bound disabled),
+    where depth is in fact unlimited.
+
+    ``admits`` is pure arithmetic. ``rejects`` is the only thing the hot path
+    acts on, and it additionally requires ``evidenced``: a lane that has never
+    completed a request and holds no slot longer than the configured cold
+    default has GUESSED its service time, and a guess must not turn traffic
+    away. Evidence arrives within the first few requests (three completions,
+    or one slot held past the cold default), which is long before a queue can
+    grow into the shape this guard exists for.
+    """
+
+    slots: int
+    busy: int
+    free: int
+    queued: int
+    ahead: int
+    service_time_s: float
+    residual_s: float
+    samples: int
+    source: str
+    evidenced: bool
+    max_wait_s: float
+    enforced: bool
+    rounds: int
+    wait_s: float
+    max_depth: int
+    admits: bool
+    rejects: bool
+    retry_after_s: int
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def _quantile(values: list[float], q: float) -> float:
+    """Nearest-rank quantile of an unsorted list. ``values`` must be non-empty."""
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
+    return ordered[idx]
+
+
+def _finite(value: float, fallback: float) -> float:
+    """``value`` when it is a real finite number, else ``fallback``.
+
+    An inherited wait budget arrives as a client-supplied header and a config
+    default arrives from the environment; either can parse to ``inf`` or
+    ``nan``, which turns the arithmetic below into an ``OverflowError`` on a
+    request path (and into invalid JSON on ``/__throttle/health``).
+    """
+    number = float(value)
+    return number if math.isfinite(number) else fallback
+
+
+def _service_estimate(
+    samples: collections.deque[float],
+    holds: list[float],
+    now: float | None = None,
+) -> tuple[float, list[float], int, str]:
+    """Conservative seconds-per-request for one lane, with its provenance.
+
+    Two independent sources, and the larger wins:
+
+    * completed requests (p90 of the recent window) once the lane has measured
+      itself at least ``_MIN_SERVICE_SAMPLES`` times, else the cold default;
+    * how long the OLDEST currently-held slot has already been held. That age
+      is a lower bound on that request's TOTAL service time — not on its
+      remaining time — and it is the only signal available in the shape that
+      motivated this code: at 14:20 on 01/09/2026 the two slow generations had
+      not completed yet, so a completion-only estimator was blind to exactly
+      the requests doing the blocking.
+
+    Also returns a PER-HOLDER residual: how much longer each currently-held
+    slot is modelled to run. A slot younger than a typical request has that
+    much of a typical request left, which keeps an arrival behind a
+    nearly-finished slot from being refused over time it will not wait. A slot
+    that is already OVERDUE has an unknown remainder, and service times here
+    are heavy-tailed — a 200 s generation is likelier to keep running than a
+    2 s one — so it is priced at a full estimated service rather than at zero.
+
+    Per holder, not a single scalar: two slots aged 200 s and 34 s free at very
+    different times, and collapsing them either lets an arrival through on the
+    nearly-done one (when the other is what it will actually wait for) or
+    refuses it on the stuck one (when the other is about to free). Both were
+    reachable with one number (Codex round-2 BLOCKER).
+    """
+    stamp = time.monotonic() if now is None else now
+    count = len(samples)
+    if count >= _MIN_SERVICE_SAMPLES:
+        typical, source = _quantile(list(samples), _SERVICE_QUANTILE), "measured"
+    else:
+        typical, source = _finite(config.QUEUE_DRAIN_DEFAULT_S, 10.0), "cold"
+    typical = max(_MIN_SERVICE_TIME_S, typical)
+    service = typical
+    ages = sorted(max(0.0, stamp - started) for started in holds)
+    if ages and ages[-1] > service:
+        # A slot held longer than any completed request IS evidence the lane is
+        # slower than its history says.
+        service, source = ages[-1], "inflight"
+    service = max(_MIN_SERVICE_TIME_S, service)
+    residuals = [typical - age if age < typical else service for age in ages]
+    return service, residuals, count, source
+
+
+def _starts_within(available: list[float], service_time_s: float, horizon: float) -> int:
+    """How many dispatches begin at or before ``horizon`` on this schedule.
+
+    A server free at ``t`` dispatches at ``t, t + service, t + 2 * service, …``,
+    so it contributes ``floor((horizon - t) / service) + 1`` starts. The
+    quotient is then VERIFIED by multiplication in both directions rather than
+    nudged by a fudge factor: binary floats make ``180 / 0.001`` come out as
+    ``179999.99999999997`` (one dispatch short per server) while a start that
+    truly lands past the horizon must not be counted at all. Each correction
+    loop walks only the few ULP the division was off by.
+
+    O(slots) and exact in the same arithmetic the schedule itself uses, which
+    is what lets the published bound and the per-request answer agree.
+    """
+    total = 0
+    for free_at in available:
+        if free_at > horizon:
+            continue
+        periods = int((horizon - free_at) / service_time_s)
+        while periods > 0 and free_at + periods * service_time_s > horizon:
+            periods -= 1
+        while free_at + (periods + 1) * service_time_s <= horizon:
+            periods += 1
+        total += periods + 1
+    return total
+
+
+def _wait_for_position(available: list[float], service_time_s: float, ahead: int) -> float:
+    """When the ``ahead + 1``-th dispatch starts, given each slot's free time.
+
+    Requests take the earliest free slot, which is what the dispatcher does.
+    Closed-form round arithmetic cannot express that: with slots free at 0 s
+    and 100 s and a 1 s service, the first slot serves a hundred requests
+    before the second serves one.
+
+    Found by inverting :func:`_starts_within`, so this and the published bound
+    are answers to the same question and cannot disagree — a stepped walk with
+    a cap advertised depths its own request path then refused (Codex round-5
+    BLOCKER). Bisection over a monotone integer count, O(slots) per step.
+    """
+    if not available:
+        return math.inf
+    target = ahead + 1
+    low = min(available)
+    if _starts_within(available, service_time_s, low) >= target:
+        return low
+    high = low + target * service_time_s
+    for _ in range(_DRAIN_BISECT_STEPS):
+        mid = (low + high) / 2
+        if mid <= low or mid >= high:
+            break
+        if _starts_within(available, service_time_s, mid) >= target:
+            high = mid
+        else:
+            low = mid
+    return high
+
+
+def _admissible_ahead(available: list[float], service_time_s: float, horizon: float) -> int:
+    """Largest ``ahead`` whose dispatch still starts within ``horizon``.
+
+    The last start inside the horizon is the arrival itself, hence ``- 1``.
+    Returns ``-1`` when not even an arrival at the head of an empty queue could
+    start in time; the published field clamps that to 0, but admission must be
+    able to tell "only rank 0 fits" from "nothing fits".
+
+    Exact rather than a capped simulation: ``/__throttle/health`` calls this
+    once per bearer (invariant #4 is 50 ms for the whole endpoint), and a step
+    cap silently truncates the answer — 32 idle slots at 1 ms with a 180 s
+    bound really can drain millions, and reporting a thousand is a lie a
+    consumer would act on.
+    """
+    if not available or service_time_s <= 0:
+        return -1
+    return _starts_within(available, service_time_s, horizon) - 1
+
+
+def _compute_drain(
+    *,
+    slots: int,
+    busy: int,
+    queued: int,
+    ahead: int | None = None,
+    service_time_s: float,
+    residuals: list[float] | None = None,
+    samples: int,
+    source: str,
+    evidenced: bool,
+    max_wait: float | None,
+) -> DrainEstimate:
+    """Queueing arithmetic for one arriving request. Pure — no limiter state.
+
+    ``ahead`` is how many queued requests will be dispatched BEFORE this
+    arrival. Under the limiter's per-client round-robin that is NOT the total
+    queue depth: a new client with one request overtakes a chatty client's
+    backlog by design, which is the whole point of the fair queue. Callers pass
+    the round-robin-aware count; ``None`` falls back to ``queued`` (strict
+    FIFO), which is the conservative reading used when no client is named.
+
+    Each server is modelled as "free at T": idle slots now, held slots after
+    their own ``residuals`` entry. Requests take the earliest free slot, which
+    is what the dispatcher does, and the arrival's start time is the
+    ``ahead + 1``-th such event. Per-holder residuals matter: two slots aged
+    200 s and 34 s free at very different times, and one scalar for the pair
+    either lets an arrival through on the nearly-done slot or refuses it on
+    the stuck one.
+
+    This is a conservative POLICY, not a proof. A holder's age bounds its total
+    service time from below, never its remaining time; it may return in the
+    next millisecond. The model deliberately errs toward over-estimating the
+    wait (a false refusal answered in milliseconds, which the SDK retries)
+    rather than under-estimating it (a request parked past the client's
+    patience, answered too late to be useful — the failure being fixed).
+    """
+    slots = max(0, int(slots))
+    busy = max(0, int(busy))
+    queued = max(0, int(queued))
+    ahead = queued if ahead is None else max(0, int(ahead))
+    service_time_s = max(_MIN_SERVICE_TIME_S, _finite(service_time_s, _MIN_SERVICE_TIME_S))
+    horizon = 0.0 if not max_wait or max_wait < 0 else _finite(max_wait, 0.0)
+    enforced = horizon > 0.0
+
+    free = max(0, slots - busy)
+    held = sorted(
+        min(max(0.0, _finite(value, service_time_s)), service_time_s) for value in (residuals or [])
+    )[:busy]
+    if len(held) < busy:
+        # No per-slot evidence (a synthetic estimate, or a slot taken before
+        # leases existed): price the unknown holders at a full service.
+        held += [service_time_s] * (busy - len(held))
+    if busy > slots:
+        # Oversubscribed: a live cap that just shrank below inflight. The
+        # dispatcher stays shut until occupancy falls back UNDER the cap, so
+        # the earliest `busy - slots` completions buy the arrival nothing —
+        # they only pay down the overshoot (Codex round-3 BLOCKER).
+        held = held[busy - slots :]
+    available = [0.0] * free + held
+
+    wait_s = _wait_for_position(available, service_time_s, ahead)
+    admissible = _admissible_ahead(available, service_time_s, horizon) if enforced else -1
+    # Decided on the INTEGER bound, not on the float wait: the two are answers
+    # to the same question, and letting them round differently is how a
+    # producer advertises a depth its own request path refuses.
+    admits = (not enforced) or (slots > 0 and ahead <= admissible)
+    rejects = enforced and evidenced and not admits
+    max_depth = max(0, admissible)
+
+    # Coarse descriptor kept for logs and dashboards: how many service rounds
+    # deep the arrival is. The wait above is the scheduled answer, not this.
+    rounds = (
+        0 if ahead + 1 <= free else math.ceil((ahead + 1 - free) / slots) if slots else ahead + 1
+    )
+    residual = min(held) if held else 0.0
+    if not math.isfinite(wait_s):
+        # Only reachable with zero servers: nothing will ever dispatch.
+        wait_s = horizon + service_time_s
+
+    # The advertised retry is the drain estimate, never shorter than the
+    # historical constant, and HARD-capped: an unbounded hint is not actionable.
+    # The pre-queue rejection path raises this floor to the budget it just
+    # refused (still under the cap) — a shorter hint would send a compliant
+    # client straight back into the same wall, which is the measured x4 retry
+    # storm. The elapsed path does not, because that budget is already spent.
+    retry_after_s = min(
+        config.QUEUE_RETRY_AFTER_MAX_S,
+        max(config.QUEUE_TIMEOUT_RETRY_AFTER_S, math.ceil(wait_s)),
+    )
+
+    return DrainEstimate(
+        slots=slots,
+        busy=busy,
+        free=free,
+        queued=queued,
+        ahead=ahead,
+        service_time_s=round(service_time_s, 3),
+        residual_s=round(residual, 3),
+        samples=samples,
+        source=source,
+        evidenced=evidenced,
+        max_wait_s=round(horizon, 3),
+        enforced=enforced,
+        rounds=rounds,
+        wait_s=round(wait_s, 3),
+        max_depth=max_depth,
+        admits=admits,
+        rejects=rejects,
+        retry_after_s=retry_after_s,
+    )
+
+
+def budget_floored_retry_after(estimate: DrainEstimate) -> int:
+    """Retry hint for a request refused BEFORE it ever waited.
+
+    It never waited, so the budget it was refused against is still ahead of it:
+    advertising less would guarantee an immediate repeat refusal. Still hard-
+    capped by ``QUEUE_RETRY_AFTER_MAX_S`` — the ceiling is a ceiling.
+    """
+    return min(
+        config.QUEUE_RETRY_AFTER_MAX_S,
+        max(estimate.retry_after_s, math.ceil(estimate.max_wait_s)),
+    )
+
+
+def cold_drain_estimate(max_wait: float | None = None) -> DrainEstimate:
+    """The bound a brand-new bearer would get, from config alone.
+
+    ``/__throttle/admission`` must publish a real depth bound even before the
+    first request allocates a limiter; a consumer polling a freshly restarted
+    proxy would otherwise read "0" and conclude the lane admits nothing.
+    """
+    return _compute_drain(
+        slots=_initial_live_cap(config.MAX_CONCURRENT),
+        busy=0,
+        queued=0,
+        service_time_s=float(config.QUEUE_DRAIN_DEFAULT_S),
+        samples=0,
+        source="config",
+        evidenced=False,
+        max_wait=config.QUEUE_MAX_WAIT_S if max_wait is None else max_wait,
+    )
+
+
 class FairBearerLimiter:
     """Per-bearer concurrency limiter with weighted-fair-queueing across clients.
 
@@ -369,6 +728,18 @@ class FairBearerLimiter:
         self._priority_queues: dict[str, collections.deque[asyncio.Future]] = {}
         self._priority_rr: collections.deque[str] = collections.deque()
         self.priority_inflight = 0
+        # Service-time evidence per lane, for queue-DEPTH admission.
+        # `_holds` maps a per-slot LEASE to (lane, monotonic dispatch stamp), so
+        # a completion prices the request that actually finished. Pairing by
+        # arrival order instead would let a stream of short completions pop the
+        # stamp of the long request still holding the slot, erasing the one
+        # signal the incident turns on. `_samples` holds recent durations.
+        self._holds: dict[int, tuple[bool, float]] = {}
+        self._next_lease = 0
+        self._samples: collections.deque[float] = collections.deque(maxlen=_SERVICE_SAMPLES)
+        self._priority_samples: collections.deque[float] = collections.deque(
+            maxlen=_SERVICE_SAMPLES
+        )
         self._lock = asyncio.Lock()
         # _last_throttle_at: monotonic-ish wall clock of the last shrink.
         # _successes_since_throttle: consecutive 2xx since that shrink.
@@ -448,6 +819,135 @@ class FairBearerLimiter:
             self._successes_since_throttle = 0
             self._shrink_history.append(self._last_throttle_at)
             return new_max
+
+    def _note_dispatch(self, priority: bool) -> int:
+        """Lease a slot to its holder. Caller holds ``_lock`` (every ``inflight += 1``).
+
+        Returns the lease the holder must hand back on release. The soft cap is
+        a leak guard only: a lease that never returns is a bug, and dropping the
+        oldest entries degrades the estimate rather than growing memory.
+        """
+        self._next_lease += 1
+        lease = self._next_lease
+        self._holds[lease] = (priority, time.monotonic())
+        while len(self._holds) > _HOLDS_SOFT_CAP:
+            self._holds.pop(next(iter(self._holds)), None)
+        return lease
+
+    def _note_completion(self, lease: int | None, priority: bool, *, sample: bool = True) -> None:
+        """Return a lease, recording its duration. Caller holds ``_lock``.
+
+        ``lease=None`` is the fallback for a caller that took a slot through
+        the bare :meth:`acquire`/:meth:`release` pair (tests, and anything that
+        predates leases). The oldest hold in the lane is released so the books
+        stay balanced, but it is only SAMPLED when that lane holds exactly one
+        slot: with several in flight, "the oldest" is a guess, and a guess that
+        prices a still-running request as finished is the estimator poisoning
+        this design replaced arrival-order pairing to avoid.
+
+        ``sample=False`` for a slot that was cancelled during the dispatch
+        race: it never ran upstream, and recording its ~0 s "duration" would
+        teach the estimator that the lane is instant.
+        """
+        if lease is not None:
+            held = self._holds.pop(lease, None)
+            if held is None:
+                # An unknown lease is a bug or a soft-cap eviction. Popping
+                # "something else" would price a LIVE request as finished, so
+                # take nothing and leave the estimate conservative.
+                log(f"drain-lease-miss bid={self.bearer_id} lease={lease}")
+                return
+        else:
+            lane = [item for item in self._holds.items() if item[1][0] == priority]
+            if not lane:
+                return
+            oldest = min(lane, key=lambda item: item[1][1])
+            self._holds.pop(oldest[0], None)
+            held = oldest[1]
+            sample = sample and len(lane) == 1
+        if sample:
+            samples = self._priority_samples if held[0] else self._samples
+            samples.append(max(0.0, time.monotonic() - held[1]))
+
+    def _lane_holds(self, priority: bool) -> list[float]:
+        """Dispatch stamps of the slots currently held in one lane."""
+        return [started for lane, started in self._holds.values() if lane == priority]
+
+    def _ahead_of(self, client_id: str | None, priority: bool) -> int:
+        """Queued requests that will be dispatched BEFORE this client's arrival.
+
+        The dispatcher rotates across clients, so an arrival does not queue
+        behind the whole backlog — it queues behind at most one request per
+        other active client per turn it has to take. For a client with ``own``
+        requests already parked, its next one dispatches on turn ``own + 1``.
+        A sibling AHEAD of it in the current rotation gets one more turn than a
+        sibling behind it, so the two are counted differently: up to
+        ``own + 1`` versus up to ``own``.
+
+        Counting the whole depth instead would refuse a brand-new client stuck
+        behind one chatty client's backlog — traffic the fair queue exists to
+        serve promptly, and traffic this proxy serves today. ``client_id=None``
+        (the published snapshot) assumes a NEW client, the common case for a
+        consumer asking "can I be served".
+        """
+        queues = self._priority_queues if priority else self._queues
+        order = self._priority_rr if priority else self._rr_order
+        own = len(queues.get(client_id, ())) if client_id is not None else 0
+        # A client not yet in the rotation joins at the tail, so every listed
+        # client is "ahead" of it.
+        position = order.index(client_id) if client_id in order else len(order)
+        ahead = own
+        for index, cid in enumerate(order):
+            if cid == client_id:
+                continue
+            turns = own + 1 if index < position else own
+            ahead += min(len(queues.get(cid, ())), turns)
+        return ahead
+
+    def drain_estimate(
+        self,
+        max_wait: float | None = None,
+        *,
+        priority: bool = False,
+        client_id: str | None = None,
+        now: float | None = None,
+    ) -> DrainEstimate:
+        """Whether one more arrival can reach a slot within ``max_wait``.
+
+        ``max_wait=None`` reports against the CONFIGURED bound, which is what
+        ``snapshot`` publishes; a caller holding a request passes its own
+        effective (possibly inherited, therefore shorter) budget instead.
+
+        The priority reserve is a DEDICATED pool, so a lane call is judged
+        against ``PRIORITY_RESERVE_SLOTS`` and the lane's own queue — a full
+        main pool must not reject the evaluator the reserve exists for.
+        """
+        priority = priority and config.PRIORITY_RESERVE_SLOTS > 0
+        if priority:
+            slots = config.PRIORITY_RESERVE_SLOTS
+            busy = self.priority_inflight
+            queued = self.priority_queued
+            samples = self._priority_samples
+        else:
+            slots = self.max_concurrent
+            busy = self.inflight - self.priority_inflight
+            queued = self.queued_total
+            samples = self._samples
+        service_time_s, residuals, count, source = _service_estimate(
+            samples, self._lane_holds(priority), now
+        )
+        return _compute_drain(
+            slots=slots,
+            busy=busy,
+            queued=queued,
+            ahead=self._ahead_of(client_id, priority),
+            service_time_s=service_time_s,
+            residuals=residuals,
+            samples=count,
+            source=source,
+            evidenced=source != "cold",
+            max_wait=config.QUEUE_MAX_WAIT_S if max_wait is None else max_wait,
+        )
 
     def _recent_shrinks(self, now: float | None = None) -> int:
         """Count shrinks whose timestamp is inside ``2 * AIMD_BACKOFF_S``.
@@ -594,6 +1094,15 @@ class FairBearerLimiter:
             await asyncio.sleep(wait)
 
     async def acquire(self, client_id: str, *, priority: bool = False) -> bool:
+        """Acquire one slot, returning only the effective lane.
+
+        Back-compat shim over :meth:`acquire_lease` for callers that release
+        without a lease (see ``_note_completion``).
+        """
+        effective, _lease = await self.acquire_lease(client_id, priority=priority)
+        return effective
+
+    async def acquire_lease(self, client_id: str, *, priority: bool = False) -> tuple[bool, int]:
         """Acquire one slot for ``client_id``, queueing fairly if necessary.
 
         In non-queue modes this just bumps ``inflight`` and returns. In queue
@@ -604,9 +1113,9 @@ class FairBearerLimiter:
         never waits behind long generations holding every main slot.
 
         Returns the EFFECTIVE lane (a reserve of 0 disables the lane and
-        demotes the call to normal traffic). Callers that later invoke
-        :meth:`release` directly must pass this value back as ``priority`` so
-        the lane accounting stays symmetric.
+        demotes the call to normal traffic) and the slot's LEASE. Callers must
+        pass both back to :meth:`release` so lane accounting and service-time
+        bookkeeping stay symmetric.
         """
         priority = priority and config.PRIORITY_RESERVE_SLOTS > 0
         if not self.queue_enabled:
@@ -614,7 +1123,8 @@ class FairBearerLimiter:
                 self.inflight += 1
                 if priority:
                     self.priority_inflight += 1
-            return priority
+                lease = self._note_dispatch(priority)
+            return priority, lease
 
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
@@ -632,15 +1142,15 @@ class FairBearerLimiter:
             self._try_dispatch()
         try:
             # The dispatcher stamps the future's result with the lane that
-            # actually granted the slot (True = priority pool). This survives
-            # a mid-wait retune: reserve dropping to 0 migrates queued lane
-            # waiters into the normal queue, and whichever loop dispatches is
-            # the one whose accounting the caller must undo on release.
-            effective: bool = await fut
+            # actually granted the slot (True = priority pool) and the lease it
+            # opened. This survives a mid-wait retune: reserve dropping to 0
+            # migrates queued lane waiters into the normal queue, and whichever
+            # loop dispatches is the one whose accounting the caller must undo.
+            effective, lease = await fut
         except asyncio.CancelledError:
             await self._cancel_cleanup(client_id, fut)
             raise
-        return effective
+        return effective, lease
 
     async def _cancel_cleanup(self, client_id: str, fut: asyncio.Future) -> None:
         """Undo a queued/dispatched slot when the caller is cancelled.
@@ -655,9 +1165,13 @@ class FairBearerLimiter:
         async with self._lock:
             removed = self._remove_pending(client_id, fut)
             if not removed and fut.done() and not fut.cancelled() and fut.exception() is None:
+                effective, lease = fut.result()
                 self.inflight -= 1
-                if fut.result():
+                if effective:
                     self.priority_inflight -= 1
+                # Dispatched and cancelled in the same breath: return the lease
+                # but do NOT sample it — it never reached upstream.
+                self._note_completion(lease, bool(effective), sample=False)
                 self._try_dispatch()
 
     def _remove_pending(self, client_id: str, fut: asyncio.Future) -> bool:
@@ -690,12 +1204,13 @@ class FairBearerLimiter:
                 order.remove(client_id)
         return removed
 
-    async def release(self, *, priority: bool = False) -> None:
+    async def release(self, *, priority: bool = False, lease: int | None = None) -> None:
         """Release one in-flight slot and dispatch the next queued request."""
         async with self._lock:
             self.inflight -= 1
             if priority:
                 self.priority_inflight -= 1
+            self._note_completion(lease, priority)
             self._try_dispatch()
 
     def _try_dispatch(self) -> None:
@@ -739,7 +1254,7 @@ class FairBearerLimiter:
                 continue
             self.inflight += 1
             self.priority_inflight += 1
-            fut.set_result(True)
+            fut.set_result((True, self._note_dispatch(True)))
         while (self.inflight - self.priority_inflight) < self.max_concurrent and self._rr_order:
             client_id = self._rr_order.popleft()
             q = self._queues.get(client_id)
@@ -754,7 +1269,7 @@ class FairBearerLimiter:
             if fut.cancelled():
                 continue
             self.inflight += 1
-            fut.set_result(False)
+            fut.set_result((False, self._note_dispatch(False)))
 
     def _migrate_priority_to_normal(self) -> None:
         """Move all parked lane waiters into the normal queues. Holds ``_lock``.
@@ -827,22 +1342,40 @@ class FairBearerLimiter:
             "recent_shrinks": recent,
             "storm_mode": recent >= config.AIMD_STORM_THRESHOLD,
             "effective_ramp_after": effective,
+            # Queue-DEPTH admission, against the CONFIGURED bound and a NEW
+            # client — the same arithmetic the hot path runs, for the question a
+            # consumer is actually asking. A request that inherits a SHORTER
+            # end-to-end budget is judged against that shorter horizon instead,
+            # so `max_wait_s` here says which horizon this bound describes.
+            "drain": self.drain_estimate().as_dict(),
         }
 
 
 class QueueWaitTimeout(Exception):
-    """A queued request exceeded its ``max_wait`` bound without getting a slot.
+    """A request could not get a slot within its ``max_wait`` bound.
 
     Raised from ``_FairSlotContext.__aenter__`` BEFORE any slot is held (the
     ``asyncio.wait_for`` cancellation runs ``acquire``'s ``_cancel_cleanup``,
     which removes the parked future or releases a raced dispatch), so the
     caller never owes a ``release()`` and can answer the client with a clean
     503 + Retry-After while its transport is still alive.
+
+    ``pre_queue`` distinguishes the two ways that happens: the request was
+    parked and the bound expired, or the lane's own numbers put the wait past
+    the budget before it was ever parked.
     """
 
-    def __init__(self, max_wait: float) -> None:
+    def __init__(
+        self,
+        max_wait: float,
+        *,
+        pre_queue: bool = False,
+        estimate: DrainEstimate | None = None,
+    ) -> None:
         super().__init__(f"no slot within {max_wait}s")
         self.max_wait = max_wait
+        self.pre_queue = pre_queue
+        self.estimate = estimate
 
 
 class _FairSlotContext:
@@ -859,27 +1392,59 @@ class _FairSlotContext:
         self.client_id = client_id
         self.priority = priority
         self.max_wait = max_wait
+        self.lease: int | None = None
+
+    def _estimate(self) -> DrainEstimate:
+        return self.limiter.drain_estimate(
+            self.max_wait, priority=self.priority, client_id=self.client_id
+        )
 
     async def __aenter__(self) -> _FairSlotContext:
-        # acquire() echoes the EFFECTIVE lane (reserve 0 demotes to normal);
-        # remember it so __aexit__ releases the same pool it acquired from,
-        # even if the knob is retuned mid-flight.
-        acquire = self.limiter.acquire(self.client_id, priority=self.priority)
-        if self.max_wait and self.limiter.queue_enabled:
+        bounded = bool(self.max_wait) and self.limiter.queue_enabled
+        if bounded:
+            # Bounding the WAIT does not bound the DEPTH: a queue deeper than
+            # this lane drains at its own measured service rate parks a request
+            # whose estimated wait is already past the budget, burns the whole
+            # patience window in silence, and answers too late to be useful
+            # (01/09/2026 :8766 — 2 slots held 113.7 s / 221.2 s, 3 queued,
+            # 30 s budget, 4 retries into the same wall). Refuse up front, with
+            # the arithmetic attached, while the transport is wide open.
+            #
+            # The check and the enqueue below are one event-loop step: every
+            # `_lock` critical section in this class is synchronous, so
+            # `acquire`'s lock take never yields and a simultaneous burst is
+            # serialized rather than all passing one stale estimate.
+            estimate = self._estimate()
+            if estimate.rejects:
+                log(
+                    f"queue-depth-reject bid={self.limiter.bearer_id} cid={self.client_id} "
+                    f"slots={estimate.slots} busy={estimate.busy} queued={estimate.queued} "
+                    f"ahead={estimate.ahead} service_s={estimate.service_time_s:g} "
+                    f"source={estimate.source} est_wait_s={estimate.wait_s:g} "
+                    f"max_wait_s={estimate.max_wait_s:g} max_depth={estimate.max_depth}"
+                )
+                raise QueueWaitTimeout(self.max_wait, pre_queue=True, estimate=estimate)
+        # acquire_lease() echoes the EFFECTIVE lane (reserve 0 demotes to
+        # normal) and the slot's lease; remember both so __aexit__ releases the
+        # same pool and returns the same lease, even if the knob is retuned
+        # mid-flight. Created only once the request is admitted, so a rejection
+        # leaves no un-awaited coroutine behind.
+        acquire = self.limiter.acquire_lease(self.client_id, priority=self.priority)
+        if bounded:
             # wait_for cancels the parked acquire on timeout; its
             # CancelledError path (_cancel_cleanup) rolls the queue entry —
             # or a slot dispatched during the cancellation race — back, so
             # no release is owed here.
             try:
-                self.priority = await asyncio.wait_for(acquire, timeout=self.max_wait)
+                self.priority, self.lease = await asyncio.wait_for(acquire, timeout=self.max_wait)
             except TimeoutError as exc:
-                raise QueueWaitTimeout(self.max_wait) from exc
+                raise QueueWaitTimeout(self.max_wait, estimate=self._estimate()) from exc
         else:
-            self.priority = await acquire
+            self.priority, self.lease = await acquire
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        await self.limiter.release(priority=self.priority)
+        await self.limiter.release(priority=self.priority, lease=self.lease)
         return False
 
 

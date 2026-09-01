@@ -83,8 +83,14 @@ def test_queue_timeout_response_shape() -> None:
     lim = FairBearerLimiter(1, "fair")
     resp = proxy._queue_wait_timeout_response("bid12345", "cid", "v1/messages", lim, 30.0)
     assert resp.status == 503
-    assert resp.headers["retry-after"] == str(config.QUEUE_TIMEOUT_RETRY_AFTER_S)
     assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    # PR #222: the interval is the lane's drain estimate, floored at the old
+    # constant. This is the ELAPSED path — the 30 s budget is already spent, so
+    # it is not also charged as a delay; an idle lane can serve immediately.
+    retry = int(resp.headers["retry-after"])
+    assert retry == lim.drain_estimate(30.0).retry_after_s
+    assert retry >= config.QUEUE_TIMEOUT_RETRY_AFTER_S
+    assert retry <= config.QUEUE_RETRY_AFTER_MAX_S
 
 
 def test_effective_queue_max_wait_budget_math(monkeypatch) -> None:
