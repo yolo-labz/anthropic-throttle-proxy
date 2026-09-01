@@ -274,10 +274,12 @@ QUEUE_TIMEOUT_RETRY_AFTER_S = 5
 # not punitive: a fresh lane with a free slot is never rejected, and three
 # completions replace this with the measured p90.
 QUEUE_DRAIN_DEFAULT_S = max(0.001, _finite_env_float("THROTTLE_QUEUE_DRAIN_DEFAULT_S", "10", 10.0))
-# Ceiling on the advertised queue-timeout Retry-After. The drain estimate is
-# honest but can be large on a stalled lane; an unbounded hint is not actionable
-# for a client, so cap what we advertise while still never claiming a delay
-# shorter than the wait budget that was just proven insufficient.
+# HARD ceiling on the advertised queue-timeout Retry-After. The drain estimate
+# is honest but can be large on a stalled lane, and an unbounded hint is not
+# actionable. A request refused before it ever waited is otherwise floored at
+# the budget it was refused against, so that it cannot immediately walk back
+# into the same wall — but this cap still wins, so a budget configured above it
+# is answered with the cap.
 QUEUE_RETRY_AFTER_MAX_S = max(
     QUEUE_TIMEOUT_RETRY_AFTER_S, int(os.environ.get("THROTTLE_QUEUE_RETRY_AFTER_MAX_S", "300"))
 )

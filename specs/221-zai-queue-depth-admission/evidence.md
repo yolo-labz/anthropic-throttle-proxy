@@ -40,12 +40,18 @@ pre-arrival: inflight=2 max_concurrent=2 queued_total=3
 RESULT: 503 after 0.301s of a 0.300s budget (scaled: 30.1s of 30s)
         parked-not-rejected=True
         retry-after=5  (x-anthropic-throttle-queue-timeout=1)
-        real drain for this arrival >= 4.42s scaled (442s real) — 2 rounds behind 3 queued
+        modelled drain under those assumptions >= 4.42s scaled (442s real)
 ```
 
-**Verdict: not falsified.** Current `main` (a) admits the impossible request
-and burns the entire budget in silence, and (b) advertises a constant 5 s
-retry against a ≥ 442 s real drain. The producer change is required.
+The replay is **synthetic**: it fixes the arrival behind all three queued
+requests and gives both holders a full service time, neither of which the
+incident record establishes. Its purpose is narrow — to show what `main` does
+with a queue it cannot drain, whatever the exact numbers were.
+
+**Verdict: not falsified.** Current `main` (a) parks the arrival without
+estimating the wait at all and burns the entire budget in silence, and (b)
+advertises the same constant 5 s regardless of how long the lane's slots have
+been held. The producer change is required.
 
 ## 3. What the fix must therefore establish
 
@@ -96,10 +102,12 @@ What the change does establish:
 - At the lane's own measured rate from the ledger's 29/08 observation
   (~35 s/req on 2 slots) with those assumptions, the shape refuses at once:
   70 s of scheduled wait against a 30 s budget.
-- By the second of the four retries the holders were already ~100 s old —
-  evidence on its own — so a repeat of the storm is cut at the first retry.
-- The client's outcome changes from *four silent 30 s stalls then an abort* to
-  an immediate 503 carrying an honest interval.
+- The same two slots were still held across the retry window, so by the first
+  retry their age is itself evidence — the estimator no longer has to guess.
+- The outcome shape changes: the FIRST arrival may still spend its 30 s
+  waiting (a cold lane does not enforce), but the repeats that made it a storm
+  are answered immediately, with an interval that reflects the lane instead of
+  a constant 5 s.
 
 ## 5a. Codex adversarial review, round 2 (BLOCK at `c16cf21`)
 
@@ -124,6 +132,15 @@ What the change does establish:
 | MINOR — a mixed fair+bypass lane did not set `source: bypass` | **Accepted.** Any bypass bearer sets `source: bypass` and keeps the queueing bearers' provenance as `fair_source`; `test_mixed_fair_and_bypass_lane_reports_bypass`. |
 | NIT — stale `_service_estimate` return annotation | Fixed. |
 | Verified positively by round 3 | RR position matches `_try_dispatch` including tail re-append, emptied deques, newcomers and `_priority_rr`; unknown leases no longer consume another hold; residual clamping, zero-slot normalization order and the `busy <= slots` heap are correct; the 1024-step bound costs ~1.14 ms for a synthetic worst-case bearer. |
+
+## 5c. Codex adversarial review, round 4 (BLOCK at `988c294`, fresh reviewer seat)
+
+| Finding | Disposition |
+|---|---|
+| MAJOR (blocking) — the published bound was a 1024-step SIMULATION: ~94 ms for 250 bearer snapshots (invariant #4 is 50 ms for the whole endpoint) and factually wrong once a lane can drain more than a thousand — 32 idle slots at 1 ms with a 180 s bound really can start 5,760,031 | **Accepted.** `_admissible_ahead` is now a closed form, O(slots): a server free at `t` contributes `floor((horizon - t) / service) + 1` starts. Verified equal to the simulation on 5,000 random shapes (three differ by one at an exact float boundary), exact on the 5.76M case, and 250 snapshots now cost **6.9 ms**. Pinned by `test_published_depth_is_exact_not_a_simulation_cap` and `test_snapshot_stays_cheap_for_a_wide_registry`. |
+| MAJOR (blocking) — §2 still called the drain "real" and the arrival "impossible", and §5 asserted an unsupported ~100 s holder age at the second retry while claiming an immediate first response | **Accepted.** §2 is labelled synthetic with its assumptions stated; "real"/"impossible" removed; §5 now says only that the same slots were still held across the retry window, and states plainly that the FIRST arrival may still spend its 30 s because a cold lane does not enforce. |
+| MAJOR (blocking) — `plan.md` still described FIFO deque pairing and a single budget floor for every timeout, both superseded | **Accepted.** Rewritten to the lease model, the pre-queue/elapsed floor split, and the closed-form published bound. The `config.py` ceiling comment no longer claims the advertised delay is never shorter than the budget — the hard cap wins. |
+| MINOR (follow-up, pre-existing) — lowering `PRIORITY_RESERVE_SLOTS` from 2 to 0 while two reserve holders are in flight migrates a queued lane waiter and dispatches it immediately, giving `inflight=3` against the new combined cap of 2 | **Not fixed here, deliberately.** It predates this slice (PR #73's migration path), is a limiter concurrency question rather than a depth-admission one, and lease attribution stays correct throughout. Recorded as follow-up: normal dispatch should gate on the combined live cap while retired reserve leases drain. |
 
 ## 6. Post-change results
 

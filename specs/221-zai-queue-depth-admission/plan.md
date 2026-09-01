@@ -28,19 +28,25 @@ deadline, elapsed wait) without touching the handler's control flow.
 ### 1. Service-time evidence (limiter)
 
 Dispatch and completion already funnel through three `inflight += 1` sites and
-two `inflight -= 1` sites inside the limiter. Record a monotonic start on each
-dispatch into a per-lane bounded deque and pop it FIFO on completion, appending
-the duration to a bounded sample deque.
+two `inflight -= 1` sites inside the limiter. Each dispatch opens a per-slot
+**lease** (`_holds: lease -> (lane, monotonic start)`) and each completion
+returns its own lease, appending that request's duration to a bounded sample
+deque.
 
-- FIFO pairing is an approximation when completion order differs from dispatch
-  order; it preserves the distribution and skews conservative on mixed traffic
-  (a short request that finishes first inherits an older start). Marked with a
-  `ponytail:` comment naming the ceiling.
-- Cancellation cleanup pops the start **without** recording a sample: a slot
+- Leases, not arrival-order pairing. Completion order routinely differs from
+  dispatch order, and pairing by order lets a stream of short completions pop
+  the long holder's stamp — erasing the "this slot has been held for minutes"
+  signal the incident turns on (Codex round-1 BLOCKER).
+- The lease rides the dispatch future's result alongside the effective lane, so
+  `acquire_lease` / `release(lease=)` / `_cancel_cleanup` all return the exact
+  slot. `acquire()` stays as a shim for callers that release without one; those
+  fall back to the oldest hold in the lane. An UNKNOWN lease takes nothing —
+  popping "something else" would price a live request as finished.
+- Cancellation cleanup returns the lease **without** recording a sample: a slot
   that was dispatched and immediately cancelled never ran upstream and must not
   poison the estimator with a ~0 s sample.
-- Both deques are `maxlen`-bounded, so a mispaired decrement can never grow
-  memory (invariant: nothing in this process may grow unbounded — see #205).
+- Holds are bounded by real in-flight count, with a soft cap as a leak guard
+  only (invariant: nothing in this process may grow unbounded — see #205).
 
 ### 2. Conservative estimate
 
@@ -87,16 +93,26 @@ expresses exactly that condition.
 
 ### 5. Retry-After (proxy)
 
-`_queue_wait_timeout_response` recomputes the estimate from the limiter it
-already receives and emits
-`clamp(ceil(wait_s), floor=max(QUEUE_TIMEOUT_RETRY_AFTER_S, ceil(max_wait)), ceiling=QUEUE_RETRY_AFTER_MAX_S)`.
-The floor keeps it from ever being shorter than today's constant or than the
-budget just proven insufficient; the ceiling keeps it bounded.
+`_queue_wait_timeout_response` takes the estimate from the raised
+`QueueWaitTimeout` (or recomputes it for the pre-dispatch call sites) and emits
+`min(QUEUE_RETRY_AFTER_MAX_S, max(QUEUE_TIMEOUT_RETRY_AFTER_S, ceil(wait_s)))`.
+
+The ceiling is a HARD cap, so a budget larger than the cap is answered with the
+cap. Only the PRE-QUEUE refusal additionally raises the floor to the refused
+budget (`budget_floored_retry_after`), because that request never waited and
+would otherwise walk straight back into the same wall. A request that already
+SPENT its budget waiting is not charged for it twice — that time is behind it,
+and a slot may free the moment after the timeout (Codex round-2 MAJOR).
 
 ### 6. Published contract (proxy)
 
 `FairBearerLimiter.snapshot()` gains a `drain` sub-dict computed against
-`config.QUEUE_MAX_WAIT_S`; `_lane_saturation` aggregates it across measured
+`config.QUEUE_MAX_WAIT_S` for a NEW client. The published bound is a closed
+form over the same schedule (each server free at `t` contributes
+`floor((horizon - t) / service) + 1` starts), not a simulation: a step cap
+would both break invariant #4 on a wide registry and understate real capacity
+by orders of magnitude (Codex round-4 MAJOR).
+ `_lane_saturation` aggregates it across measured
 usable bearers into `saturation.queue_admit_max_depth` (sum, matching the
 existing `slots`/`free`/`queued` sums) and `saturation.queue_admit` (max
 service time, total samples, worst provenance, configured max wait). With no

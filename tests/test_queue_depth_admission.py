@@ -710,3 +710,32 @@ def test_hot_tuned_knob_rejects_a_non_finite_float() -> None:
     with pytest.raises(ValueError):
         config._coerce(spec, "1e400")
     assert config._coerce(spec, "45") == 45.0
+
+
+def test_published_depth_is_exact_not_a_simulation_cap() -> None:
+    """A step cap both breaks the health budget and lies about capacity.
+
+    32 idle slots at 1 ms service really can start 5.76M requests inside a
+    180 s bound; publishing "1023" is a number a consumer would act on.
+    """
+    from anthropic_throttle_proxy.limiter import _admissible_ahead
+
+    assert _admissible_ahead([0.0] * 32, 0.001, 180.0) == 5_760_031
+    assert _admissible_ahead([0.0, 0.0], 10.0, 30.0) == 7
+    assert _admissible_ahead([0.0, 25.0], 10.0, 30.0) == 4  # 0/10/20/30 + 25
+    assert _admissible_ahead([31.0], 10.0, 30.0) == 0  # nothing starts in time
+    assert _admissible_ahead([], 10.0, 30.0) == 0
+
+
+def test_snapshot_stays_cheap_for_a_wide_registry() -> None:
+    """`/__throttle/health` renders one snapshot per bearer under a 50 ms budget."""
+    import time
+
+    lim = FairBearerLimiter(32, "fair")
+    lim.max_concurrent = 32
+    lim.snapshot()  # warm
+    started = time.perf_counter()
+    for _ in range(250):
+        lim.snapshot()
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    assert elapsed_ms < 50, f"250 bearer snapshots took {elapsed_ms:.1f} ms"

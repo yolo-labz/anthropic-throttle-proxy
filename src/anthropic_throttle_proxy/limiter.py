@@ -38,6 +38,8 @@ _MIN_SERVICE_TIME_S = 0.001
 # Upper bound on simulated dispatch events per drain estimate. Bounds both the
 # per-request check and the published bound; health calls this per bearer.
 _DRAIN_SIM_STEPS = 1024
+# Absorbs binary-float error in a division that must land on a whole dispatch.
+_DIVISION_EPSILON = 1e-9
 # Held-slot bookkeeping is keyed by lease, so it is bounded by real in-flight
 # count. This cap only exists so a leaked lease (a bug) degrades the estimate
 # instead of growing memory forever — the #205 failure shape.
@@ -488,20 +490,27 @@ def _wait_for_position(available: list[float], service_time_s: float, ahead: int
 def _admissible_ahead(available: list[float], service_time_s: float, horizon: float) -> int:
     """Largest ``ahead`` whose dispatch still starts within ``horizon``.
 
-    Counts the dispatches that begin inside the horizon on the same schedule;
-    the last of them is the arrival itself, hence ``count - 1``. Saturates at
-    ``_DRAIN_SIM_STEPS``: a lane that can drain a thousand queued requests
-    inside its wait bound is not the failure this guard exists for.
+    Closed form, O(slots): a server free at ``t`` dispatches at
+    ``t, t + service, t + 2 * service, ...``, so it contributes
+    ``floor((horizon - t) / service) + 1`` starts inside the horizon. The last
+    start across all servers is the arrival itself, hence ``- 1``.
+
+    Simulating this instead would be both slow and wrong: ``/__throttle/health``
+    calls it once per bearer (invariant #4 is 50 ms for the whole endpoint),
+    and a step cap silently truncates the answer — 32 idle slots at 1 ms with a
+    180 s bound really can drain millions, and reporting a thousand is a lie a
+    consumer would act on.
     """
-    if not available:
+    if not available or service_time_s <= 0:
         return 0
-    heap = list(available)
-    heapq.heapify(heap)
-    count = 0
-    while count < _DRAIN_SIM_STEPS and heap[0] <= horizon:
-        heapq.heappush(heap, heapq.heappop(heap) + service_time_s)
-        count += 1
-    return max(0, count - 1)
+    # The epsilon is a float-division guard, not a fudge: 180 / 0.001 evaluates
+    # to 179999.99999999997, which would drop a whole dispatch per server.
+    starts = sum(
+        int((horizon - free_at) / service_time_s + _DIVISION_EPSILON) + 1
+        for free_at in available
+        if free_at <= horizon
+    )
+    return max(0, starts - 1)
 
 
 def _compute_drain(
