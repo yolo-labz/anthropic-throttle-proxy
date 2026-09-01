@@ -790,3 +790,24 @@ async def test_published_bound_is_a_rank_not_a_raw_depth(monkeypatch) -> None:
     assert chatty_block["queue_admit"]["admits_new_client"] is True
     assert spread_block["queue_admit"]["ahead"] == 100
     assert spread_block["queue_admit"]["admits_new_client"] is False
+
+
+async def test_leaseless_release_never_samples_an_ambiguous_hold() -> None:
+    """Without a lease, "the oldest hold" is a guess — do not price it.
+
+    The books still balance (the hold is released, nothing leaks), but a
+    duration is only recorded when the lane holds exactly one slot, where the
+    attribution is unambiguous.
+    """
+    lim = FairBearerLimiter(3, "fair")
+    lim.max_concurrent = 3
+    await lim.acquire("slow")  # still running
+    await asyncio.sleep(0.03)
+    await lim.acquire("quick")
+    await lim.release()  # leaseless: ambiguous, two slots held
+    assert len(lim._holds) == 2 - 1, "the hold is still released"
+    assert lim.drain_estimate(5.0).samples == 0, "but not priced onto a live request"
+
+    await lim.release()  # now unambiguous: one hold left
+    assert lim._holds == {}
+    assert lim.drain_estimate(5.0).samples == 1

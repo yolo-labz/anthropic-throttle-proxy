@@ -152,6 +152,23 @@ What the change does establish:
 | MINOR — the fixed `1e-9` quotient epsilon overcounted a genuine near-boundary start (`available=[5e-10]`, service 1, horizon 1 returned 1 instead of 0) | **Accepted.** The epsilon is gone: each quotient is verified by multiplication in both directions, which fixes the float-division shortfall (`180 / 0.001 == 179999.99999999997`) without inventing a start that lands past the horizon. Both cases are pinned. |
 | Reserve `2 -> 0` hot-tune (round-4 MINOR) | Confirmed by the reviewer as defensibly deferred: predates this slice, attribution stays correct, recorded as follow-up in §5c. |
 
+## 5e. Independent review, round 6 (Groq `openai/gpt-oss-120b`, BLOCK at `f47d1d5`)
+
+Both Codex seats hit their usage limits mid-slice (account A resets 06/09,
+account B 07/09) and the DeepInfra lane returned backend 500s, so the
+different-family gate ran on the Groq OpenAI-lineage lane instead. Its
+configured key was stale; the vault entry (`rbw get "Groq API Key"`) works, and
+the review ran against `openai/gpt-oss-120b` directly. **Flagged for Pedro:**
+the `GROQ_API_KEY` in the lane's environment no longer matches the vault.
+
+| Finding | Disposition |
+|---|---|
+| BLOCKER — a race between the pre-queue estimate and the enqueue lets two concurrent arrivals both pass one stale estimate | **Refuted**, as in round 1. No yield point exists between them: a task holds `_lock` only across synchronous code, so it always releases before it can yield, so no other task can ever observe the lock held, so `Lock.acquire` always takes its non-yielding fast path. The reviewer named no yield point, and its proposed repair does not close the alleged window either — it creates the acquire coroutine inside the lock but still awaits it outside, so the enqueue happens after release exactly as now (and holding `_lock` across a call that re-takes it would deadlock, since `asyncio.Lock` is not reentrant). The empirical pin stands: 10 simultaneous arrivals against a 1-slot evidenced lane admit exactly the published bound. |
+| MAJOR — the leaseless fallback can price a still-running request as finished | **Accepted.** Real, though only reachable from the bare `acquire`/`release` pair (no in-tree production caller). The hold is still released so nothing leaks, but a duration is now recorded only when the lane holds exactly ONE slot, where attribution is unambiguous. The reviewer's own repair — return without popping — would have leaked the hold and left a phantom busy slot in every future estimate. `test_leaseless_release_never_samples_an_ambiguous_hold`. |
+| MAJOR — `_ahead_of` over-counts a client that has queued requests but is absent from `_rr_order` | **Declined, with reason.** That state cannot occur: a client is appended to the rotation in the same locked section that creates its deque, and removed in the same locked section that empties it (`_remove_from`), and `_migrate_priority_to_normal` re-appends on migration. The reviewer's own scenario begins "possible after a bug that manually removed the id", i.e. it defends an invariant break rather than an input. |
+| MINOR — the `_starts_within` correction loops can run more than twice | **Docstring corrected** (they walk the few ULP the division was off by). The traced example is wrong — there is no outer loop, and `available=[0.0]`, service 0.1, horizon 0.30000000000000004 yields 4 starts, which is correct. |
+| NIT — the bool exclusion in `_aggregate_drain` | Intentional: `bool` is a subclass of `int`, and a boolean `max_depth` is corrupt input, not a small number. |
+
 ## 6. Post-change results
 
 Filled in by `verify.sh` and recorded at merge time.

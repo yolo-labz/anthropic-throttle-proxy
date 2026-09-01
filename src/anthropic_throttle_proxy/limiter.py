@@ -467,8 +467,8 @@ def _starts_within(available: list[float], service_time_s: float, horizon: float
     quotient is then VERIFIED by multiplication in both directions rather than
     nudged by a fudge factor: binary floats make ``180 / 0.001`` come out as
     ``179999.99999999997`` (one dispatch short per server) while a start that
-    truly lands past the horizon must not be counted at all. The correction
-    loops run at most once or twice.
+    truly lands past the horizon must not be counted at all. Each correction
+    loop walks only the few ULP the division was off by.
 
     O(slots) and exact in the same arithmetic the schedule itself uses, which
     is what lets the published bound and the per-request answer agree.
@@ -839,8 +839,11 @@ class FairBearerLimiter:
 
         ``lease=None`` is the fallback for a caller that took a slot through
         the bare :meth:`acquire`/:meth:`release` pair (tests, and anything that
-        predates leases): the oldest hold in the same lane is returned instead,
-        which is the best available guess and keeps the books balanced.
+        predates leases). The oldest hold in the lane is released so the books
+        stay balanced, but it is only SAMPLED when that lane holds exactly one
+        slot: with several in flight, "the oldest" is a guess, and a guess that
+        prices a still-running request as finished is the estimator poisoning
+        this design replaced arrival-order pairing to avoid.
 
         ``sample=False`` for a slot that was cancelled during the dispatch
         race: it never ran upstream, and recording its ~0 s "duration" would
@@ -855,15 +858,13 @@ class FairBearerLimiter:
                 log(f"drain-lease-miss bid={self.bearer_id} lease={lease}")
                 return
         else:
-            oldest = min(
-                (item for item in self._holds.items() if item[1][0] == priority),
-                key=lambda item: item[1][1],
-                default=None,
-            )
-            if oldest is None:
+            lane = [item for item in self._holds.items() if item[1][0] == priority]
+            if not lane:
                 return
+            oldest = min(lane, key=lambda item: item[1][1])
             self._holds.pop(oldest[0], None)
             held = oldest[1]
+            sample = sample and len(lane) == 1
         if sample:
             samples = self._priority_samples if held[0] else self._samples
             samples.append(max(0.0, time.monotonic() - held[1]))
