@@ -703,7 +703,7 @@ async def _read_lane_admission(
     """
     try:
         async with session.get(
-            f"{lane.url}/__throttle/admission",
+            lane.admission_url,
             timeout=aiohttp.ClientTimeout(total=LANE_HEALTH_TIMEOUT_S),
         ) as resp:
             if resp.status != 200 or (

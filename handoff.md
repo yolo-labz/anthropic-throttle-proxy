@@ -21,15 +21,21 @@ Live disposable probes established the discriminator: a GLM-only ingress with
 reported full `glm-5.3`. The fix is configuration separation, not a model-name
 claim.
 
-Issue #220 adds `INGRESS_<LANE>_LANE_HEALTH_URL` to every lane while preserving
-derived health behavior when unset, Codex's `/healthz` default, and empty-URL
-lane retirement. A regression test sends client `/v1/messages` through a
-prefixed GLM lane and proves the forwarded path plus exact model remap; unit
-controls prove a health override cannot resurrect a retired lane.
+Issue #220 adds independent health/admission control URLs to every lane while
+preserving derived behavior when unset, Codex's `/healthz` default, and
+empty-URL lane retirement. The first review correctly requested behavioral
+root-health coverage; while adding it, tracing `_fresh_lane_state` exposed the
+same hidden prefix bug on `/__throttle/admission`. `Lane` now derives root
+admission from a root health override, and an explicit admission override is
+available for irregular control surfaces. A regression test sends client
+`/v1/messages` through a prefixed GLM lane, performs real root health/admission
+requests, and proves the forwarded path plus exact model remap; unit controls
+cover all five env names and prove an override cannot resurrect a retired lane.
 
-Verification at the feature head: 150 focused routing/ingress tests and all 973
-pytest tests pass; Ruff format/lint is clean. No service, credential, provider
-route, Nix pin, or deployment changed. Reversal is one squash-revert PR.
+Verification at the feature head: 184 focused routing/ingress/ADR tests and all
+978 pytest tests pass; Ruff format/lint is clean. No service, credential,
+provider route, Nix pin, or deployment changed. Reversal is one squash-revert
+PR.
 
 ## 31/08/2026 — issue #205 clients-map leak: prune shipped after a Codex round-1 BLOCK
 

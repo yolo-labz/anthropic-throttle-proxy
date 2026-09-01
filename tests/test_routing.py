@@ -658,13 +658,28 @@ def test_protocol_prefixed_glm_lane_uses_explicit_root_health(monkeypatch) -> No
     lane = default_lanes()["glm"]
     assert lane.url == "http://127.0.0.1:8766/api/anthropic"
     assert lane.health_url == "http://127.0.0.1:8766/__throttle/health"
+    assert lane.admission_url == "http://127.0.0.1:8766/__throttle/admission"
     assert set(lane.models.values()) == {"glm-5.3"}
+
+
+@pytest.mark.parametrize("lane", ["anthropic", "kimi", "glm", "deepseek", "codex"])
+def test_every_lane_accepts_explicit_control_overrides(monkeypatch, lane: str) -> None:
+    prefix = lane.upper()
+    monkeypatch.setenv(f"INGRESS_{prefix}_LANE_HEALTH_URL", f"http://127.0.0.1:9000/{lane}/health")
+    monkeypatch.setenv(
+        f"INGRESS_{prefix}_LANE_ADMISSION_URL", f"http://127.0.0.1:9000/{lane}/admission"
+    )
+    configured = default_lanes()[lane]
+    assert configured.health_url == f"http://127.0.0.1:9000/{lane}/health"
+    assert configured.admission_url == f"http://127.0.0.1:9000/{lane}/admission"
 
 
 def test_blank_health_override_keeps_derived_default(monkeypatch) -> None:
     monkeypatch.setenv("INGRESS_GLM_LANE_URL", "http://127.0.0.1:9999/prefix")
     monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "   ")
-    assert default_lanes()["glm"].health_url == "http://127.0.0.1:9999/prefix/__throttle/health"
+    lane = default_lanes()["glm"]
+    assert lane.health_url == "http://127.0.0.1:9999/prefix/__throttle/health"
+    assert lane.admission_url == "http://127.0.0.1:9999/prefix/__throttle/admission"
 
 
 def test_health_override_cannot_resurrect_retired_lane(monkeypatch) -> None:

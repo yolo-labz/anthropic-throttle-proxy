@@ -133,8 +133,10 @@ class Lane:
     """A per-lane throttle the ingress can route to.
 
     ``url`` is the lane's base URL (requests forward to ``url + path_qs``);
-    ``health_url`` defaults to ``url + /__throttle/health``. ``models`` maps a
-    role → the model id the lane's upstream expects (S4 egress remap); an empty
+    ``health_url`` and ``admission_url`` default to the lane control surface.
+    A root health override also derives root admission, keeping protocol-prefixed
+    forwarding away from both control endpoints. ``models`` maps a role → the
+    model id the lane's upstream expects (S4 egress remap); an empty
     mapping (Anthropic) means the client's ``claude-*`` id is forwarded verbatim.
     """
 
@@ -142,6 +144,7 @@ class Lane:
     url: str
     roles: frozenset[str]
     health_url: str = ""
+    admission_url: str = ""
     models: dict[str, str] = field(default_factory=dict)
     # True for a proxy-owns-key lane (Kimi :8767 injects its own credential and
     # tracks zero per-client bearers). Such a lane is usable with an empty
@@ -152,6 +155,14 @@ class Lane:
     def __post_init__(self) -> None:
         if not self.health_url:
             object.__setattr__(self, "health_url", f"{self.url.rstrip('/')}/__throttle/health")
+        if not self.admission_url:
+            suffix = "/__throttle/health"
+            control_root = (
+                self.health_url[: -len(suffix)]
+                if self.health_url.endswith(suffix)
+                else self.url.rstrip("/")
+            )
+            object.__setattr__(self, "admission_url", f"{control_root}/__throttle/admission")
 
 
 @dataclass
@@ -232,22 +243,26 @@ def default_lanes() -> dict[str, Lane]:
         "codex": os.environ.get("INGRESS_CODEX_LANE_URL", "http://127.0.0.1:8769"),
     }
 
-    def health_url(lane: str, default: str = "") -> str:
-        """Keep protocol-prefixed forwarding separate from root lane health."""
-        return os.environ.get(f"INGRESS_{lane.upper()}_LANE_HEALTH_URL", "").strip() or default
+    def control_url(lane: str, kind: str, default: str = "") -> str:
+        """Keep protocol-prefixed forwarding separate from lane control paths."""
+        return (
+            os.environ.get(f"INGRESS_{lane.upper()}_LANE_{kind.upper()}_URL", "").strip() or default
+        )
 
     lanes = {
         "anthropic": Lane(
             "anthropic",
             lane_urls["anthropic"],
             frozenset({"generate", "judge"}),
-            health_url=health_url("anthropic"),
+            health_url=control_url("anthropic", "health"),
+            admission_url=control_url("anthropic", "admission"),
         ),
         "kimi": Lane(
             "kimi",
             lane_urls["kimi"],
             frozenset({"generate", "bulk"}),
-            health_url=health_url("kimi"),
+            health_url=control_url("kimi", "health"),
+            admission_url=control_url("kimi", "admission"),
             models=kimi_models,
             proxy_owns_key=True,
         ),
@@ -255,14 +270,16 @@ def default_lanes() -> dict[str, Lane]:
             "glm",
             lane_urls["glm"],
             frozenset({"generate", "judge", "bulk"}),
-            health_url=health_url("glm"),
+            health_url=control_url("glm", "health"),
+            admission_url=control_url("glm", "admission"),
             models=glm_models,
         ),
         "deepseek": Lane(
             "deepseek",
             lane_urls["deepseek"],
             frozenset({"bulk", "generate"}),
-            health_url=health_url("deepseek"),
+            health_url=control_url("deepseek", "health"),
+            admission_url=control_url("deepseek", "admission"),
             models=deepseek_models,
             proxy_owns_key=True,
         ),
@@ -282,7 +299,8 @@ def default_lanes() -> dict[str, Lane]:
             # The CCP sidecar does not serve /__throttle/health (health-404
             # finding, 06/08): it answers /healthz -> 200 {"ok": true}. The
             # probe normalizes that shape at the boundary (ingress._poll_one_lane).
-            health_url=health_url("codex", "http://127.0.0.1:8769/healthz"),
+            health_url=control_url("codex", "health", "http://127.0.0.1:8769/healthz"),
+            admission_url=control_url("codex", "admission"),
         ),
     }
     # An EXPLICITLY empty lane URL retires that lane: it is not built, so it
