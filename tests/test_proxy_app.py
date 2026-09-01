@@ -1836,7 +1836,8 @@ async def test_queue_wait_timeout_fails_fast_with_clean_503(
         resp_headers = resp.headers
 
     assert status == 503
-    assert resp_headers["retry-after"] == str(config.QUEUE_TIMEOUT_RETRY_AFTER_S)
+    # PR #222: a drain estimate, floored at the historical constant.
+    assert int(resp_headers["retry-after"]) >= config.QUEUE_TIMEOUT_RETRY_AFTER_S
     assert resp_headers[config.QUEUE_TIMEOUT_HEADER] == "1"
     assert b"queue wait exceeded" in streamed
     assert (config.state["queued"], config.state["inflight"]) == (0, 0)

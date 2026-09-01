@@ -51,12 +51,16 @@ from anthropic_throttle_proxy.limiter import FairBearerLimiter, QueueWaitTimeout
 
 
 async def main() -> None:
+    # 1/100 scale of the measured shape: cold default 0.1 s stands in for 10 s.
+    config.QUEUE_DRAIN_DEFAULT_S = 0.1
     lim = FairBearerLimiter(2, "fair")
     lim.max_concurrent = 2
     for _ in range(2):
         await lim.acquire("holder")
     parked = [asyncio.create_task(lim.acquire(f"q{i}")) for i in range(3)]
-    await asyncio.sleep(0.01)
+    # Hold long enough that the occupied slots are themselves evidence the lane
+    # is slow; the estimator refuses to reject on a guess.
+    await asyncio.sleep(0.2)
     before = lim.snapshot()["queued_total"]
     try:
         async with lim.slot("arriving", max_wait=0.30):

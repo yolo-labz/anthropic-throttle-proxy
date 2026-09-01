@@ -242,10 +242,29 @@ MAX_HOLD_RETRY_AFTER_S = max(0.0, float(os.environ.get("THROTTLE_MAX_HOLD_RETRY_
 # (historical unbounded wait). Orthogonal to MAX_HOLD_RETRY_AFTER_S above,
 # which gates only upstream Retry-After holds, not queue time.
 QUEUE_MAX_WAIT_S = max(0.0, float(os.environ.get("THROTTLE_QUEUE_MAX_WAIT_S", "30")))
-# Retry-After attached to the queue-wait-timeout 503. Short on purpose: the
-# retry re-enters the per-client round-robin fairly, and the SDK layers its
-# own exponential backoff on repeated failures.
+# FLOOR for the Retry-After attached to the queue-wait-timeout 503, and the
+# value used when the lane cannot estimate anything worse. The real interval is
+# the limiter's drain estimate (see QUEUE_DRAIN_DEFAULT_S); this only keeps the
+# advertised delay from dropping below the historical constant, because the
+# retry re-enters the per-client round-robin fairly and the SDK layers its own
+# exponential backoff on repeated failures.
 QUEUE_TIMEOUT_RETRY_AFTER_S = 5
+# Service-time estimate used by queue-depth admission before the lane has
+# completed enough requests to measure its own. Queue admission bounds WAIT;
+# without a service rate it cannot bound DEPTH, so it would park requests that
+# provably cannot reach a slot in time (01/09/2026 :8766 incident:
+# max_concurrent=2, queue depth 3, 30 s budget, occupied slots completing after
+# 113.7 s and 221.2 s — the arrival needed two service rounds). Conservative but
+# not punitive: a fresh lane with a free slot is never rejected, and three
+# completions replace this with the measured p90.
+QUEUE_DRAIN_DEFAULT_S = max(0.001, float(os.environ.get("THROTTLE_QUEUE_DRAIN_DEFAULT_S", "10")))
+# Ceiling on the advertised queue-timeout Retry-After. The drain estimate is
+# honest but can be large on a stalled lane; an unbounded hint is not actionable
+# for a client, so cap what we advertise while still never claiming a delay
+# shorter than the wait budget that was just proven insufficient.
+QUEUE_RETRY_AFTER_MAX_S = max(
+    QUEUE_TIMEOUT_RETRY_AFTER_S, int(os.environ.get("THROTTLE_QUEUE_RETRY_AFTER_MAX_S", "300"))
+)
 
 # Optional JSON file for per-bearer Retry-After windows. Live hotfix deploys
 # restart the user service while account windows are still cooling down; without

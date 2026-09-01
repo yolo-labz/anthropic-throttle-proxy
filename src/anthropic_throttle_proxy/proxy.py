@@ -109,7 +109,12 @@ from .forwarding import (
     set_success_headers_callback,
     stamp_proxy_marker,
 )
-from .limiter import FairBearerLimiter, QueueWaitTimeout, _get_bearer_limiter
+from .limiter import (
+    FairBearerLimiter,
+    QueueWaitTimeout,
+    _get_bearer_limiter,
+    cold_drain_estimate,
+)
 from .metrics import (
     CONTENT_TYPE_LATEST,
     M_ACCOUNT_COLLISIONS,
@@ -837,7 +842,13 @@ def _is_queue_timeout_response(response: web.StreamResponse | None) -> bool:
 
 
 def _queue_wait_timeout_response(
-    bid: str, cid: str, path: str, limiter: FairBearerLimiter, max_wait: float
+    bid: str,
+    cid: str,
+    path: str,
+    limiter: FairBearerLimiter,
+    max_wait: float,
+    *,
+    timeout: QueueWaitTimeout | None = None,
 ) -> web.Response:
     """Fail a queued request fast with a clean 503 while the client transport
     is still alive.
@@ -848,18 +859,31 @@ def _queue_wait_timeout_response(
     ``InvalidHTTPResponse`` → a phantom 401/login error (07/07/2026 incident).
     A clean 503 + Retry-After makes the SDK retry transparently and re-enter
     the round-robin fairly.
+
+    The interval is the lane's DRAIN estimate, not a constant. A hardcoded 5 s
+    against a lane whose slots were completing after 113.7 s and 221.2 s sends
+    the client straight back into the same wall — measured 01/09/2026 as four
+    retries and an abort. ``timeout`` carries the estimate already computed at
+    the rejection; without it the estimate is recomputed here, which is what
+    the pre-dispatch call sites (spent budget, expired deadline) need.
     """
     M_QUEUE_WAIT_TIMEOUTS.labels(bearer=bid).inc()
     snap = limiter.snapshot()
+    estimate = timeout.estimate if timeout is not None and timeout.estimate else None
+    if estimate is None:
+        estimate = limiter.drain_estimate(max_wait)
+    reason = "pre-queue-depth" if timeout is not None and timeout.pre_queue else "elapsed"
     log(
-        f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
+        f"queue-wait-timeout bid={bid} cid={cid} path=/{path} reason={reason} "
         f"max_wait_s={max_wait:g} inflight={snap['inflight']} "
-        f"queued_total={snap['queued_total']} max_concurrent={snap['max_concurrent']}"
+        f"queued_total={snap['queued_total']} max_concurrent={snap['max_concurrent']} "
+        f"service_s={estimate.service_time_s:g} source={estimate.source} "
+        f"est_wait_s={estimate.wait_s:g} retry_after_s={estimate.retry_after_s}"
     )
     return web.Response(
         status=503,
         headers={
-            "retry-after": str(config.QUEUE_TIMEOUT_RETRY_AFTER_S),
+            "retry-after": str(estimate.retry_after_s),
             config.QUEUE_TIMEOUT_HEADER: "1",
         },
         text=(
@@ -3943,13 +3967,16 @@ async def handler(request: web.Request) -> web.StreamResponse:
                         finally:
                             if probe_lease["bid"] == bid:
                                 finish_probe(success=200 <= attempt.final_status < 300)
-        except QueueWaitTimeout:
+        except QueueWaitTimeout as queue_timeout:
             # No slot within the wait bound: answer 503 while the client's
             # transport is still open (the limiter already rolled its queue entry
-            # back via acquire's cancellation path; no release is owed).
+            # back via acquire's cancellation path, or never parked the request
+            # at all when the depth was already undrainable; no release is owed).
             counters.dequeue()
             finish_probe(success=False)
-            return _queue_wait_timeout_response(bid, cid, path, limiter, slot_max_wait or 0.0)
+            return _queue_wait_timeout_response(
+                bid, cid, path, limiter, slot_max_wait or 0.0, timeout=queue_timeout
+            )
         finally:
             # PR #575 B1 fix: if we got cancelled between incrementing `queued`
             # and the inner `async with limiter.slot()` body decrementing it,
@@ -4403,6 +4430,50 @@ def _nonnegative_int(snapshot: dict, key: str) -> int | None:
     return parsed if parsed >= 0 else None
 
 
+def _aggregate_drain(drains: list[object]) -> tuple[int, dict]:
+    """Lane-wide queue-depth bound + the estimator inputs behind it.
+
+    Depth sums across measured bearers, matching the ``slots``/``free``/
+    ``queued`` sums beside it: an arrival may land on any of them. The
+    published service time is the SLOWEST bearer's, with that bearer's
+    provenance, because the slow one is what decides whether a queue drains.
+
+    With nothing measured (a freshly restarted process that has not seen a
+    request yet) the bound comes from config, flagged ``source: config`` — a
+    consumer must never read "0" and conclude the lane admits nothing.
+    """
+    valid = [
+        d
+        for d in drains
+        if isinstance(d, dict)
+        and isinstance(d.get("max_depth"), int)
+        and not isinstance(d.get("max_depth"), bool)
+        and isinstance(d.get("service_time_s"), int | float)
+        and not isinstance(d.get("service_time_s"), bool)
+    ]
+    if not valid:
+        cold = cold_drain_estimate()
+        return cold.max_depth, {
+            "service_time_s": cold.service_time_s,
+            "samples": 0,
+            "source": "config",
+            "slots": cold.slots,
+            "free": cold.free,
+            "max_wait_s": cold.max_wait_s,
+            "enforced": cold.enforced,
+        }
+    slowest = max(valid, key=lambda d: float(d["service_time_s"]))
+    return sum(int(d["max_depth"]) for d in valid), {
+        "service_time_s": float(slowest["service_time_s"]),
+        "samples": sum(int(d.get("samples") or 0) for d in valid),
+        "source": str(slowest.get("source", "cold")),
+        "slots": sum(int(d.get("slots") or 0) for d in valid),
+        "free": sum(int(d.get("free") or 0) for d in valid),
+        "max_wait_s": float(slowest.get("max_wait_s", config.QUEUE_MAX_WAIT_S)),
+        "enforced": bool(slowest.get("enforced", False)),
+    }
+
+
 def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
     """Whether every usable bearer's normal pool would park a new request.
 
@@ -4427,6 +4498,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
     measured_count = 0
     slots = normal_inflight = priority_inflight = queued = free = 0
     all_would_park = True
+    drains: list[object] = []
 
     for bid, ok in usable.items():
         if not ok:
@@ -4452,6 +4524,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
             continue
 
         measured_count += 1
+        drains.append(snapshot.get("drain"))
         normal = total - reserve
         bearer_free = max(0, cap - normal)
         slots += cap
@@ -4463,6 +4536,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
             all_would_park = False
 
     measured = usable_count > 0 and measured_count == usable_count
+    admit_max_depth, admit_inputs = _aggregate_drain(drains)
     return {
         "usable_bearers": usable_count,
         "measured_bearers": measured_count,
@@ -4474,6 +4548,11 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
         "measured": measured,
         "all_usable_bearers_would_park": measured and all_would_park,
         "queue_max_wait_s": float(config.QUEUE_MAX_WAIT_S),
+        # Queue-DEPTH admission: the largest queue depth this lane can still
+        # drain inside the configured wait bound, plus the estimator inputs, so
+        # a consumer reads saturation instead of re-deriving it.
+        "queue_admit_max_depth": admit_max_depth,
+        "queue_admit": admit_inputs,
     }
 
 

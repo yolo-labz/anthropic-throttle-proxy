@@ -83,8 +83,14 @@ def test_queue_timeout_response_shape() -> None:
     lim = FairBearerLimiter(1, "fair")
     resp = proxy._queue_wait_timeout_response("bid12345", "cid", "v1/messages", lim, 30.0)
     assert resp.status == 503
-    assert resp.headers["retry-after"] == str(config.QUEUE_TIMEOUT_RETRY_AFTER_S)
     assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    # PR #222: the interval is the lane's drain estimate, never the old
+    # constant 5 s. It is still never SHORTER than that floor, nor shorter
+    # than the wait budget the client just spent failing.
+    retry = int(resp.headers["retry-after"])
+    assert retry == lim.drain_estimate(30.0).retry_after_s
+    assert retry >= config.QUEUE_TIMEOUT_RETRY_AFTER_S
+    assert retry >= 30
 
 
 def test_effective_queue_max_wait_budget_math(monkeypatch) -> None:

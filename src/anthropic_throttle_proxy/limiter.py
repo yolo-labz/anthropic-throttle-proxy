@@ -11,13 +11,31 @@ from __future__ import annotations
 import asyncio
 import collections
 import json
+import math
 import os
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import config
 from .config import log
 from .metrics import M_AIMD_MAX
+
+# Completed slot durations kept per lane. Small on purpose: the estimator wants
+# what this lane is doing NOW, not its lifetime average.
+_SERVICE_SAMPLES = 64
+# Below this many completions the lane has not measured itself yet and the
+# configured cold default is used instead.
+_MIN_SERVICE_SAMPLES = 3
+# Defensive bound on unpaired dispatch stamps. Pairing is FIFO, so a decrement
+# that ever escapes `_note_completion` would otherwise grow this forever (the
+# #205 failure shape). With a maxlen the worst case is a stale oldest stamp,
+# which only makes the estimate MORE conservative.
+_SERVICE_STARTS_MAX = 256
+# Nearest-rank quantile of recent service times. p90 rather than the median:
+# admission is a safety bound, and under-estimating the lane's service time is
+# what parks a request that cannot be drained.
+_SERVICE_QUANTILE = 0.9
 
 # Late-bound in main() (needs the running loop) — guards the registry below.
 bearer_limiter_lock: asyncio.Lock | None = None
@@ -322,6 +340,180 @@ async def kick_existing_limiters() -> None:
             lim._try_dispatch()
 
 
+@dataclass(frozen=True)
+class DrainEstimate:
+    """Can this lane still drain one more queued request inside the budget?
+
+    Every field is a live lane fact or arithmetic over live lane facts, so the
+    answer is reproducible from ``/__throttle/admission`` without re-deriving
+    it (the duplicate-oracle failure this repo already documents for
+    availability).
+
+    ``max_depth`` is the largest queue depth still admissible under
+    ``max_wait_s``; it is advisory when ``enforced`` is false (bound disabled),
+    where depth is in fact unlimited.
+
+    ``admits`` is pure arithmetic. ``rejects`` is the only thing the hot path
+    acts on, and it additionally requires ``evidenced``: a lane that has never
+    completed a request and holds no slot longer than the configured cold
+    default has GUESSED its service time, and a guess must not turn traffic
+    away. Evidence arrives within the first few requests (three completions,
+    or one slot held past the cold default), which is long before a queue can
+    grow into the shape this guard exists for.
+    """
+
+    slots: int
+    busy: int
+    free: int
+    queued: int
+    service_time_s: float
+    samples: int
+    source: str
+    evidenced: bool
+    max_wait_s: float
+    enforced: bool
+    rounds: int
+    wait_s: float
+    max_depth: int
+    admits: bool
+    rejects: bool
+    retry_after_s: int
+
+    def as_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def _quantile(values: list[float], q: float) -> float:
+    """Nearest-rank quantile of an unsorted list. ``values`` must be non-empty."""
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, math.ceil(q * len(ordered)) - 1))
+    return ordered[idx]
+
+
+def _service_estimate(
+    samples: collections.deque[float],
+    starts: collections.deque[float],
+    now: float | None = None,
+) -> tuple[float, int, str]:
+    """Conservative seconds-per-request for one lane, with its provenance.
+
+    Two independent sources, and the larger wins:
+
+    * completed requests (p90 of the recent window) once the lane has measured
+      itself at least ``_MIN_SERVICE_SAMPLES`` times, else the cold default;
+    * how long the OLDEST currently-held slot has already been held. That is a
+      hard lower bound on that request's service time, and it is the only
+      signal available in the shape that motivated this code: at 14:20 on
+      01/09/2026 the two slow generations had not completed yet, so a
+      completion-only estimator was blind to exactly the requests doing the
+      blocking.
+    """
+    count = len(samples)
+    if count >= _MIN_SERVICE_SAMPLES:
+        service, source = _quantile(list(samples), _SERVICE_QUANTILE), "measured"
+    else:
+        service, source = float(config.QUEUE_DRAIN_DEFAULT_S), "cold"
+    if starts:
+        elapsed = max(0.0, (time.monotonic() if now is None else now) - starts[0])
+        if elapsed > service:
+            service, source = elapsed, "inflight"
+    return service, count, source
+
+
+def _compute_drain(
+    *,
+    slots: int,
+    busy: int,
+    queued: int,
+    service_time_s: float,
+    samples: int,
+    source: str,
+    evidenced: bool,
+    max_wait: float | None,
+) -> DrainEstimate:
+    """Queueing arithmetic for one arriving request. Pure — no limiter state.
+
+    With ``free`` idle slots, ``slots`` servers and ``queued`` requests already
+    parked, an arrival is ``queued + 1``-th in line. It is served immediately
+    while its position fits in the free slots; otherwise it waits for
+    ``ceil((position - free) / slots)`` service rounds. Inverting
+    ``rounds * service <= max_wait`` gives the largest admissible depth.
+
+    Assuming a FULL service time for slots that are already part-way through
+    is deliberate: over-estimating the wait rejects a borderline request that
+    might have made it, while under-estimating parks one that cannot, which is
+    the failure being fixed.
+    """
+    slots = max(0, int(slots))
+    busy = max(0, int(busy))
+    queued = max(0, int(queued))
+    service_time_s = max(0.0, float(service_time_s))
+    horizon = 0.0 if not max_wait or max_wait < 0 else float(max_wait)
+    enforced = horizon > 0.0
+
+    free = max(0, slots - busy)
+    position = queued + 1
+    if position <= free:
+        rounds = 0
+    elif slots <= 0:
+        # No server can ever dispatch; every request is its own dead round.
+        rounds = position
+    else:
+        rounds = math.ceil((position - free) / slots)
+    wait_s = rounds * service_time_s
+
+    admits = (not enforced) or (slots > 0 and wait_s <= horizon)
+    rejects = enforced and evidenced and not admits
+    rounds_max = int(horizon // service_time_s) if enforced and service_time_s > 0 else 0
+    max_depth = max(0, free - 1 + rounds_max * slots)
+
+    # Never advertise a retry shorter than the historical constant, than the
+    # budget just proven insufficient (a compliant client would re-enter the
+    # same wall immediately — the observed x4 retry storm), or than the drain
+    # estimate. The ceiling bounds the ESTIMATE; the floor still wins, so a
+    # long configured budget cannot be answered with a shorter hint.
+    floor_s = max(config.QUEUE_TIMEOUT_RETRY_AFTER_S, math.ceil(horizon))
+    retry_after_s = max(floor_s, min(config.QUEUE_RETRY_AFTER_MAX_S, math.ceil(wait_s)))
+
+    return DrainEstimate(
+        slots=slots,
+        busy=busy,
+        free=free,
+        queued=queued,
+        service_time_s=round(service_time_s, 3),
+        samples=samples,
+        source=source,
+        evidenced=evidenced,
+        max_wait_s=round(horizon, 3),
+        enforced=enforced,
+        rounds=rounds,
+        wait_s=round(wait_s, 3),
+        max_depth=max_depth,
+        admits=admits,
+        rejects=rejects,
+        retry_after_s=retry_after_s,
+    )
+
+
+def cold_drain_estimate(max_wait: float | None = None) -> DrainEstimate:
+    """The bound a brand-new bearer would get, from config alone.
+
+    ``/__throttle/admission`` must publish a real depth bound even before the
+    first request allocates a limiter; a consumer polling a freshly restarted
+    proxy would otherwise read "0" and conclude the lane admits nothing.
+    """
+    return _compute_drain(
+        slots=_initial_live_cap(config.MAX_CONCURRENT),
+        busy=0,
+        queued=0,
+        service_time_s=float(config.QUEUE_DRAIN_DEFAULT_S),
+        samples=0,
+        source="config",
+        evidenced=False,
+        max_wait=config.QUEUE_MAX_WAIT_S if max_wait is None else max_wait,
+    )
+
+
 class FairBearerLimiter:
     """Per-bearer concurrency limiter with weighted-fair-queueing across clients.
 
@@ -369,6 +561,17 @@ class FairBearerLimiter:
         self._priority_queues: dict[str, collections.deque[asyncio.Future]] = {}
         self._priority_rr: collections.deque[str] = collections.deque()
         self.priority_inflight = 0
+        # Service-time evidence per lane, for queue-DEPTH admission. `_starts`
+        # holds the monotonic dispatch stamp of each currently-held slot
+        # (oldest first); `_samples` holds recent completed durations.
+        self._starts: collections.deque[float] = collections.deque(maxlen=_SERVICE_STARTS_MAX)
+        self._samples: collections.deque[float] = collections.deque(maxlen=_SERVICE_SAMPLES)
+        self._priority_starts: collections.deque[float] = collections.deque(
+            maxlen=_SERVICE_STARTS_MAX
+        )
+        self._priority_samples: collections.deque[float] = collections.deque(
+            maxlen=_SERVICE_SAMPLES
+        )
         self._lock = asyncio.Lock()
         # _last_throttle_at: monotonic-ish wall clock of the last shrink.
         # _successes_since_throttle: consecutive 2xx since that shrink.
@@ -448,6 +651,73 @@ class FairBearerLimiter:
             self._successes_since_throttle = 0
             self._shrink_history.append(self._last_throttle_at)
             return new_max
+
+    def _note_dispatch(self, priority: bool) -> None:
+        """Stamp a slot as held. Caller holds ``_lock`` (every ``inflight += 1``)."""
+        starts = self._priority_starts if priority else self._starts
+        starts.append(time.monotonic())
+
+    def _note_completion(self, priority: bool, *, sample: bool = True) -> None:
+        """Unstamp a released slot, recording its duration. Caller holds ``_lock``.
+
+        ponytail: stamps are paired FIFO, not per-slot. Completion order can
+        differ from dispatch order, in which case an individual duration is
+        mis-attributed between concurrent requests — the distribution the
+        estimator reads is preserved, and the error skews toward the LONGER
+        request, which is the safe direction here. Per-slot tokens are the
+        upgrade if a lane ever needs exact per-request timing.
+
+        ``sample=False`` for a slot that was cancelled during the dispatch
+        race: it never ran upstream, and recording its ~0 s "duration" would
+        teach the estimator that the lane is instant.
+        """
+        starts = self._priority_starts if priority else self._starts
+        if not starts:
+            return
+        started = starts.popleft()
+        if sample:
+            samples = self._priority_samples if priority else self._samples
+            samples.append(max(0.0, time.monotonic() - started))
+
+    def drain_estimate(
+        self,
+        max_wait: float | None = None,
+        *,
+        priority: bool = False,
+        now: float | None = None,
+    ) -> DrainEstimate:
+        """Whether one more arrival can reach a slot within ``max_wait``.
+
+        ``max_wait=None`` reports against the configured bound, which is what
+        ``snapshot`` publishes; callers holding a request pass their own
+        effective (possibly inherited) budget instead.
+
+        The priority reserve is a DEDICATED pool, so a lane call is judged
+        against ``PRIORITY_RESERVE_SLOTS`` and the lane's own queue — a full
+        main pool must not reject the evaluator the reserve exists for.
+        """
+        priority = priority and config.PRIORITY_RESERVE_SLOTS > 0
+        if priority:
+            slots = config.PRIORITY_RESERVE_SLOTS
+            busy = self.priority_inflight
+            queued = self.priority_queued
+            starts, samples = self._priority_starts, self._priority_samples
+        else:
+            slots = self.max_concurrent
+            busy = self.inflight - self.priority_inflight
+            queued = self.queued_total
+            starts, samples = self._starts, self._samples
+        service_time_s, count, source = _service_estimate(samples, starts, now)
+        return _compute_drain(
+            slots=slots,
+            busy=busy,
+            queued=queued,
+            service_time_s=service_time_s,
+            samples=count,
+            source=source,
+            evidenced=source != "cold",
+            max_wait=config.QUEUE_MAX_WAIT_S if max_wait is None else max_wait,
+        )
 
     def _recent_shrinks(self, now: float | None = None) -> int:
         """Count shrinks whose timestamp is inside ``2 * AIMD_BACKOFF_S``.
@@ -614,6 +884,7 @@ class FairBearerLimiter:
                 self.inflight += 1
                 if priority:
                     self.priority_inflight += 1
+                self._note_dispatch(priority)
             return priority
 
         loop = asyncio.get_running_loop()
@@ -658,6 +929,9 @@ class FairBearerLimiter:
                 self.inflight -= 1
                 if fut.result():
                     self.priority_inflight -= 1
+                # Dispatched and cancelled in the same breath: unstamp the slot
+                # but do NOT sample it — it never reached upstream.
+                self._note_completion(bool(fut.result()), sample=False)
                 self._try_dispatch()
 
     def _remove_pending(self, client_id: str, fut: asyncio.Future) -> bool:
@@ -696,6 +970,7 @@ class FairBearerLimiter:
             self.inflight -= 1
             if priority:
                 self.priority_inflight -= 1
+            self._note_completion(priority)
             self._try_dispatch()
 
     def _try_dispatch(self) -> None:
@@ -739,6 +1014,7 @@ class FairBearerLimiter:
                 continue
             self.inflight += 1
             self.priority_inflight += 1
+            self._note_dispatch(True)
             fut.set_result(True)
         while (self.inflight - self.priority_inflight) < self.max_concurrent and self._rr_order:
             client_id = self._rr_order.popleft()
@@ -754,6 +1030,7 @@ class FairBearerLimiter:
             if fut.cancelled():
                 continue
             self.inflight += 1
+            self._note_dispatch(False)
             fut.set_result(False)
 
     def _migrate_priority_to_normal(self) -> None:
@@ -827,22 +1104,37 @@ class FairBearerLimiter:
             "recent_shrinks": recent,
             "storm_mode": recent >= config.AIMD_STORM_THRESHOLD,
             "effective_ramp_after": effective,
+            # Queue-DEPTH admission, against the CONFIGURED bound: a consumer
+            # reads the same arithmetic the hot path applies per request.
+            "drain": self.drain_estimate().as_dict(),
         }
 
 
 class QueueWaitTimeout(Exception):
-    """A queued request exceeded its ``max_wait`` bound without getting a slot.
+    """A request could not get a slot within its ``max_wait`` bound.
 
     Raised from ``_FairSlotContext.__aenter__`` BEFORE any slot is held (the
     ``asyncio.wait_for`` cancellation runs ``acquire``'s ``_cancel_cleanup``,
     which removes the parked future or releases a raced dispatch), so the
     caller never owes a ``release()`` and can answer the client with a clean
     503 + Retry-After while its transport is still alive.
+
+    ``pre_queue`` distinguishes the two ways that happens: the request was
+    parked and the bound expired, or the lane's own numbers proved up front
+    that no slot could arrive in time and it was never parked at all.
     """
 
-    def __init__(self, max_wait: float) -> None:
+    def __init__(
+        self,
+        max_wait: float,
+        *,
+        pre_queue: bool = False,
+        estimate: DrainEstimate | None = None,
+    ) -> None:
         super().__init__(f"no slot within {max_wait}s")
         self.max_wait = max_wait
+        self.pre_queue = pre_queue
+        self.estimate = estimate
 
 
 class _FairSlotContext:
@@ -861,11 +1153,31 @@ class _FairSlotContext:
         self.max_wait = max_wait
 
     async def __aenter__(self) -> _FairSlotContext:
+        bounded = bool(self.max_wait) and self.limiter.queue_enabled
+        if bounded:
+            # Bounding the WAIT does not bound the DEPTH: a queue deeper than
+            # this lane can drain at its own measured service rate parks a
+            # request that provably cannot be served, burns the client's whole
+            # patience window in silence, and answers too late to be useful
+            # (01/09/2026 :8766 — 2 slots held 113.7 s / 221.2 s, 3 queued,
+            # 30 s budget, 4 retries into the same wall). Refuse up front, with
+            # the arithmetic attached, while the transport is wide open.
+            estimate = self.limiter.drain_estimate(self.max_wait, priority=self.priority)
+            if estimate.rejects:
+                log(
+                    f"queue-depth-reject bid={self.limiter.bearer_id} cid={self.client_id} "
+                    f"slots={estimate.slots} busy={estimate.busy} queued={estimate.queued} "
+                    f"service_s={estimate.service_time_s:g} source={estimate.source} "
+                    f"est_wait_s={estimate.wait_s:g} max_wait_s={estimate.max_wait_s:g} "
+                    f"max_depth={estimate.max_depth}"
+                )
+                raise QueueWaitTimeout(self.max_wait, pre_queue=True, estimate=estimate)
         # acquire() echoes the EFFECTIVE lane (reserve 0 demotes to normal);
         # remember it so __aexit__ releases the same pool it acquired from,
-        # even if the knob is retuned mid-flight.
+        # even if the knob is retuned mid-flight. Created only once the request
+        # is admitted, so a rejection leaves no un-awaited coroutine behind.
         acquire = self.limiter.acquire(self.client_id, priority=self.priority)
-        if self.max_wait and self.limiter.queue_enabled:
+        if bounded:
             # wait_for cancels the parked acquire on timeout; its
             # CancelledError path (_cancel_cleanup) rolls the queue entry —
             # or a slot dispatched during the cancellation race — back, so
@@ -873,7 +1185,10 @@ class _FairSlotContext:
             try:
                 self.priority = await asyncio.wait_for(acquire, timeout=self.max_wait)
             except TimeoutError as exc:
-                raise QueueWaitTimeout(self.max_wait) from exc
+                raise QueueWaitTimeout(
+                    self.max_wait,
+                    estimate=self.limiter.drain_estimate(self.max_wait, priority=self.priority),
+                ) from exc
         else:
             self.priority = await acquire
         return self
