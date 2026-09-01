@@ -4453,6 +4453,14 @@ def _aggregate_drain(drains: list[object], bypass_bearers: int = 0) -> tuple[int
     horizon it describes, and a consumer with a tighter budget must scale it
     rather than read it as its own admission verdict.
 
+    ``queue_admit_max_depth`` counts requests DISPATCHED AHEAD of an arrival,
+    which under per-client round-robin is not the raw ``queued`` beside it: 100
+    requests from one chatty client put a new arrival second in line, while the
+    same 100 spread over 100 clients put it hundredth. Comparing the two
+    directly reads a healthy lane as saturated, so ``ahead`` (a new client's
+    rank right now) and ``admits_new_client`` (the direct answer) are published
+    with it.
+
     With nothing measured (a freshly restarted process that has not seen a
     request yet) the bound comes from config, flagged ``source: config`` — a
     consumer must never read "0" and conclude the lane admits nothing.
@@ -4479,6 +4487,8 @@ def _aggregate_drain(drains: list[object], bypass_bearers: int = 0) -> tuple[int
             "source": "bypass" if bypass_bearers else "config",
             "slots": cold.slots,
             "free": cold.free,
+            "ahead": cold.ahead,
+            "admits_new_client": True if bypass_bearers else cold.admits,
             "max_wait_s": cold.max_wait_s,
             "enforced": cold.enforced and not bypass_bearers,
             "bypass_bearers": bypass_bearers,
@@ -4494,6 +4504,11 @@ def _aggregate_drain(drains: list[object], bypass_bearers: int = 0) -> tuple[int
         "fair_source": fair_source,
         "slots": sum(int(d.get("slots") or 0) for d in valid),
         "free": sum(int(d.get("free") or 0) for d in valid),
+        # `ahead` is a new client's round-robin rank on the WORST bearer; the
+        # lane admits one if ANY bearer would take it (or a bypass bearer,
+        # which never queues at all).
+        "ahead": max(int(d.get("ahead") or 0) for d in valid),
+        "admits_new_client": bool(bypass_bearers) or any(bool(d.get("admits")) for d in valid),
         "max_wait_s": float(slowest.get("max_wait_s", config.QUEUE_MAX_WAIT_S)),
         "enforced": bool(slowest.get("enforced", False)) and not bypass_bearers,
         "bypass_bearers": bypass_bearers,

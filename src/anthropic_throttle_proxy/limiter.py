@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import heapq
 import json
 import math
 import os
@@ -35,11 +34,9 @@ _SERVICE_QUANTILE = 0.9
 # Floor on the estimated service time. Zero would make every depth admissible
 # while publishing a zero bound — two contradictory answers from one number.
 _MIN_SERVICE_TIME_S = 0.001
-# Upper bound on simulated dispatch events per drain estimate. Bounds both the
-# per-request check and the published bound; health calls this per bearer.
-_DRAIN_SIM_STEPS = 1024
-# Absorbs binary-float error in a division that must land on a whole dispatch.
-_DIVISION_EPSILON = 1e-9
+# Bisection steps when inverting the dispatch schedule for one arrival. Each
+# step is O(slots); the search collapses long before this on real budgets.
+_DRAIN_BISECT_STEPS = 96
 # Held-slot bookkeeping is keyed by lease, so it is bounded by real in-flight
 # count. This cap only exists so a leaked lease (a bug) degrades the estimate
 # instead of growing memory forever — the #205 failure shape.
@@ -462,55 +459,81 @@ def _service_estimate(
     return service, residuals, count, source
 
 
+def _starts_within(available: list[float], service_time_s: float, horizon: float) -> int:
+    """How many dispatches begin at or before ``horizon`` on this schedule.
+
+    A server free at ``t`` dispatches at ``t, t + service, t + 2 * service, …``,
+    so it contributes ``floor((horizon - t) / service) + 1`` starts. The
+    quotient is then VERIFIED by multiplication in both directions rather than
+    nudged by a fudge factor: binary floats make ``180 / 0.001`` come out as
+    ``179999.99999999997`` (one dispatch short per server) while a start that
+    truly lands past the horizon must not be counted at all. The correction
+    loops run at most once or twice.
+
+    O(slots) and exact in the same arithmetic the schedule itself uses, which
+    is what lets the published bound and the per-request answer agree.
+    """
+    total = 0
+    for free_at in available:
+        if free_at > horizon:
+            continue
+        periods = int((horizon - free_at) / service_time_s)
+        while periods > 0 and free_at + periods * service_time_s > horizon:
+            periods -= 1
+        while free_at + (periods + 1) * service_time_s <= horizon:
+            periods += 1
+        total += periods + 1
+    return total
+
+
 def _wait_for_position(available: list[float], service_time_s: float, ahead: int) -> float:
     """When the ``ahead + 1``-th dispatch starts, given each slot's free time.
 
-    Greedy earliest-slot assignment over a min-heap of "this slot is free at
-    T" — the same order the dispatcher produces. Closed-form round arithmetic
-    cannot express it: with slots free at 0 s and 100 s and a 1 s service, the
-    first slot serves a hundred requests before the second serves one.
+    Requests take the earliest free slot, which is what the dispatcher does.
+    Closed-form round arithmetic cannot express that: with slots free at 0 s
+    and 100 s and a 1 s service, the first slot serves a hundred requests
+    before the second serves one.
 
-    Beyond ``_DRAIN_SIM_STEPS`` the schedule is regular enough that the
-    remaining requests are priced as full rounds; a lane that deep is far past
-    any wait bound anyway.
+    Found by inverting :func:`_starts_within`, so this and the published bound
+    are answers to the same question and cannot disagree — a stepped walk with
+    a cap advertised depths its own request path then refused (Codex round-5
+    BLOCKER). Bisection over a monotone integer count, O(slots) per step.
     """
     if not available:
         return math.inf
-    heap = list(available)
-    heapq.heapify(heap)
-    simulated = min(ahead, _DRAIN_SIM_STEPS)
-    for _ in range(simulated):
-        heapq.heappush(heap, heapq.heappop(heap) + service_time_s)
-    start = heap[0]
-    if ahead > simulated:
-        start += math.ceil((ahead - simulated) / len(available)) * service_time_s
-    return start
+    target = ahead + 1
+    low = min(available)
+    if _starts_within(available, service_time_s, low) >= target:
+        return low
+    high = low + target * service_time_s
+    for _ in range(_DRAIN_BISECT_STEPS):
+        mid = (low + high) / 2
+        if mid <= low or mid >= high:
+            break
+        if _starts_within(available, service_time_s, mid) >= target:
+            high = mid
+        else:
+            low = mid
+    return high
 
 
 def _admissible_ahead(available: list[float], service_time_s: float, horizon: float) -> int:
     """Largest ``ahead`` whose dispatch still starts within ``horizon``.
 
-    Closed form, O(slots): a server free at ``t`` dispatches at
-    ``t, t + service, t + 2 * service, ...``, so it contributes
-    ``floor((horizon - t) / service) + 1`` starts inside the horizon. The last
-    start across all servers is the arrival itself, hence ``- 1``.
+    The last start inside the horizon is the arrival itself, hence ``- 1``.
+    Returns ``-1`` when not even an arrival at the head of an empty queue could
+    start in time; the published field clamps that to 0, but admission must be
+    able to tell "only rank 0 fits" from "nothing fits".
 
-    Simulating this instead would be both slow and wrong: ``/__throttle/health``
-    calls it once per bearer (invariant #4 is 50 ms for the whole endpoint),
-    and a step cap silently truncates the answer — 32 idle slots at 1 ms with a
-    180 s bound really can drain millions, and reporting a thousand is a lie a
+    Exact rather than a capped simulation: ``/__throttle/health`` calls this
+    once per bearer (invariant #4 is 50 ms for the whole endpoint), and a step
+    cap silently truncates the answer — 32 idle slots at 1 ms with a 180 s
+    bound really can drain millions, and reporting a thousand is a lie a
     consumer would act on.
     """
     if not available or service_time_s <= 0:
-        return 0
-    # The epsilon is a float-division guard, not a fudge: 180 / 0.001 evaluates
-    # to 179999.99999999997, which would drop a whole dispatch per server.
-    starts = sum(
-        int((horizon - free_at) / service_time_s + _DIVISION_EPSILON) + 1
-        for free_at in available
-        if free_at <= horizon
-    )
-    return max(0, starts - 1)
+        return -1
+    return _starts_within(available, service_time_s, horizon) - 1
 
 
 def _compute_drain(
@@ -575,9 +598,13 @@ def _compute_drain(
     available = [0.0] * free + held
 
     wait_s = _wait_for_position(available, service_time_s, ahead)
-    admits = (not enforced) or (slots > 0 and wait_s <= horizon)
+    admissible = _admissible_ahead(available, service_time_s, horizon) if enforced else -1
+    # Decided on the INTEGER bound, not on the float wait: the two are answers
+    # to the same question, and letting them round differently is how a
+    # producer advertises a depth its own request path refuses.
+    admits = (not enforced) or (slots > 0 and ahead <= admissible)
     rejects = enforced and evidenced and not admits
-    max_depth = _admissible_ahead(available, service_time_s, horizon) if enforced else 0
+    max_depth = max(0, admissible)
 
     # Coarse descriptor kept for logs and dashboards: how many service rounds
     # deep the arrival is. The wait above is the scheduled answer, not this.

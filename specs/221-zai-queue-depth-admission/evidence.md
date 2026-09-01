@@ -142,6 +142,16 @@ What the change does establish:
 | MAJOR (blocking) — `plan.md` still described FIFO deque pairing and a single budget floor for every timeout, both superseded | **Accepted.** Rewritten to the lease model, the pre-queue/elapsed floor split, and the closed-form published bound. The `config.py` ceiling comment no longer claims the advertised delay is never shorter than the budget — the hard cap wins. |
 | MINOR (follow-up, pre-existing) — lowering `PRIORITY_RESERVE_SLOTS` from 2 to 0 while two reserve holders are in flight migrates a queued lane waiter and dispatches it immediately, giving `inflight=3` against the new combined cap of 2 | **Not fixed here, deliberately.** It predates this slice (PR #73's migration path), is a limiter concurrency question rather than a depth-admission one, and lease attribution stays correct throughout. Recorded as follow-up: normal dispatch should gate on the combined live cap while retired reserve leases drain. |
 
+## 5d. Codex adversarial review, round 5 (BLOCK at `042521d`)
+
+| Finding | Disposition |
+|---|---|
+| MAJOR (blocking) — the exact published bound and the still-capped per-request walk disagreed: for 32 idle slots at 1 ms with a 180 s horizon the block advertised `max_depth = 5,760,031` while a request at that rank was refused with `Retry-After: 181` | **Accepted.** Both answers now come from one counting function `_starts_within`; the published bound is `count(horizon) - 1` and the per-request wait bisects the same function. Admission compares INTEGER ranks (`ahead <= admissible`), so they cannot round apart. `_admissible_ahead` returns `-1` for "not even rank 0 fits" and only the published field clamps to 0. Pinned by a self-consistency assertion: the published maximum is admitted and the next rank is not. |
+| MAJOR (blocking) — the bound counts round-robin RANK but sat beside raw `queued`, which is not comparable: 100 requests from one client put a new arrival 2nd, the same 100 across 100 clients put it 100th, and a consumer reading them together sees a healthy lane as saturated | **Accepted.** `queue_admit` now publishes `ahead` (a new client's rank right now) and `admits_new_client` (the direct answer), with the units stated in the docstring. Pinned by `test_published_bound_is_a_rank_not_a_raw_depth`, which builds both distributions at identical raw depth and asserts opposite verdicts. |
+| MAJOR (blocking) — `plan.md` still described the capped simulation and `tasks.md` still specified timestamp deques | **Accepted.** Both rewritten to the counting function and the lease model; completed task states brought current. |
+| MINOR — the fixed `1e-9` quotient epsilon overcounted a genuine near-boundary start (`available=[5e-10]`, service 1, horizon 1 returned 1 instead of 0) | **Accepted.** The epsilon is gone: each quotient is verified by multiplication in both directions, which fixes the float-division shortfall (`180 / 0.001 == 179999.99999999997`) without inventing a start that lands past the horizon. Both cases are pinned. |
+| Reserve `2 -> 0` hot-tune (round-4 MINOR) | Confirmed by the reviewer as defensibly deferred: predates this slice, attribution stays correct, recorded as follow-up in §5c. |
+
 ## 6. Post-change results
 
 Filled in by `verify.sh` and recorded at merge time.

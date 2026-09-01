@@ -71,11 +71,19 @@ The wait is then a scheduled estimate rather than round arithmetic. Each server
 is modelled as "free at T" (idle slots now; a held slot after its own residual:
 `typical - age`, or a full service estimate once it is overdue), requests take
 the earliest free slot, and the arrival starts at the `ahead + 1`-th such
-event. Closed-form rounds cannot express an uneven schedule — two slots aged
+event. Round arithmetic cannot express an uneven schedule — two slots aged
 200 s and 34 s free at very different times, and one scalar for the pair errs
-in both directions. Inverting the same simulation over the horizon gives the
-largest admissible `ahead`, which is what `/__throttle/admission` publishes.
-Both loops are bounded at 1024 simulated dispatches.
+in both directions.
+
+Both answers come from one counting function, `_starts_within` (how many
+dispatches begin at or before `t`, O(slots), each quotient verified by
+multiplication rather than nudged by an epsilon). The published bound is
+`_starts_within(horizon) - 1`; the per-request wait bisects the same function
+for the `ahead + 1`-th start. Admission then compares INTEGER ranks
+(`ahead <= admissible`), so the bound and the request path cannot round apart
+and advertise a depth the hot path would refuse. A stepped walk with a 1024
+event cap did exactly that, and cost ~94 ms for 250 bearer snapshots against a
+50 ms endpoint invariant (Codex rounds 4 and 5).
 
 ### 4. Rejection path
 

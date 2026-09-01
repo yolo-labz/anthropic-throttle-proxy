@@ -718,13 +718,28 @@ def test_published_depth_is_exact_not_a_simulation_cap() -> None:
     32 idle slots at 1 ms service really can start 5.76M requests inside a
     180 s bound; publishing "1023" is a number a consumer would act on.
     """
-    from anthropic_throttle_proxy.limiter import _admissible_ahead
+    from anthropic_throttle_proxy.limiter import _admissible_ahead, _wait_for_position
 
     assert _admissible_ahead([0.0] * 32, 0.001, 180.0) == 5_760_031
     assert _admissible_ahead([0.0, 0.0], 10.0, 30.0) == 7
     assert _admissible_ahead([0.0, 25.0], 10.0, 30.0) == 4  # 0/10/20/30 + 25
-    assert _admissible_ahead([31.0], 10.0, 30.0) == 0  # nothing starts in time
-    assert _admissible_ahead([], 10.0, 30.0) == 0
+    # -1 = not even rank 0 fits; the published field clamps it, admission must not.
+    assert _admissible_ahead([31.0], 10.0, 30.0) == -1
+    assert _admissible_ahead([], 10.0, 30.0) == -1
+    # A start that lands just past the horizon is not counted: the quotient is
+    # verified by multiplication rather than nudged by a fudge factor.
+    assert _admissible_ahead([5e-10], 1.0, 1.0) == 0
+
+    # The published bound and the per-request answer must not disagree, or the
+    # producer advertises a depth its own request path refuses.
+    for available, service, horizon in (
+        ([0.0] * 32, 0.001, 180.0),
+        ([0.0, 25.0], 10.0, 30.0),
+        ([1.0, 100.0], 1.0, 30.0),
+    ):
+        bound = _admissible_ahead(available, service, horizon)
+        assert _wait_for_position(available, service, bound) <= horizon
+        assert _wait_for_position(available, service, bound + 1) > horizon
 
 
 def test_snapshot_stays_cheap_for_a_wide_registry() -> None:
@@ -739,3 +754,39 @@ def test_snapshot_stays_cheap_for_a_wide_registry() -> None:
         lim.snapshot()
     elapsed_ms = (time.perf_counter() - started) * 1000
     assert elapsed_ms < 50, f"250 bearer snapshots took {elapsed_ms:.1f} ms"
+
+
+async def test_published_bound_is_a_rank_not_a_raw_depth(monkeypatch) -> None:
+    """Identical raw depth, opposite verdicts, because round-robin decides.
+
+    100 requests from ONE chatty client put a new arrival second in line; the
+    same 100 spread over 100 clients put it hundredth. A consumer comparing
+    `queued` with the published bound would read the first lane as saturated,
+    so the block publishes the rank (`ahead`) and the direct answer
+    (`admits_new_client`) alongside it.
+    """
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 10.0)
+
+    async def _lane(clients: int, per_client: int) -> FairBearerLimiter:
+        lim = FairBearerLimiter(1, "fair")
+        lim.max_concurrent = 1
+        await lim.acquire("holder")
+        for c in range(clients):
+            for _ in range(per_client):
+                asyncio.get_running_loop().create_task(lim.acquire(f"c{c}"))
+        await asyncio.sleep(0.02)
+        return lim
+
+    chatty = await _lane(clients=1, per_client=100)
+    spread = await _lane(clients=100, per_client=1)
+    assert chatty.snapshot()["queued_total"] == spread.snapshot()["queued_total"] == 100
+
+    chatty_block = proxy._lane_saturation({"b": {"limiter": chatty.snapshot()}}, {"b": True})
+    spread_block = proxy._lane_saturation({"b": {"limiter": spread.snapshot()}}, {"b": True})
+
+    assert chatty_block["queued"] == spread_block["queued"] == 100
+    assert chatty_block["queue_admit"]["ahead"] == 1
+    assert chatty_block["queue_admit"]["admits_new_client"] is True
+    assert spread_block["queue_admit"]["ahead"] == 100
+    assert spread_block["queue_admit"]["admits_new_client"] is False
