@@ -1,0 +1,76 @@
+# Spec: queue-depth admission + honest queue-timeout Retry-After
+
+## Problem
+
+The fair queue bounds how long a request may WAIT, never whether the wait is
+possible. A request is parked whenever a slot is busy, however deep the queue
+already is and however slow the lane's requests actually are. When the bound
+expires the proxy answers `503` with a hardcoded `Retry-After: 5`.
+
+Measured 01/09/2026 14:20–14:24 BRT on the live `:8766` Z.AI lane:
+`max_concurrent=2`, queue depth 3, inherited effective wait budget 30 s, and
+the two requests holding the slots completed after **113.7 s** and **221.2 s**.
+The arriving request therefore could not reach a slot within 30 s *by
+construction* — it needed two service rounds behind three queued peers. The
+proxy still admitted it, burned the full budget in silence, emitted the
+`queue-wait-timeout` 503, and advertised a 5 s retry that is off by roughly two
+orders of magnitude. The client (Pi) retried the same lane four times and
+aborted. Live health later showed queue/inflight 0: this was saturation, not a
+dead proxy and not an upstream quota wall.
+
+The lane's own numbers were sufficient to know the request was hopeless before
+it was ever parked.
+
+## Requirements
+
+- **FR-1 — Depth admission.** Before parking a request in the fair queue,
+  reject it when the estimated time to reach a slot exceeds this tier's
+  effective max wait. The estimate uses only live lane facts: the live slot
+  count, current occupancy, current queue depth, and a conservative recent
+  service-time estimate. Accepted requests keep the existing per-client
+  round-robin ordering; rejection happens strictly before enqueue.
+- **FR-2 — Published bound.** `/__throttle/admission` publishes a positive
+  integer `saturation.queue_admit_max_depth` plus the estimator inputs
+  (`saturation.queue_admit`: service time, sample count, provenance, slots,
+  free slots, and the max-wait used). Missing or insufficient history must not
+  claim measured evidence it does not have: provenance is explicit and the
+  bound stays finite and conservative. The endpoint stays cheap — no I/O, no
+  new locks, `/__throttle/health` remains < 50 ms (invariant #4).
+- **FR-3 — Truthful Retry-After.** The queue-timeout `503` carries a bounded
+  integer drain estimate instead of the constant `5`. It must never claim a
+  delay shorter than the next plausible slot release, never shorter than the
+  historical 5 s floor, and never shorter than the wait budget that was just
+  proven insufficient — otherwise the retry re-enters the same wall
+  immediately, which is exactly the observed ×4 retry storm. It stays bounded
+  by a configured ceiling so an unbounded estimate cannot be advertised.
+- **FR-4 — Preserve.** Queue-timeout marker header and its anti-spoof
+  stripping, pushback-retry and AIMD exemptions for queue timeouts, limiter
+  cancellation cleanup (no slot or counter leak), per-client fairness, the
+  priority reserve lane's dedicated pool, and every existing default for
+  non-saturated traffic are unchanged. The guard is inert whenever the queue
+  is disabled (`off`/`observe`) or the effective max wait is unset/0.
+- **FR-5 — Cost.** No new dependency, no vendor SDK, no credential handling
+  change, no new log field carrying a token or client payload.
+- **FR-6 — Evidence.** A RED→GREEN test drives the real limiter/admission seam
+  with the measured 2-slot / 3-deep / short-budget shape, plus cold history,
+  disabled bound, priority reserve, cancellation cleanup, and Retry-After
+  bounds.
+
+## Non-goals
+
+- No consumer change. Pi's retry policy, the NixOS pin, and host activation are
+  separate slices; this repo ships the producer only.
+- No change to `allow` in `/__throttle/admission`. Saturation has never been a
+  go/no-go verdict and does not become one here.
+- No new upstream pacing, AIMD, or routing behavior.
+
+## Acceptance
+
+- The deterministic replay of the measured shape rejects **before** enqueue,
+  with `queued_total` unchanged and no slot consumed.
+- The rejection's `Retry-After` is ≥ the exhausted wait budget and ≥ the 5 s
+  floor, an integer, and ≤ the configured ceiling.
+- `/__throttle/admission` exposes a positive `saturation.queue_admit_max_depth`
+  on an idle lane and on a lane with no bearers observed yet.
+- Full `pytest`, `ruff check`, and `ruff format --check` pass; `verify.sh` is
+  green.
