@@ -144,22 +144,25 @@ class Lane:
     url: str
     roles: frozenset[str]
     health_url: str = ""
-    admission_url: str = ""
     models: dict[str, str] = field(default_factory=dict)
     # True for a proxy-owns-key lane (Kimi :8767 injects its own credential and
     # tracks zero per-client bearers). Such a lane is usable with an empty
     # ``bearers`` map; a client-provides-key lane (GLM :8766) is NOT — empty
     # bearers means no client has a token routed through it, so traffic would 401.
     proxy_owns_key: bool = False
+    # Appended after the historical positional fields; external Lane(...,
+    # health_url, models, proxy_owns_key) callers keep their argument binding.
+    admission_url: str = ""
 
     def __post_init__(self) -> None:
         if not self.health_url:
             object.__setattr__(self, "health_url", f"{self.url.rstrip('/')}/__throttle/health")
         if not self.admission_url:
             suffix = "/__throttle/health"
+            normalized_health = self.health_url.rstrip("/")
             control_root = (
-                self.health_url[: -len(suffix)]
-                if self.health_url.endswith(suffix)
+                normalized_health[: -len(suffix)]
+                if normalized_health.endswith(suffix)
                 else self.url.rstrip("/")
             )
             object.__setattr__(self, "admission_url", f"{control_root}/__throttle/admission")

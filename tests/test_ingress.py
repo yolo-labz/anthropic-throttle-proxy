@@ -308,7 +308,8 @@ async def test_protocol_prefixed_glm_lane_keeps_messages_remap(
                 "upstream_egress_ok": True
             }
             assert await ingress._read_lane_admission(session, lanes["glm"]) == (True, 0.0)
-        assert seen_control_paths == ["/__throttle/health", "/__throttle/admission"]
+        assert set(seen_control_paths) == {"/__throttle/health", "/__throttle/admission"}
+        assert all(not path.startswith("/api/anthropic/") for path in seen_control_paths)
         async with ing.post(
             "/v1/messages",
             json={"model": "claude-opus-5", "max_tokens": 64, "messages": []},

@@ -674,6 +674,18 @@ def test_every_lane_accepts_explicit_control_overrides(monkeypatch, lane: str) -
     assert configured.admission_url == f"http://127.0.0.1:9000/{lane}/admission"
 
 
+def test_explicit_admission_override_beats_health_derivation(monkeypatch) -> None:
+    monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "http://127.0.0.1:8766/__throttle/health")
+    monkeypatch.setenv("INGRESS_GLM_LANE_ADMISSION_URL", "http://127.0.0.1:9999/custom-admission")
+    assert default_lanes()["glm"].admission_url == "http://127.0.0.1:9999/custom-admission"
+
+
+def test_trailing_slash_health_still_derives_root_admission(monkeypatch) -> None:
+    monkeypatch.setenv("INGRESS_GLM_LANE_URL", "http://127.0.0.1:8766/api/anthropic")
+    monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "http://127.0.0.1:8766/__throttle/health/")
+    assert default_lanes()["glm"].admission_url == "http://127.0.0.1:8766/__throttle/admission"
+
+
 def test_blank_health_override_keeps_derived_default(monkeypatch) -> None:
     monkeypatch.setenv("INGRESS_GLM_LANE_URL", "http://127.0.0.1:9999/prefix")
     monkeypatch.setenv("INGRESS_GLM_LANE_HEALTH_URL", "   ")

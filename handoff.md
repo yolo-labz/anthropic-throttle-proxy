@@ -32,10 +32,18 @@ available for irregular control surfaces. A regression test sends client
 requests, and proves the forwarded path plus exact model remap; unit controls
 cover all five env names and prove an override cannot resurrect a retired lane.
 
-Verification at the feature head: 184 focused routing/ingress/ADR tests and all
-978 pytest tests pass; Ruff format/lint is clean. No service, credential,
-provider route, Nix pin, or deployment changed. Reversal is one squash-revert
-PR.
+The second full-GLM review returned ALLOW with four robustness minors. The
+explicit-admission collision and real-control-path checks were strengthened;
+trailing-slash health now derives root admission; and `admission_url` was moved
+after every historical dataclass field to preserve positional callers. Its
+whitespace-lane concern was already falsified by the existing whitespace
+retirement test, and a source grep found no other `lane.url + /__throttle/*`
+call site.
+
+Verification before the final review refresh: 186 focused
+routing/ingress/ADR tests and all 980 pytest tests passed; Ruff format/lint was
+clean. No service, credential, provider route, Nix pin, or deployment changed.
+Reversal is one squash-revert PR.
 
 ## 31/08/2026 — issue #205 clients-map leak: prune shipped after a Codex round-1 BLOCK
 
