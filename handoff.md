@@ -6,6 +6,45 @@ host activation. Latest incident first.
 
 ---
 
+## 01/09/2026 — issue #220: protocol-prefixed GLM forwarding needs root health
+
+Hypothesis: a dedicated subscription-constrained GLM ingress can pin exact
+Flash/full models only if clients keep the exact `/v1/messages` path for role
+inference/remapping while the lane forwards under Z.AI's `/api/anthropic`
+prefix and probes throttle health at the queue root.
+
+Live disposable probes established the discriminator: a GLM-only ingress with
+`api.z.ai` subscription enforcement returned HTTP 200 and same-response
+`lane=glm`/`credential_mode=subscription`, but calling the ingress at
+`/api/anthropic/v1/messages` bypassed the exact-path remapper and returned
+`glm-5.3-flash` even when `INGRESS_GLM_MODEL=glm-5.3`; a direct queued request
+reported full `glm-5.3`. The fix is configuration separation, not a model-name
+claim.
+
+Issue #220 adds independent health/admission control URLs to every lane while
+preserving derived behavior when unset, Codex's `/healthz` default, and
+empty-URL lane retirement. The first review correctly requested behavioral
+root-health coverage; while adding it, tracing `_fresh_lane_state` exposed the
+same hidden prefix bug on `/__throttle/admission`. `Lane` now derives root
+admission from a root health override, and an explicit admission override is
+available for irregular control surfaces. A regression test sends client
+`/v1/messages` through a prefixed GLM lane, performs real root health/admission
+requests, and proves the forwarded path plus exact model remap; unit controls
+cover all five env names and prove an override cannot resurrect a retired lane.
+
+The second full-GLM review returned ALLOW with four robustness minors. The
+explicit-admission collision and real-control-path checks were strengthened;
+trailing-slash health now derives root admission; and `admission_url` was moved
+after every historical dataclass field to preserve positional callers. Its
+whitespace-lane concern was already falsified by the existing whitespace
+retirement test, and a source grep found no other `lane.url + /__throttle/*`
+call site.
+
+Verification before the final review refresh: 186 focused
+routing/ingress/ADR tests and all 980 pytest tests passed; Ruff format/lint was
+clean. No service, credential, provider route, Nix pin, or deployment changed.
+Reversal is one squash-revert PR.
+
 ## 31/08/2026 — issue #205 clients-map leak: prune shipped after a Codex round-1 BLOCK
 
 Symptom: `bearers[].clients` was insert-only, keyed by the peer's ephemeral

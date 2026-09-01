@@ -260,6 +260,71 @@ async def test_forward_preserves_path_query_and_body(ingress_client: TestClient)
     assert json.loads(payload["body"])["model"] == "claude-sonnet-4-6"
 
 
+async def test_protocol_prefixed_glm_lane_keeps_messages_remap(
+    monkeypatch,
+) -> None:
+    """A prefixed lane URL must still receive the ingress's exact messages path.
+
+    Clients keep POSTing ``/v1/messages`` so role inference and model remapping
+    run before the prefix is added at the forwarding boundary.
+    """
+
+    seen_control_paths: list[str] = []
+
+    async def echo(request: web.Request) -> web.Response:
+        return web.json_response(
+            {"path": request.path, "body": json.loads((await request.read()).decode())}
+        )
+
+    async def health(request: web.Request) -> web.Response:
+        seen_control_paths.append(request.path)
+        return web.json_response({"upstream_egress_ok": True})
+
+    async def admission(request: web.Request) -> web.Response:
+        seen_control_paths.append(request.path)
+        return web.json_response({"allow": True, "retry_after_s": 0})
+
+    app = web.Application()
+    app.router.add_post("/api/anthropic/v1/messages", echo)
+    app.router.add_get("/__throttle/health", health)
+    app.router.add_get("/__throttle/admission", admission)
+    lane = TestClient(TestServer(app))
+    await lane.start_server()
+    base = str(lane.make_url("")).rstrip("/")
+    lanes = {
+        "glm": Lane(
+            "glm",
+            base + "/api/anthropic",
+            frozenset({"generate", "bulk", "judge"}),
+            health_url=base + "/__throttle/health",
+            models={"generate": "glm-5.3", "bulk": "glm-5.3-flash", "judge": "glm-5.3"},
+        )
+    }
+    monkeypatch.setattr(routing, "GENERATE_OVERFLOW_ENABLED", True)
+    ing = await _boot_ingress(monkeypatch, lanes, _open_state({"glm"}))
+    try:
+        async with aiohttp.ClientSession() as session:
+            assert await ingress._read_lane_health(session, lanes["glm"], time.time()) == {
+                "upstream_egress_ok": True
+            }
+            assert await ingress._read_lane_admission(session, lanes["glm"]) == (True, 0.0)
+        assert set(seen_control_paths) == {"/__throttle/health", "/__throttle/admission"}
+        assert all(not path.startswith("/api/anthropic/") for path in seen_control_paths)
+        async with ing.post(
+            "/v1/messages",
+            json={"model": "claude-opus-5", "max_tokens": 64, "messages": []},
+            headers={"Authorization": "Bearer public-test"},
+        ) as response:
+            assert response.status == 200
+            assert response.headers["x-anthropic-throttle-lane"] == "glm"
+            payload = await response.json()
+        assert payload["path"] == "/api/anthropic/v1/messages"
+        assert payload["body"]["model"] == "glm-5.3"
+    finally:
+        await ing.close()
+        await lane.close()
+
+
 async def test_forward_is_byte_identical_to_direct_lane(
     ingress_client: TestClient, lane_client: TestClient
 ) -> None:
