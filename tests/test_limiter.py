@@ -379,17 +379,22 @@ async def test_acquire_cancelled_while_queued_cleans_up() -> None:
 async def test_cancel_cleanup_dispatched_branch_releases_slot() -> None:
     """Direct call to _cancel_cleanup with a dispatched-but-cancelled future.
 
-    Models the race where ``_try_dispatch`` already called ``set_result(None)``
-    + ``inflight += 1`` on the future, but the awaiting task is cancelled
-    before observing the result. Lines 252-256 must roll inflight back.
+    Models the race where ``_try_dispatch`` already stamped the future with
+    ``(effective_lane, lease)`` + ``inflight += 1``, but the awaiting task is
+    cancelled before observing the result. Cleanup must roll inflight back and
+    return the lease WITHOUT recording a service sample — the request never
+    reached upstream.
     """
     lim = limiter.FairBearerLimiter(2, "fair")
     loop = asyncio.get_running_loop()
     fut = loop.create_future()
-    fut.set_result(None)  # done, not cancelled, no exception
     lim.inflight = 1
+    lease = lim._note_dispatch(False)
+    fut.set_result((False, lease))  # done, not cancelled, no exception
     await lim._cancel_cleanup("c1", fut)
     assert lim.inflight == 0
+    assert lim._holds == {}
+    assert lim.drain_estimate(5.0).samples == 0
 
 
 # ---------------------------------------------------------------------------

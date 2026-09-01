@@ -24,6 +24,7 @@ from anthropic_throttle_proxy.limiter import (
     FairBearerLimiter,
     QueueWaitTimeout,
     _compute_drain,
+    budget_floored_retry_after,
 )
 
 SCALE = 100.0
@@ -34,7 +35,7 @@ INCIDENT_HOLDS_S = (113.7 / SCALE, 221.2 / SCALE)
 INCIDENT_COLD_S = 10.0 / SCALE
 # Long enough that the held slots are themselves evidence the lane is slow —
 # the estimator refuses to reject on a guess.
-INCIDENT_SETTLE_S = 0.2
+INCIDENT_SETTLE_S = 0.3
 
 
 async def _saturated_incident_limiter(monkeypatch) -> tuple[FairBearerLimiter, list[asyncio.Task]]:
@@ -74,7 +75,9 @@ def test_incident_arithmetic_at_the_measured_scale() -> None:
         slots=2,
         busy=2,
         queued=3,
+        ahead=3,
         service_time_s=113.7,
+        residual_s=113.7,
         samples=8,
         source="measured",
         evidenced=True,
@@ -88,6 +91,121 @@ def test_incident_arithmetic_at_the_measured_scale() -> None:
     # Honest: 228 s, not 5 s. Bounded by the configured ceiling.
     assert estimate.retry_after_s == 228
     assert estimate.retry_after_s <= config.QUEUE_RETRY_AFTER_MAX_S
+
+
+def test_rejects_at_the_lanes_own_measured_service_rate() -> None:
+    """Completed-history alone is enough: 29/08 measured ~35 s/req on 2 slots."""
+    estimate = _compute_drain(
+        slots=2,
+        busy=2,
+        queued=3,
+        ahead=3,
+        service_time_s=35.0,
+        residual_s=35.0,
+        samples=16,
+        source="measured",
+        evidenced=True,
+        max_wait=30.0,
+    )
+    assert estimate.wait_s == pytest.approx(70.0)
+    assert estimate.rejects is True
+    assert estimate.retry_after_s == 70
+
+
+def test_nearly_finished_slots_are_not_charged_a_whole_round() -> None:
+    """An arrival behind slots that are about to free must not be refused."""
+    estimate = _compute_drain(
+        slots=2,
+        busy=2,
+        queued=0,
+        ahead=0,
+        service_time_s=40.0,
+        residual_s=2.0,  # both holders are 38 s into a 40 s typical request
+        samples=16,
+        source="measured",
+        evidenced=True,
+        max_wait=30.0,
+    )
+    assert estimate.rounds == 1
+    assert estimate.wait_s == pytest.approx(2.0)
+    assert estimate.admits is True
+    assert estimate.rejects is False
+
+
+async def test_round_robin_position_not_raw_queue_depth(monkeypatch) -> None:
+    """A new client overtakes a chatty client's backlog — that is the fair queue.
+
+    Counting raw depth would refuse a fresh client stuck behind one chatty
+    client's 20 parked requests, which the round-robin dispatcher serves on the
+    very next release. The same arrival from the CHATTY client is correctly
+    refused: it really is 20 of its own turns away.
+    """
+    monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 0.05)
+    lim = FairBearerLimiter(2, "fair")
+    lim.max_concurrent = 2
+    for _ in range(2):
+        await lim.acquire("holder")
+    await asyncio.sleep(0.2)  # slots are overdue: evidenced, ~0.2 s service
+    backlog = [asyncio.create_task(lim.acquire("chatty")) for _ in range(20)]
+    await asyncio.sleep(0.01)
+    assert lim.snapshot()["queued_total"] == 20
+
+    fresh = lim.drain_estimate(1.0, client_id="fresh")
+    assert fresh.ahead == 1, "one turn for the chatty client, then this one"
+    assert fresh.rejects is False
+
+    same = lim.drain_estimate(1.0, client_id="chatty")
+    assert same.ahead == 20
+    assert same.rejects is True
+
+    waiter = asyncio.create_task(_park(lim, "fresh", 1.0))
+    await asyncio.sleep(0.01)
+    assert not waiter.done(), "the fresh client must be parked, not refused"
+    assert lim.snapshot()["queued_total"] == 21
+
+    waiter.cancel()
+    for task in backlog:
+        task.cancel()
+    await asyncio.gather(waiter, *backlog, return_exceptions=True)
+    for _ in range(2):
+        await lim.release()
+
+
+async def test_simultaneous_burst_is_serialized_not_all_admitted(monkeypatch) -> None:
+    """Ten arrivals in one burst must not all pass one stale estimate.
+
+    The check and the enqueue are one event-loop step because every `_lock`
+    critical section in the limiter is synchronous, so the lock take never
+    yields. This test pins that property: if a future refactor awaits inside a
+    critical section, the burst starts admitting past the bound.
+    """
+    monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 0.05)
+    lim = FairBearerLimiter(1, "fair")
+    lim.max_concurrent = 1
+    await lim.acquire("holder")
+    await asyncio.sleep(0.12)
+    bound = lim.drain_estimate(0.30, client_id="c0")
+    assert bound.evidenced is True
+
+    rejected: list[int] = []
+
+    async def arrival(i: int) -> None:
+        try:
+            async with lim.slot(f"c{i}", max_wait=0.30):
+                pass
+        except QueueWaitTimeout:
+            rejected.append(i)
+
+    tasks = [asyncio.create_task(arrival(i)) for i in range(10)]
+    await asyncio.sleep(0.02)
+    queued = lim.snapshot()["queued_total"]
+    assert queued <= bound.max_depth + 1, f"burst admitted {queued} past bound {bound.max_depth}"
+    assert len(rejected) == 10 - queued
+
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await lim.release()
 
 
 async def test_incident_shape_rejects_before_enqueue(monkeypatch) -> None:
@@ -365,3 +483,42 @@ def test_admission_depth_bound_shrinks_as_the_lane_slows(monkeypatch) -> None:
     monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 120.0)
     shallow_slow = proxy._lane_saturation({"b": {"limiter": fast.snapshot()}}, {"b": True})
     assert shallow_fast["queue_admit_max_depth"] > shallow_slow["queue_admit_max_depth"]
+
+
+def test_non_finite_budget_never_reaches_the_arithmetic(monkeypatch) -> None:
+    """An inherited budget is a client-supplied header; `1e400` parses to inf.
+
+    Unguarded, `horizon // service` raises OverflowError on a request path and
+    a non-finite field reaches `/__throttle/health` as invalid JSON.
+    """
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.0)
+    inherited = proxy._effective_queue_max_wait({config.WAIT_BUDGET_HEADER: "1e400"})
+    assert inherited == math.inf
+    lim = FairBearerLimiter(2, "fair")
+    lim.max_concurrent = 2
+    for budget in (inherited, float("nan"), -5.0):
+        estimate = lim.drain_estimate(budget)
+        assert estimate.enforced is False
+        assert estimate.rejects is False
+        for value in estimate.as_dict().values():
+            assert not isinstance(value, float) or math.isfinite(value)
+
+
+def test_zero_service_time_is_floored(monkeypatch) -> None:
+    """A zero estimate would admit any depth while publishing a zero bound."""
+    monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 0.0)
+    lim = FairBearerLimiter(2, "fair")
+    lim.max_concurrent = 2
+    estimate = lim.drain_estimate(30.0)
+    assert estimate.service_time_s > 0
+    assert estimate.max_depth > 0
+
+
+def test_retry_after_ceiling_is_a_hard_cap(monkeypatch) -> None:
+    """A 600 s budget under a 300 s ceiling must advertise 300, not 600."""
+    monkeypatch.setattr(config, "QUEUE_RETRY_AFTER_MAX_S", 300)
+    lim = FairBearerLimiter(1, "fair")
+    lim.max_concurrent = 1
+    estimate = lim.drain_estimate(600.0)
+    assert budget_floored_retry_after(estimate) == 300
+    assert estimate.retry_after_s <= 300

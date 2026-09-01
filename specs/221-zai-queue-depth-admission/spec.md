@@ -26,23 +26,35 @@ it was ever parked.
 - **FR-1 — Depth admission.** Before parking a request in the fair queue,
   reject it when the estimated time to reach a slot exceeds this tier's
   effective max wait. The estimate uses only live lane facts: the live slot
-  count, current occupancy, current queue depth, and a conservative recent
-  service-time estimate. Accepted requests keep the existing per-client
-  round-robin ordering; rejection happens strictly before enqueue.
+  count, current occupancy, the arrival's **round-robin** position (not raw
+  queue depth — a new client overtakes a chatty client's backlog by design, and
+  counting the whole depth would refuse traffic the fair queue exists to serve
+  promptly), and a conservative recent service-time estimate. Accepted requests
+  keep the existing per-client ordering; rejection happens strictly before
+  enqueue.
 - **FR-2 — Published bound.** `/__throttle/admission` publishes a positive
   integer `saturation.queue_admit_max_depth` plus the estimator inputs
   (`saturation.queue_admit`: service time, sample count, provenance, slots,
   free slots, and the max-wait used). Missing or insufficient history must not
   claim measured evidence it does not have: provenance is explicit and the
-  bound stays finite and conservative. The endpoint stays cheap — no I/O, no
+  bound stays finite and conservative. The published horizon is the
+  **configured** `THROTTLE_QUEUE_MAX_WAIT_S` and the arrival is assumed to be a
+  NEW client; a request inheriting a shorter end-to-end budget is judged
+  against that shorter horizon on the hot path, so `max_wait_s` states which
+  horizon the published bound describes. The endpoint stays cheap — no I/O, no
   new locks, `/__throttle/health` remains < 50 ms (invariant #4).
 - **FR-3 — Truthful Retry-After.** The queue-timeout `503` carries a bounded
-  integer drain estimate instead of the constant `5`. It must never claim a
-  delay shorter than the next plausible slot release, never shorter than the
-  historical 5 s floor, and never shorter than the wait budget that was just
-  proven insufficient — otherwise the retry re-enters the same wall
-  immediately, which is exactly the observed ×4 retry storm. It stays bounded
-  by a configured ceiling so an unbounded estimate cannot be advertised.
+  integer drain estimate instead of the constant `5`, never shorter than the
+  historical 5 s floor. A request refused **before** it waited is additionally
+  floored at the budget it was just refused against — otherwise the retry
+  re-enters the same wall immediately, which is exactly the observed ×4 retry
+  storm. A request that already **spent** that budget waiting is not, because
+  that time is behind it and the lane may free a slot the instant after the
+  timeout. The configured ceiling is a HARD cap in both cases: an unbounded
+  hint is not actionable.
+  *(Amended after Codex round 1, which showed the original single floor made
+  the "ceiling" non-binding for budgets above it and charged already-spent
+  waiting time twice. Recorded in `evidence.md`.)*
 - **FR-4 — Preserve.** Queue-timeout marker header and its anti-spoof
   stripping, pushback-retry and AIMD exemptions for queue timeouts, limiter
   cancellation cleanup (no slot or counter leak), per-client fairness, the
@@ -63,6 +75,17 @@ it was ever parked.
 - No change to `allow` in `/__throttle/admission`. Saturation has never been a
   go/no-go verdict and does not become one here.
 - No new upstream pacing, AIMD, or routing behavior.
+
+## What this is not
+
+The estimate is a conservative admission **policy**, not a proof. A holder's
+age bounds its total service time from below, never its remaining time — it may
+return in the next millisecond. The model deliberately errs toward
+over-estimating the wait (a false refusal answered in milliseconds, which the
+SDK retries) rather than under-estimating it (a request parked past the
+client's patience, answered too late to be useful). False refusals are an
+accepted cost, which is also why enforcement requires evidence rather than a
+guess.
 
 ## Acceptance
 

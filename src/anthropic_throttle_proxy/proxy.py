@@ -113,6 +113,7 @@ from .limiter import (
     FairBearerLimiter,
     QueueWaitTimeout,
     _get_bearer_limiter,
+    budget_floored_retry_after,
     cold_drain_estimate,
 )
 from .metrics import (
@@ -866,24 +867,31 @@ def _queue_wait_timeout_response(
     retries and an abort. ``timeout`` carries the estimate already computed at
     the rejection; without it the estimate is recomputed here, which is what
     the pre-dispatch call sites (spent budget, expired deadline) need.
+
+    A request refused BEFORE it waited is told to come back no sooner than the
+    budget it was refused against (still under the hard ceiling); one that
+    already spent that budget waiting is not, because that time is behind it
+    and the lane may free a slot the moment after the timeout.
     """
     M_QUEUE_WAIT_TIMEOUTS.labels(bearer=bid).inc()
     snap = limiter.snapshot()
     estimate = timeout.estimate if timeout is not None and timeout.estimate else None
     if estimate is None:
-        estimate = limiter.drain_estimate(max_wait)
-    reason = "pre-queue-depth" if timeout is not None and timeout.pre_queue else "elapsed"
+        estimate = limiter.drain_estimate(max_wait, client_id=cid)
+    pre_queue = timeout is not None and timeout.pre_queue
+    retry_after_s = budget_floored_retry_after(estimate) if pre_queue else estimate.retry_after_s
     log(
-        f"queue-wait-timeout bid={bid} cid={cid} path=/{path} reason={reason} "
+        f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
+        f"reason={'pre-queue-depth' if pre_queue else 'elapsed'} "
         f"max_wait_s={max_wait:g} inflight={snap['inflight']} "
         f"queued_total={snap['queued_total']} max_concurrent={snap['max_concurrent']} "
         f"service_s={estimate.service_time_s:g} source={estimate.source} "
-        f"est_wait_s={estimate.wait_s:g} retry_after_s={estimate.retry_after_s}"
+        f"est_wait_s={estimate.wait_s:g} retry_after_s={retry_after_s}"
     )
     return web.Response(
         status=503,
         headers={
-            "retry-after": str(estimate.retry_after_s),
+            "retry-after": str(retry_after_s),
             config.QUEUE_TIMEOUT_HEADER: "1",
         },
         text=(
@@ -4437,6 +4445,13 @@ def _aggregate_drain(drains: list[object]) -> tuple[int, dict]:
     ``queued`` sums beside it: an arrival may land on any of them. The
     published service time is the SLOWEST bearer's, with that bearer's
     provenance, because the slow one is what decides whether a queue drains.
+
+    The horizon is the CONFIGURED ``THROTTLE_QUEUE_MAX_WAIT_S`` and the arrival
+    is assumed to be a NEW client. A request that inherits a shorter end-to-end
+    budget is judged against that shorter horizon on the hot path, so this is
+    advisory capacity for the configured bound — ``max_wait_s`` states which
+    horizon it describes, and a consumer with a tighter budget must scale it
+    rather than read it as its own admission verdict.
 
     With nothing measured (a freshly restarted process that has not seen a
     request yet) the bound comes from config, flagged ``source: config`` — a

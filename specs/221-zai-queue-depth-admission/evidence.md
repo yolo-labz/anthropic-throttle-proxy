@@ -56,7 +56,38 @@ retry against a ≥ 442 s real drain. The producer change is required.
    consumer can see saturation without re-deriving it (the repeated failure
    mode this repo already documents for availability).
 
-## 4. Post-change results
+## 4. Codex adversarial review, round 1 (BLOCK at `36015f9`)
+
+Different-family gate (this is Anthropic-authored work). Seven findings; every
+one acted on. Two are worth recording because they changed the design, and one
+because it was refuted with evidence rather than accepted.
+
+| Finding | Disposition |
+|---|---|
+| BLOCKER — admission not atomic with enqueue; a burst could all pass one stale estimate | **Refuted with a probe.** Every `_lock` critical section in the limiter is synchronous, so `asyncio.Lock.acquire` takes its non-yielding fast path and check+enqueue complete in one event-loop step. Measured: 10 simultaneous arrivals against a 1-slot evidenced lane → 2 enqueued, 8 refused, exactly the published bound. Pinned by `test_simultaneous_burst_is_serialized_not_all_admitted` so a future `await` inside a critical section breaks the test rather than the guard. |
+| BLOCKER — depth math assumed FIFO, but the dispatcher is per-client round-robin | **Accepted, real regression.** A new client behind one chatty client's 20 parked requests would have been refused although RR serves it on the very next release. Fixed with `_ahead_of(client_id)`: own depth + `min(depth_j, own + 1)` per sibling. Both directions pinned by `test_round_robin_position_not_raw_queue_depth`. |
+| BLOCKER — FIFO stamp pairing could pop the long holder's stamp on a short completion, erasing the incident signal | **Accepted.** Replaced with per-slot leases (`_holds: lease -> (lane, start)`), threaded through `acquire_lease`/`release`/`_cancel_cleanup`. Bookkeeping is now bounded by real in-flight count instead of a 256-entry truncation. |
+| BLOCKER — a heuristic was named and documented as proof | **Accepted.** Language corrected across spec, docstrings and log line; added `residual_s` so a wave that is nearly finished is not charged a whole round, and stated the accepted false-refusal cost explicitly. |
+| MAJOR — evidence did not establish the *first* arrival would have been refused | **Accepted, claim narrowed.** See §5. |
+| MAJOR — published bound uses the configured 180 s horizon while the hot path used the effective 30 s | **Accepted**, documented as configured-horizon advisory capacity with `max_wait_s` naming the horizon. |
+| MAJOR — the Retry-After "ceiling" was not a ceiling; the elapsed path charged already-spent budget again | **Accepted.** Hard cap in both paths; the budget floor now applies only to the pre-queue refusal (`budget_floored_retry_after`). |
+| MINOR — non-finite / zero inputs | **Accepted.** `_finite()` guards, `_MIN_SERVICE_TIME_S` floor, regression tests for `1e400`/`nan`/negative budgets and a zero service estimate. |
+
+## 5. Scope of the causal claim (narrowed after review)
+
+This change would **not** necessarily have refused the very first arrival of
+the incident. With fewer than three completions and holders only seconds old,
+the estimator is cold and does not enforce at all. What it does establish:
+
+- With the lane's own measured rate from the ledger's 29/08 observation
+  (~35 s/req on 2 slots), the measured shape refuses at once: 2 rounds × 35 s =
+  70 s against a 30 s budget (`test_rejects_at_the_lanes_own_measured_service_rate`).
+- By the second of the four retries the holders were already ~100 s old, which
+  is evidence on its own, so the retry storm is cut at the first repeat.
+- The client's outcome changes from *four silent 30 s stalls then an abort* to
+  an immediate 503 carrying an honest interval.
+
+## 6. Post-change results
 
 Filled in by `verify.sh` and recorded at merge time.
 
