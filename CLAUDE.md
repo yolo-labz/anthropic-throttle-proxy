@@ -149,11 +149,24 @@ case "$running" in "$persisted"*) echo "OK  running == persisted" ;;
   *) echo "DRIFT  running=$running  persisted=$persisted  -> systemctl --user restart" ;;
 esac
 
-# 8. HM profile pointer vs activated NixOS toplevel's HM closure
-readlink -f ~/.local/state/nix/profiles/home-manager
+# 8. Did the HM half actually activate?
+# OBSOLETE ON DESKTOP (corrected 05/09/2026): the old form of this step
+# compared `~/.local/state/nix/profiles/home-manager` against the activated
+# toplevel's HM closure and called a mismatch a deferred switch. That pointer
+# is a STANDALONE home-manager artifact. Desktop drives HM as a NixOS module,
+# through the system-level `home-manager-notroot.service`, and that path never
+# bumps the standalone profile — it has been frozen at generation 517 since
+# 24/08/2026 while HM activations kept running normally. Comparing them now
+# reports a permanent false "stale symlink" and sends you chasing a
+# non-existent deferred switch.
+# Ask the service instead: it names the generation it activated, and a 0 exit
+# is the activation actually succeeding.
+systemctl show home-manager-notroot.service -p ExecMainStartTimestamp -p ExecMainStatus
+systemctl show home-manager-notroot.service -p ExecStart --value |
+  grep -oE '/nix/store/[a-z0-9]+-home-manager-generation'
 nix-store -qR "$(readlink /run/current-system)" | grep home-manager-generation
-# These two MUST match. If not, a `nh os switch` was deferred (niri-guard
-# rewrites to `nh os boot`) and the persistent symlink is stale.
+# The generation the SERVICE ran must match the one in the activated closure.
+# `Status=0` plus that match is the real proof; the profile pointer is not.
 ```
 
 ### Persistence checklist (apply after any HM / Nix / systemd-user fix)
