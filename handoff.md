@@ -6,6 +6,94 @@ host activation. Latest incident first.
 
 ---
 
+## 07/09/2026 — #221/#222/#223/#224 were merged and inert: the pin, and the activation
+
+Four PRs landed upstream between 31/08 and 07/09, two of them incident fixes,
+and **none of them was running.** `~/NixOS` pinned `419dd7f` (#217, 31/08), and
+both desktop instances execute that Nix-pinned build. PR #222 said so in its own
+body and named the owed slice:
+
+> the live desktop is not fixed by this merge. `:8766` runs a Nix-pinned build
+> and keeps the old behavior until `~/NixOS` pins the merged rev and the host
+> activates it — a separate slice.
+
+That slice is this entry. Measured before touching anything (07/09 17:38 BRT):
+
+```text
+:8765  build=/nix/store/xw3hwi4x…-anthropic-throttle-proxy-0.1.0   served=2571
+:8766  build=/nix/store/xw3hwi4x…-anthropic-throttle-proxy-0.1.0   served=268
+has("config_override_drift")                                       false
+grep -c 'def override_drift' <running pkg>/config.py                0
+```
+
+The `grep` is the load-bearing check, not the `build` string: a matching store
+path only proves *which* package was launched, never that the package contains
+the code the PR claims.
+
+### The pin (NixOS #2155, merged `d14b121b`)
+
+`419dd7f` → `eedf96d`, hash `sha256-6DE+rXspPkVxe96bNfB9MBC4dCPxro16RVcecjitqsI=`.
+
+**Gotcha for the next bumper:** `pkgs/anthropic-throttle-proxy/default.nix`
+carries `postFetch = "rm -rf $out/specs"`, so the fixed-output hash is computed
+AFTER the strip. `nix-prefetch-github` returns the raw-source hash and it does
+**not** match — it produced `sha256-R4KfGe5g…`, the build wanted
+`sha256-6DE+rXsp…`. Resolve by building against `lib.fakeHash` and reading the
+mismatch.
+
+Built `desktop` and `server` toplevels, then grep-verified the resulting
+`i6paq008…-anthropic-throttle-proxy-0.1.0`: `def override_drift` ×1,
+`def drain_estimate` ×1, `admission_url` ×9.
+
+### The activation
+
+`nixos-smart-switch` (not `nh os switch`) — it previews restarts and aborts on a
+session-critical one. Preview named exactly one service,
+`home-manager-notroot.service`, so the compositor was never at risk. Generation
+**2147**, live and boot closures identical. HM's sd-switch restarted both proxy
+units during activation, so no manual restart was needed.
+
+Post-activation, running == persisted (`i6paq008…`), and both oracles pass:
+
+```text
+:8765  allow=true  lane.open=true  measured=true
+       queue_admit_max_depth=49  queue_max_wait_s=90.0  config_override_drift={}
+:8766  queue_admit_max_depth=37  max_wait_s=180.0  enforced=true
+       source=config  samples=0  slots=2  config_override_drift={}
+```
+
+`max_wait_s=180.0` on `:8766` is the #224 incident closing: the lane now obeys
+the 180 that `modules/home/zai-throttle-proxy.nix` declares, not the 30 a
+persisted `overrides.json` had pinned since 29/08. That file is now
+`{aimd_initial_concurrent: 2, priority_reserve_slots: 0}` — both equal to the
+declared config, so both are no-ops, which is why `config_override_drift` is
+empty rather than absent. The journal line is the new contract in practice:
+
+```text
+17:57:18 [anthropic-throttle] config: loaded 2 override(s) from …/overrides.json
+```
+
+Still a count — but under #224 a count with **no drift line beside it** now
+means "none of them contradicts its default", which is the assertion the old
+build could not make and which is exactly what hid the harmful 30 for nine days.
+
+### What this does NOT prove
+
+`:8766`'s `queue_admit_max_depth=37` carries `source: config` and `samples: 0`.
+It is the cold, config-derived estimate, so the done_oracle passes on
+*publication*, not on measurement. Under #222's own contract enforcement also
+requires evidence (`rejects = enforced and evidenced and not admits`), so a lane
+that has completed nothing still admits everything. **Admission has not yet
+refused a single request on this host.** The first real test is the next
+saturation event on `:8766`; until one occurs, treat depth-admission as deployed
+and unexercised, not as validated under load. `allow:false` /
+`reason: "no bearers observed yet"` on `:8766` immediately after the restart is
+cold-start, not a fault — `:8765` had already served traffic and reported
+`allow:true`.
+
+Reversal: `git revert d14b121b` in `~/NixOS`, then `nixos-smart-switch`; or
+`sudo nixos-rebuild switch --rollback` for the activation alone.
+
 ## 01/09/2026 — issue #220: protocol-prefixed GLM forwarding needs root health
 
 Hypothesis: a dedicated subscription-constrained GLM ingress can pin exact
