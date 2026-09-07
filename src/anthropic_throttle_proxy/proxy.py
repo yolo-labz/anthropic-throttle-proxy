@@ -4768,6 +4768,9 @@ async def health(_request: web.Request) -> web.Response:
         "upstream_retries": state["upstream_retries"],
         "max_concurrent": config.MAX_CONCURRENT,
         "queue_mode": config.QUEUE_MODE,
+        # Overrides that CONTRADICT the unit file. Empty is the healthy case; a
+        # non-empty map is a knob the declared config does not actually control.
+        "config_override_drift": config.override_drift(),
         "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
         "upstream": config.UPSTREAM,
         "upstream_egress_ok": upstream_egress_ok,

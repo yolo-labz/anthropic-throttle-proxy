@@ -68,6 +68,10 @@ _HEALTH_TOP_LEVEL = frozenset(
         "upstream_retries",
         "max_concurrent",
         "queue_mode",
+        # Additive (07/09/2026): overrides that CONTRADICT the unit file. A
+        # persisted override outranks declared config silently, which hid a
+        # known-harmful queue_max_wait_s on the Z.AI lane for nine days.
+        "config_override_drift",
         "min_dispatch_gap_ms",
         "upstream",
         "upstream_egress_ok",
