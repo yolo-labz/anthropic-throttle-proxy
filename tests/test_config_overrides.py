@@ -191,3 +191,92 @@ def test_storm_warn_retries_default_is_25():
     # threshold. Overridable via THROTTLE_STORM_WARN_RETRIES.
     assert config.STORM_WARN_RETRIES == 25
     assert isinstance(config.STORM_WARN_RETRIES, int)
+
+
+def test_override_drift_names_only_contradicting_knobs():
+    """A persisted override outranks the unit file in silence.
+
+    On 07/09/2026 the Z.AI lane ran nine days on ``queue_max_wait_s=30`` while
+    its module declared 180 — the exact value that module documents as
+    measured-harmful. The only signal was "loaded 3 override(s)". Divergence,
+    not the count, is what an operator needs.
+    """
+    config.OVERRIDES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    env_gap = config.ENV_DEFAULTS.get("min_dispatch_gap_ms")
+    config.OVERRIDES_FILE.write_text(
+        json.dumps({"max_concurrent": 8, "min_dispatch_gap_ms": env_gap})
+    )
+    config.load_overrides()
+
+    drift = config.override_drift()
+    # Contradicts the env default -> named, with BOTH values.
+    assert "max_concurrent" in drift
+    assert drift["max_concurrent"]["override"] == 8
+    assert drift["max_concurrent"]["env"] == config.ENV_DEFAULTS["max_concurrent"]
+    assert drift["max_concurrent"]["env_known"] is True
+    # Equal to the env default -> a no-op, and noise if reported.
+    assert "min_dispatch_gap_ms" not in drift
+
+
+def test_override_drift_never_publishes_a_non_finite_default():
+    """Health must stay RFC 8259 JSON.
+
+    Several editable floats are parsed with a bare ``float(os.environ...)``
+    (AIMD_BACKOFF_S, AIMD_DECREASE, MAX_HOLD_RETRY_AFTER_S), so a NaN/inf can
+    reach ENV_DEFAULTS. Emitting it would put the tokens ``NaN``/``Infinity``
+    into /__throttle/health and a strict consumer rejects the WHOLE document.
+    """
+    config.RUNTIME_OVERRIDES.clear()
+    # Restore the captured default: the autouse teardown calls reset_override,
+    # which feeds ENV_DEFAULTS back through the setter — leaving a poisoned
+    # value here would push -inf into the live knob and wreck the pacing suite.
+    original = config.ENV_DEFAULTS["aimd_backoff_s"]
+    try:
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            config.ENV_DEFAULTS["aimd_backoff_s"] = bad
+            config.RUNTIME_OVERRIDES["aimd_backoff_s"] = 30.0
+            entry = config.override_drift()["aimd_backoff_s"]
+            assert entry["env"] is None, bad
+            assert entry["env_known"] is False, bad
+            # The whole document must survive a STRICT encoder.
+            json.dumps(config.override_drift(), allow_nan=False)
+    finally:
+        config.ENV_DEFAULTS["aimd_backoff_s"] = original
+        config.RUNTIME_OVERRIDES.clear()
+
+
+def test_override_drift_does_not_claim_divergence_it_cannot_prove():
+    """A getter that raised leaves None — unknown, not a contradiction."""
+    config.RUNTIME_OVERRIDES.clear()
+    config.ENV_DEFAULTS["max_concurrent"] = None
+    config.RUNTIME_OVERRIDES["max_concurrent"] = 8
+    entry = config.override_drift()["max_concurrent"]
+    assert entry["env_known"] is False
+    assert entry["env"] is None
+
+
+def test_capture_env_defaults_is_one_shot_per_key():
+    """A second capture would snapshot ALREADY-overridden values as the default.
+
+    Real drift would then equal its own 'default' and vanish from the report.
+    """
+    config.ENV_DEFAULTS.clear()
+    config.RUNTIME_OVERRIDES.clear()
+    config._capture_env_defaults()
+    baseline = config.ENV_DEFAULTS["max_concurrent"]
+    config.set_override("max_concurrent", str(baseline + 3))
+    config._capture_env_defaults()  # must NOT re-snapshot the mutated value
+    assert config.ENV_DEFAULTS["max_concurrent"] == baseline
+    assert "max_concurrent" in config.override_drift()
+
+
+def test_override_drift_is_empty_with_no_overrides():
+    config.RUNTIME_OVERRIDES.clear()
+    assert config.override_drift() == {}
+
+
+def test_reset_override_clears_the_drift_it_caused():
+    config.set_override("max_concurrent", "8")
+    assert "max_concurrent" in config.override_drift()
+    config.reset_override("max_concurrent")
+    assert "max_concurrent" not in config.override_drift()

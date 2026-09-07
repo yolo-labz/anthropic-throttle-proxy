@@ -1175,6 +1175,11 @@ def _get_proxy_attr(name: str, default: _Any) -> _Any:
 def _capture_env_defaults() -> None:
     """Snapshot each knob's current effective value before any overrides apply."""
     for key, spec in EDITABLE_KNOBS.items():
+        # Capture ONCE per key. A second pass would snapshot values an override
+        # has already mutated, and a knob whose override then equalled that
+        # "default" would silently drop out of the drift report.
+        if key in ENV_DEFAULTS:
+            continue
         try:
             ENV_DEFAULTS[key] = spec["getter"]()
         except Exception:
@@ -1267,6 +1272,52 @@ def load_overrides() -> None:
         RUNTIME_OVERRIDES[key] = value
         EDITABLE_KNOBS[key]["setter"](value)
     log(f"config: loaded {len(RUNTIME_OVERRIDES)} override(s) from {OVERRIDES_FILE}")
+    # Name every override that CONTRADICTS the declared environment, not just
+    # the count. A persisted override outranks the unit file silently, so on
+    # 07/09/2026 the Z.AI lane ran nine days on queue_max_wait_s=30 while its
+    # module declared 180 -- and 30 is the value that module documents as
+    # measured-harmful (41 spurious local 503s while every upstream response
+    # was 200). The only signal was "loaded 3 override(s)", which is true and
+    # useless. Divergence is the thing worth reading.
+    for key, value in override_drift().items():
+        if value["env_known"]:
+            log(
+                f"config: override {key}={value['override']!r} DIVERGES "
+                f"from env default {value['env']!r}"
+            )
+        else:
+            log(
+                f"config: override {key}={value['override']!r} cannot be checked "
+                f"— the env default is unavailable"
+            )
+
+
+def override_drift() -> dict[str, dict[str, _Any]]:
+    """Overrides whose live value contradicts the env-derived default.
+
+    An override equal to its env default is a no-op worth ignoring; only a
+    contradiction can silently change behaviour the unit file claims to set.
+    """
+    drift: dict[str, dict[str, _Any]] = {}
+    for key, value in RUNTIME_OVERRIDES.items():
+        env_default = ENV_DEFAULTS.get(key)
+        # A default is publishable only when it is KNOWN and finite. It is None
+        # when the knob's getter raised, and a bare `float(os.environ...)` knob
+        # (AIMD_BACKOFF_S, AIMD_DECREASE, MAX_HOLD_RETRY_AFTER_S) can hold NaN
+        # or inf. Emitting either would put the tokens `NaN`/`Infinity` into
+        # /__throttle/health, which is not RFC 8259 JSON, and a strict consumer
+        # rejects the WHOLE document — so an observability field would have
+        # broken the endpoint a Dokku healthcheck polls every 5s.
+        known = env_default is not None and not (
+            isinstance(env_default, float) and not math.isfinite(env_default)
+        )
+        if not known:
+            # Unverifiable, NOT proven to contradict. Saying "diverges" here
+            # would assert something the snapshot cannot support.
+            drift[key] = {"override": value, "env": None, "env_known": False}
+        elif env_default != value:
+            drift[key] = {"override": value, "env": env_default, "env_known": True}
+    return drift
 
 
 def save_overrides() -> None:
