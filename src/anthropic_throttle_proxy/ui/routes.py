@@ -33,6 +33,7 @@ from .. import accounts as _accounts
 from .. import config as _config
 from .. import copilot as _copilot
 from .. import fleet as _fleet
+from .. import fleet_ui_config as _fleet_ui_config
 from .. import history as _history
 from .. import lanes as _lanes
 from .. import metrics as _metrics
@@ -771,6 +772,14 @@ async def _collect_view() -> dict[str, object]:
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
     subscriptions = _build_subscriptions(accounts_view, lanes_view, now)
+    # Declarative front-end: the fleet-ui YAML decorates and orders the rows
+    # (label/emoji/family/plan per subscription). Unconfigured rows keep their
+    # generic emoji and sort after; a bad edit degrades to the last good
+    # config with a config_error marker, never a blank board.
+    ui_cfg = _fleet_ui_config.load()
+    subscriptions = _fleet_ui_config.decorate(subscriptions, ui_cfg)["rows"]
+    if ui_cfg.get("config_error"):
+        subscriptions = [{**r, "config_error": ui_cfg["config_error"]} for r in subscriptions]
     _attach_binding(status, subscriptions)
     return {
         "signals": _signals.collect(),

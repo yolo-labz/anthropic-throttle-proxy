@@ -2080,6 +2080,9 @@ async def test_ui_renders_subscription_lanes_and_publishes_gauges(
         )
     )
     monkeypatch.setenv("THROTTLE_LANES_FILE", str(report))
+    # The fleet-ui YAML is operator state on this host — tests pin an empty
+    # one so the declarative layer is inert here (rows render generically).
+    monkeypatch.setenv("FLEET_UI_CONFIG", str(tmp_path / "fleet-ui-empty.yaml"))
     lanes_mod._cache = None
 
     html = await (await client.get("/ui")).text()
