@@ -6,6 +6,42 @@ host activation. Latest incident first.
 
 ---
 
+## 12/09/2026 — user's live screenshots still fail acceptance
+
+Pedro supplied both the unchanged six-row dashboard (no Codex C) and the exact
+terminal queue banner again. This is NOT a new diagnosis or a browser cache
+issue. The deployed `i6paq008…` package has no `fleet_ui_config.py`, and the
+running `7spiyjf…` lane probe still produces only `codex:a` and `codex:b`.
+Persisted/effective units agree: there is no hidden newer build to restart into.
+
+Added the READ-ONLY, loopback-only delivery oracle:
+
+```sh
+python3 specs/226-fleet-ui/verify-live.py
+# report_fresh=true; codex_c_measured=false; codex_c_rendered=false;
+# configured_label_rendered=false; configured_icon_rendered=false; exit 1
+```
+
+It passes a measured synthetic report and fails missing/stale reports; ruff
+check/format passed. It stays separate from unit CI: a green PR is not live
+delivery. Custom installations can set `--port`, `--report`, `--label`, `--icon`.
+Screenshots plus sanitized receipt are preserved privately outside disposable
+scratch: `~/.local/state/fleet-coordination/evidence/throttle-2026-09-12/`.
+
+At 20:38 Z.AI admission itself was OPEN (1/1 serving, cap 4, 4 active, 2 queued),
+confirming why queue saturation must not be confused with depleted quota.
+`git log -SrunZaiQueueTimeoutTerminalization` identifies NixOS #2147 as the
+intentional consumer stop. The fix remains UNIMPLEMENTED, with its desired
+native-resume oracle RED in #2190. No extra concurrency change, automatic user
+resubmission, tool replay, or deployment was performed in response to the image.
+
+The blockers are concrete and unchanged, not tests: the current ledger records
+Anthropic subscription access paused for a failed payment, live :8765 admission
+is 0/1 serving, and private NixOS `main` still reports `protected:false`.
+GPT is available again but is the same family as these repairs; it cannot be
+used to mislabel a self-family verdict as independent. Do not keep retrying an
+unchanged refused review lane or tell Pedro either screenshot is fixed.
+
 ## 12/09/2026 — recovery: UI #226 incomplete; native Z.AI turn termination
 
 The inherited session had pushed #226 (`9c066c3`) but had NOT merged or
