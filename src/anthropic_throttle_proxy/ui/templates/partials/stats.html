@@ -137,6 +137,12 @@
 </div>
 {% endif %}
 
+{% if fleet_ui_config_error %}
+<div class="status crit" role="alert">
+  <span class="verdict">⚠️ Fleet UI configuration error</span>
+  <span class="detail">{{ fleet_ui_config_error }} — using the last valid configuration, if available.</span>
+</div>
+{% endif %}
 {% if subscriptions %}
 <h2>Subscriptions · <span class="count">{{ subscriptions | length }}</span>
   {% if lanes and lanes.stale %}<span class="tag-stale" title="The lane probe timer has not written in over 2 intervals — non-Anthropic readings below predate it">report stale</span>{% endif %}
@@ -170,7 +176,8 @@
     <tr{% if s.is_binding %} class="row-binding"{% endif %}>
       <td>
         <span class="provider-icon" aria-hidden="true">{{ s.icon or "🤖" }}</span>
-        <span class="acct">{{ s.identity }}</span>
+        <span class="acct">{{ s.label or s.identity }}</span>
+        {% if s.label and s.label != s.identity %}<span class="src-note">{{ s.identity }}</span>{% endif %}
         {% if s.id != s.identity %}<span class="id-tag" title="Local credential/report label — the visible provider identity is authoritative">({{ s.id }})</span>{% endif %}
         {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
       </td>

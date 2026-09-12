@@ -29,13 +29,13 @@ PATH_ENV = "FLEET_UI_CONFIG"
 
 _DEFAULT_EMOJI = {
     "anthropic": "✳️",
-    "openai": "🅒",
+    "openai": "🧠",
     "chinese-frontier": "⚡",
     "github": "🐙",
 }
 
 _lock = threading.Lock()
-_cache: dict[str, tuple[float, dict[str, Any]]] = {}  # path -> (mtime, parsed)
+_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}  # path -> (stat, result)
 
 
 def config_path() -> Path:
@@ -49,12 +49,27 @@ def _validate(raw: Any) -> dict[str, Any]:
     subs = raw.get("subscriptions")
     if not isinstance(subs, list):
         raise ValueError("fleet-ui config: 'subscriptions' must be a list")
+    defaults = raw.get("defaults", {})
+    if not isinstance(defaults, dict):
+        raise ValueError("defaults must be a mapping")
+    emojis = defaults.get("emoji_by_family", {})
+    if not isinstance(emojis, dict) or any(
+        not isinstance(k, str) or not isinstance(v, str) for k, v in emojis.items()
+    ):
+        raise ValueError("defaults.emoji_by_family must map strings to strings")
+    ids: set[str] = set()
     for i, s in enumerate(subs):
         if not isinstance(s, dict):
             raise ValueError(f"subscriptions[{i}] must be a mapping")
         for key in ("id", "label", "family"):
             if not isinstance(s.get(key), str) or not s[key]:
                 raise ValueError(f"subscriptions[{i}].{key} must be a non-empty string")
+        for key in ("emoji", "plan", "provider", "lane", "bearer", "identity"):
+            if key in s and not isinstance(s[key], str):
+                raise ValueError(f"subscriptions[{i}].{key} must be a string")
+        if s["id"] in ids:
+            raise ValueError(f"subscriptions[{i}].id must be unique")
+        ids.add(s["id"])
     return raw
 
 
@@ -62,24 +77,33 @@ def load(path: Path | None = None) -> dict[str, Any]:
     """Load the YAML config (mtime-cached). Returns
     {"subscriptions": [...], "defaults": {...}, "config_error": str | None,
      "config_path": str}."""
-    global _cache
+    explicit = path is not None or bool(os.environ.get(PATH_ENV))
     path = path or config_path()
     key = str(path)
     with _lock:
         cached = _cache.get(key)
         try:
-            mtime = path.stat().st_mtime
+            stat = path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_ctime_ns)
         except OSError:
             parsed = cached[1] if cached else {"subscriptions": [], "defaults": {}}
             return {
                 **parsed,
                 "config_path": key,
-                "config_error": None if cached else f"config missing at {path}",
+                "config_error": f"config missing or unreadable at {path}"
+                if cached or explicit
+                else None,
             }
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and cached[0] == stamp:
             return {**cached[1], "config_path": key}
         try:
-            raw = _validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+            # ponytail: a small operator file, not a corpus; bound parsing work
+            # on the UI event loop. Larger inventories need off-thread loading.
+            with path.open(encoding="utf-8") as source:
+                text = source.read(32_769)
+            if len(text) > 32_768:
+                raise ValueError("fleet-ui config exceeds 32768 characters")
+            raw = _validate(yaml.safe_load(text))
             parsed = {
                 "subscriptions": raw.get("subscriptions") or [],
                 "defaults": {
@@ -90,11 +114,15 @@ def load(path: Path | None = None) -> dict[str, Any]:
                 },
             }
             error = None
-        except Exception as e:  # noqa: BLE001 — a bad edit must degrade, not blank
+        except (OSError, ValueError, yaml.YAMLError, RecursionError) as e:
             parsed = cached[1] if cached else {"subscriptions": [], "defaults": {}}
-            error = f"{type(e).__name__}: {e}"[:200]
-        _cache[key] = (mtime, parsed)
-        return {**parsed, "config_path": key, "config_error": error}
+            # YAML parser errors can echo the operator's file contents.
+            error = (
+                str(e)[:200] if type(e) is ValueError else f"{type(e).__name__}: cannot load config"
+            )
+        result = {**parsed, "config_path": key, "config_error": error}
+        _cache[key] = (stamp, result)
+        return result
 
 
 def reset_cache() -> None:
@@ -118,6 +146,7 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
     for r in rows:
         rid = str(r.get("id") or "")
         by_key[rid] = r
+        by_key.setdefault(f"lane:{rid}", r)
         lane_id = str(r.get("lane_id") or "")
         if lane_id:
             by_key.setdefault(f"lane:{lane_id}", r)
@@ -142,6 +171,7 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
             decorated.append(
                 {
                     "id": entry["id"],
+                    "label": entry["label"],
                     "identity": entry.get("identity") or entry["id"],
                     "provider": entry.get("provider") or entry["id"],
                     "icon": entry.get("emoji")
@@ -156,26 +186,24 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
                     "pace_warn": False,
                     "eta": "",
                     "status": "unknown",
-                    "status_icon": "🤖",
+                    "status_icon": "❔",
                     "detail": "configured; no live reading",
                     "billing": None,
                     "configured": True,
                 }
             )
             continue
+        if id(match) in consumed:
+            continue
         consumed.add(id(match))
-        # The live id (lane id / bearer id) is identity used by the router and
-        # the tests — the config decorates presentation only and must never
-        # rewrite it. The config's own id is just the lookup key.
-        match["label"] = entry.get("label") or match.get("label") or entry["id"]
+        match = dict(match)
+        match["label"] = entry["label"]
         if entry.get("emoji"):
             match["icon"] = entry["emoji"]
         if entry.get("family"):
             match["family"] = entry["family"]
         if entry.get("plan"):
             match["plan"] = entry["plan"]
-        if entry.get("identity"):
-            match["identity"] = entry["identity"]
         match["configured"] = True
         decorated.append(match)
 
@@ -184,6 +212,7 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
     # lane report's — must not be overwritten by the YAML defaults).
     for r in rows:
         if id(r) not in consumed:
+            r = dict(r)
             if not r.get("icon"):
                 r["icon"] = emoji_by_family.get(r.get("family") or "", "🤖")
             decorated.append(r)

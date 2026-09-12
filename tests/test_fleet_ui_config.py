@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from anthropic_throttle_proxy import fleet_ui_config as fuc
@@ -84,6 +86,7 @@ def test_bad_edit_degrades_to_last_good(tmp_path):
     assert cfg["config_error"] and "must be a list" in cfg["config_error"]
     # last good config survived
     assert [s["id"] for s in cfg["subscriptions"]] == ["codex-c", "anthropic-c"]
+    assert fuc.load(p)["config_error"] == cfg["config_error"]  # every poll reports it
 
 
 def test_decorate_merges_config_onto_live_rows(tmp_path):
@@ -120,3 +123,80 @@ def test_validate_rejects_bad_shapes(tmp_path):
         _validate([])
     with pytest.raises(ValueError):
         _validate({"subscriptions": [{"id": "x"}]})  # missing label/family
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "defaults: []\n",
+        "defaults: {emoji_by_family: []}\n",
+        "defaults: {emoji_by_family: {openai: [bad]}}\n",
+        "subscriptions: [{id: x, label: X, family: openai, lane: [codex:c]}]\n",
+        "subscriptions: [{id: x, label: X, family: openai, emoji: 2}]\n",
+        "subscriptions: [{id: x, label: X, family: openai}, {id: x, label: Y, family: openai}]\n",
+    ],
+)
+def test_invalid_optional_fields_keep_last_good(tmp_path, bad):
+    p = _write(tmp_path)
+    good = fuc.load(p)
+    prefix = "subscriptions: []\n" if bad.startswith("defaults:") else ""
+    p.write_text(prefix + bad, encoding="utf-8")
+    invalid = fuc.load(p)
+    assert invalid["config_error"]
+    assert invalid["subscriptions"] == good["subscriptions"]
+    assert fuc.load(p)["config_error"] == invalid["config_error"]
+    assert fuc.decorate([], invalid)["rows"]
+
+
+def test_deleted_config_reports_stale_configuration(tmp_path):
+    p = _write(tmp_path)
+    good = fuc.load(p)
+    p.unlink()
+    stale = fuc.load(p)
+    assert stale["subscriptions"] == good["subscriptions"]
+    assert stale["config_error"]
+
+
+def test_source_aliases_do_not_duplicate_or_mutate_live_rows(tmp_path):
+    rows = _live_rows()
+    before = copy.deepcopy(rows)
+    text = CFG.replace("lane: codex:c", "lane: lane:codex:c")
+    cfg = fuc.load(_write(tmp_path, text))
+    cfg["subscriptions"].append(
+        {"id": "alias", "label": "Duplicate alias", "family": "openai", "lane": "codex:c"}
+    )
+    out = fuc.decorate(rows, cfg)["rows"]
+    assert rows == before
+    assert len(out) == len(rows)
+    assert out[0]["id"] == "codex:c"
+    assert out[0]["label"] == "Codex C"  # first declaration owns presentation
+
+
+def test_label_does_not_replace_live_identity(tmp_path):
+    rows = _live_rows()
+    rows[2]["identity"] = "verified@example.test"
+    cfg = fuc.load(_write(tmp_path))
+    cfg["subscriptions"][0]["identity"] = "configured@example.test"
+    out = fuc.decorate(rows, cfg)["rows"]
+    assert out[0]["identity"] == "verified@example.test"
+
+
+def test_missing_live_row_has_label(tmp_path):
+    cfg = fuc.load(_write(tmp_path))
+    row = fuc.decorate([], cfg)["rows"][0]
+    assert row["label"] == "Codex C"
+
+
+def test_optional_missing_default_is_not_an_error(monkeypatch, tmp_path):
+    monkeypatch.delenv("FLEET_UI_CONFIG")
+    monkeypatch.setattr(fuc, "DEFAULT_PATH", tmp_path / "optional.yaml")
+    assert fuc.load()["config_error"] is None
+
+
+def test_oversize_edit_keeps_last_good(tmp_path):
+    p = _write(tmp_path)
+    good = fuc.load(p)
+    p.write_text("#" + "x" * 32_768, encoding="utf-8")
+    cfg = fuc.load(p)
+    assert "exceeds" in cfg["config_error"]
+    assert cfg["subscriptions"] == good["subscriptions"]
