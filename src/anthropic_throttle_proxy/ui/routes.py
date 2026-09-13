@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import ipaddress
 import logging
 import os
 import time
@@ -41,6 +42,7 @@ from .. import metrics as _metrics
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
 from . import signals as _signals
+from .presentation import accounts_hidden, apply_display
 
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
@@ -158,15 +160,85 @@ def _fmt_since(seconds: float) -> str:
     return f"{minutes // 60}h {minutes % 60:02d}m"
 
 
-def _compute_status(
-    bearers: list[dict], queue_mode: str, now: float | None = None
-) -> dict[str, object]:
-    """Derive one fleet-wide verdict from the live snapshot (drives the status strip).
+def _credential_refusal(cred: object) -> str | None:
+    """Refusal reason when a credential verdict PROVES refusal, else ``None``.
 
-    Worst-wins across bearers: ``throttled`` > ``pacing`` > ``healthy``. The
-    ``binding`` line names the most-constrained bearer so the operator sees the
-    single thing holding the fleet back without scanning the table. ``now`` (unix
-    seconds) gates stale-window dropping; defaults to the current time.
+    Credential shape (as collected per bearer): ``{"ok": false, "status": 403,
+    "reason": "refused", "detail": "..."}``. Only an explicit ``ok is False``
+    counts; a missing or unknown credential proves nothing and must never be
+    upgraded into a refusal — or into a cancellation/disabled claim.
+    """
+    if not isinstance(cred, dict) or cred.get("ok") is not False:
+        return None
+    return str(cred.get("reason") or cred.get("detail") or "refused")
+
+
+def _capability_splits(
+    bearers: list[dict],
+    credential_verdicts: dict[str, dict] | None,
+    admission: dict[str, object] | None,
+) -> tuple[list[str], list[str]]:
+    """Split bearers into ``(refused, unevidenced)`` capability buckets.
+
+    ``refused``: explicit refusal evidence — a collected credential verdict
+    with ``ok: false`` (from the caller-supplied ``credential_verdicts`` map,
+    or ``b["credential"]`` on the bearer itself) or a supplied authoritative
+    ``admission`` of ``False``. ``unevidenced``: no POSITIVE evidence — a
+    credential that is missing, empty (``{}``), ``ok: None``, non-boolean or
+    otherwise malformed proves nothing, and neither does a missing/unknown
+    admission; capacity for those lanes stays unknown, never HEALTHY.
+    ``admission`` is trusted only when the caller already holds it; nothing
+    here fetches, fabricates or infers policy outcomes.
+    """
+    refused: list[str] = []
+    unevidenced: list[str] = []
+    for b in bearers:
+        bid = str(b.get("bearer_id") or "?")
+        cred = None
+        if credential_verdicts is not None and bid in credential_verdicts:
+            cred = credential_verdicts[bid]
+        else:
+            cred = b.get("credential")
+        admitted = admission.get(bid) if admission is not None else None
+        # An explicit False refusal keeps priority over every other reading.
+        if _credential_refusal(cred) is not None or admitted is False:
+            refused.append(bid)
+        # Only an EXPLICIT True is capacity evidence. An empty dict, an
+        # ok:None verdict, a truthy non-boolean, or a missing admission all
+        # leave the lane unevidenced — manufacturing HEALTHY out of those was
+        # exactly the failure mode under correction.
+        elif (isinstance(cred, dict) and cred.get("ok") is True) or admitted is True:
+            continue
+        else:
+            unevidenced.append(bid)
+    return refused, unevidenced
+
+
+def _compute_status(
+    bearers: list[dict],
+    queue_mode: str,
+    now: float | None = None,
+    *,
+    credential_verdicts: dict[str, dict] | None = None,
+    admission: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Derive one LOCAL verdict from the live snapshot (drives the status strip).
+
+    Worst-wins across bearers: ``crit`` (refused/disabled) > ``throttled`` >
+    ``pacing`` > ``healthy`` / ``idle`` (unknown). The ``binding`` line names
+    the most-constrained bearer so the operator sees the single thing holding
+    the fleet back without scanning the table. ``now`` (unix seconds) gates
+    stale-window dropping; defaults to the current time.
+
+    Additive keyword-only evidence (existing callers unchanged):
+    ``credential_verdicts`` maps bearer id → collected credential state
+    (``{"ok": false, ...}``); ``admission`` maps bearer id → an authoritative
+    local admission verdict, trusted only when the caller already holds it.
+    A refusal or a supplied ``False`` admission can no longer render HEALTHY
+    (finding 1); with neither credential nor admission evidence the strip
+    reports unknown (``idle``) instead of a cleared claim (finding 11). The
+    headline is scoped to this proxy — it is not a fleet-wide or
+    native-subscription statement.
     """
     if now is None:
         now = time.time()
@@ -193,7 +265,33 @@ def _compute_status(
         if util is not None and label is not None and (binding is None or util > binding[0]):
             binding = (util, label, b["bearer_id"], retry_after)
 
+    refused, unevidenced = _capability_splits(bearers, credential_verdicts, admission)
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
+    if refused:
+        # Finding 1: a refusal (or a supplied disabled admission) is a
+        # capability failure, not a pacing state — it must never degrade into
+        # HEALTHY. Worst-wins: crit > throttled > pacing, with the remaining
+        # limit signals still named so the headline does not hide them.
+        plural = "s" if len(bearers) != 1 else ""
+        level, verdict = "crit", "CRIT"
+        detail = (
+            f"{len(refused)} of {len(bearers)} bearer{plural} refused/disabled"
+            " — inference unavailable on those lanes"
+        )
+        if throttled:
+            detail += f"; {len(throttled)} throttled"
+        if pacing:
+            detail += f"; {len(pacing)} pacing"
+    elif level == "healthy" and unevidenced:
+        # Finding 11: missing credential/admission evidence is not health.
+        # The proxy cannot verify capacity it never saw — report unknown
+        # (idle), never "clear", and never invent a cancellation either.
+        plural = "s" if len(unevidenced) != 1 else ""
+        level, verdict = "idle", "UNKNOWN"
+        detail = (
+            "capacity unknown — no auth/permission evidence for "
+            f"{len(unevidenced)} of {len(bearers)} bearer{plural}"
+        )
     bound: dict[str, object] | None = None
     if binding is not None:
         # The binding block below the strip renders the same fact with a name,
@@ -211,6 +309,10 @@ def _compute_status(
         }
     if queue_mode == "off":
         detail += " · queue off (passthrough)"
+    # Findings 7/8 (status half): this verdict is a LOCAL proxy observation
+    # over local request counters — it says nothing about other machines or
+    # native subscription usage.
+    detail += " · local proxy view"
     # A verdict with no duration cannot separate a transient from an outage
     # (`docs/DASHBOARD-DESIGN.md` S4.4). The ring knows when the level last
     # changed; asking it once per render is idempotent for an unchanged level.
@@ -219,6 +321,9 @@ def _compute_status(
         "verdict": verdict,
         "detail": detail,
         "binding": bound,
+        "scope": "local",
+        "refused": refused,
+        "unevidenced": unevidenced,
         "since": _fmt_since(_history.level_since(level, now)),
     }
 
@@ -326,17 +431,43 @@ def _provider_icon(name: str) -> str:
     return _PROVIDER_ICONS.get(name.lower(), "🤖")
 
 
-def _provider_label(upstream: str) -> str:
-    """Friendly provider name from an upstream URL — the host's root label.
+# Documented provider endpoints whose host collapses to a friendly root label.
+# ONLY these collapse. Anything else — a custom hostname, an internal name, a
+# bare IP — keeps its FULL identity: truncating ``sibling-lab.internal`` to
+# ``sibling`` or ``192.168.7.20`` to ``192`` made distinct lanes render the
+# same label and hid which lane was which (finding 3).
+_PROVIDER_HOST_LABELS = {
+    "api.anthropic.com": "anthropic",
+    "api.openai.com": "openai",
+    "api.moonshot.ai": "moonshot",
+    "api.z.ai": "z.ai",
+}
 
-    ``https://api.anthropic.com`` → ``anthropic``; ``https://api.moonshot.ai`` →
-    ``moonshot``. Defensive: an unparseable / hostless URL falls back to the
-    raw string so the row still renders (never raises into the render path).
+
+def _provider_label(upstream: str) -> str:
+    """Friendly provider name from an upstream URL.
+
+    Only the documented provider hosts above collapse (``api.anthropic.com``
+    → ``anthropic``); a custom host or IP endpoint — IPv4 or bracketed IPv6 —
+    keeps its FULL address/name, never a truncated fragment. Defensive: a
+    malformed URL (an unclosed or non-IPv6 bracket raises ValueError out of
+    urlparse; a hostless or empty string) falls back to the raw string so the
+    row still renders — never raises into the render path.
     """
-    host = urlparse(upstream).hostname or upstream.strip()
-    host = host.removeprefix("www.").removeprefix("api.")
-    root = host.split(".", 1)[0] if host else ""
-    return root or "upstream"
+    try:
+        host = urlparse(upstream).hostname
+    except ValueError:  # e.g. "http://[::1" — invalid bracketed host
+        host = None
+    if not host:
+        host = upstream.strip()
+    if not host:
+        return "upstream"
+    known = _PROVIDER_HOST_LABELS.get(host.lower())
+    if known is not None:
+        return known
+    with contextlib.suppress(ValueError):
+        return str(ipaddress.ip_address(host))
+    return host
 
 
 def _build_providers(
@@ -350,6 +481,7 @@ def _build_providers(
     served: int,
     max_concurrent: int,
     fleet: list[dict],
+    upstream_dns_ok: bool | None = None,
 ) -> list[dict]:
     """Unified provider rows: the primary upstream (always) + fleet siblings.
 
@@ -358,19 +490,41 @@ def _build_providers(
     routing destination with no env gate. Each configured sibling proxy
     (``THROTTLE_FLEET_HEALTH``) appends as another row, so every provider the
     proxy can reach lives in ONE table instead of a separate optional card strip.
+
+    ``upstream_dns_ok`` is the ONLY admitted DNS source for the primary row: an
+    explicitly supplied boolean from an actual observation. A central HTTP
+    status is tier availability, not DNS evidence, and this UI process runs no
+    resolver — so without the explicit boolean the primary's DNS verdict is
+    None (unknown), in central AND direct mode.
     """
     is_central = central_url != "(direct)"
     primary_name = "central" if is_central else _provider_label(upstream)
+    # Finding 2 (corrected): central_status answers "is the central tier's HTTP
+    # endpoint up" — that is availability, NOT DNS resolution, NOT TCP
+    # reachability of the upstream, NOT auth/inference. Only an explicitly
+    # supplied real boolean counts as DNS evidence; truthy strings and other
+    # non-bools stay None, never coerced into a claim.
+    primary_dns: bool | None = upstream_dns_ok if isinstance(upstream_dns_ok, bool) else None
+    dns_note = (
+        "central tier HTTP status is availability, not DNS — DNS unverified"
+        if is_central
+        else "no probe in direct mode — DNS/auth/inference unverified"
+    )
     providers: list[dict] = [
         {
             "name": primary_name,
             "icon": _provider_icon(primary_name),
             "kind": "primary",
             "upstream": central_url if is_central else upstream,
-            # The proxy itself is up (it is rendering this page); egress is only
-            # impaired when a configured central tier is reporting down.
+            # The proxy itself is up (it is rendering this page) — that is
+            # availability, NOT DNS/egress evidence. Transport availability
+            # stays distinct from DNS: dns/egress carry the explicit value or
+            # None (unknown), never a hardcoded True and never a reading
+            # synthesized from a status string or a sibling health endpoint.
             "ok": True,
-            "egress_ok": not (is_central and central_status == "down"),
+            "dns_ok": primary_dns,
+            "dns_note": dns_note,
+            "egress_ok": primary_dns,  # compat alias for the template; same DNS signal
             "inflight": inflight,
             "queued": queued,
             "served": served,
@@ -386,6 +540,12 @@ def _build_providers(
         # "HEALTHY egress ok" for weeks that way (04/08/2026). Auth is the
         # verdict that decides whether traffic can land, so it wins.
         auth_dead = f.get("upstream_auth_ok") is False
+        # Finding 2: keep the probe in DNS/reachability terms. Only an actual
+        # bool is preserved; a truthy STRING ("up", "1", "yes") is not a probe
+        # result and must stay unknown (None) — bool("up") manufactured a True
+        # claim out of an unverifiable value.
+        sibling_dns = f.get("upstream_egress_ok")
+        sibling_dns = sibling_dns if isinstance(sibling_dns, bool) else None
         sibling_name = str(f.get("name") or "?")
         providers.append(
             {
@@ -394,7 +554,9 @@ def _build_providers(
                 "kind": "sibling",
                 "upstream": str(f.get("upstream") or ""),
                 "ok": ok,
-                "egress_ok": bool(f.get("upstream_egress_ok")),
+                "dns_ok": sibling_dns,
+                "dns_note": "sibling probe — reachability, not auth/inference",
+                "egress_ok": sibling_dns,  # compat alias; DNS/reachability semantics
                 "inflight": int(f.get("inflight") or 0),
                 "queued": int(f.get("queued") or 0),
                 "served": int(f.get("served") or 0),
@@ -568,6 +730,9 @@ def _build_subscriptions(
                 # balance); `unlimited` is just the oldest one.
                 "note": m.get("note") or ("unlimited" if m.get("unlimited") else ""),
                 "exhausted_ok": bool(m.get("exhausted_ok")),
+                "window_mins": m.get("window_mins"),
+                "resets_at": m.get("resets_at"),
+                "unlimited": bool(m.get("unlimited")),
             }
             for m in lane.get("meters") or []
         ]
@@ -693,7 +858,9 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
 async def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
-    labels = _accounts.bearer_labels()
+    ui_cfg = _fleet_ui_config.load()
+    hide_accounts = accounts_hidden(ui_cfg)
+    labels = {} if hide_accounts else _accounts.bearer_labels()
     now = time.time()
     bearers = []
     # _anon is the unauthenticated bypass slot (health checks, /metrics). It
@@ -736,8 +903,9 @@ async def _collect_view() -> dict[str, object]:
                 "limiter": lim.snapshot() if lim is not None else None,
             }
         )
-    endpoint = await _accounts.refresh_endpoint(now)
-    accounts_view = _accounts.account_view(bearers, now, endpoint)
+    # Hidden account telemetry is not needed for rendering. This is not a vendor kill switch.
+    endpoint = {} if hide_accounts else await _accounts.refresh_endpoint(now)
+    accounts_view = [] if hide_accounts else _accounts.account_view(bearers, now, endpoint)
     # Same identity scheme as the subscriptions table: email first.
     email_by_bid = {
         a["bearer_id"]: a["email"] for a in accounts_view if a.get("bearer_id") and a.get("email")
@@ -745,7 +913,8 @@ async def _collect_view() -> dict[str, object]:
     for b in bearers:
         b["identity"] = email_by_bid.get(b["bearer_id"]) or b.get("account")
     identity = _accounts.identity_state(accounts_view)
-    _publish_account_gauges(endpoint, identity)
+    if not hide_accounts:
+        _publish_account_gauges(endpoint, identity)
     # Fleet + Copilot are concurrent with the account refresh — both are
     # failure-tolerant (a down sibling / 403 org renders as such, never raises).
     # return_exceptions: a future regression in one panel must never blank the
@@ -756,7 +925,12 @@ async def _collect_view() -> dict[str, object]:
     )
     fleet_view = fleet_raw if isinstance(fleet_raw, list) else []
     copilot_view = copilot_raw if isinstance(copilot_raw, list) else []
-    status = _compute_status(bearers, _proxy.QUEUE_MODE, now)
+    status = _compute_status(
+        bearers,
+        _proxy.QUEUE_MODE,
+        now,
+        credential_verdicts={b["bearer_id"]: b.get("credential") for b in bearers},
+    )
     central_url = _proxy.CENTRAL_URL or "(direct)"
     providers = _build_providers(
         upstream=_proxy.UPSTREAM,
@@ -772,38 +946,43 @@ async def _collect_view() -> dict[str, object]:
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
     subscriptions = _build_subscriptions(accounts_view, lanes_view, now)
-    ui_cfg = _fleet_ui_config.load()
     subscriptions = _fleet_ui_config.decorate(subscriptions, ui_cfg)["rows"]
     _attach_binding(status, subscriptions)
-    return {
-        "signals": _signals.collect(),
-        "subscriptions": subscriptions,
-        "fleet_ui_config_error": ui_cfg.get("config_error"),
-        "identity": identity,
-        "providers": providers,
-        "lanes": lanes_view,
-        "copilot": copilot_view,
-        "status": status,
-        "inflight": _proxy.state["inflight"],
-        "queued": _proxy.state["queued"],
-        # Streams parked in an SSE keepalive-hold. Peer of inflight/queued, not
-        # a total: a held request is already answered 200 and is counted by
-        # neither, so without this row the operator's screen shows an idle proxy
-        # while it is holding streams open (spec 092 T003).
-        "holds": _proxy.state["keepalive_holds_active"],
-        "served": _proxy.state["served"],
-        "disconnects": _proxy.state["client_disconnects"],
-        "retries": _proxy.state["upstream_retries"],
-        "max_concurrent": _proxy.MAX_CONCURRENT,
-        "queue_mode": _proxy.QUEUE_MODE,
-        "min_dispatch_gap_ms": int(_proxy.MIN_DISPATCH_GAP_S * 1000),
-        "upstream": _proxy.UPSTREAM,
-        "central_url": central_url,
-        "central_status": cs,
-        "bearers": bearers,
-        "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
-        "last_advisor": _proxy.state.get("last_advisor"),
-    }
+    knobs = _config.knob_snapshot()
+    return apply_display(
+        {
+            "config_count": len(knobs),
+            "override_count": sum(k.get("override") is True for k in knobs),
+            "signals": _signals.collect(),
+            "subscriptions": subscriptions,
+            "fleet_ui_config_error": ui_cfg.get("config_error"),
+            "identity": identity,
+            "providers": providers,
+            "lanes": lanes_view,
+            "copilot": copilot_view,
+            "status": status,
+            "inflight": _proxy.state["inflight"],
+            "queued": _proxy.state["queued"],
+            # Streams parked in an SSE keepalive-hold. Peer of inflight/queued, not
+            # a total: a held request is already answered 200 and is counted by
+            # neither, so without this row the operator's screen shows an idle proxy
+            # while it is holding streams open (spec 092 T003).
+            "holds": _proxy.state["keepalive_holds_active"],
+            "served": _proxy.state["served"],
+            "disconnects": _proxy.state["client_disconnects"],
+            "retries": _proxy.state["upstream_retries"],
+            "max_concurrent": _proxy.MAX_CONCURRENT,
+            "queue_mode": _proxy.QUEUE_MODE,
+            "min_dispatch_gap_ms": int(_proxy.MIN_DISPATCH_GAP_S * 1000),
+            "upstream": _proxy.UPSTREAM,
+            "central_url": central_url,
+            "central_status": cs,
+            "bearers": bearers,
+            "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
+            "last_advisor": _proxy.state.get("last_advisor"),
+        },
+        ui_cfg,
+    )
 
 
 async def index(
@@ -819,7 +998,11 @@ async def stats_partial(
     request: web.Request,
 ) -> web.Response:
     """GET /ui/stats — render the live stats ``<table>`` partial (hx-polled)."""
-    return aiohttp_jinja2.render_template("partials/stats.html", request, await _collect_view())
+    return aiohttp_jinja2.render_template(
+        "partials/stats.html",
+        request,
+        {**await _collect_view(), "partial_response": True, "asset_v": _ASSET_V},
+    )
 
 
 async def advisor(request: web.Request) -> web.Response:
@@ -942,10 +1125,11 @@ async def _account_refresh_loop() -> None:
     log = logging.getLogger("throttle.ui.accounts")
     while True:
         try:
-            now = time.time()
-            endpoint = await _accounts.refresh_endpoint(now)
-            view = _accounts.account_view([], now, endpoint)
-            _publish_account_gauges(endpoint, _accounts.identity_state(view))
+            if not accounts_hidden(_fleet_ui_config.load()):
+                now = time.time()
+                endpoint = await _accounts.refresh_endpoint(now)
+                view = _accounts.account_view([], now, endpoint)
+                _publish_account_gauges(endpoint, _accounts.identity_state(view))
         except Exception as exc:  # noqa: BLE001 — a UI nicety must never crash the app
             log.debug("account endpoint refresh failed: %s", exc)
         await asyncio.sleep(_REFRESH_INTERVAL_S)

@@ -57,6 +57,17 @@ def _validate(raw: Any) -> dict[str, Any]:
         not isinstance(k, str) or not isinstance(v, str) for k, v in emojis.items()
     ):
         raise ValueError("defaults.emoji_by_family must map strings to strings")
+    # OPTIONAL presentation knobs (consumed by the dashboard's display layer:
+    # families hidden from the active board, whether the primary row shows).
+    # Validated only when present: a config written before these keys existed
+    # must keep loading unchanged (backwards compatible). No default hide —
+    # absent keys hide nothing.
+    if "hidden_families" in defaults:
+        hidden = defaults["hidden_families"]
+        if not isinstance(hidden, list) or any(not isinstance(f, str) for f in hidden):
+            raise ValueError("defaults.hidden_families must be a list of strings")
+    if "show_primary" in defaults and not isinstance(defaults["show_primary"], bool):
+        raise ValueError("defaults.show_primary must be a boolean")
     ids: set[str] = set()
     for i, s in enumerate(subs):
         if not isinstance(s, dict):
@@ -134,11 +145,16 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
     """Merge the declarative config onto the live rows.
 
     A configured subscription finds its live row (by id, or lane id) and
-    receives the config's label/emoji/family/plan — live data (meters, status,
-    pace) still feeds the row. Configured rows with no live match append with
-    an honest "no reading" state; live rows absent from the config keep their
-    default emoji and sort after the configured ones. Config order is render
-    order.
+    receives the config's label/emoji/family — live data (meters, status,
+    pace) still feeds the row. The config's plan NEVER overwrites an observed
+    one: the meter reading is the measurement, the YAML is at best an
+    annotation, so the configured plan lands in ``plan_caption`` and
+    ``plan_conflict`` flags a configured plan that disagrees with the
+    observed one. Configured rows with no live match append with an honest
+    "no reading" state and an EMPTY ``plan`` (nothing was observed — the
+    YAML string is the caption, not a reading); live rows absent from the
+    config keep their default emoji and sort after the configured ones.
+    Config order is render order. Source rows are copied, never mutated.
     """
     subs = config.get("subscriptions") or []
     emoji_by_family = (config.get("defaults") or {}).get("emoji_by_family", {})
@@ -178,7 +194,12 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
                     or emoji_by_family.get(entry.get("family") or "", "🤖"),
                     "sub": entry.get("identity") or "",
                     "family": entry.get("family") or "",
-                    "plan": entry.get("plan") or "",
+                    # Nothing observed: no plan, the configured string is only
+                    # a caption. plan_conflict stays False — there is no
+                    # observed plan to disagree with.
+                    "plan": "",
+                    "plan_caption": entry.get("plan") or "",
+                    "plan_conflict": False,
                     "meters": [
                         {"label": "status", "pct": None, "reset_in": "", "note": "no reading"}
                     ],
@@ -202,8 +223,16 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
             match["icon"] = entry["emoji"]
         if entry.get("family"):
             match["family"] = entry["family"]
-        if entry.get("plan"):
-            match["plan"] = entry["plan"]
+        # The observed plan is the measurement and stays in ``plan``; the
+        # configured plan is an annotation beside it. Overwriting the reading
+        # with the YAML once rendered a probe-reported plan the row never
+        # actually had — the one thing a dashboard must not do.
+        configured_plan = entry.get("plan") or ""
+        observed_plan = str(match.get("plan") or "")
+        match["plan_caption"] = configured_plan
+        match["plan_conflict"] = bool(
+            configured_plan and observed_plan and configured_plan != observed_plan
+        )
         match["configured"] = True
         decorated.append(match)
 

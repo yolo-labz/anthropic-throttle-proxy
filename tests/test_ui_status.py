@@ -104,8 +104,9 @@ def test_provider_label_derives_host_root():
     assert routes._provider_label("https://api.anthropic.com") == "anthropic"
     assert routes._provider_label("https://api.moonshot.ai/anthropic") == "moonshot"
     assert (
-        routes._provider_label("http://127.0.0.1:8766") == "127"
-    )  # ip → first octet, still renders
+        routes._provider_label("http://127.0.0.1:8766") == "127.0.0.1"
+    )  # full IPv4 — finding 3: a truncated "127" hid which loopback lane
+    assert routes._provider_label("http://[::1]:8766") == "::1"  # bracketed IPv6, full
     assert routes._provider_label("") == "upstream"  # defensive: never raises / empty
 
 
@@ -133,17 +134,25 @@ def test_build_providers_always_has_primary_by_default():
     p = rows[0]
     assert p["kind"] == "primary"
     assert p["name"] == "anthropic"
-    assert p["ok"] is True and p["egress_ok"] is True  # direct upstream → egress ok
+    assert (
+        p["ok"] is True and p["egress_ok"] is None
+    )  # direct mode: no DNS probe — unknown, never a hardcoded ok
     assert p["served"] == 23550 and p["max_concurrent"] == 5
     assert p["level"] == "throttled"
 
 
-def test_build_providers_central_mode_reflects_central_health():
+def test_build_providers_central_http_status_is_not_dns():
     up = _providers(central_url="http://central:9000", central_status="up")[0]
     assert up["name"] == "central" and up["upstream"] == "http://central:9000"
-    assert up["egress_ok"] is True
+    # Corrected finding 2: a central HTTP status is tier availability, never
+    # DNS evidence — DNS stays unknown whether the tier is up or down.
+    assert up["dns_ok"] is None and up["egress_ok"] is None
     down = _providers(central_url="http://central:9000", central_status="down")[0]
-    assert down["egress_ok"] is False  # central down → primary egress impaired
+    assert down["dns_ok"] is None and down["egress_ok"] is None
+    supplied = _providers(
+        central_url="http://central:9000", central_status="up", upstream_dns_ok=True
+    )[0]
+    assert supplied["dns_ok"] is True  # only an explicit boolean may claim DNS
 
 
 def test_build_providers_appends_fleet_siblings():
@@ -380,10 +389,11 @@ def test_pi_registry_strip_names_every_configured_provider_with_icons():
             ]
         }
     )
-    assert "Pi routes" in html
+    assert "Registered providers" in html
+    assert "catalog membership, not current eligibility" in html
     for text in ("✳️", "Claude", "🌀", "Codex", "✨", "Z.AI", "🚀", "Groq", "🌙", "DeepInfra"):
         assert text in html
-    assert "same registry drives routing + meters" in html
+    assert "same registry drives routing + meters" not in html
 
 
 def test_zai_row_renders_accessible_identity_billing_and_hard_resets():

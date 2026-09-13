@@ -6,6 +6,33 @@ host activation. Latest incident first.
 
 ---
 
+## 13/09/2026 — dashboard candidate integrated; delivery/review still gated
+
+The audit candidate now contains real production-source changes: honest
+credential/DNS status, complete endpoint identities, observed-plan provenance,
+validated telemetry timestamps/cadence, per-row duration icons, neutral Codex
+badges, optional hidden families and a subscription-only display. Source tests
+are not proof of delivery or browser rendering. See the audit's trace table.
+
+Latest worker state supersedes the historical launch description below: all
+workers are terminal, and the completion watcher is stopped. Several additional
+narrow native-edit attempts were made after the initial output-length failures;
+the original promised one-repair ceiling was not maintained. No further retries
+are authorized by this handoff. Actual streams and every attempt remain durable.
+GLM yielded truth and plan-caption code; later attempts produced no additional
+patches and one proxy journal entry confirms an upstream socket-read timeout.
+OpenAI completed the remaining source integration. Provenance is mixed: an
+OpenAI reviewer would independently gate GLM's code only, not the entire diff.
+Anthropic remains canceled and must not be called to work around this gate.
+
+Optional YAML `defaults.hidden_families: [anthropic]` and `show_primary: false`
+remove the canceled connection from the active presentation. These settings
+have NOT been activated. They are not a replacement for network/credential
+containment. No new pin, service restart, production deployment or merge has
+been performed for the candidate. The 17-point live oracle remains red.
+
+Durable private evidence and attempt records: `~/.local/state/fleet-coordination/swarms/throttle-dashboard-2026-09-13/`. No runtime records or screenshots are included in this change.
+
 ## 12/09/2026 — user's live screenshots still fail acceptance
 
 Pedro supplied both the unchanged six-row dashboard (no Codex C) and the exact

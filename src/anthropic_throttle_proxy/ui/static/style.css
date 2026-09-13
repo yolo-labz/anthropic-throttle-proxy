@@ -428,8 +428,8 @@ table.bearers td.col-num { text-align: right; }
 table.bearers th.th-center,
 table.bearers td.td-center { text-align: center; }
 table.bearers thead th {
-  color: var(--muted);
-  font-size: 0.62rem;
+  color: var(--ctp-subtext0);
+  font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 500;
@@ -494,7 +494,7 @@ table.bearers code { font-family: var(--mono); color: var(--ctp-peach); backgrou
 .tok-fresh    { color: var(--ctp-subtext0); }
 .tok-expiring { color: var(--warn); }
 .tok-expired  { color: var(--crit); font-weight: 600; }
-.reset-in { display: block; font-size: 0.68rem; margin-top: 0.12rem; }
+.reset-in { display: block; font-size: 0.8rem; margin-top: 0.12rem; }
 .accounts .email { font-size: 0.66rem; margin-top: 0.12rem; color: var(--muted); }
 /* Same shrink-to-fit as the lanes table: fixed columns + width:100% spreads
    the surplus BETWEEN columns, which is the gap Pedro read as broken. */
@@ -543,8 +543,8 @@ col.c-pace        { width: 6rem; }
 col.c-eta         { width: 8rem; }
 col.c-sub-status  { width: 9rem; }
 .subs .src-note {
-  font-family: var(--mono);
-  font-size: 0.62rem;
+  font-family: var(--sans);
+  font-size: 0.8rem;
   color: var(--muted);
   margin-top: 0.1rem;
 }
@@ -553,7 +553,12 @@ col.c-sub-status  { width: 9rem; }
 .billing-ok { color: var(--ok); }
 .billing-warn { color: var(--crit); font-weight: 600; }
 .billing-stale { color: var(--warn); }
-.billing-meta { font-family: var(--mono); font-size: 0.62rem; color: var(--ctp-subtext0); margin-top: 0.08rem; }
+.billing-meta { font-family: var(--sans); font-size: 0.8rem; color: var(--ctp-subtext0); margin-top: 0.08rem; }
+.account-badge { display: inline-block; padding: 0.05rem 0.3rem; margin-right: 0.3rem; border: var(--hairline); border-radius: var(--radius-sm); color: var(--ctp-text); font-family: var(--mono); }
+.status-reason { white-space: normal; max-width: 26rem; font-size: 0.8rem; color: var(--ctp-subtext0); margin-top: 0.25rem; }
+.meter-freshness, .refresh-state { font-size: 0.85rem; color: var(--ctp-subtext0); }
+.refresh-lost { color: var(--warn); font-weight: 600; }
+button:disabled { cursor: not-allowed; opacity: 0.6; }
 /* Status vocabulary shared with the lane rows; the account-only verdicts are
    new (a rejected window, a usage lock, a dead token, a never-seen bearer). */
 .lane-rejected      { color: var(--crit); }
@@ -594,7 +599,7 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
 .lane-meter + .lane-meter { margin-top: 0.22rem; }
 .lane-meter .meter-label {
   font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   color: var(--ctp-subtext0);
   overflow-wrap: anywhere;
 }
@@ -614,7 +619,7 @@ table.bearers.subs td:nth-child(4) { white-space: normal; }
    that collides across families and never appears alone. */
 .id-tag {
   font-family: var(--mono);
-  font-size: 0.6rem;
+  font-size: 0.78rem;
   color: var(--ctp-subtext0);
   margin-left: 0.25rem;
 }
