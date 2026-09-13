@@ -7,6 +7,8 @@ Requires viewport/zoom/scroll/refresh/focus/disconnect checks in BOTH renderers.
 import hashlib
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -67,7 +69,34 @@ def get(path):
 def main():
     health = json.loads(get("__throttle/health"))
     build = Path(health["build"])
-    assert str(build).startswith("/nix/store/"), "runtime is not a persisted Nix package"
+    assert str(build).startswith("/nix/store/"), "runtime is not a Nix package"
+    unit = subprocess.check_output(
+        [
+            "/run/current-system/sw/bin/systemctl",
+            "--user",
+            "cat",
+            "anthropic-throttle-proxy.service",
+        ],
+        text=True,
+        timeout=8,
+    )
+    starts = "\n".join(line for line in unit.splitlines() if line.startswith("ExecStart="))
+    packages = set(re.findall(r"/nix/store/[^/\s]+-anthropic-throttle-proxy-[0-9.]+", starts))
+    package = str(Path(*build.parts[:4]))
+    assert packages == {package}, "persistent start chain does not match running source"
+    effective = subprocess.check_output(
+        [
+            "/run/current-system/sw/bin/systemctl",
+            "--user",
+            "show",
+            "anthropic-throttle-proxy.service",
+            "-p",
+            "ExecStart",
+        ],
+        text=True,
+        timeout=8,
+    )
+    assert package in effective, "effective start differs from the running package"
     expected = source_hash(SOURCE)
     assert source_hash(build) == expected, "running source does not match candidate"
     report_path = Path(

@@ -31,6 +31,14 @@ have NOT been activated. They are not a replacement for network/credential
 containment. No new pin, service restart, production deployment or merge has
 been performed for the candidate. The 17-point live oracle remains red.
 
+Follow-up: eight synthetic Chromium width/CSS-zoom cases exercised headings,
+HTMX focus retention, refresh failure/recovery and page overflow. The narrowest
+zoomed case exposed a non-wrapping status strip; wrapping fixes that measured
+overflow. Reset timestamps now occupy their own line and pool-scope explanations
+have a wider column. The Node refresh contract also passes. Synthetic fixtures
+and CSS zoom are NOT Firefox, native browser zoom or live-delivery acceptance.
+The live oracle additionally checks effective/persisted systemd package identity.
+
 Durable private evidence and attempt records: `~/.local/state/fleet-coordination/swarms/throttle-dashboard-2026-09-13/`. No runtime records or screenshots are included in this change.
 
 ## 12/09/2026 — user's live screenshots still fail acceptance
