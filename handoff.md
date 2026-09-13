@@ -6,6 +6,94 @@ host activation. Latest incident first.
 
 ---
 
+## 12/09/2026 — user's live screenshots still fail acceptance
+
+Pedro supplied both the unchanged six-row dashboard (no Codex C) and the exact
+terminal queue banner again. This is NOT a new diagnosis or a browser cache
+issue. The deployed `i6paq008…` package has no `fleet_ui_config.py`, and the
+running `7spiyjf…` lane probe still produces only `codex:a` and `codex:b`.
+Persisted/effective units agree: there is no hidden newer build to restart into.
+
+Added the READ-ONLY, loopback-only delivery oracle:
+
+```sh
+python3 specs/226-fleet-ui/verify-live.py
+# report_fresh=true; codex_c_measured=false; codex_c_rendered=false;
+# configured_label_rendered=false; configured_icon_rendered=false; exit 1
+```
+
+It passes a measured synthetic report and fails missing/stale reports; ruff
+check/format passed. It stays separate from unit CI: a green PR is not live
+delivery. Custom installations can set `--port`, `--report`, `--label`, `--icon`.
+Screenshots plus sanitized receipt are preserved privately outside disposable
+scratch: `~/.local/state/fleet-coordination/evidence/throttle-2026-09-12/`.
+
+At 20:38 Z.AI admission itself was OPEN (1/1 serving, cap 4, 4 active, 2 queued),
+confirming why queue saturation must not be confused with depleted quota.
+`git log -SrunZaiQueueTimeoutTerminalization` identifies NixOS #2147 as the
+intentional consumer stop. The fix remains UNIMPLEMENTED, with its desired
+native-resume oracle RED in #2190. No extra concurrency change, automatic user
+resubmission, tool replay, or deployment was performed in response to the image.
+
+The blockers are concrete and unchanged, not tests: the current ledger records
+Anthropic subscription access paused for a failed payment, live :8765 admission
+is 0/1 serving, and private NixOS `main` still reports `protected:false`.
+GPT is available again but is the same family as these repairs; it cannot be
+used to mislabel a self-family verdict as independent. Do not keep retrying an
+unchanged refused review lane or tell Pedro either screenshot is fixed.
+
+## 12/09/2026 — recovery: UI #226 incomplete; native Z.AI turn termination
+
+The inherited session had pushed #226 (`9c066c3`) but had NOT merged or
+activated it. Its alignment check failed on an added `noqa: BLE001`;
+Copilot's only review says its quota is exhausted, not that the diff passed.
+The primary checkout was already on `feat/fleet-ui-yaml`. It was left alone;
+repairs live in sibling `anthropic-throttle-proxy-226-fleet-ui-yaml` and advance
+the SAME remote PR, not a duplicate.
+
+Hypothesis: the new YAML layer did not fulfill its presentation contract
+because labels/errors were never consumed by the template, errors disappeared
+on cache hits, and malformed optional fields escaped validation. Thirteen
+focused failures reproduced these defects before the repair. The repair:
+
+- Renders escaped labels while retaining live account identity; includes an
+  always-visible configuration alert, including when no subscriptions exist.
+- Keeps parse/validation/read errors across polls and retains last-good rows;
+  validates optional strings/defaults/duplicate ids and bounds input size.
+- Preserves live input rows; recognizes lane aliases without duplicating a row.
+- Adds a shipped example `docs/fleet-ui.example.yaml` and README instructions.
+  The inherited starter existed only in operator state and was not a deliverable.
+- Removes the broad suppressed exception instead of weakening the lint gate;
+  tests isolate all operator YAML state centrally.
+
+Executed on this worktree: `uv run pytest -q --tb=short --disable-warnings`
+→ **1045 passed, 120 warnings, 71.89 s**; `uv run ruff check src tests`
+→ **All checks passed**; `uv run ruff format --check src tests`
+→ **61 files already formatted**. Includes actual HTTP dashboard tests for
+Codex C with a real-shaped report and without telemetry. YAML alone does NOT
+add an account to election/probing; NixOS #2183 remains OPEN.
+
+**Not deployed, not review-clean.** Generator provenance: original GLM /
+Chinese-frontier; recovery repairs OpenAI. Claude Opus independent gate refused
+before spawn (live admission 0/1 serving, no privacy-safe different-family
+fallback). A later Nix pin must also add `python3Packages.pyyaml`; the current
+Nix package dependencies do not include the new runtime dependency. NixOS main
+currently reports `protected:false`, another genuine merge/activation gate.
+Reversal before merge: revert this repair commit on the feature branch; after
+landing, use a normal revert PR. No service restart or model/pane dispatch ran.
+
+The latest queue ask is a separate consumer defect, not an unactivated cap
+increase: NixOS #2187 is MERGED and :8766 is already cap 4, wait 180 s, fair.
+At 19:53–19:54 it issued nine measured pre-queue refusals with Retry-After
+186–268 s. Pi's #2147 handler deliberately terminalizes those empty errors.
+A native Pi 0.84.4 adapter against a fake loopback proxy reproduces the exact
+banner with **one request, zero tokens**; the desired-resume assertion is RED.
+Spec/plan/replay/evidence are in `~/NixOS-2188-zai-queue-wait/specs/2188-zai-queue-wait/`.
+Implementation is held at the failed independent plan gate, not replaced by
+an unbounded retry loop or a blind concurrency increase. Restoring quota/auth
+or other paid accounts is not part of this recovery. Finite plan quota remains
+finite even after correct admission waiting.
+
 ## 07/09/2026 — #221/#222/#223/#224 were merged and inert: the pin, and the activation
 
 Four PRs landed upstream between 31/08 and 07/09, two of them incident fixes,

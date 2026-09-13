@@ -2051,6 +2051,62 @@ async def test_ui_dashboard_renders(client: TestClient) -> None:
     assert (await client.get(f"/ui/static/style.css?v={ui_routes._ASSET_V}")).status == 200
 
 
+@pytest.mark.parametrize("with_live", [False, True])
+async def test_ui_renders_configured_labels_and_persistent_errors(
+    client: TestClient, monkeypatch, tmp_path, with_live
+) -> None:
+    if with_live:
+        report = tmp_path / "lanes.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "intervalSeconds": 900,
+                    "lanes": [
+                        {
+                            "id": "codex:c",
+                            "kind": "codex",
+                            "status": "ok",
+                            "meters": [{"limitId": "codex", "usedPercent": 41, "planType": "pro"}],
+                        }
+                    ],
+                }
+            )
+        )
+        monkeypatch.setenv("THROTTLE_LANES_FILE", str(report))
+    cfg = tmp_path / "fleet-ui.yaml"
+    monkeypatch.setenv("FLEET_UI_CONFIG", str(cfg))
+    cfg.write_text(
+        "subscriptions:\n"
+        "  - {id: codex-c, label: 'GPT Pro <C>', family: openai, emoji: '🧠', lane: 'codex:c'}\n"
+    )
+    html = await (await client.get("/ui")).text()
+    assert html.count("GPT Pro &lt;C&gt;") == 1
+    assert "GPT Pro <C>" not in html
+    assert "🧠" in html
+    assert ("41%" if with_live else "no reading") in html
+
+    cfg.write_text("subscriptions: 42")
+    for _ in range(2):
+        response = await client.get("/ui")
+        html = await response.text()
+        assert response.status == 200
+        assert "Fleet UI configuration error" in html
+        assert "GPT Pro &lt;C&gt;" in html
+
+
+async def test_ui_renders_config_error_without_any_subscriptions(
+    client: TestClient, monkeypatch, tmp_path
+) -> None:
+    cfg = tmp_path / "fleet-ui.yaml"
+    cfg.write_text("subscriptions: 42")
+    monkeypatch.setenv("FLEET_UI_CONFIG", str(cfg))
+    response = await client.get("/ui")
+    assert response.status == 200
+    assert "Fleet UI configuration error" in await response.text()
+
+
 async def test_ui_renders_subscription_lanes_and_publishes_gauges(
     client: TestClient, monkeypatch, tmp_path
 ) -> None:
@@ -2080,6 +2136,9 @@ async def test_ui_renders_subscription_lanes_and_publishes_gauges(
         )
     )
     monkeypatch.setenv("THROTTLE_LANES_FILE", str(report))
+    # The fleet-ui YAML is operator state on this host — tests pin an empty
+    # one so the declarative layer is inert here (rows render generically).
+    monkeypatch.setenv("FLEET_UI_CONFIG", str(tmp_path / "fleet-ui-empty.yaml"))
     lanes_mod._cache = None
 
     html = await (await client.get("/ui")).text()

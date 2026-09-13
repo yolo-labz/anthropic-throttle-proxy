@@ -1,0 +1,35 @@
+# Presentation only: this file neither enables providers nor invents meters.
+# Order here is display order; unconfigured live rows follow unchanged.
+subscriptions:
+  - id: gpt-c
+    label: GPT C · Pro
+    emoji: 🧠
+    family: openai
+    plan: pro
+    lane: codex:c
+  - id: gpt-a
+    label: GPT A
+    emoji: 🧠
+    family: openai
+    lane: codex:a
+  - id: gpt-b
+    label: GPT B
+    emoji: 🧠
+    family: openai
+    lane: codex:b
+  - id: zai
+    label: Z.AI · GLM
+    emoji: ⚡
+    family: chinese-frontier
+    lane: zai:plan
+  - id: C # replace with the Anthropic credential label on your host
+    label: Claude C
+    emoji: ✳️
+    family: anthropic
+
+defaults:
+  emoji_by_family:
+    anthropic: ✳️
+    openai: 🧠
+    chinese-frontier: ⚡
+    github: 🐙

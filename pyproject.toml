@@ -11,6 +11,7 @@ dependencies = [
     "aiohttp-jinja2>=1.6",
     "jinja2>=3.1",
     "prometheus-client>=0.21",
+    "pyyaml>=6.0",
 ]
 
 # Console entry point so `anthropic-throttle-proxy` resolves to a real bin

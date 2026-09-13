@@ -42,6 +42,29 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
 claude       # or opencode / codex / any SDK
 ```
 
+## Dashboard presentation (YAML)
+
+Copy [`docs/fleet-ui.example.yaml`](docs/fleet-ui.example.yaml) to
+`~/.local/state/anthropic-throttle-proxy/fleet-ui.yaml`, or set
+`FLEET_UI_CONFIG=/path/to/fleet-ui.yaml`. No file is required by default.
+
+The `subscriptions` list controls labels, emoji, plan text and display order.
+Each entry requires unique `id`, `label`, and `family` strings. Match a live
+source with `lane: codex:c` (also accepts `lane:codex:c`), `bearer: "hash"`,
+`identity: account@example.test`, or the live row's `id`. All optional fields
+are strings; `defaults.emoji_by_family` is a string-to-string mapping.
+The first declaration matching a live row wins; unconfigured live rows remain.
+Labels do not replace observed account identities or meter readings.
+
+Edits reload automatically. Invalid/unreadable files retain the last valid
+configuration and display an alert on every refresh, even with no rows.
+Replace with `subscriptions: []` to clear customization. The file is limited
+to 32,768 characters. A missing source displays **no reading**, not 0% usage.
+
+**This config does not add accounts to credential election, enable providers,
+or generate telemetry.** A `codex:c` row needs a lane probe that actually
+measures that account; YAML alone cannot complete that integration.
+
 ## Deploy to Dokku
 
 See [`docs/DEPLOY-DOKKU.md`](docs/DEPLOY-DOKKU.md). One-time:

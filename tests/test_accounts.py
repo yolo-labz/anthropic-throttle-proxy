@@ -401,6 +401,9 @@ async def test_ui_stats_renders_accounts_panel(tmp_path, monkeypatch):
 
 async def test_ui_stats_hides_panel_when_unconfigured(monkeypatch):
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
+    # The declarative fleet-ui layer is pinned inert: with nothing configured
+    # anywhere (no bearers, no lanes, no YAML rows) the panel hides.
+    monkeypatch.setenv("FLEET_UI_CONFIG", "/nonexistent/fleet-ui.yaml")
     html = await _render_stats()
     assert "Subscriptions ·" not in html
 
