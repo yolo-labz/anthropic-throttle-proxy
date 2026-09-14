@@ -22,7 +22,7 @@ The frozen acceptance suite initially failed eight of nine checks.
 | 6 | Distinct pools were conflated with account-wide exhaustion | Mixed Codex pools are `pool limited`, with model applicability explicitly unknown. Same-pool 5h/7d constraints remain binding. |
 | 7 | Local request counters appeared fleet-wide | Label process-local scope; hide this section in subscription-only mode. |
 | 8 | Capacity required joining diagnostic tables | Subscriptions precede provider diagnostics. Eligibility remains unknown without an authoritative source; no routing recommendation is manufactured. Further actionable-capacity work is pending that source. |
-| 9 | HTML polling hid telemetry cadence/failure | Show observation time, age, interval and expected next sample. Invalid/future timestamps cannot certify freshness. HTMX failure/watchdog marks last-known data; changed build/display mode requests reload without forcing focus loss. |
+| 9 | HTML polling hid telemetry cadence/failure | Show observation time, age, interval and expected next sample. Invalid/future timestamps cannot certify freshness. A server-rendered `as of` timestamp stops advancing when HTMX refresh fails; there is no client-side watchdog. Changed build/display mode requests reload; disconnect visibility and focus behavior remain browser gates. |
 | 10 | Raw pool scope/reset/pace lacked context | Preserve scope and duration, show absolute UTC reset time, label pace as projection. Undocumented model mappings remain unresolved. |
 | 11 | Missing/refused/unconfigured readings conflated | Preserve refusals; mark untrusted readings unknown and show source/error text. Do not infer funding or enable providers. |
 | 12 | Hardcoded settings/override count | Derive both from `knob_snapshot`; refresh count without replacing focused settings controls. Advisor disabled honestly. |
@@ -42,8 +42,8 @@ defaults:
   show_primary: false
 ```
 
-These are **display controls, not security or admission controls**. Hidden
-Anthropic account telemetry is not polled by the UI collectors; separate
+These are **display controls, not security or admission controls**. Hiding a
+family does not stop UI telemetry collection or gauge publication; separate
 credential automation, inference routes, other processes and network containment
 must still be configured independently. Do not use visibility as a kill switch.
 

@@ -6,6 +6,30 @@ host activation. Latest incident first.
 
 ---
 
+## 14/09/2026 — recovery reconciled; whole-diff review remains blocked
+
+Remote REST readback at 18:24 BRT: PR #227 is OPEN and draft, head
+`83d8b544b1b998e75591288969683d7b8aaba23a`, with all nine reported check runs
+successful. No merge or candidate activation occurred. The running :8765
+package remains `7n97nkkgiz93l0yxyhm0jbz6hgykshbz`, not a newly activated
+candidate. The existing queue repair worker was still running; it was not
+relaunched. The fairness seat delivered its 17-finding checklist, now retained
+in `specs/227-dashboard-audit/fairness-acceptance.md` (not a browser receipt).
+
+The prior Codex review at `4eb8c28` found four blockers and three majors; GLM
+pushed repairs in `83d8b54`. That is NOT independent approval of the whole
+candidate: the original integration contains OpenAI-authored code. A bounded
+Opus review request was refused before spawn, with no eligible different-family
+fallback. The older handoff's canceled-Anthropic constraint also remains in
+force; do not retry that lane or substitute another OpenAI review as approval.
+The refreshed doc descriptions now agree with the code: hiding does not stop
+collection, and refresh failure freezes an `as of` stamp, not a JS watchdog.
+
+Unmet gates: permitted independent review of the mixed-family whole diff,
+exact-source Firefox AND Chromium acceptance, and guarded activation. Green
+source CI and the historical scorecard satisfy none of those delivery gates.
+Private recovery evidence stays under the existing fleet-coordination root.
+
 ## 13/09/2026 — dashboard candidate integrated; delivery/review still gated
 
 The audit candidate now contains real production-source changes: honest
