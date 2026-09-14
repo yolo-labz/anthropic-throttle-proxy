@@ -33,6 +33,35 @@ def test_invalid_cadence_cannot_certify_current_capacity(tmp_path, monkeypatch, 
     assert "interval invalid" in view["error"]
 
 
+def test_missing_cadence_is_missing_not_a_guessed_default(tmp_path, monkeypatch):
+    """Review B4: an ABSENT intervalSeconds is not a 900-second cadence.
+
+    The old ``raw.get("intervalSeconds", 900)`` fabricated a cadence and then
+    certified staleness and projected a next-sample time from the guess.
+    Missing stays missing: no interval, no projection, no staleness claim,
+    and an error that says "missing" — not "invalid".
+    """
+    path = tmp_path / "report.json"
+    path.write_text(
+        json.dumps(
+            {
+                "generatedAt": "2026-01-01T00:00:00Z",
+                "lanes": [
+                    {"id": "codex:a", "kind": "codex", "status": "ok"},
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("THROTTLE_LANES_FILE", str(path))
+    lanes._cache = None
+    view = lanes.view(1767225630)
+    assert view["interval_s"] is None
+    assert view["next_sample_in_s"] is None
+    assert view["stale"] is False  # never certified from a guessed cadence
+    assert "interval missing" in view["error"]
+    assert "interval invalid" not in view["error"]
+
+
 def test_cadence_and_source_time_are_independent_of_html_polling(tmp_path, monkeypatch):
     path = tmp_path / "report.json"
     path.write_text(
@@ -105,13 +134,29 @@ def test_default_visibility_preserves_primary_and_unknown_meter():
     assert view == before
 
 
-async def test_hidden_anthropic_does_not_poll_account_endpoint(monkeypatch):
+async def test_hidden_anthropic_still_collects_but_displays_nothing(monkeypatch):
+    """Review major, round 1: hiding a family is a DISPLAY choice.
+
+    The old contract skipped endpoint refresh + gauge publication while the
+    family was hidden — a presentation toggle froze Prometheus series and
+    the email cache with stale values published indefinitely. Collection
+    continues now; only apply_display filters the render.
+    """
     from anthropic_throttle_proxy import fleet_ui_config
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("hidden accounts must not be polled for display")
+    async def fake_refresh(now):
+        return {"ok": True}
 
-    monkeypatch.setattr(routes._accounts, "refresh_endpoint", forbidden)
+    published: list = []
+    monkeypatch.setattr(routes._accounts, "refresh_endpoint", fake_refresh)
+    monkeypatch.setattr(
+        routes._accounts,
+        "account_view",
+        lambda bearers, now, endpoint: [{"bearer_id": "x", "email": "a@b.c"}],
+    )
+    monkeypatch.setattr(
+        routes, "_publish_account_gauges", lambda endpoint, identity: published.append(endpoint)
+    )
     monkeypatch.setattr(
         fleet_ui_config,
         "load",
@@ -120,6 +165,7 @@ async def test_hidden_anthropic_does_not_poll_account_endpoint(monkeypatch):
         },
     )
     result = await routes._collect_view()
+    assert published, "display hiding must not stop gauge publication"
     assert result["show_local"] is False and result["bearers"] == []
     assert result["status"]["verdict"] == "SUBSCRIPTIONS"
     knobs = routes._config.knob_snapshot()

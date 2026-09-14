@@ -11,12 +11,15 @@ contract only:
 * keys ABSENT from a config change nothing — configs written before the keys
   existed keep loading (backwards compatible);
 * no hiding behavior and no global default hide live here — ``decorate`` and
-  ``apply_display`` own rendering.
+  ``apply_display`` own rendering (one end-to-end regression pins that a
+  LOADED config actually drives the projection — review B1 found load()
+  dropping the keys between the two layers);
 """
 
 import pytest
 
 from anthropic_throttle_proxy import fleet_ui_config
+from anthropic_throttle_proxy.ui.presentation import apply_display
 
 
 def _raw(**defaults):
@@ -96,6 +99,41 @@ def test_load_accepts_synthetic_config_with_presentation_keys(tmp_path):
     assert cfg["config_error"] is None
     assert [s["id"] for s in cfg["subscriptions"]] == ["codex:a"]
     assert cfg["defaults"]["emoji_by_family"]["openai"] == "🧠"
+    # Review B1: load() must PRESERVE the presentation keys it validates —
+    # dropping them here silently disabled hiding and show_primary for every
+    # loaded config while the old test only looked at subscriptions+emoji.
+    assert cfg["defaults"]["hidden_families"] == ["github"]
+    assert cfg["defaults"]["show_primary"] is False
+
+
+def test_loaded_display_config_actually_drives_the_display_projection(tmp_path):
+    """Review B1 end-to-end: load → projection, not load → dropped keys."""
+    path = _write_config(
+        tmp_path,
+        "hiding.yaml",
+        "subscriptions: []\n"
+        "defaults:\n"
+        "  hidden_families:\n"
+        "    - anthropic\n"
+        "  show_primary: false\n",
+    )
+    cfg = fleet_ui_config.load(path)
+    assert cfg["config_error"] is None
+    view = {
+        "subscriptions": [
+            {"id": "claude-a", "family": "anthropic"},
+            {"id": "codex-a", "family": "openai"},
+        ],
+        "providers": [{"kind": "local"}, {"kind": "sibling"}],
+        "bearers": [{"bearer_id": "x"}],
+        "signals": {"k": "v"},
+        "identity": {"a": "b"},
+        "status": {"level": "healthy", "verdict": "HEALTHY"},
+    }
+    out = apply_display(view, cfg)
+    assert [row["id"] for row in out["subscriptions"]] == ["codex-a"]
+    assert out["show_local"] is False
+    assert out["providers"] == [{"kind": "sibling"}]
 
 
 def test_load_rejects_wrong_hidden_families_type_with_config_error(tmp_path):

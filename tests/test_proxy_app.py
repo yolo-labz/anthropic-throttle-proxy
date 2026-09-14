@@ -2254,10 +2254,11 @@ def test_compute_status_healthy_clear() -> None:
     out = _compute_status([_bearer("aa", util=0.30)], "fair")
     assert out["level"] == "healthy"
     assert out["verdict"] == "HEALTHY"
-    # The binding is a structured object, not a clause in the detail sentence
-    # (#179 — the strip and the binding block rendered the same fact twice).
-    assert out["binding"]["bearer_id"] == "aa"
-    assert out["binding"]["pct"] == 30
+    # Review B2: a 30% allowed meter with no pushback, rejection or queue
+    # pressure is NOT binding — the old code bound the highest utilization
+    # number and the strip called it "blocked". The binding block stays
+    # reserved for measured conditions (see test_ui_status.py).
+    assert out["binding"] is None
 
 
 def test_compute_status_pacing_on_high_utilization() -> None:

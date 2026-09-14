@@ -383,7 +383,8 @@ def _read(now: float) -> dict[str, Any]:
         return EMPTY
     if not isinstance(raw, dict) or not isinstance(raw.get("lanes"), list):
         return EMPTY
-    interval = _pct(raw.get("intervalSeconds", 900))
+    raw_interval = raw.get("intervalSeconds")
+    interval = _pct(raw_interval)
     if interval is not None and interval <= 0:
         interval = None
     age = _age_s(raw.get("generatedAt"), now)
@@ -392,7 +393,13 @@ def _read(now: float) -> dict[str, Any]:
         age = None
         error = "observation timestamp missing, invalid or in the future"
     if interval is None:
-        error = " · ".join(filter(None, [error, "sampling interval invalid"]))
+        # Review B4: a MISSING cadence is not a 900-second cadence. Guessing
+        # one let the page certify staleness and project a next-sample time
+        # from an invented number; both stay uncertified until the report
+        # declares its own interval.
+        missing = raw_interval is None
+        detail = "sampling interval missing" if missing else "sampling interval invalid"
+        error = " · ".join(filter(None, [error, detail]))
     stale = age is not None and interval is not None and age > interval * _STALE_INTERVALS
     lanes = []
     for source in raw["lanes"]:

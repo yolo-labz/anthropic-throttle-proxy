@@ -89,7 +89,10 @@ def _parse_health(body: Any) -> dict[str, Any]:
         "max_concurrent": _safe_int(body.get("max_concurrent")),
         "queue_mode": str(body.get("queue_mode") or ""),
         "upstream": str(body.get("upstream") or ""),
-        "upstream_egress_ok": bool(body.get("upstream_egress_ok", False)),
+        # Review B3: tri-state, like upstream_auth_ok below. A MISSING key is
+        # "unmeasured" — coercing it to False turned no-evidence into a
+        # measured DNS failure on every sibling that simply omits the field.
+        "upstream_egress_ok": body.get("upstream_egress_ok"),
         # Tri-state on purpose: True/False only on a proxy-owns-key sibling,
         # None where the client supplies the token (nothing lane-wide to judge).
         "upstream_auth_ok": body.get("upstream_auth_ok"),

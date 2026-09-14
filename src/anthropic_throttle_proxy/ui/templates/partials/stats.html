@@ -6,8 +6,9 @@
 <div class="status {{ status.level }}">
   <span class="dot"></span>
   <span class="verdict">{{ status.verdict }}</span>
-  {% if status.since %}<span class="since" title="How long the fleet has held this verdict">for {{ status.since }}</span>{% endif %}
+  {% if status.since %}<span class="since" title="How long this proxy has held this verdict">for {{ status.since }}</span>{% endif %}
   <span class="detail">{{ status.detail }}</span>
+  <span class="muted as-of" title="Server render time of this panel. The page re-renders every 2s — a stamp that stops moving means the refresh disconnected and these readings are last known, not live.">as of {{ as_of | default('—') }}</span>
 </div>
 {# The binding constraint is the page's decision object, not a clause inside a
    sentence: which paid subscription is blocked, until when, and what takes the

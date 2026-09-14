@@ -47,7 +47,7 @@
   </header>
 
   <main>
-    <p id="refresh-state" class="refresh-state" role="status" aria-live="polite">Page refresh every 2s; meter sampling is separate.</p>
+    <p id="refresh-state" class="refresh-state" role="status" aria-live="polite">Page refresh every 2s; meter sampling is separate. If the “as of” stamp in the status strip stops moving, the refresh disconnected and readings are last known, not live.</p>
     <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML">
       {% include "partials/stats.html" %}
     </section>
@@ -74,32 +74,10 @@
     <span title="{{ build | default('') }}">UI revision {{ asset_v }}</span> ·
     <a href="https://github.com/yolo-labz/anthropic-throttle-proxy" target="_blank" rel="noopener">github</a>
   </footer>
-  <script>
-    (() => {
-      const state = document.getElementById('refresh-state');
-      let received = Date.now();
-      const revision = {{ asset_v | tojson }};
-      const localView = {{ (show_local | default(true)) | tojson }};
-      const lost = () => {
-        state.textContent = 'Refresh disconnected — displayed readings are last known, not live.';
-        state.classList.add('refresh-lost');
-      };
-      for (const event of ['htmx:responseError', 'htmx:sendError', 'htmx:timeout']) {
-        document.body.addEventListener(event, e => { if (e.detail.elt?.id === 'stats') lost(); });
-      }
-      document.body.addEventListener('htmx:afterSwap', e => {
-        if (e.detail.target?.id !== 'stats') return;
-        received = Date.now();
-        const snapshot = document.getElementById('stats-meta');
-        const changed = snapshot && (snapshot.dataset.revision !== revision ||
-          snapshot.dataset.local !== String(localView));
-        state.textContent = changed
-          ? 'Dashboard settings/build changed — reload to update the header and styles.'
-          : 'Page refresh every 2s; meter sampling is separate.';
-        state.classList.toggle('refresh-lost', Boolean(changed));
-      });
-      setInterval(() => { if (Date.now() - received > 10000) lost(); }, 2000);
-    })();
-  </script>
+  {# Load-bearing invariant (CLAUDE.md): the dashboard renders without
+     JavaScript modules — exactly ONE script tag (the HTMX runtime above).
+     Disconnect/build-change staleness is signalled server-side instead:
+     every swap re-renders the panel's “as of” clock and the asset-versioned
+     URLs give each build its own cache entries (see dashboard-refresh-check). #}
 </body>
 </html>

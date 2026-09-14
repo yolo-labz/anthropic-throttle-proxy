@@ -10,6 +10,7 @@ custom hosts and IPs keep their full identity instead of truncating.
 
 import pytest
 
+from anthropic_throttle_proxy import fleet
 from anthropic_throttle_proxy.ui import routes
 
 NOW = 1000.0
@@ -253,6 +254,33 @@ def test_central_http_status_is_never_dns_evidence():
         assert p["dns_ok"] is None, central_status
         assert p["egress_ok"] is None, central_status
         assert "DNS" in p["dns_note"], central_status
+
+
+def test_sibling_missing_egress_field_is_unmeasured_not_failed():
+    """Review B3 through the REAL integration path.
+
+    The sibling health body is parsed by ``fleet._parse_health`` before it
+    reaches ``_build_providers``. A body that OMITS ``upstream_egress_ok``
+    is unmeasured (None → the template renders "DNS unmeasured") — the old
+    ``bool(body.get(..., False))`` turned absent evidence into a measured
+    "DNS failed" on every sibling that simply doesn't report the field, and
+    the old tests bypassed the parser so the lie stayed invisible.
+    """
+    parsed = fleet._parse_health({"ok": True, "status": 200, "inflight": 0})
+    assert parsed["upstream_egress_ok"] is None
+    parsed["name"] = "sibling-a"
+    rows = _provider_rows(fleet=[parsed], central_url="http://sib:9000", central_status="up")
+    assert _row_named(rows, "sibling-a")["egress_ok"] is None
+
+    # An explicit False is still a measured failure — only ABSENCE is unknown.
+    measured = {
+        **fleet._parse_health(
+            {"ok": True, "status": 200, "inflight": 0, "upstream_egress_ok": False}
+        ),
+        "name": "sibling-b",
+    }
+    rows2 = _provider_rows(fleet=[measured], central_url="http://sib:9000", central_status="up")
+    assert _row_named(rows2, "sibling-b")["egress_ok"] is False
 
 
 def test_explicit_supplied_boolean_is_the_only_primary_dns_source():

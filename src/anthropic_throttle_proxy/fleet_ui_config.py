@@ -115,13 +115,20 @@ def load(path: Path | None = None) -> dict[str, Any]:
             if len(text) > 32_768:
                 raise ValueError("fleet-ui config exceeds 32768 characters")
             raw = _validate(yaml.safe_load(text))
+            raw_defaults = raw.get("defaults", {}) or {}
             parsed = {
                 "subscriptions": raw.get("subscriptions") or [],
                 "defaults": {
                     "emoji_by_family": {
                         **_DEFAULT_EMOJI,
-                        **(raw.get("defaults", {}) or {}).get("emoji_by_family", {}),
-                    }
+                        **(raw_defaults.get("emoji_by_family") or {}),
+                    },
+                    # Review B1: _validate accepts these keys, so load() must
+                    # preserve them. Dropping them here silently disabled
+                    # accounts_hidden()/show_primary for every loaded config
+                    # while the load test only looked at subscriptions+emoji.
+                    "hidden_families": list(raw_defaults.get("hidden_families") or []),
+                    "show_primary": raw_defaults.get("show_primary", True),
                 },
             }
             error = None

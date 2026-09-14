@@ -22,6 +22,7 @@ import ipaddress
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -42,15 +43,17 @@ from .. import metrics as _metrics
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
 from . import signals as _signals
-from .presentation import accounts_hidden, apply_display
+from .presentation import apply_display
 
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
 _STATIC = _HERE / "static"
 
 
-def _asset_version(static: Path = _STATIC) -> str:
-    """Content hash of the static bundle, used as a cache-busting URL suffix.
+def _asset_version(
+    static: Path = _STATIC, templates: Path = _TEMPLATES, view: Path | None = None
+) -> str:
+    """Content hash of the rendered surface, used as a cache-busting URL suffix.
 
     Nix normalises every store file's mtime to epoch 1, so aiohttp serves the
     stylesheet with ``Last-Modified: 1970``. A browser with no explicit
@@ -59,11 +62,20 @@ def _asset_version(static: Path = _STATIC) -> str:
     rendered the NEW markup against the OLD CSS, which reads as a totally
     unstyled dashboard (03/08/2026). Hashing content into the URL gives each
     build its own cache entry.
+
+    Review major: the revision must move when ANY rendering input changes —
+    hashing only ``ui/static/`` missed template and view-code-only changes,
+    so a rebuild could ship new behaviour under the old revision label.
     """
     h = hashlib.sha256()
     with contextlib.suppress(OSError):
         for path in sorted(p for p in static.iterdir() if p.is_file()):
             h.update(path.read_bytes())
+        for path in sorted(p for p in templates.rglob("*") if p.is_file()):
+            h.update(path.read_bytes())
+        # This module's own code re-renders the page without touching either
+        # directory above — include it or the revision can miss the change.
+        h.update((view or Path(__file__)).read_bytes())
     return h.hexdigest()[:12]
 
 
@@ -252,7 +264,8 @@ def _compute_status(
 
     throttled: list[str] = []
     pacing: list[str] = []
-    binding: tuple[float, str, str, object] | None = None  # (util, label, bearer_id, retry_after)
+    # (util, label, bearer_id, retry_after, evidence)
+    binding: tuple[float, str, str, object, str] | None = None
     for b in bearers:
         state, _util_5h, retry_after = _bearer_pacing_state(b)
         if state == "throttled":
@@ -262,8 +275,19 @@ def _compute_status(
         live = _live_unified(b.get("unified"), now)
         util = _proxy._binding_utilization(live)
         label = _proxy._binding_window(live)
-        if util is not None and label is not None and (binding is None or util > binding[0]):
-            binding = (util, label, b["bearer_id"], retry_after)
+        # Review B2: a binding claim is a measured statement — the same
+        # evidence the strip already trusts (throttled/pacing: upstream
+        # rejection, Retry-After, AIMD shrink, warn-line utilization or
+        # queued work). The highest utilization NUMBER alone is none of
+        # those: labelling a 30% allowed_warning meter "blocked" was the
+        # exact lie finding 8 banned.
+        if (
+            state is not None
+            and util is not None
+            and label is not None
+            and (binding is None or util > binding[0])
+        ):
+            binding = (util, label, b["bearer_id"], retry_after, state)
 
     refused, unevidenced = _capability_splits(bearers, credential_verdicts, admission)
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
@@ -306,6 +330,8 @@ def _compute_status(
             "window": binding[1],
             "pct": round(binding[0] * 100),
             "retry_after": binding[3],
+            # Measured reason this is binding — never a bare utilization rank.
+            "evidence": binding[4],
         }
     if queue_mode == "off":
         detail += " · queue off (passthrough)"
@@ -830,37 +856,41 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
                 if meter.get("label") == bound["window"]:
                     bound["resets_in"] = meter.get("reset_in") or ""
             break
-    # Next usable: an Anthropic sibling that is serving, ranked by how much
-    # room it has left. Nothing to suggest is itself the answer — say so rather
-    # than leaving the operator to scan for a row that does not exist.
+    # Next usable: an Anthropic sibling with MEASURED headroom — serving
+    # (status "ok") with at least one real meter reading. Review B2: an
+    # "unseen" account has no evidence of usability, and ranking missing
+    # meters as 0% manufactured a routing recommendation out of no data
+    # (the exact finding-8 lie: "takes traffic next" must be earned).
     candidates = [
         row
         for row in subscriptions
         if row.get("family") == "anthropic"
         and not row.get("is_binding")
-        # "unseen" is fine — no traffic yet is not a fault. "refused" is not:
-        # naming a quarantined credential as what takes traffic next sends the
-        # operator at an account that answers 403 on every request (measured
-        # live 05/08/2026: account A, org-policy refusal, offered as next).
-        and row.get("status") in {"ok", "unseen"}
+        # "refused" names a quarantined credential; "unseen" names no
+        # evidence. Neither may be offered as what takes traffic next.
+        and row.get("status") == "ok"
     ]
 
-    def _fill(row: dict) -> float:
+    def _fill(row: dict) -> float | None:
         readings = [m["pct"] for m in row.get("meters") or [] if m.get("pct") is not None]
-        return max(readings) if readings else 0.0
+        return max(readings) if readings else None
 
-    candidates.sort(key=_fill)
-    if candidates:
-        bound["next_usable"] = candidates[0]["id"]
-        bound["next_usable_pct"] = round(_fill(candidates[0]))
+    measured = [(row, pct) for row in candidates if (pct := _fill(row)) is not None]
+    measured.sort(key=lambda item: item[1])
+    if measured:
+        bound["next_usable"] = measured[0][0]["id"]
+        bound["next_usable_pct"] = round(measured[0][1])
 
 
 async def _collect_view() -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template."""
     cs = _proxy.state["central_status"]
     ui_cfg = _fleet_ui_config.load()
-    hide_accounts = accounts_hidden(ui_cfg)
-    labels = {} if hide_accounts else _accounts.bearer_labels()
+    # Review major: hiding a family is a DISPLAY choice (apply_display below
+    # filters the render). Collection, endpoint refresh and gauge publication
+    # run regardless — a presentation toggle must not freeze Prometheus
+    # series or the email cache while stale values stay published.
+    labels = _accounts.bearer_labels()
     now = time.time()
     bearers = []
     # _anon is the unauthenticated bypass slot (health checks, /metrics). It
@@ -903,9 +933,9 @@ async def _collect_view() -> dict[str, object]:
                 "limiter": lim.snapshot() if lim is not None else None,
             }
         )
-    # Hidden account telemetry is not needed for rendering. This is not a vendor kill switch.
-    endpoint = {} if hide_accounts else await _accounts.refresh_endpoint(now)
-    accounts_view = [] if hide_accounts else _accounts.account_view(bearers, now, endpoint)
+    # Telemetry is collected regardless of display hiding (see above).
+    endpoint = await _accounts.refresh_endpoint(now)
+    accounts_view = _accounts.account_view(bearers, now, endpoint)
     # Same identity scheme as the subscriptions table: email first.
     email_by_bid = {
         a["bearer_id"]: a["email"] for a in accounts_view if a.get("bearer_id") and a.get("email")
@@ -913,8 +943,7 @@ async def _collect_view() -> dict[str, object]:
     for b in bearers:
         b["identity"] = email_by_bid.get(b["bearer_id"]) or b.get("account")
     identity = _accounts.identity_state(accounts_view)
-    if not hide_accounts:
-        _publish_account_gauges(endpoint, identity)
+    _publish_account_gauges(endpoint, identity)
     # Fleet + Copilot are concurrent with the account refresh — both are
     # failure-tolerant (a down sibling / 403 org renders as such, never raises).
     # return_exceptions: a future regression in one panel must never blank the
@@ -951,6 +980,12 @@ async def _collect_view() -> dict[str, object]:
     knobs = _config.knob_snapshot()
     return apply_display(
         {
+            # Frozen-clock freshness: this panel is swapped every 2s, so a
+            # stamp that stops moving IS the disconnect signal — visible
+            # staleness without a single line of custom JavaScript (review
+            # major: the old inline watchdog script broke the HTMX-only
+            # load-bearing invariant).
+            "as_of": datetime.fromtimestamp(now).strftime("%H:%M:%S"),
             "config_count": len(knobs),
             "override_count": sum(k.get("override") is True for k in knobs),
             "signals": _signals.collect(),
@@ -1125,11 +1160,13 @@ async def _account_refresh_loop() -> None:
     log = logging.getLogger("throttle.ui.accounts")
     while True:
         try:
-            if not accounts_hidden(_fleet_ui_config.load()):
-                now = time.time()
-                endpoint = await _accounts.refresh_endpoint(now)
-                view = _accounts.account_view([], now, endpoint)
-                _publish_account_gauges(endpoint, _accounts.identity_state(view))
+            # Display hiding must not stop collection/publication (see
+            # _collect_view): a presentation choice that froze gauges left
+            # stale series published indefinitely.
+            now = time.time()
+            endpoint = await _accounts.refresh_endpoint(now)
+            view = _accounts.account_view([], now, endpoint)
+            _publish_account_gauges(endpoint, _accounts.identity_state(view))
         except Exception as exc:  # noqa: BLE001 — a UI nicety must never crash the app
             log.debug("account endpoint refresh failed: %s", exc)
         await asyncio.sleep(_REFRESH_INTERVAL_S)
