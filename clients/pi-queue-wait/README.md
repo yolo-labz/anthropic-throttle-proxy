@@ -1,7 +1,7 @@
 # pi-queue-wait
 
 A Pi extension that keeps a **stamped queue-timeout rejection** from a local
-[anthropic-throttle-proxy](../../../README.md) z.ai lane pending and retries it
+[anthropic-throttle-proxy](../../README.md) z.ai lane pending and retries it
 after the advised delay, instead of losing the turn to a transient admission
 failure (spec 227).
 
@@ -51,13 +51,21 @@ retry, transparently.
   disabling is removing/reloading this extension only. Unregistering `zai` at
   runtime could erase another extension's merged provider overlay.
 
-## Install
+## Candidate status
+
+**Not approved for installation.** The independent transport review denied this
+candidate despite 76 passing tests: native SDK retries can bypass outer wait
+accounting, and terminal-error eligibility is too permissive. See
+[the review and follow-up gates](../../specs/227-pi-queue-wait/transport-review.md).
+The repaired validator also awaits a permitted different-family review.
+
+## Install (after release gates pass)
 
 Copy this directory into your Pi extensions directory:
 
 ```sh
-mkdir -p ~/.pi/extensions
-cp -r clients/pi-queue-wait ~/.pi/extensions/pi-queue-wait
+mkdir -p ~/.pi/agent/extensions
+cp -r clients/pi-queue-wait ~/.pi/agent/extensions/pi-queue-wait
 ```
 
 No build step, no new runtime dependency: `index.ts` is loaded by Pi's jiti

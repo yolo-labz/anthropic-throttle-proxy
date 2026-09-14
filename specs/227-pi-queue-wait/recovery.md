@@ -34,7 +34,15 @@ The test worktree contains the controller-staged transport snapshot. The final c
 
 ## Remaining gates / debt
 
-- Exact-candidate independent transport review; do not infer ALLOW from the 76 tests.
+- Exact-candidate transport review completed at `d3e056c`: **DENY**, not ALLOW.
+  See `transport-review.md`: native SDK retry accounting and exact terminal
+  semantics are P1 blockers; repeated clock failure and message-only abort
+  classification remain P2 findings. The two-repair cap is exhausted; no further
+  automatic repair was launched. README installation path/link were corrected
+  as documentation only, with an explicit not-approved-for-installation warning.
+- The original fleet ledger's test-only oracle is insufficient for release;
+  the release row additionally requires the draft PR to be merged. A test pass
+  must not be reported as delivery.
 - Independent review of OpenAI-authored validator changes before a mixed-family release.
 - No production/desktop activation without its separate authorized guarded workflow.
 - Hook warnings recorded: native-replay fixture size, nesting, long test-registration function and decorative comments. Hooks passed without bypass; these warnings were not converted into false correctness failures or silenced.
