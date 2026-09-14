@@ -2236,6 +2236,7 @@ def _bearer(bid: str, *, util=None, status="allowed", retry=None, live=8, hard=8
     """Build a minimal bearer view dict shaped like ``_collect_view`` emits."""
     return {
         "bearer_id": bid,
+        "credential": {"ok": True},
         "queued": queued,
         "unified": None if util is None else {"util_5h": util, "status": status},
         "last_ratelimit": None if retry is None else {"retry-after": retry},
@@ -2253,10 +2254,11 @@ def test_compute_status_healthy_clear() -> None:
     out = _compute_status([_bearer("aa", util=0.30)], "fair")
     assert out["level"] == "healthy"
     assert out["verdict"] == "HEALTHY"
-    # The binding is a structured object, not a clause in the detail sentence
-    # (#179 — the strip and the binding block rendered the same fact twice).
-    assert out["binding"]["bearer_id"] == "aa"
-    assert out["binding"]["pct"] == 30
+    # Review B2: a 30% allowed meter with no pushback, rejection or queue
+    # pressure is NOT binding — the old code bound the highest utilization
+    # number and the strip called it "blocked". The binding block stays
+    # reserved for measured conditions (see test_ui_status.py).
+    assert out["binding"] is None
 
 
 def test_compute_status_pacing_on_high_utilization() -> None:
@@ -2292,7 +2294,8 @@ def test_compute_status_retry_after_throttles_and_annotates() -> None:
 
 def test_compute_status_notes_passthrough_when_queue_off() -> None:
     out = _compute_status([_bearer("aa", util=0.20)], "off")
-    assert out["detail"].endswith("queue off (passthrough)")
+    assert "queue off (passthrough)" in out["detail"]
+    assert out["detail"].endswith("local proxy view")
 
 
 # ---------------------------------------------------------------------------

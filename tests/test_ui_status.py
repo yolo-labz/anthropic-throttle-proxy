@@ -60,11 +60,14 @@ def test_binding_line_names_the_representative_window_not_hardcoded_5h():
     status = routes._compute_status(bearers, "fair", NOW)
     # The binding is an OBJECT now, not a clause: the strip and the binding
     # block rendered the same condition twice and could drift apart (#179).
+    # 87% ≥ the 80% warn line is measured pacing evidence (review B2), so
+    # the binding exists and names the LIVE representative window.
     assert status["binding"] == {
         "bearer_id": "b144f62f",
         "window": "7d",
         "pct": 87,
         "retry_after": None,
+        "evidence": "pacing",
     }
     assert "5h" not in str(status["binding"]["window"])  # never the stale label
 
@@ -86,6 +89,102 @@ def test_binding_line_uses_5h_when_it_is_the_live_binding_window():
     assert status["binding"]["window"] == "5h"
     assert status["binding"]["pct"] == 91
     assert status["binding"]["bearer_id"] == "aaaa1111"
+    assert status["binding"]["evidence"] == "pacing"
+
+
+def test_binding_requires_measured_evidence_not_just_a_utilization_number():
+    """Review B2 / finding 8: the highest utilization NUMBER is not "blocked".
+
+    A 30% allowed_warning reading with no pushback, no rejection and no
+    queue pressure is a healthy meter — it must not manufacture a binding
+    claim, let alone a page that says "blocked".
+    """
+    bearers = [
+        _bearer(
+            "cccc3333",
+            {
+                "util_5h": 0.30,
+                "reset_5h": FUTURE,
+                "status": "allowed",
+                "status_5h": "allowed",
+                "representative_claim": "five_hour",
+            },
+        )
+    ]
+    status = routes._compute_status(bearers, "fair", NOW)
+    assert status["binding"] is None
+
+
+def test_binding_names_rejection_even_below_the_warn_line():
+    # A rejected window is upstream's own answer — binding evidence even at
+    # low utilization.
+    bearers = [
+        _bearer(
+            "dddd4444",
+            {
+                "util_5h": 0.12,
+                "reset_5h": FUTURE,
+                "status": "rejected",
+                "status_5h": "rejected",
+                "representative_claim": "five_hour",
+            },
+        )
+    ]
+    status = routes._compute_status(bearers, "fair", NOW)
+    assert status["binding"] is not None
+    assert status["binding"]["evidence"] == "throttled"
+
+
+def test_attach_binding_never_offers_unmeasured_accounts_as_next_usable():
+    """Review B2: "takes traffic next" must be earned with measurements.
+
+    An "unseen" account has no evidence of usability, and ranking missing
+    meters as 0% made the page recommend exactly the account it knew
+    nothing about.
+    """
+    status = {
+        "binding": {
+            "bearer_id": "bind0001",
+            "window": "7d",
+            "pct": 100,
+            "retry_after": None,
+            "evidence": "pacing",
+        }
+    }
+    rows = [
+        {
+            "id": "measured-ok",
+            "family": "anthropic",
+            "status": "ok",
+            "bearer_id": "aaaa1111",
+            "meters": [{"label": "7d", "pct": 85}],
+        },
+        {
+            "id": "unseen-no-evidence",
+            "family": "anthropic",
+            "status": "unseen",
+            "meters": [],
+        },
+        {
+            "id": "ok-but-unmeasured",
+            "family": "anthropic",
+            "status": "ok",
+            "meters": [{"label": "7d"}],  # meter present, pct missing
+        },
+        {
+            "id": "refused",
+            "family": "anthropic",
+            "status": "refused",
+            "meters": [{"label": "7d", "pct": 0}],
+        },
+    ]
+    routes._attach_binding(status, rows)
+    bound = status["binding"]
+    assert bound["next_usable"] == "measured-ok"
+    assert bound["next_usable_pct"] == 85
+    # No row matched the binding bearer here, so none is flagged — and none
+    # of the unmeasured rows may silently become the suggestion either.
+    assert all("is_binding" not in row or row["is_binding"] is not True for row in rows)
 
 
 def test_no_binding_line_when_all_windows_stale():
@@ -104,8 +203,9 @@ def test_provider_label_derives_host_root():
     assert routes._provider_label("https://api.anthropic.com") == "anthropic"
     assert routes._provider_label("https://api.moonshot.ai/anthropic") == "moonshot"
     assert (
-        routes._provider_label("http://127.0.0.1:8766") == "127"
-    )  # ip → first octet, still renders
+        routes._provider_label("http://127.0.0.1:8766") == "127.0.0.1"
+    )  # full IPv4 — finding 3: a truncated "127" hid which loopback lane
+    assert routes._provider_label("http://[::1]:8766") == "::1"  # bracketed IPv6, full
     assert routes._provider_label("") == "upstream"  # defensive: never raises / empty
 
 
@@ -133,17 +233,25 @@ def test_build_providers_always_has_primary_by_default():
     p = rows[0]
     assert p["kind"] == "primary"
     assert p["name"] == "anthropic"
-    assert p["ok"] is True and p["egress_ok"] is True  # direct upstream → egress ok
+    assert (
+        p["ok"] is True and p["egress_ok"] is None
+    )  # direct mode: no DNS probe — unknown, never a hardcoded ok
     assert p["served"] == 23550 and p["max_concurrent"] == 5
     assert p["level"] == "throttled"
 
 
-def test_build_providers_central_mode_reflects_central_health():
+def test_build_providers_central_http_status_is_not_dns():
     up = _providers(central_url="http://central:9000", central_status="up")[0]
     assert up["name"] == "central" and up["upstream"] == "http://central:9000"
-    assert up["egress_ok"] is True
+    # Corrected finding 2: a central HTTP status is tier availability, never
+    # DNS evidence — DNS stays unknown whether the tier is up or down.
+    assert up["dns_ok"] is None and up["egress_ok"] is None
     down = _providers(central_url="http://central:9000", central_status="down")[0]
-    assert down["egress_ok"] is False  # central down → primary egress impaired
+    assert down["dns_ok"] is None and down["egress_ok"] is None
+    supplied = _providers(
+        central_url="http://central:9000", central_status="up", upstream_dns_ok=True
+    )[0]
+    assert supplied["dns_ok"] is True  # only an explicit boolean may claim DNS
 
 
 def test_build_providers_appends_fleet_siblings():
@@ -380,10 +488,18 @@ def test_pi_registry_strip_names_every_configured_provider_with_icons():
             ]
         }
     )
-    assert "Pi routes" in html
+    assert "Registered providers" in html
+    assert "catalog membership, not current eligibility" in html
     for text in ("✳️", "Claude", "🌀", "Codex", "✨", "Z.AI", "🚀", "Groq", "🌙", "DeepInfra"):
         assert text in html
-    assert "same registry drives routing + meters" in html
+    # Behavioral, not tautological (review minor): an id the icon table does
+    # not know still renders — with the fallback icon — and the strip keeps
+    # registration separate from eligibility even for unknown providers.
+    html_unknown = _render_stats(lanes={"registry": [{"provider": "MysteryLane"}]})
+    # Unknown providers still render (registration is not eligibility — the
+    # strip's disclaimer must hold for ids the icon table has never seen).
+    assert "MysteryLane" in html_unknown
+    assert "same registry drives routing + meters" not in html
 
 
 def test_zai_row_renders_accessible_identity_billing_and_hard_resets():

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>anthropic-throttle-proxy</title>
+  <title>{{ 'anthropic-throttle-proxy' if show_local | default(true) else 'Subscription capacity' }}</title>
   <link rel="icon" href="/ui/static/favicon.svg?v={{ asset_v }}" type="image/svg+xml">
   <link rel="stylesheet" href="/ui/static/style.css?v={{ asset_v }}">
   <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
@@ -11,14 +11,17 @@
 <body>
   <header>
     <div class="brand">
-      <h1>anthropic-throttle-proxy</h1>
-      {% if central_url != "(direct)" %}
+      <h1>{{ 'anthropic-throttle-proxy' if show_local | default(true) else 'Subscription capacity' }}</h1>
+      {% if not show_local | default(true) %}
+        <span class="role">read-only account meters</span>
+      {% elif central_url != "(direct)" %}
         <span class="role">local · forwards to central</span>
       {% else %}
         <span class="role">direct upstream</span>
       {% endif %}
     </div>
     <div class="config">
+      {% if show_local | default(true) %}
       <span class="badge" title="Per-bearer concurrent ceiling. AIMD lowers the live value on 429s.">MAX <b>{{ max_concurrent }}</b></span>
       <span class="badge" title="Queue mode: off / observe / fair.">mode <b>{{ queue_mode }}</b></span>
       <span class="badge" title="Minimum gap between upstream dispatches (ms). 0 = disabled.">gap <b>{{ min_dispatch_gap_ms }}ms</b></span>
@@ -26,9 +29,11 @@
       {% if central_url != "(direct)" %}
         <span class="badge central-{{ central_status }}" title="Central tier health (polled).">● central {{ central_status }}</span>
       {% endif %}
+      {% endif %}
       {# The advisor is an action, not a section: a standing paragraph that
          explains the feature costs a screen the operator came here to read. #}
-      <button class="ghost"
+      {% if show_local | default(true) %}
+      <button class="ghost" {% if not advisor_enabled %}disabled aria-disabled="true"{% endif %}
               hx-post="/ui/advisor"
               hx-target="#advisor-out"
               hx-swap="innerHTML"
@@ -37,32 +42,42 @@
         {% if advisor_enabled %}ask advisor{% else %}advisor off{% endif %}
       </button>
       <span id="advisor-spin" class="htmx-indicator">…thinking</span>
+      {% endif %}
     </div>
   </header>
 
   <main>
+    <p id="refresh-state" class="refresh-state" role="status" aria-live="polite">Page refresh every 2s; meter sampling is separate. If the “as of” stamp in the status strip stops moving, the refresh disconnected and readings are last known, not live.</p>
     <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML">
       {% include "partials/stats.html" %}
     </section>
 
     <div id="advisor-out"></div>
 
+    {% if show_local | default(true) %}
     <details class="config-section">
       <summary>
         <span>settings</span>
-        <span class="muted">12 live overrides · autosave on change · persisted across restarts</span>
+        <span id="config-summary" class="muted">{{ config_count | default('—') }} settings · {{ override_count | default('—') }} overrides · autosave on change</span>
         <span class="muted summary-hint" data-closed="click to expand" data-open="click to collapse" aria-hidden="true"></span>
       </summary>
       <section id="config" hx-get="/ui/config" hx-trigger="toggle from:closest details once" hx-target="#config" hx-swap="innerHTML">
         <p class="muted">Loading…</p>
       </section>
     </details>
+    {% endif %}
   </main>
 
   <footer>
     <a href="/__throttle/health">/__throttle/health</a> ·
     <a href="/metrics">/metrics</a> ·
+    <span title="{{ build | default('') }}">UI revision {{ asset_v }}</span> ·
     <a href="https://github.com/yolo-labz/anthropic-throttle-proxy" target="_blank" rel="noopener">github</a>
   </footer>
+  {# Load-bearing invariant (CLAUDE.md): the dashboard renders without
+     JavaScript modules — exactly ONE script tag (the HTMX runtime above).
+     Disconnect/build-change staleness is signalled server-side instead:
+     every swap re-renders the panel's “as of” clock and the asset-versioned
+     URLs give each build its own cache entries (see dashboard-refresh-check). #}
 </body>
 </html>

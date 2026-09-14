@@ -6,6 +6,65 @@ host activation. Latest incident first.
 
 ---
 
+## 14/09/2026 — recovery reconciled; whole-diff review remains blocked
+
+Remote REST readback at 18:24 BRT: PR #227 is OPEN and draft, head
+`83d8b544b1b998e75591288969683d7b8aaba23a`, with all nine reported check runs
+successful. No merge or candidate activation occurred. The running :8765
+package remains `7n97nkkgiz93l0yxyhm0jbz6hgykshbz`, not a newly activated
+candidate. The existing queue repair worker was still running; it was not
+relaunched. The fairness seat delivered its 17-finding checklist, now retained
+in `specs/227-dashboard-audit/fairness-acceptance.md` (not a browser receipt).
+
+The prior Codex review at `4eb8c28` found four blockers and three majors; GLM
+pushed repairs in `83d8b54`. That is NOT independent approval of the whole
+candidate: the original integration contains OpenAI-authored code. A bounded
+Opus review request was refused before spawn, with no eligible different-family
+fallback. The older handoff's canceled-Anthropic constraint also remains in
+force; do not retry that lane or substitute another OpenAI review as approval.
+The refreshed doc descriptions now agree with the code: hiding does not stop
+collection, and refresh failure freezes an `as of` stamp, not a JS watchdog.
+
+Unmet gates: permitted independent review of the mixed-family whole diff,
+exact-source Firefox AND Chromium acceptance, and guarded activation. Green
+source CI and the historical scorecard satisfy none of those delivery gates.
+Private recovery evidence stays under the existing fleet-coordination root.
+
+## 13/09/2026 — dashboard candidate integrated; delivery/review still gated
+
+The audit candidate now contains real production-source changes: honest
+credential/DNS status, complete endpoint identities, observed-plan provenance,
+validated telemetry timestamps/cadence, per-row duration icons, neutral Codex
+badges, optional hidden families and a subscription-only display. Source tests
+are not proof of delivery or browser rendering. See the audit's trace table.
+
+Latest worker state supersedes the historical launch description below: all
+workers are terminal, and the completion watcher is stopped. Several additional
+narrow native-edit attempts were made after the initial output-length failures;
+the original promised one-repair ceiling was not maintained. No further retries
+are authorized by this handoff. Actual streams and every attempt remain durable.
+GLM yielded truth and plan-caption code; later attempts produced no additional
+patches and one proxy journal entry confirms an upstream socket-read timeout.
+OpenAI completed the remaining source integration. Provenance is mixed: an
+OpenAI reviewer would independently gate GLM's code only, not the entire diff.
+Anthropic remains canceled and must not be called to work around this gate.
+
+Optional YAML `defaults.hidden_families: [anthropic]` and `show_primary: false`
+remove the canceled connection from the active presentation. These settings
+have NOT been activated. They are not a replacement for network/credential
+containment. No new pin, service restart, production deployment or merge has
+been performed for the candidate. The 17-point live oracle remains red.
+
+Follow-up: eight synthetic Chromium width/CSS-zoom cases exercised headings,
+HTMX focus retention, refresh failure/recovery and page overflow. The narrowest
+zoomed case exposed a non-wrapping status strip; wrapping fixes that measured
+overflow. Reset timestamps now occupy their own line and pool-scope explanations
+have a wider column. The Node refresh contract also passes. Synthetic fixtures
+and CSS zoom are NOT Firefox, native browser zoom or live-delivery acceptance.
+The live oracle additionally checks effective/persisted systemd package identity.
+
+Durable private evidence and attempt records: `~/.local/state/fleet-coordination/swarms/throttle-dashboard-2026-09-13/`. No runtime records or screenshots are included in this change.
+
 ## 12/09/2026 — user's live screenshots still fail acceptance
 
 Pedro supplied both the unchanged six-row dashboard (no Codex C) and the exact
