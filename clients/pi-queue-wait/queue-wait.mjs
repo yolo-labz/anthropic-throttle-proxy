@@ -141,33 +141,20 @@ function sameLocation(a, b) {
 }
 
 /**
- * Every usage and cost field must be exactly zero — not merely output tokens
- * or total cost — so a partially-billed error can never be swallowed.
+ * Every mandatory usage and cost scalar must be the NUMBER 0 — null,
+ * undefined, strings, empty objects, and missing fields all fail closed, so
+ * a partially-billed or shape-broken error can never be swallowed.
  */
 function allUsageZero(usage) {
   if (usage === null || typeof usage !== "object") return false;
-  const required = ["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost"];
-  for (const key of required) {
-    if (!(key in usage)) return false;
+  const isZero = (value) => typeof value === "number" && value === 0;
+  for (const key of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]) {
+    if (!isZero(usage[key])) return false;
   }
-  // cost must be a NON-NULL OBJECT with every scalar field PRESENT — a missing
-  // nested field fails closed just like a missing top-level field.
   const cost = usage.cost;
   if (cost === null || typeof cost !== "object") return false;
   for (const key of ["input", "output", "cacheRead", "cacheWrite", "total"]) {
-    if (!(key in cost)) return false;
-  }
-  return zeroWalk(usage);
-}
-
-function zeroWalk(node) {
-  if (node === null || typeof node !== "object") return false;
-  for (const value of Object.values(node)) {
-    if (typeof value === "number") {
-      if (value !== 0) return false;
-    } else if (value !== undefined && value !== null) {
-      if (!zeroWalk(value)) return false;
-    }
+    if (!isZero(cost[key])) return false;
   }
   return true;
 }

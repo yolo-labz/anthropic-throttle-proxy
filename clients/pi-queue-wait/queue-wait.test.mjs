@@ -678,6 +678,41 @@ for (const field of COST_SCALAR_FIELDS) {
   });
 }
 
+// r21: null/undefined/non-number in a mandatory usage scalar must fail
+// closed exactly like a missing field — zeroWalk ignored these.
+for (const [label, patch] of [
+  ["null", (u, f) => { u[f] = null; }],
+  ["undefined", (u, f) => { u[f] = undefined; }],
+  ["string", (u, f) => { u[f] = "0"; }],
+]) {
+  for (const field of USAGE_SCALAR_FIELDS) {
+    test(`unit: no retry when usage.${field} is ${label}`, async () => {
+      const usage = ZERO_USAGE();
+      patch(usage, field);
+      const attempts = [];
+      const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([{ thenError: { usage } }], attempts) });
+      const { fetch, calls } = fakeFetch([eligible503()]);
+      await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
+      assert.equal(attempts.length, 1, `${label} usage.${field} must not authorize a retry`);
+      assert.equal(calls.length, 1);
+      assert.equal(sleeps.length, 0);
+    });
+  }
+  for (const field of COST_SCALAR_FIELDS) {
+    test(`unit: no retry when usage.cost.${field} is ${label}`, async () => {
+      const usage = { ...ZERO_USAGE(), cost: { ...ZERO_COST() } };
+      patch(usage.cost, field);
+      const attempts = [];
+      const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([{ thenError: { usage } }], attempts) });
+      const { fetch, calls } = fakeFetch([eligible503()]);
+      await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
+      assert.equal(attempts.length, 1, `${label} usage.cost.${field} must not authorize a retry`);
+      assert.equal(calls.length, 1);
+      assert.equal(sleeps.length, 0);
+    });
+  }
+}
+
 for (const field of USAGE_SCALAR_FIELDS) {
   test(`unit: missing usage.${field} fails closed`, async () => {
     const usage = ZERO_USAGE();
