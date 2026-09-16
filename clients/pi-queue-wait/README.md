@@ -23,14 +23,14 @@ retry, transparently.
 
 ## What it does
 
-- Intercepts **only** `provider=zai`, `model=glm-5.3-flash`, POSTs to a
+- Intercepts **only** `provider=zai`, models `glm-5.3-flash` and `glm-5.3`, POSTs to a
   permitted loopback HTTP endpoint (default `http://127.0.0.1:8766`) with the
   exact path `/api/coding/paas/v4/chat/completions`.
 - Treats a response as a queue rejection only when **all** hold: status 503,
   both stamps exactly `1`, no redirect (final URL equals the request URL),
   body byte-equal to the sentence above plus its trailing newline, and the
   native error event carries empty content with **every** usage and cost field
-  zero and no earlier event of any type was emitted.
+  zero, both terminal reasons are exactly `error`, and no earlier event of any type was emitted.
 - Waits `Retry-After` plus strictly positive jitter (1–1000 ms), then
   re-dispatches **the same model request** — same model, context, options.
   Missing/unparsable/non-positive `Retry-After` falls back to 15 s.
@@ -46,18 +46,22 @@ retry, transparently.
 - Never logs bearer tokens or request bodies.
 - Never retries a non-queue error (429s, quota, overflow keep their native
   semantics, including the native SDK's own pushback handling and the caller's
-  `maxRetries`, which are preserved untouched).
+  `maxRetries`, which are preserved untouched). For a fully proven queue rejection
+  only, a response-header overlay (`x-should-retry: false`) prevents native
+  retries from bypassing the outer wait budget. The original headers stay untouched.
 - No toggle commands (`queue-wait-off` / `queue-wait-on` do not exist):
   disabling is removing/reloading this extension only. Unregistering `zai` at
   runtime could erase another extension's merged provider overlay.
 
 ## Candidate status
 
-**Not approved for installation.** The independent transport review denied this
-candidate despite 76 passing tests: native SDK retries can bypass outer wait
-accounting, and terminal-error eligibility is too permissive. See
-[the review and follow-up gates](../../specs/227-pi-queue-wait/transport-review.md).
-The repaired validator also awaits a permitted different-family review.
+**Not approved for installation pending exact-head review.** The original
+candidate was denied despite 76 passing tests. A newly bounded
+[retry-safety follow-up](../../specs/232-pi-queue-retry-safety/plan.md) addresses
+native retry accounting, terminal semantics, clock-failure reporting and abort
+identity, with both GLM models covered. The expanded tests failed 10 cases before
+the fix and pass 89/89 afterward. The [original DENY](../../specs/227-pi-queue-wait/transport-review.md)
+is preserved; green tests do not replace the different-family release gate.
 
 ## Install (after release gates pass)
 

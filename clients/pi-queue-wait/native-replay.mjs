@@ -447,6 +447,77 @@ function makeContext() {
 }
 
 export function runNativeReplayTests() {
+  for (const id of ["glm-5.3-flash", "glm-5.3"]) {
+    for (const budget of [1, 100]) {
+      test(`native: ${id} outer queue accounting with maxRetries=1, budget=${budget}`, async () => {
+        const piAi = await loadPiAi();
+        const proxy = createFakeProxy([eligible503({ retryAfter: 0.001 }), sse200()]);
+        try {
+          const base = await proxy.baseUrl();
+          const { sleep, state } = recordingSleep();
+          const originals = [];
+          const createQueueWaitStream = (await import("./queue-wait.mjs")).createQueueWaitStream;
+          const events = await drainEvents(createQueueWaitStream({
+            streamSimple: piAi.streamSimple,
+            createEventStream: piAi.createEventStream,
+            sleep,
+            random: () => 0,
+            maxWaitMs: budget,
+            allowedBaseUrls: [base],
+          })(makeModel(base, { id }), makeContext(), {
+            apiKey: "sk-test-fake-key", maxRetries: 1,
+            fetch: async (...args) => {
+              const response = await globalThis.fetch(...args);
+              originals.push(response);
+              return response;
+            },
+          }));
+          assert.equal(originals[0].headers.get("x-should-retry"), null, "never mutate original headers");
+          if (budget === 1) {
+            assert.equal(proxy.requests.length, 1, "native retry must not escape the outer budget");
+            assert.deepEqual(state.delays, []);
+            assert.equal(events.length, 1);
+            assert.equal(events[0].reason, "error");
+            assert.match(events[0].error.errorMessage, /admission wait budget exhausted/);
+          } else {
+            assert.equal(proxy.requests.length, 2);
+            assert.deepEqual(state.delays, [2], "one accounted wait with positive jitter");
+            assert.equal(events.filter((e) => e.type === "error").length, 0);
+            assert.equal(events.at(-1).type, "done");
+            assert.equal(proxy.requests[0].body, proxy.requests[1].body, "same model request, no tool replay");
+          }
+        } finally {
+          await proxy.close();
+        }
+      });
+    }
+  }
+
+  for (const [label, first] of [
+    ["raw503", { status: 503, headers: { "retry-after": "0.001" }, body: "unavailable" }],
+    ["quota429", { status: 429, headers: { "retry-after": "0.001" }, body: "quota" }],
+    ["wrong-body", { ...eligible503({ retryAfter: 0.001 }), body: "not a local queue rejection\n" }],
+  ]) {
+    test(`native: unrelated ${label} retains maxRetries=1 behavior`, async () => {
+      const piAi = await loadPiAi();
+      const proxy = createFakeProxy([first, sse200()]);
+      try {
+        const base = await proxy.baseUrl();
+        const { sleep, state } = recordingSleep();
+        const createQueueWaitStream = (await import("./queue-wait.mjs")).createQueueWaitStream;
+        const events = await drainEvents(createQueueWaitStream({
+          streamSimple: piAi.streamSimple, createEventStream: piAi.createEventStream,
+          sleep, allowedBaseUrls: [base],
+        })(makeModel(base), makeContext(), { apiKey: "sk-test-fake-key", maxRetries: 1 }));
+        assert.equal(proxy.requests.length, 2);
+        assert.deepEqual(state.delays, [], "unrelated retries remain native-owned");
+        assert.equal(events.at(-1).type, "done");
+      } finally {
+        await proxy.close();
+      }
+    });
+  }
+
   test("native: marked queue rejection then success — no intermediate assistant error", async () => {
     const piAi = await loadPiAi();
     const proxy = createFakeProxy([eligible503({ retryAfter: 1 }), sse200()]);
