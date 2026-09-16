@@ -361,6 +361,59 @@ function assertSingleNativeError(events, reason, message) {
 
 await runNativeReplayTests();
 
+for (const [reason, stopReason] of [["stop", "error"], ["error", "stop"], [undefined, "error"], ["error", undefined]]) {
+  test(`unit: fail closed on terminal semantics ${reason}/${stopReason}`, async () => {
+    const { fetch, calls } = fakeFetch([eligible503(), { status: 200 }]);
+    const native = fakeStreamSimple([]);
+    const { deps } = baseDeps({
+      streamSimple(model, context, options) {
+        const outer = createEventStream();
+        (async () => {
+          try {
+            for await (const event of native(model, context, options)) {
+              if (event.type === "error") {
+                event.reason = reason;
+                event.error.stopReason = stopReason;
+              }
+              outer.push(event);
+            }
+          } finally { outer.end(); }
+        })();
+        return outer;
+      },
+    });
+    const events = await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
+    assert.equal(calls.length, 1, "unknown terminal semantics must not replay a request");
+    assert.equal(events[0].reason, reason);
+    assert.equal(events[0].error.stopReason, stopReason);
+  });
+}
+
+test("unit: throwing injected clock cannot erase an original failure", async () => {
+  const { deps } = baseDeps({
+    streamSimple: () => { throw new Error("original failure"); },
+    now: () => { throw new Error("clock unavailable"); },
+  });
+  const events = await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), {}));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].reason, "error");
+  assert.equal(events[0].error.errorMessage, "original failure");
+  assert.ok(Number.isFinite(events[0].error.timestamp));
+});
+
+test("unit: a message-only aborted error is not cancellation", async () => {
+  const { fetch, calls } = fakeFetch([eligible503(), { status: 200 }]);
+  const { deps } = baseDeps({
+    streamSimple: fakeStreamSimple([]),
+    sleep: async () => { throw new Error("aborted"); },
+  });
+  const events = await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
+  assert.equal(calls.length, 1);
+  assert.equal(events[0].reason, "error");
+  assert.equal(events[0].error.stopReason, "error");
+  assert.equal(events[0].error.errorMessage, "aborted");
+});
+
 // ---------------------------------------------------------------------------
 // 1. Eligibility gate — a single upstream call, native error surfaced once.
 // ---------------------------------------------------------------------------

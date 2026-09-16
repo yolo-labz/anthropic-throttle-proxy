@@ -214,7 +214,7 @@ export function createQueueWaitStream(deps) {
 
   return function queueWaitStream(model, context, options) {
     // Provider/model gate: anything else is the native function, un-wrapped.
-    if (model?.provider !== QUEUE_PROVIDER_ID || model?.id !== QUEUE_MODEL_ID) {
+    if (model?.provider !== QUEUE_PROVIDER_ID || ![QUEUE_MODEL_ID, "glm-5.3"].includes(model?.id)) {
       return streamSimple(model, context, options);
     }
 
@@ -243,7 +243,7 @@ export function createQueueWaitStream(deps) {
         outer.end();
       };
       const emitSynthetic = (stopReason, message) => {
-        finishWithEvent(syntheticErrorEvent(model, stopReason, message, now()));
+        finishWithEvent(syntheticErrorEvent(model, stopReason, message, Date.now()));
       };
 
       while (true) {
@@ -345,7 +345,7 @@ export function createQueueWaitStream(deps) {
             emitSynthetic("aborted", "Request was aborted");
           } else {
             finishWithEvent(
-              syntheticErrorEvent(model, "error", String(sleepError?.message ?? sleepError), now()),
+              syntheticErrorEvent(model, "error", String(sleepError?.message ?? sleepError), Date.now()),
             );
           }
           return;
@@ -379,7 +379,7 @@ export function createQueueWaitStream(deps) {
             model,
             aborted ? "aborted" : "error",
             aborted ? "Request was aborted" : String(runError?.message ?? runError),
-            now(),
+            Date.now(),
           ),
         );
       } catch {
@@ -400,16 +400,15 @@ function positiveInt(value, fallback) {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-/** True only when the error itself is an abort (AbortError or the default
- * sleep's "aborted" marker); DI sleep failures keep their original message. */
+/** Abort identity, never message text: an ordinary Error("aborted") stays an error. */
 function isAbortError(error) {
-  return error?.name === "AbortError" || error?.message === "aborted";
+  return error?.name === "AbortError";
 }
 
 function defaultSleep(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new Error("aborted"));
+      reject(new DOMException("Request was aborted", "AbortError"));
       return;
     }
     const timer = setTimeout(() => {
@@ -418,7 +417,7 @@ function defaultSleep(ms, signal) {
     }, ms);
     const onAbort = () => {
       cleanup();
-      reject(new Error("aborted"));
+      reject(new DOMException("Request was aborted", "AbortError"));
     };
     const cleanup = () => {
       clearTimeout(timer);
@@ -431,23 +430,24 @@ function defaultSleep(ms, signal) {
 /** The native error event must be empty-content with EVERY usage/cost field zero. */
 function isZeroErrorEvent(event) {
   const error = event?.error;
+  if (event?.reason !== "error" || error?.stopReason !== "error") return false;
   if (!error || error.role !== "assistant") return false;
   if (Array.isArray(error.content) ? error.content.length !== 0 : true) return false;
   return allUsageZero(error.usage);
 }
 
+/** Reject unrelated responses before cloning or waiting for any body proof. */
+function isQueueResponse(res, requestUrl, allowedBases) {
+  return res?.status === 503 && !res.redirected &&
+    sameLocation(res.url, requestUrl) && urlGate(requestUrl, allowedBases) &&
+    res.headers.get(QUEUE_MARKER_HEADER) === "1" &&
+    res.headers.get(QUEUE_TIMEOUT_HEADER) === "1";
+}
+
 /** Full response gate: status, both stamps, exact body, same-location, no redirect. */
 function gateResponse(res, requestUrl, text, allowedBases, nowFn) {
-  // CALL the injected clock (HTTP-date Retry-After must resolve against the
-  // engine's now, including DI test clocks).
+  if (!isQueueResponse(res, requestUrl, allowedBases) || text !== QUEUE_BODY_FULL) return null;
   const nowMs = typeof nowFn === "function" ? nowFn() : nowFn;
-  if (res.status !== 503) return null;
-  if (res.redirected) return null;
-  if (!sameLocation(res.url, requestUrl)) return null;
-  if (!urlGate(requestUrl, allowedBases)) return null;
-  if (res.headers.get(QUEUE_MARKER_HEADER) !== "1") return null;
-  if (res.headers.get(QUEUE_TIMEOUT_HEADER) !== "1") return null;
-  if (text !== QUEUE_BODY_FULL) return null;
   return { retryAfterMs: parseRetryAfterMs(res.headers.get("retry-after"), nowMs) };
 }
 
@@ -486,8 +486,9 @@ async function awaitCapture(capture, signal) {
  * ineligible and network-failed ones); on a 503 clones immediately and
  * classifies the clone asynchronously (never blocking the native path),
  * publishing the verdict ONLY while its fetch is still the current one so a
- * delayed stale clone can never authorize a retry; always returns the
- * ORIGINAL Response untouched.
+ * delayed stale clone can never authorize a retry. Unrelated responses stay
+ * untouched. Only a proven queue rejection gets a retry-control header overlay
+ * when caller-enabled native retries would otherwise escape outer accounting.
  */
 function wrapFetch(options, attempt, allowedBases, nowFn) {
   const nativeFetch = options?.fetch ?? globalThis.fetch;
@@ -501,7 +502,7 @@ function wrapFetch(options, attempt, allowedBases, nowFn) {
       return nativeFetch(input, init);
     }
     const res = await nativeFetch(input, init);
-    if (res?.status !== 503) return res;
+    if (!isQueueResponse(res, requestUrl, allowedBases)) return res;
     let clone;
     try {
       clone = res.clone();
@@ -520,6 +521,25 @@ function wrapFetch(options, attempt, allowedBases, nowFn) {
         }
       }
     })();
+    // Pi's native adapter defaults to zero retries. Preserve its asynchronous
+    // capture path then; only enabled native retries need proof before return.
+    if (options?.maxRetries > 0 && !attempt.sawPriorEvent) {
+      const signals = [init?.signal, options?.signal].filter(Boolean);
+      const signal = signals.length ? AbortSignal.any(signals) : undefined;
+      const captured = await awaitCapture(attempt.capture, signal);
+      if (captured.aborted) throw new DOMException("Request was aborted", "AbortError");
+      if (token === fetchToken && attempt.rejection && !attempt.sawPriorEvent) {
+        // Both Pi retryProviderRequest and the native SDK honor this header.
+        // No admission sleep here: the request timeout ends before outer wait.
+        const headers = new Headers(res.headers);
+        headers.set("x-should-retry", "false");
+        const controlled = new Response(res.body, {
+          status: res.status, statusText: res.statusText, headers,
+        });
+        Object.defineProperty(controlled, "url", { value: res.url });
+        return controlled;
+      }
+    }
     return res;
   };
 }
