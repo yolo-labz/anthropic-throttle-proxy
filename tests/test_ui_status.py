@@ -158,6 +158,7 @@ def test_attach_binding_never_offers_unmeasured_accounts_as_next_usable():
             "status": "ok",
             "bearer_id": "aaaa1111",
             "meters": [{"label": "7d", "pct": 85}],
+            "routing_eligible": True,
         },
         {
             "id": "unseen-no-evidence",

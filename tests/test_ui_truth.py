@@ -8,6 +8,8 @@ evidence; a central HTTP status is tier availability and NEVER DNS evidence
 custom hosts and IPs keep their full identity instead of truncating.
 """
 
+import contextlib as _contextlib
+
 import pytest
 
 from anthropic_throttle_proxy import fleet
@@ -349,3 +351,354 @@ def test_missing_dns_state_stays_unknown_not_false():
     glm = _row_named(_provider_rows(fleet=fleet), "glm")
     assert glm["dns_ok"] is None
     assert glm["egress_ok"] is None
+
+
+# ── cross-family review, 18/09/2026 — five reproduced defects ────────────────
+#
+# The review that gated this branch found four MAJORs and two MINORs, each with
+# a reproduction. Every one of them is a case of the page asserting more than
+# its evidence supports, which is what this file exists to prevent — so each
+# gets a regression here rather than a note in a comment.
+
+
+def _subscription_row(account: dict) -> dict:
+    """One Anthropic row through the REAL builder, not a hand-built dict."""
+    return routes._build_subscriptions([account], {"lanes": [], "registry": []}, NOW)[0]
+
+
+def _account(**over: object) -> dict:
+    base = {
+        "label": "A",
+        "email": "a@example.test",
+        "bearer_id": "b-dead",
+        "seen": True,
+        "src": "endpoint",
+        "win5": {"pct": 12, "reset_in": "1h", "rejected": False},
+        "win7": {"pct": 12, "reset_in": "2d", "rejected": False},
+        "credential": {"ok": True, "status": 200, "reason": "", "detail": ""},
+        "pace": 0.5,
+        "eta": "",
+    }
+    base.update(over)
+    return base
+
+
+def test_a_failed_usage_endpoint_disqualifies_the_routing_recommendation():
+    """MAJOR 1. `_account_status` files an endpoint failure as a NOTE and keeps
+    the verdict at `ok`, so an account whose own usage call answered
+    `credential rejected (401)` still ranked as the freest lane and was offered
+    as "takes traffic next" on the strength of a percentage the page could not
+    actually read. A recommendation is a claim; the evidence has to carry it.
+    """
+    healthy = _subscription_row(_account())
+    assert healthy["status"] == "ok"
+    assert healthy["routing_eligible"] is True
+
+    broken = _subscription_row(
+        _account(endpoint_err="credential rejected (401)", win7={"pct": 3, "reset_in": "2d"})
+    )
+    # The verdict is still `ok` — the endpoint error is a note, which is the
+    # reason the recommendation needs its own gate rather than reusing status.
+    assert broken["status"] == "ok"
+    assert "credential rejected (401)" in broken["detail"]
+    assert broken["routing_eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "disqualifier",
+    [
+        {"endpoint_err": "credential rejected (401)"},
+        {"error": "usage parse failed"},
+        {"locked_in": "2h"},
+        {"credential": {"ok": False, "detail": "oauth_not_allowed_for_organization"}},
+        {"token": {"state": "expired", "detail": "expired 3h ago"}},
+    ],
+)
+def test_every_untrustworthy_evidence_signal_vetoes_the_recommendation(disqualifier):
+    row = _subscription_row(_account(**disqualifier))
+    assert row["routing_eligible"] is False, (
+        f"{disqualifier} left the row eligible to be recommended"
+    )
+
+
+def _binding_context(sibling: dict) -> dict:
+    """A binding on account A plus one sibling, in the shape the builder emits."""
+    status = {"binding": {"bearer_id": "bind", "window": "7d", "pct": 100, "evidence": "throttled"}}
+    rows = [
+        {
+            "id": "blocked-lane",
+            "bearer_id": "bind",
+            "family": "anthropic",
+            "status": "ok",
+            "meters": [{"label": "7d", "pct": 100, "reset_in": "1h"}],
+            "routing_eligible": True,
+        },
+        sibling,
+    ]
+    routes._attach_binding(status, rows)
+    return status["binding"]
+
+
+@pytest.mark.parametrize(
+    ("name", "sibling", "expect_unknown"),
+    [
+        # "ok" but nothing about it could be verified: a fact we cannot state.
+        (
+            "unreadable",
+            {
+                "id": "unreadable-sibling",
+                "bearer_id": "b2",
+                "family": "anthropic",
+                "status": "ok",
+                "meters": [{"label": "7d", "pct": 4}],
+                "routing_eligible": False,
+            },
+            True,
+        ),
+        # Every sibling is genuinely closed: a fact we can.
+        (
+            "refusing",
+            {
+                "id": "refused-sibling",
+                "bearer_id": "b2",
+                "family": "anthropic",
+                "status": "refused",
+                "meters": [],
+                "routing_eligible": False,
+            },
+            False,
+        ),
+    ],
+)
+def test_an_unverified_sibling_is_never_reported_as_a_blocked_one(
+    name: str, sibling: dict, expect_unknown: bool
+):
+    """The page used to answer "nothing — every sibling is blocked too" for
+    BOTH "every sibling is refusing" and "I could not read any sibling".
+    Those are different facts and only one of them is knowable here."""
+    bound = _binding_context(sibling)
+    assert "next_usable" not in bound
+    assert bool(bound.get("next_usable_unknown")) is expect_unknown, name
+
+
+def test_pacing_is_not_rendered_as_a_blocked_subscription():
+    """MAJOR 2. `_compute_status` builds a binding object for PACING too — a
+    window past the warn line that upstream still reports as `allowed` — and the
+    strip said `blocked` with a `reopens in`, turning queue pressure into a
+    quota refusal. The measured reason is on the object as `evidence`; the
+    wording has to follow it.
+    """
+    import jinja2
+
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(routes._TEMPLATES)), autoescape=True
+    )
+
+    def render(evidence: str) -> str:
+        return env.get_template("partials/stats.html").render(
+            subscriptions=[],
+            bearers=[],
+            providers=[],
+            signals=[],
+            lanes=None,
+            last_advisor=None,
+            served=0,
+            inflight=0,
+            queued=0,
+            holds=0,
+            retries=0,
+            disconnects=0,
+            status={
+                "level": "pacing" if evidence == "pacing" else "throttled",
+                "verdict": "PACING" if evidence == "pacing" else "THROTTLED",
+                "since": "4m",
+                "detail": "",
+                "binding": {
+                    "bearer_id": "b1",
+                    "subscription": "A",
+                    "sub": "a@example.test",
+                    "window": "7d",
+                    "pct": 30,
+                    "resets_in": "1h",
+                    "evidence": evidence,
+                },
+            },
+        )
+
+    pacing = render("pacing")
+    # Scoped to the binding block: the phrase "blocked" also appears in the
+    # no-sibling fallback text, which is a different sentence about a
+    # different fact.
+    assert '<span class="binding-label">binding constraint</span>' in pacing
+    assert '<span class="binding-label">blocked</span>' not in pacing
+    assert "reopens in" not in pacing
+    assert "resets in 1h" in pacing
+
+    throttled = render("throttled")
+    assert '<span class="binding-label">blocked</span>' in throttled
+    assert "reopens in 1h" in throttled
+
+
+def test_an_unrepresentable_number_in_the_report_cannot_crash_the_reader(tmp_path, monkeypatch):
+    """MAJOR 4. `math.isfinite` raises OverflowError on an int too large to
+    convert to float, and this reads ARBITRARY JSON — so `intervalSeconds:
+    10**400` in a file written by another process took down both dashboard
+    endpoints, health JSON included. A number the platform cannot represent is
+    not a reading.
+    """
+    from anthropic_throttle_proxy import lanes
+
+    report = tmp_path / "lanes.json"
+    report.write_text(
+        '{"generatedAt": "2026-09-18T12:00:00Z", "intervalSeconds": 1' + "0" * 400 + ","
+        ' "lanes": []}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("THROTTLE_LANES_FILE", str(report))
+    monkeypatch.setattr(lanes, "_cache", None)
+
+    view = lanes.view(NOW)  # must not raise
+    assert view["interval_s"] is None
+    assert view["stale"] is False  # an invalid cadence cannot certify staleness
+    assert "sampling interval invalid" in view["error"]
+
+
+def test_a_backward_clock_does_not_extend_the_lane_cache(tmp_path, monkeypatch):
+    """MINOR 6. `now - cached < TTL` is TRUE for a negative elapsed time, so a
+    clock that stepped backward (NTP, a restored snapshot, suspend/resume)
+    served the previous snapshot without re-reading — freshness that heals
+    itself only once wall time catches back up."""
+    from anthropic_throttle_proxy import lanes
+
+    report = tmp_path / "lanes.json"
+    report.write_text('{"generatedAt": "2026-09-18T12:00:00Z", "lanes": []}', encoding="utf-8")
+    monkeypatch.setenv("THROTTLE_LANES_FILE", str(report))
+    monkeypatch.setattr(lanes, "_cache", None)
+
+    lanes.view(NOW)
+    assert lanes._cache is not None and lanes._cache[0] == NOW
+    # Time moves BACKWARD by an hour: the cache must be treated as unusable,
+    # not as "still warm".
+    lanes.view(NOW - 3600)
+    assert lanes._cache[0] == NOW - 3600, "a backward clock reused the cached snapshot"
+
+
+@_contextlib.asynccontextmanager
+async def _ui_client():
+    """A real aiohttp app with only the UI routes attached."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    app = web.Application()
+    routes.attach_ui(app)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        yield client
+    finally:
+        await client.close()
+
+
+def test_a_tab_rendered_by_an_older_build_is_told_to_reload(monkeypatch):
+    """MAJOR 3. The panel emitted `data-revision` / `data-local` and nothing
+    consumed them, so a tab left open across a deploy kept the old stylesheet,
+    header, settings panel and footer while receiving new markup — and toggling
+    `show_primary` left a projected panel inside a page that no longer matched
+    it. The poll now reports the revision it was rendered with and the server
+    answers `HX-Refresh` when it stops matching.
+    """
+    import asyncio
+
+    async def run() -> None:
+        async with _ui_client() as client:
+            # Same revision → a normal partial, no reload requested.
+            fresh = await client.get(f"/ui/stats?rev={routes._ASSET_V}")
+            assert fresh.status == 200
+            assert "HX-Refresh" not in fresh.headers
+
+            # Older revision → the whole page reloads (new CSS URL and all).
+            stale = await client.get("/ui/stats?rev=deadbeef0000")
+            assert stale.status == 200  # still a valid partial render
+            assert stale.headers.get("HX-Refresh") == "true"
+
+            # A client that never declared a revision has nothing to be stale
+            # against — a curl probe must not be told to reload.
+            bare = await client.get("/ui/stats")
+            assert bare.status == 200
+            assert "HX-Refresh" not in bare.headers
+
+            # Display mode is the same class of divergence on the same
+            # mechanism. `show_local` defaults to true here, so a tab that
+            # declares `local=false` was rendered under a mode the server no
+            # longer agrees with.
+            flipped = await client.get("/ui/stats?local=false")
+            assert flipped.headers.get("HX-Refresh") == "true"
+
+            # ...and a tab that declares the mode the server IS in stays put.
+            agreed = await client.get("/ui/stats?local=true")
+            assert "HX-Refresh" not in agreed.headers
+
+    asyncio.run(run())
+
+
+def test_the_advisor_reads_the_unfiltered_snapshot(monkeypatch):
+    """MINOR 5. `_collect_view` applied the display projection, so with
+    `show_primary: false` the advisor received an empty bearer list and a
+    placeholder verdict — and diagnosed a page that does not exist. Hiding the
+    button never disabled the endpoint.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from anthropic_throttle_proxy import (
+        accounts,
+        config,
+        copilot,
+        fleet,
+        fleet_ui_config,
+        lanes,
+    )
+
+    seen = []
+
+    async def fake_recommend(snapshot):
+        seen.append(snapshot)
+        return {"text": "ok", "error": None, "trigger": "test"}
+
+    monkeypatch.setenv("ADVISOR_ENABLED", "true")
+    monkeypatch.setattr(
+        fleet_ui_config, "load", lambda *a, **k: {"defaults": {"show_primary": False}}
+    )
+
+    synthetic = {
+        "bearer_id": "sample01",
+        "inflight": 0,
+        "queued": 0,
+        "served": 1,
+        "credential": {"ok": False, "reason": "refused"},
+    }
+
+    async def run() -> None:
+        async with _ui_client() as client:
+            with (
+                patch.dict(config.bearer_state, {"sample01": synthetic}, clear=True),
+                patch.object(accounts, "bearer_labels", return_value={}),
+                patch.object(accounts, "refresh_endpoint", new=AsyncMock(return_value={})),
+                patch.object(accounts, "account_view", return_value=[]),
+                patch.object(accounts, "identity_state", return_value={}),
+                patch.object(fleet, "refresh", new=AsyncMock(return_value=[])),
+                patch.object(copilot, "refresh", new=AsyncMock(return_value=[])),
+                patch.object(lanes, "view", return_value=dict(lanes.EMPTY)),
+                patch.object(routes, "_publish_account_gauges"),
+                patch.object(routes, "_publish_lane_gauges"),
+                patch("anthropic_throttle_proxy.ui.advisor_impl.recommend", fake_recommend),
+            ):
+                await client.post("/ui/advisor")
+
+    asyncio.run(run())
+    assert seen, "the advisor never ran"
+    snapshot = seen[0]
+    assert snapshot["status"]["verdict"] != "SUBSCRIPTIONS", (
+        "the advisor was handed the display placeholder instead of the real verdict"
+    )
+    assert snapshot["bearers"], "the advisor was handed a view with the bearers hidden"

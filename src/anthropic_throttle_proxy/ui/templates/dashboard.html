@@ -48,7 +48,16 @@
 
   <main>
     <p id="refresh-state" class="refresh-state" role="status" aria-live="polite">Page refresh every 2s; meter sampling is separate. If the “as of” stamp in the status strip stops moving, the refresh disconnected and readings are last known, not live.</p>
-    <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML">
+    {# `hx-vals` tells the server which build and which display mode THIS tab was
+       rendered with, once, at page load. A partial swap never reloads the
+       stylesheet or the header, so a tab left open across a deploy would
+       otherwise mix old chrome with new markup, and toggling `show_primary`
+       would leave a projected panel inside a page that no longer matches it.
+       When either value stops matching, the server answers `HX-Refresh` and
+       htmx reloads the whole page. Without this the panel's revision/display
+       attributes described the divergence and nothing acted on it. #}
+    <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML"
+             hx-vals='{"rev": "{{ asset_v }}", "local": "{{ 'true' if show_local | default(true) else 'false' }}"}'>
       {% include "partials/stats.html" %}
     </section>
 

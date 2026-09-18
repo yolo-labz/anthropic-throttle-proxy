@@ -80,10 +80,23 @@ def report_path() -> str:
 
 
 def _pct(value: Any) -> float | None:
-    """Coerce a percentage to float; anything non-numeric → None (unknown)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    """Coerce a percentage to float; anything non-numeric → None (unknown).
+
+    ``math.isfinite`` raises ``OverflowError`` on an integer too large to
+    convert to float — and this reads ARBITRARY JSON, so ``intervalSeconds:
+    10**400`` in the report file crashed ``_read``, which crashed
+    ``_collect_view``, which is to say a malformed number in a file written by
+    another process took the dashboard down (cross-family review, 18/09/2026).
+    A number the platform cannot represent is not a reading.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        if not math.isfinite(value):
+            return None
+        return float(value)
+    except (OverflowError, ValueError):
+        return None
 
 
 def _epoch(value: Any) -> float | None:
@@ -435,9 +448,18 @@ def _read(now: float) -> dict[str, Any]:
 
 
 def view(now: float) -> dict[str, Any]:
-    """Lane view for the dashboard. TTL-cached; empty when no report exists."""
+    """Lane view for the dashboard. TTL-cached; empty when no report exists.
+
+    The cache expires on a bounded window, not on ``elapsed < TTL``: with the
+    unbounded form a clock that moves BACKWARD (NTP step, a VM restored from
+    snapshot, a suspend/resume on a laptop) made ``now - cached`` negative, the
+    test passed, and the previously fresh snapshot was served without ever
+    re-reading the report — a stale reading that heals itself only once wall
+    time catches back up (cross-family review, 18/09/2026). A negative age is
+    not freshness; it is a clock we cannot reason about.
+    """
     global _cache
-    if _cache is not None and now - _cache[0] < TTL_S:
+    if _cache is not None and 0.0 <= now - _cache[0] < TTL_S:
         return _cache[1]
     snapshot = _read(now)
     _cache = (now, snapshot)

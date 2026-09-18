@@ -44,3 +44,26 @@ All 17 findings still require acceptance against the delivered source. `verify-l
 16. **Duration/account iconography is consistent — code-proven.** Each row must use `⏱️` for 5h and `📅` for 7d, show Codex A/B/C as plain badges beside a neutral family icon, preserve raw labels for unknown periods, and honor explicit custom icons. Boxed account glyphs or row-to-row duration-icon changes must be absent.
 
 17. **Acceptance evidence is row-scoped — code-proven.** For every stable `data-subscription-id`, the same visible row must contain its expected identity, observed/configured plan provenance, duration icons, and visibility state. An icon or label found only in another row must not satisfy the finding.
+
+## Cross-family adversarial review — 18/09/2026 (GPT-6 Astra)
+
+The gate this document says was outstanding. Findings, all reproduced by the
+reviewer against local HEAD `3d467e0`, and their disposition:
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1 | MAJOR | `_attach_binding` recommended an account whose own usage call answered `credential rejected (401)` — `_account_status` files an endpoint failure as a note and keeps the verdict `ok`, so the 12% beside it was never actually readable | `routing_eligible` gate on the account row (fail-closed: absent = no); a sibling that exists but cannot be verified now renders "no verified alternative", and "every sibling is blocked too" is reserved for siblings that really are closed |
+| 2 | MAJOR | A PACING binding — a window upstream still reports as `allowed` — rendered as `blocked` with a `reopens in` | Wording follows the measured `evidence` already on the object: `throttled` → blocked/reopens, `pacing` → binding constraint/resets in |
+| 3 | MAJOR | `data-revision` / `data-local` were inert; a tab open across a deploy kept old CSS/header/settings while receiving new markup | `hx-vals` on `#stats` reports the revision each tab was rendered with; `stats_partial` answers `HX-Refresh` on mismatch |
+| 4 | MAJOR | `math.isfinite()` raises `OverflowError` on `intervalSeconds: 10**400` in the report JSON, crashing both dashboard endpoints | `lanes._pct` classifies an unrepresentable number as invalid instead of raising |
+| 5 | MINOR | `_collect_view` handed the DISPLAY-PROJECTED view to the advisor, so `show_primary: false` made it diagnose an empty fleet | `_collect_view(project=False)` for the advisor; projection is applied in rendering handlers only |
+| 6 | MINOR | `now - cached < TTL` is true for a negative elapsed time, so a backward clock step served a stale snapshot without re-reading | Bounded cache window `0 <= elapsed < TTL` |
+
+Clean on review: deep-copy isolation, gauge-before-display ordering, explicit
+credential refusals reaching the verdict, and ordinary missing/bool/NaN/infinite
+cadence inputs all failing closed. Row-scoped icon/plan assertions verified real;
+the July/August regression checks still exercise their named cases; no SDK,
+token-logging, script-count or palette violation.
+
+The reviewer could not certify the OpenAI-authored portion of the diff, and
+browser acceptance at the widths below is recorded in the PR rather than here.

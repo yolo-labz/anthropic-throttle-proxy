@@ -16,14 +16,21 @@
 {% if status.binding %}
 <div class="binding {{ status.level }}" role="status" aria-label="Binding constraint">
   <div class="binding-what">
-    <span class="binding-label">blocked</span>
+    {# "Blocked" is a capability claim, so only an upstream refusal earns it.
+       `_compute_status` also builds a binding object for PACING — a window
+       past the warn line that is still `allowed` — and the page labelled that
+       `blocked` with a `reopens in`, which turns queue pressure into a quota
+       refusal (cross-family review, 18/09/2026). The measured reason is
+       already on the object as `evidence`; the wording follows it. #}
+    {% set refused = status.binding.evidence == "throttled" %}
+    <span class="binding-label">{{ "blocked" if refused else "binding constraint" }}</span>
     <span class="binding-sub">{{ status.binding.subscription or status.binding.bearer_id }}</span>
     {% if status.binding.sub %}<span class="binding-email">{{ status.binding.sub }}</span>{% endif %}
   </div>
   <div class="binding-window">
     <span class="binding-label">{{ status.binding.window }} window</span>
     <span class="binding-pct">{{ status.binding.pct }}%</span>
-    {% if status.binding.resets_in %}<span class="binding-note">reopens in {{ status.binding.resets_in }}</span>
+    {% if status.binding.resets_in %}<span class="binding-note">{{ "reopens in" if refused else "resets in" }} {{ status.binding.resets_in }}</span>
     {% elif status.binding.retry_after %}<span class="binding-note">retry-after {{ status.binding.retry_after }}s</span>{% endif %}
   </div>
   <div class="binding-next">
@@ -31,6 +38,12 @@
     {% if status.binding.next_usable %}
       <span class="binding-sub">{{ status.binding.next_usable }}</span>
       <span class="binding-note">{{ status.binding.next_usable_pct }}% used</span>
+    {% elif status.binding.next_usable_unknown %}
+      {# A sibling exists but carries no reading we can trust. That is a
+         different fact from "every sibling is blocked", and only one of the
+         two is knowable here — so the page says the one it knows. #}
+      <span class="binding-none">no verified alternative</span>
+      <span class="binding-note">a sibling exists but its capacity is unmeasured or its endpoint is failing</span>
     {% else %}
       <span class="binding-none">nothing — every sibling is blocked too</span>
     {% endif %}

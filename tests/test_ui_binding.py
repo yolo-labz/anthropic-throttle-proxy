@@ -11,7 +11,14 @@ from __future__ import annotations
 from anthropic_throttle_proxy.ui import routes
 
 
-def _sub(label, bearer, pct, status="ok", window="7d"):
+def _sub(label, bearer, pct, status="ok", window="7d", routing_eligible=True):
+    """One account row, in the shape `_build_subscriptions` emits.
+
+    `routing_eligible` is REQUIRED here rather than defaulted away in the
+    production code: it is the account's right to be named as "what takes
+    traffic next", and `_attach_binding` treats a missing value as a NO. A
+    fixture that wants the recommendation has to claim the evidence for it.
+    """
     return {
         "id": label,
         "sub": f"{label.lower()}@example.test",
@@ -19,6 +26,7 @@ def _sub(label, bearer, pct, status="ok", window="7d"):
         "family": "anthropic",
         "status": status,
         "meters": [{"label": window, "pct": pct, "reset_in": "2d 3h"}],
+        "routing_eligible": routing_eligible,
     }
 
 
@@ -89,7 +97,7 @@ def test_a_spent_weekly_budget_is_not_clear():
 
 
 def _refused(label, bearer, pct):
-    row = _sub(label, bearer, pct)
+    row = _sub(label, bearer, pct, routing_eligible=False)
     row["status"] = "refused"
     return row
 

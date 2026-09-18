@@ -714,6 +714,23 @@ def _build_subscriptions(
                 }
             )
         status, detail = _account_status(account)
+        # Whether this account may be NAMED as "what takes traffic next".
+        # `_account_status` folds an endpoint failure into the row's detail as
+        # a note while leaving the verdict at `ok`, so an account whose own
+        # usage call came back "credential rejected (401)" still ranked as the
+        # freest lane and got recommended — a routing suggestion built on a
+        # meter we could not read (cross-family review, 18/09/2026). Every
+        # signal that the reading is untrustworthy has to veto the
+        # recommendation, and the absence of a signal is not a signal: the
+        # default is False.
+        credential = account.get("credential")
+        routing_eligible = (
+            status == "ok"
+            and not account.get("endpoint_err")
+            and not account.get("error")
+            and not account.get("locked_in")
+            and not (isinstance(credential, dict) and credential.get("ok") is False)
+        )
         rows.append(
             {
                 "id": account.get("label") or "?",
@@ -739,6 +756,7 @@ def _build_subscriptions(
                 "status_icon": _STATUS_ICONS.get(status, "❔"),
                 "detail": detail,
                 "billing": None,
+                "routing_eligible": routing_eligible,
             }
         )
     for lane in lanes_view.get("lanes") or []:
@@ -856,19 +874,26 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
                 if meter.get("label") == bound["window"]:
                     bound["resets_in"] = meter.get("reset_in") or ""
             break
-    # Next usable: an Anthropic sibling with MEASURED headroom — serving
-    # (status "ok") with at least one real meter reading. Review B2: an
-    # "unseen" account has no evidence of usability, and ranking missing
-    # meters as 0% manufactured a routing recommendation out of no data
-    # (the exact finding-8 lie: "takes traffic next" must be earned).
-    candidates = [
+    # Next usable: an Anthropic sibling with MEASURED headroom AND trustworthy
+    # evidence for the reading. Two independent gates, because they fail
+    # differently:
+    #   * `routing_eligible` — the account may be recommended at all. An
+    #     endpoint error, a locked usage window or a refused credential means
+    #     the meter beside it cannot be trusted, even though its percentage
+    #     looks like every other percentage (cross-family review, 18/09/2026:
+    #     a `credential rejected (401)` account was offered as the way out on
+    #     the strength of a 12% number).
+    #   * a real meter reading — an "unseen" account has no evidence of
+    #     usability, and ranking missing meters as 0% manufactured a routing
+    #     recommendation out of no data (review B2 / finding 8: "takes traffic
+    #     next" must be earned).
+    siblings = [
         row
         for row in subscriptions
-        if row.get("family") == "anthropic"
-        and not row.get("is_binding")
-        # "refused" names a quarantined credential; "unseen" names no
-        # evidence. Neither may be offered as what takes traffic next.
-        and row.get("status") == "ok"
+        if row.get("family") == "anthropic" and not row.get("is_binding")
+    ]
+    candidates = [
+        row for row in siblings if row.get("routing_eligible") and row.get("status") == "ok"
     ]
 
     def _fill(row: dict) -> float | None:
@@ -880,10 +905,26 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
     if measured:
         bound["next_usable"] = measured[0][0]["id"]
         bound["next_usable_pct"] = round(measured[0][1])
+    elif siblings and not all(row.get("status") in _CLOSED_STATUSES for row in siblings):
+        # A sibling EXISTS that is not itself closed, but no reading of it
+        # could be trusted. "Nothing — every sibling is blocked too" is a
+        # different claim from "I cannot tell", and the template used to make
+        # the stronger one for both (review finding 1). Reserved for the case
+        # where every sibling really is in a closed state.
+        bound["next_usable_unknown"] = True
 
 
-async def _collect_view() -> dict[str, object]:
-    """Snapshot the proxy's globals into a JSON-safe view for the template."""
+async def _collect_view(*, project: bool = True) -> dict[str, object]:
+    """Snapshot the proxy's globals into a JSON-safe view for the template.
+
+    ``project=False`` returns the UNFILTERED view, before
+    ``presentation.apply_display`` hides configured families/rows. Rendering
+    handlers want the projection; the advisor does not — it reads the snapshot
+    to reason about the fleet, and handing it a view whose bearer list had been
+    emptied and whose verdict had been replaced by a display placeholder meant
+    it diagnosed a page that does not exist (cross-family review, 18/09/2026:
+    hiding the button never disabled the endpoint).
+    """
     cs = _proxy.state["central_status"]
     ui_cfg = _fleet_ui_config.load()
     # Review major: hiding a family is a DISPLAY choice (apply_display below
@@ -978,46 +1019,47 @@ async def _collect_view() -> dict[str, object]:
     subscriptions = _fleet_ui_config.decorate(subscriptions, ui_cfg)["rows"]
     _attach_binding(status, subscriptions)
     knobs = _config.knob_snapshot()
-    return apply_display(
-        {
-            # Frozen-clock freshness: this panel is swapped every 2s, so a
-            # stamp that stops moving IS the disconnect signal — visible
-            # staleness without a single line of custom JavaScript (review
-            # major: the old inline watchdog script broke the HTMX-only
-            # load-bearing invariant).
-            "as_of": datetime.fromtimestamp(now).strftime("%H:%M:%S"),
-            "config_count": len(knobs),
-            "override_count": sum(k.get("override") is True for k in knobs),
-            "signals": _signals.collect(),
-            "subscriptions": subscriptions,
-            "fleet_ui_config_error": ui_cfg.get("config_error"),
-            "identity": identity,
-            "providers": providers,
-            "lanes": lanes_view,
-            "copilot": copilot_view,
-            "status": status,
-            "inflight": _proxy.state["inflight"],
-            "queued": _proxy.state["queued"],
-            # Streams parked in an SSE keepalive-hold. Peer of inflight/queued, not
-            # a total: a held request is already answered 200 and is counted by
-            # neither, so without this row the operator's screen shows an idle proxy
-            # while it is holding streams open (spec 092 T003).
-            "holds": _proxy.state["keepalive_holds_active"],
-            "served": _proxy.state["served"],
-            "disconnects": _proxy.state["client_disconnects"],
-            "retries": _proxy.state["upstream_retries"],
-            "max_concurrent": _proxy.MAX_CONCURRENT,
-            "queue_mode": _proxy.QUEUE_MODE,
-            "min_dispatch_gap_ms": int(_proxy.MIN_DISPATCH_GAP_S * 1000),
-            "upstream": _proxy.UPSTREAM,
-            "central_url": central_url,
-            "central_status": cs,
-            "bearers": bearers,
-            "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
-            "last_advisor": _proxy.state.get("last_advisor"),
-        },
-        ui_cfg,
-    )
+    view = {
+        # Frozen-clock freshness: this panel is swapped every 2s, so a
+        # stamp that stops moving IS the disconnect signal — visible
+        # staleness without a single line of custom JavaScript (review
+        # major: the old inline watchdog script broke the HTMX-only
+        # load-bearing invariant).
+        "as_of": datetime.fromtimestamp(now).strftime("%H:%M:%S"),
+        "config_count": len(knobs),
+        "override_count": sum(k.get("override") is True for k in knobs),
+        "signals": _signals.collect(),
+        "subscriptions": subscriptions,
+        "fleet_ui_config_error": ui_cfg.get("config_error"),
+        "identity": identity,
+        "providers": providers,
+        "lanes": lanes_view,
+        "copilot": copilot_view,
+        "status": status,
+        "inflight": _proxy.state["inflight"],
+        "queued": _proxy.state["queued"],
+        # Streams parked in an SSE keepalive-hold. Peer of inflight/queued, not
+        # a total: a held request is already answered 200 and is counted by
+        # neither, so without this row the operator's screen shows an idle proxy
+        # while it is holding streams open (spec 092 T003).
+        "holds": _proxy.state["keepalive_holds_active"],
+        "served": _proxy.state["served"],
+        "disconnects": _proxy.state["client_disconnects"],
+        "retries": _proxy.state["upstream_retries"],
+        "max_concurrent": _proxy.MAX_CONCURRENT,
+        "queue_mode": _proxy.QUEUE_MODE,
+        "min_dispatch_gap_ms": int(_proxy.MIN_DISPATCH_GAP_S * 1000),
+        "upstream": _proxy.UPSTREAM,
+        "central_url": central_url,
+        "central_status": cs,
+        "bearers": bearers,
+        "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
+        "last_advisor": _proxy.state.get("last_advisor"),
+    }
+    # Display projection is a RENDERING concern: metrics and gauges were already
+    # published above from the unfiltered snapshot, and the advisor reads the
+    # unfiltered one too.
+    return apply_display(view, ui_cfg) if project else view
 
 
 async def index(
@@ -1032,12 +1074,35 @@ async def index(
 async def stats_partial(
     request: web.Request,
 ) -> web.Response:
-    """GET /ui/stats — render the live stats ``<table>`` partial (hx-polled)."""
-    return aiohttp_jinja2.render_template(
+    """GET /ui/stats — render the live stats ``<table>`` partial (hx-polled).
+
+    A partial swap does not reload the page, so a tab opened before a deploy
+    keeps the OLD stylesheet, header, settings panel and footer while receiving
+    markup rendered by the new build — and toggling ``show_primary`` leaves the
+    same tab with a projection whose surrounding page no longer matches it. The
+    panel carries the revision and the display mode it was rendered with
+    (``hx-vals`` on ``#stats``, set once per page load, so every tab answers
+    with its OWN values), and when either stops matching the server asks htmx
+    for a full reload. Without this the attributes were inert: they described
+    the divergence and nothing acted on it (cross-family review, 18/09/2026).
+    """
+    view = await _collect_view()
+    response = aiohttp_jinja2.render_template(
         "partials/stats.html",
         request,
-        {**await _collect_view(), "partial_response": True, "asset_v": _ASSET_V},
+        {**view, "partial_response": True, "asset_v": _ASSET_V},
     )
+    page_rev = request.query.get("rev")
+    page_local = request.query.get("local")
+    local_now = "true" if view.get("show_local", True) else "false"
+    # An absent value is a client that never declared one (a direct GET of
+    # /ui/stats, a curl probe) — it has nothing to be stale against, so it is
+    # never told to reload.
+    if (page_rev is not None and page_rev != _ASSET_V) or (
+        page_local is not None and page_local != local_now
+    ):
+        response.headers["HX-Refresh"] = "true"
+    return response
 
 
 async def advisor(request: web.Request) -> web.Response:
@@ -1067,7 +1132,11 @@ async def advisor(request: web.Request) -> web.Response:
     # Lazy import — keeps the advisor (and its HTTP client) off the hot path.
     from .advisor_impl import recommend
 
-    snapshot = await _collect_view()
+    # The advisor reasons about the FLEET, not about this page's layout, so it
+    # gets the unfiltered snapshot: a display projection that had emptied the
+    # bearer list and replaced the verdict with a placeholder made it diagnose
+    # a page that does not exist.
+    snapshot = await _collect_view(project=False)
     try:
         recommendation = await recommend(snapshot)
     except Exception as exc:
