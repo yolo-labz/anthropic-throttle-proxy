@@ -74,6 +74,18 @@ def _context() -> dict:
             "verdict": "PACING",
             "since": "23m",
             "detail": "2 of 4 bearers pacing · binding: 7d window 94% on b144f62f",
+            # The hero renders verdict + binding + way-out as one object, so the
+            # preview has to carry a binding or it accepts a hero that never
+            # shows the thing the page exists to show.
+            "binding": {
+                "subscription": "pedro@pm.me",
+                "sub": "pedro@pm.me",
+                "window": "7d",
+                "pct": 94,
+                "resets_in": "2d 04h",
+                "next_usable": "pedro@proton.me",
+                "next_usable_pct": 38,
+            },
         },
         # #227 context. The preview has to carry them or the template raises on
         # `lanes.age_s` — which is exactly how this tool was found broken: the

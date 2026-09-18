@@ -526,16 +526,17 @@ def test_pacing_is_not_rendered_as_a_blocked_subscription():
         )
 
     pacing = render("pacing")
-    # Scoped to the binding block: the phrase "blocked" also appears in the
-    # no-sibling fallback text, which is a different sentence about a
-    # different fact.
-    assert '<span class="binding-label">binding constraint</span>' in pacing
-    assert '<span class="binding-label">blocked</span>' not in pacing
+    # Scoped to the binding fact's label: the phrase "blocked" also appears in
+    # the no-sibling fallback text, which is a different sentence about a
+    # different fact. The binding block was folded into the hero in the 18/09
+    # UX pass, so its label is a <dt> rather than a `.binding-label` span.
+    assert "<dt>binding constraint</dt>" in pacing
+    assert "<dt>blocked</dt>" not in pacing
     assert "reopens in" not in pacing
     assert "resets in 1h" in pacing
 
     throttled = render("throttled")
-    assert '<span class="binding-label">blocked</span>' in throttled
+    assert "<dt>blocked</dt>" in throttled
     assert "reopens in 1h" in throttled
 
 

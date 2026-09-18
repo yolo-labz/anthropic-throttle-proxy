@@ -25,7 +25,6 @@
       <span class="badge" title="Per-bearer concurrent ceiling. AIMD lowers the live value on 429s.">MAX <b>{{ max_concurrent }}</b></span>
       <span class="badge" title="Queue mode: off / observe / fair.">mode <b>{{ queue_mode }}</b></span>
       <span class="badge" title="Minimum gap between upstream dispatches (ms). 0 = disabled.">gap <b>{{ min_dispatch_gap_ms }}ms</b></span>
-      <span class="badge upstream" title="Upstream URL (THROTTLE_UPSTREAM / THROTTLE_CENTRAL_URL).">→ <b>{{ upstream }}</b></span>
       {% if central_url != "(direct)" %}
         <span class="badge central-{{ central_status }}" title="Central tier health (polled).">● central {{ central_status }}</span>
       {% endif %}
@@ -33,7 +32,7 @@
       {# The advisor is an action, not a section: a standing paragraph that
          explains the feature costs a screen the operator came here to read. #}
       {% if show_local | default(true) %}
-      <button class="ghost" {% if not advisor_enabled %}disabled aria-disabled="true"{% endif %}
+      <button class="ghost primary" {% if not advisor_enabled %}disabled aria-disabled="true"{% endif %}
               hx-post="/ui/advisor"
               hx-target="#advisor-out"
               hx-swap="innerHTML"
@@ -46,16 +45,15 @@
     </div>
   </header>
 
+  {# The panel explains its own freshness instead of the page carrying a
+     paragraph about it. `#stats` is swapped every 2s, so the `.as-of` stamp
+     inside it is replaced every 2s — and a CSS animation ON that stamp only
+     completes when a swap STOPS arriving, at which point it turns amber and
+     says "last known" by itself. That is a disconnect detector with no
+     JavaScript, which is the only kind this page is allowed to have
+     (CLAUDE.md invariant 6). The paragraph that used to sit here explained
+     the mechanism to an operator who had come here to read a number. #}
   <main>
-    <p id="refresh-state" class="refresh-state" role="status" aria-live="polite">Page refresh every 2s; meter sampling is separate. If the “as of” stamp in the status strip stops moving, the refresh disconnected and readings are last known, not live.</p>
-    {# `hx-vals` tells the server which build and which display mode THIS tab was
-       rendered with, once, at page load. A partial swap never reloads the
-       stylesheet or the header, so a tab left open across a deploy would
-       otherwise mix old chrome with new markup, and toggling `show_primary`
-       would leave a projected panel inside a page that no longer matches it.
-       When either value stops matching, the server answers `HX-Refresh` and
-       htmx reloads the whole page. Without this the panel's revision/display
-       attributes described the divergence and nothing acted on it. #}
     <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML"
              hx-vals='{"rev": "{{ asset_v }}", "local": "{{ 'true' if show_local | default(true) else 'false' }}"}'>
       {% include "partials/stats.html" %}
@@ -64,11 +62,14 @@
     <div id="advisor-out"></div>
 
     {% if show_local | default(true) %}
+    {# A disclosure sized to its own label. It used to span 2500px — a summary
+       bar with six words on the left, a hint on the far right and nothing in
+       between, which reads as a broken table row rather than a control. #}
     <details class="config-section">
       <summary>
         <span>settings</span>
         <span id="config-summary" class="muted">{{ config_count | default('—') }} settings · {{ override_count | default('—') }} overrides · autosave on change</span>
-        <span class="muted summary-hint" data-closed="click to expand" data-open="click to collapse" aria-hidden="true"></span>
+        <span class="muted summary-hint" data-closed="expand" data-open="collapse" aria-hidden="true"></span>
       </summary>
       <section id="config" hx-get="/ui/config" hx-trigger="toggle from:closest details once" hx-target="#config" hx-swap="innerHTML">
         <p class="muted">Loading…</p>
@@ -86,7 +87,8 @@
   {# Load-bearing invariant (CLAUDE.md): the dashboard renders without
      JavaScript modules — exactly ONE script tag (the HTMX runtime above).
      Disconnect/build-change staleness is signalled server-side instead:
-     every swap re-renders the panel's “as of” clock and the asset-versioned
-     URLs give each build its own cache entries (see dashboard-refresh-check). #}
+     every swap re-renders the panel's "as of" clock, its CSS animation
+     restarts with it, and the asset-versioned URLs give each build its own
+     cache entries (see tests/dashboard-refresh-check.mjs). #}
 </body>
 </html>

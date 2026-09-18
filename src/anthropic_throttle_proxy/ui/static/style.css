@@ -36,6 +36,37 @@
      available for non-text use (hairlines, an idle dot). */
   --muted: var(--ctp-subtext0);
 
+  /* ── type scale ────────────────────────────────────────────────────────
+     Five steps, and nothing on the page outside them. Before this pass a
+     computed-style census of the live panel found NINE distinct font sizes
+     between 8.7px and 11.9px (8.7/9.57/10.44/10.73/11.31/11.6/11.89) — a
+     1.37× spread carrying no hierarchy at all. The panel title (10.73px) was
+     *smaller* than its own column headers (11.31px) and smaller again than
+     the row identities under it (11.6px): every level of the document was the
+     same size as every other, which is what "this is screaming AI made"
+     actually describes. A size now stands for a rank:
+       hero   — the verdict and the binding percentage; the answer to "what is
+                wrong", one per page
+       value  — a gauge scalar; the one number in a tile
+       title  — a panel heading, or the name of the thing a row is about
+       body   — a reading: a value, a meter label, a plan
+       meta   — the floor: column headers, units, provenance. Never smaller. */
+  --fs-hero:  1.6rem;
+  --fs-value: 1.25rem;
+  --fs-title: 0.95rem;
+  --fs-body:  0.85rem;
+  --fs-meta:  0.75rem;
+  /* Column headers are their own step: uppercase at this size stays legible
+     (a WCAG 1.4.3 concern at the old 0.62rem) and still sits BELOW the values
+     it labels, which is the point — a header that outranks its data makes
+     every row start at the header. */
+  --fs-head:  0.7rem;
+  /* Chips and tags — the one size BELOW the floor, for the short uppercase
+     labels that are themselves an annotation on another label ("rejected",
+     "primary", "spent"). They read as a footnote to the row rather than as
+     another value. */
+  --fs-tag:   0.68rem;
+
   /* Emoji families are LAST in both stacks, and they are load-bearing rather
      than decoration: #215 moved provider, meter and status icons INSIDE mono
      and sans spans, and a stack that ends at the `monospace` / `sans-serif`
@@ -59,11 +90,19 @@
 
   --hairline: 1px solid var(--ctp-surface0);
   --hairline-strong: 1px solid var(--ctp-surface1);
-  --radius: 6px;
-  --radius-sm: 3px;
+  --radius: 8px;
+  --radius-sm: 4px;
+  --panel: var(--ctp-mantle);
+  /* Reading measure for the one place this page has real sentences: the hero
+     detail and the advisor output. Tables are scanned, not read. */
+  --measure: 92ch;
 }
 
 * { box-sizing: border-box; }
+
+/* The root carries the scale; 15px rather than the old 14.5px because the
+   whole page is set in rem and the floor (`--fs-meta`) had drifted to 8.7px. */
+html { font-size: 15px; }
 
 html, body {
   margin: 0;
@@ -71,142 +110,232 @@ html, body {
   background: var(--ctp-base);
   color: var(--ctp-text);
   font-family: var(--sans);
-  font-size: 14.5px;
-  line-height: 1.5;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
 }
 
 body {
+  font-size: var(--fs-body);
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding: 1.4rem clamp(0.8rem, 3vw, 2.4rem);
-  gap: 1.1rem;
+  padding: 1rem clamp(0.75rem, 2vw, 1.6rem) 1.2rem;
+  gap: 0.85rem;
   /* No page-level cap. The 102rem cap added on 04/08 fixed "broken spaces"
      (fixed-layout tables dividing 2560px evenly between six columns) by
      shrinking the CANVAS, which is the wrong lever for an ops console: at
      2560px it left 1151px — 45% of the viewport — as inert background while
-     the operator read a 1409px column mid-incident. The columns are governed
-     where the problem actually is: each table declares its own colgroup widths
-     and shrink-to-fit, so extra viewport goes to the payload columns instead
-     of to empty gutters. Prose keeps a readable measure via --measure below. */
+     the operator read a 1409px column mid-incident. The 29/08 pass removed the
+     cap and let each panel shrink to fit, which fixed the interior void and
+     created a worse one: measured before THIS pass, the capacity panel ended
+     766px short of the viewport, the providers panel 1211px short and the
+     bearers panel 1423px short, so the bottom right third of the screen was
+     background with three different right edges above it. The shell below is
+     where that width now goes. */
   width: 100%;
 }
-
-/* Reading measure for the one place this page has real sentences: the status
-   detail and the advisor output. Tables are scanned, not read, so they are
-   deliberately not capped by this. */
-:root { --measure: 96ch; }
 
 /* ── header ─────────────────────────────────────────────────────────── */
 header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  gap: 0.8rem 1rem;
+  gap: 0.6rem 1rem;
   border-bottom: var(--hairline);
-  padding-bottom: 0.85rem;
+  padding-bottom: 0.7rem;
 }
-.brand { display: flex; align-items: baseline; gap: 0.55rem; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
 .brand h1 {
   margin: 0;
   font-family: var(--mono);
-  font-size: 1.05rem;
+  font-size: var(--fs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--ctp-text);
 }
-.brand .role {
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  color: var(--muted);
-}
+.brand .role { font-family: var(--mono); font-size: var(--fs-meta); color: var(--muted); }
 .config { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
 .badge {
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: var(--fs-meta);
   color: var(--ctp-subtext0);
-  background: var(--ctp-mantle);
+  background: var(--panel);
   border: var(--hairline);
-  padding: 0.16rem 0.48rem;
+  padding: 0.2rem 0.5rem;
   border-radius: var(--radius-sm);
   white-space: nowrap;
 }
 .badge b { color: var(--ctp-subtext1); font-weight: 500; }
-.badge.upstream b { color: var(--accent); }
 .badge.central-up      { color: var(--ok);   border-color: color-mix(in srgb, var(--ok) 40%, var(--ctp-surface0)); }
 .badge.central-down    { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, var(--ctp-surface0)); }
 .badge.central-unknown { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, var(--ctp-surface0)); }
 
 /* ── main ───────────────────────────────────────────────────────────── */
-main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
+main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
 
-/* ── status strip ───────────────────────────────────────────────────── */
-.status {
-  display: flex;
-  flex-wrap: wrap;
+/* ── shell: the page's one layout decision ──────────────────────────────
+   Two columns only once BOTH of them clear their own minimum: the board needs
+   ~52rem (a 21rem identity, an 11rem burn and a two-up meter grid) and the
+   rail ~44rem (six token columns). Below that the second column is a column
+   that scrolls, which is worse than no second column — so the breakpoint is
+   the sum of the two minimums plus the gap and the page padding, not a round
+   number. Two tracks outright, never `auto-fit`: an intrinsic track count
+   opens more tracks than the page has panels (measured: `auto-fit` at 34rem
+   opened four at 2560px and drew two, re-creating the dead third of the
+   viewport this shell exists to remove). */
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
+  align-content: start;
+}
+@media (min-width: 1600px) {
+  .shell { grid-template-columns: minmax(0, 1.3fr) minmax(40rem, 1fr); }
+}
+/* The answer and the gauges are the whole width of the page at every size;
+   only the two boards divide it. */
+.shell > .hero,
+.shell > .gauges,
+.shell > .advisor-auto,
+.shell > .status,
+.shell > .rail-panel { grid-column: 1 / -1; }
+
+/* ── hero: the answer ──────────────────────────────────────────────── */
+/* Verdict + duration + the binding constraint + the way out, as one object.
+   They used to be a thin strip, a separate conditional strip, and a clause
+   inside a sentence naming a bearer hash respectively. */
+.hero {
+  display: grid;
+  /* Verdict + detail take the slack; the facts sit at their natural width
+     against the right edge. `auto` on the facts track, not `1fr`, because
+     `1fr` spread three short labelled values evenly across 1800px and turned
+     a three-fact readout into three islands. */
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 0.75rem;
-  background: var(--ctp-mantle);
+  gap: 0.5rem 2.5rem;
+  background: var(--panel);
   border: var(--hairline);
   border-left: 3px solid var(--muted);
   border-radius: var(--radius);
-  padding: 0.7rem 0.95rem;
+  padding: 0.8rem 1.1rem;
 }
-.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-.status .verdict {
+.hero-verdict { grid-column: 1; grid-row: 1; display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.hero .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; align-self: center; }
+.hero .verdict {
   font-family: var(--mono);
-  font-weight: 600;
-  font-size: 0.82rem;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  font-size: var(--fs-hero);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
   color: var(--ctp-subtext0);
 }
-.status .detail { color: var(--ctp-subtext0); font-size: 0.82rem; max-width: var(--measure); min-width: 0; overflow-wrap: anywhere; }
 /* "THROTTLED for 12m" — duration is what separates a transient from an
    outage, and the verdict alone never said it. */
-.status .since { font-family: var(--mono); font-size: 0.72rem; color: var(--ctp-subtext0); }
-.status .detail b { color: var(--ctp-text); font-family: var(--mono); font-weight: 500; }
-.status.healthy   { border-left-color: var(--ok); }
-.status.healthy   .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
-.status.healthy   .verdict { color: var(--ok); }
-.status.pacing    { border-left-color: var(--warn); }
-.status.pacing    .dot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent); }
-.status.pacing    .verdict { color: var(--warn); }
-.status.throttled { border-left-color: var(--crit); }
-.status.throttled .dot { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 18%, transparent); }
-.status.throttled .verdict { color: var(--crit); }
-.status.crit, .status.identity-banner { border-left-color: var(--crit); }
-.status.crit .dot, .status.identity-banner .dot { background: var(--crit); }
-.status.crit .verdict, .status.identity-banner .verdict { color: var(--crit); }
-
-/* ── signal strip (RED / four golden signals, as 60-minute traces) ──── */
-/* Replaces the five-scalar KPI row: a number with no baseline cannot be
-   judged, and the oversized-KPI-row is the most reliable "generated
-   dashboard" tell (docs/DASHBOARD-DESIGN.md). Same height, four traces. */
-.signals {
+.hero .since { font-family: var(--mono); font-size: var(--fs-body); color: var(--ctp-subtext0); }
+.hero-detail {
+  grid-column: 1;
+  grid-row: 2;
+  margin: 0.15rem 0 0;
+  color: var(--ctp-subtext0);
+  font-size: var(--fs-body);
+  max-width: var(--measure);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hero-detail b { color: var(--ctp-text); font-family: var(--mono); font-weight: 500; }
+.hero-facts {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  background: var(--ctp-mantle);
+  grid-template-columns: repeat(3, minmax(9rem, 1fr));
+  gap: 0.3rem 2rem;
+  margin: 0;
+  min-width: 0;
+}
+.hero .fact { min-width: 0; }
+.hero dt {
+  font-size: var(--fs-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin-bottom: 0.1rem;
+}
+.hero dd { margin: 0; display: flex; align-items: baseline; gap: 0.45rem; flex-wrap: wrap; }
+.hero .fact-v { font-family: var(--mono); font-size: var(--fs-title); font-weight: 600; color: var(--ctp-text); }
+.hero .fact-sub { font-size: var(--fs-meta); color: var(--ctp-subtext0); font-family: var(--mono); }
+.hero.healthy    { border-left-color: var(--ok); }
+.hero.healthy    .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+.hero.healthy    .verdict { color: var(--ok); }
+.hero.pacing     { border-left-color: var(--warn); }
+.hero.pacing     .dot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent); }
+.hero.pacing     .verdict { color: var(--warn); }
+.hero.throttled  { border-left-color: var(--crit); }
+.hero.throttled  .dot { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 18%, transparent); }
+.hero.throttled  .verdict { color: var(--crit); }
+.hero.crit, .hero.identity-banner { border-left-color: var(--crit); }
+.hero.crit .dot, .hero.identity-banner .dot { background: var(--crit); }
+.hero.crit .verdict, .hero.identity-banner .verdict { color: var(--crit); }
+
+/* ── the disconnect detector ────────────────────────────────────────────
+   #stats is re-rendered every 2s, so this stamp is a NEW element every 2s and
+   its animation restarts with it. Leave the page alone (a dead server, a
+   killed proxy, a dropped network) and the animation runs to its end, at
+   which point the stamp says "these readings are last known, not live" —
+   without one line of JavaScript, which is the only kind of watchdog this
+   page is allowed to have (CLAUDE.md invariant 6). 6s = three missed polls,
+   which is past any plausible jitter and well under how long an operator
+   stares at a frozen number before trusting it. */
+.as-of {
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0.05rem 0.35rem;
+  animation: swap-staleness 6s ease-in forwards;
+}
+.as-of::after { content: " · live"; }
+@keyframes swap-staleness {
+  0%, 88% { color: var(--muted); background: transparent; border-color: transparent; }
+  100%    { color: var(--ctp-base); background: var(--warn); border-color: var(--warn); }
+}
+@keyframes swap-staleness-after {
+  0%, 88% { content: " · live"; }
+  100%    { content: " · last known"; }
+}
+.as-of::after { animation: swap-staleness-after 6s steps(1, end) forwards; }
+
+/* ── gauges: the four golden signals ─────────────────────────────────── */
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  background: var(--panel);
   border: var(--hairline);
   border-radius: var(--radius);
   overflow: hidden;
 }
-.signal {
+.gauge {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.62rem 1rem 0.7rem;
+  gap: 0.2rem;
+  padding: 0.6rem 0.9rem 0.65rem;
   border-left: var(--hairline);
   min-width: 0;
 }
-.signal:first-child { border-left: none; }
-.sig-label { color: var(--muted); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; }
-.sig-row { display: flex; align-items: flex-end; gap: 0.6rem; }
-.sig-value {
+.gauge:first-child { border-left: none; }
+.gauge-label {
+  font-size: var(--fs-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.gauge-row { display: flex; align-items: flex-end; gap: 0.7rem; min-width: 0; }
+.gauge-value {
   font-family: var(--mono);
-  font-size: 1.25rem;
+  font-size: var(--fs-value);
   font-weight: 500;
   line-height: 1;
   color: var(--ctp-text);
@@ -215,128 +344,156 @@ main { display: flex; flex-direction: column; gap: 1.15rem; flex: 1; }
      reading `requests / min` meant scanning ~500px right to find `93`. Tufte's
      sparkline is a dataword ALONGSIDE its number, not a rule separating a
      label from its value; the trace now trails the number it annotates.
-     Reordered in the MARKUP, not with `order`, so the reading order a screen
+     Ordered in the MARKUP, not with `order`, so the reading order a screen
      reader gets still matches the visual one (WCAG 1.3.2). */
 }
-.sig-detail {
+.gauge-detail {
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: var(--fs-meta);
   font-family: var(--mono);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sig-detail .is-crit-text { color: var(--crit); font-weight: 500; }
-.spark { width: 100%; height: 20px; flex: 1 1 auto; min-width: 0; overflow: visible; }
+.gauge-detail .is-crit-text { color: var(--crit); font-weight: 500; }
+.gauge-detail .holds { color: var(--warn); font-weight: 500; }
+/* 30px, not the old 20px: at a ~440px tile the trace was rendering at 22:1,
+   where a 60-minute series is a flat squiggle whatever the data says. The
+   baseline is drawn, because a flat-zero series and a missing series must not
+   look the same. */
+.spark { width: 100%; height: 30px; flex: 1 1 auto; min-width: 0; overflow: visible; }
 .spark polyline { fill: none; stroke: var(--ctp-surface2); stroke-width: 1.2; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-.spark line { stroke: var(--ctp-surface1); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.spark .spark-base { stroke: var(--ctp-surface1); stroke-width: 1; vector-effect: non-scaling-stroke; }
 /* Level tints the trace AND the value, so the state is never carried by
    colour on its own — the number and its label say it too (WCAG 1.4.1). */
-.signal.is-warn .spark polyline { stroke: var(--warn); }
-.signal.is-warn .sig-value { color: var(--warn); }
-.signal.is-crit .spark polyline { stroke: var(--crit); }
-.signal.is-crit .sig-value { color: var(--crit); }
-.signal.totals { background: color-mix(in srgb, var(--ctp-crust) 45%, transparent); min-width: 15rem; }
-.signal.totals .sig-detail { white-space: normal; line-height: 1.45; }
+.gauge.is-warn .spark polyline { stroke: var(--warn); }
+.gauge.is-warn .gauge-value { color: var(--warn); }
+.gauge.is-crit .spark polyline { stroke: var(--crit); }
+.gauge.is-crit .gauge-value { color: var(--crit); }
+/* Lifetime counters are facts about the process, not alarms: a monotonic
+   counter that can only grow must not wear the incident colour (`133 retries`
+   in red) — that is how an operator is taught to ignore red. */
+.gauge.totals { background: color-mix(in srgb, var(--ctp-crust) 45%, transparent); }
+.gauge.totals .gauge-detail { white-space: normal; line-height: 1.4; }
 
-/* ── providers table (primary upstream + sibling lanes, unified) ────── */
-/* Auto layout + intrinsic width so 1-3 providers pack left instead of a fixed
-   table stretching a single column into a wide mid-row gap on a big screen. */
-/* Shrink-to-fit like the other tables: a single provider row stretched over
-   2560px puts `served` and `status` at opposite ends of an empty band. */
-table.bearers.providers { table-layout: fixed; width: auto; min-width: 62rem; max-width: 100%; }
-
-/* Column widths declared once, in the colgroup, instead of letting a fixed
-   layout divide the viewport evenly between six columns. */
-col.c-prov-name    { width: 14rem; }
-col.c-prov-upstream{ width: 22rem; }
-col.c-n            { width: 6.5rem; }
-col.c-n-sm         { width: 5rem; }
-table.bearers.providers td.prov-upstream { text-align: left; }
-table.bearers.providers th:nth-child(3),
-table.bearers.providers td:nth-child(3) { text-align: right; }
-/* The status cell carries a vendor error sentence; let it wrap to two lines
-   and keep the full text in the tooltip rather than clipping mid-word. */
-td.prov-status { white-space: normal; }
-.prov-err {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  /* `table.bearers td` sets nowrap; without this the clamp has nothing to
-     clamp and the sentence is cut mid-word at the cell edge. */
-  white-space: normal;
-  line-height: 1.35;
-}
-col.c-prov-status { width: 30rem; }
-table.bearers.providers th:nth-child(7),
-table.bearers.providers td:nth-child(7) { text-align: left; }
-.prov-status .prov-state { display: inline-block; }
-/* Level as TEXT, colour-matched to the row dot — so the dot is never the sole
-   carrier of the pacing state (WCAG 1.4.1). */
-.prov-state { font-family: var(--mono); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.prov-state.prov-healthy   { color: var(--ok); }
-.prov-state.prov-pacing    { color: var(--warn); }
-.prov-state.prov-throttled { color: var(--crit); }
-.prov-state.prov-idle      { color: var(--ctp-subtext0); }
-.prov-status .egress { margin-left: 0.5rem; }
-.prov-err { display: block; font-family: var(--mono); font-size: 0.66rem; color: var(--crit); margin-top: 0.1rem; }
-.prov { display: inline-flex; align-items: center; gap: 0.45rem; font-family: var(--mono); font-weight: 600; color: var(--ctp-text); }
-.provider-icon { display: inline-block; min-width: 1.35em; text-align: center; margin-right: 0.22rem; }
-.prov .provider-icon { margin-right: 0; }
-.prov .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
-.prov-healthy   .pdot { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
-.prov-pacing    .pdot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
-.prov-throttled .pdot { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 16%, transparent); }
-.prov-idle      .pdot { background: var(--muted); }
-.prov-tag { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border: 1px solid var(--ctp-surface1); border-radius: var(--radius-sm); padding: 0.02rem 0.32rem; margin-left: 0.45rem; }
-.prov-upstream { font-family: var(--mono); font-size: 0.74rem; color: var(--accent); }
-.egress { font-family: var(--mono); font-size: 0.68rem; }
-.egress.up   { color: var(--ok); }
-.egress.down { color: var(--crit); }
-
-/* ── binding constraint ─────────────────────────────────────────────── */
-/* The one object the operator reads first during an incident. Three facts,
-   left to right, in the order the question is asked: who is blocked, until
-   when, what takes traffic next. Sized above the tables and below the verdict;
-   no colour-only meaning — every field is labelled text. */
-.binding {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, auto));
-  gap: 0.4rem 2.5rem;
+/* ── panels ─────────────────────────────────────────────────────────── */
+h2 {
+  font-family: var(--mono);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ctp-text);
+  margin: 0.1rem 0 0.3rem;
+  display: flex;
   align-items: baseline;
-  padding: 0.7rem 0.95rem;
-  background: var(--ctp-mantle);
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+h2 .count { color: var(--muted); font-weight: 400; font-size: var(--fs-body); }
+h2 .h2-note { font-family: var(--sans); font-size: var(--fs-meta); letter-spacing: 0; color: var(--muted); font-weight: 400; }
+/* Secondary sections read as secondary: the budget board is the page, the
+   per-token traffic table is the detail under it. */
+h2.sub { font-size: var(--fs-body); }
+
+/* The meter report's cadence, as a labelled row rather than a sentence. It is
+   a property of the numbers below it, so it is the panel's caption — not a
+   paragraph between two panels explaining a mechanism. */
+.panel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.45rem;
+  margin: -0.1rem 0 0.35rem;
+  font-size: var(--fs-meta);
+  font-family: var(--mono);
+  color: var(--ctp-subtext0);
+}
+.panel-meta .pm-k { color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--fs-tag); }
+.panel-meta .pm-v { color: var(--ctp-subtext1); }
+.panel-meta .pm-sep { color: var(--ctp-surface2); }
+.panel-meta .pm-err { color: var(--warn); }
+.panel-meta .is-warn-text { color: var(--warn); }
+
+/* ── the panel surface ──────────────────────────────────────────────────
+   One bordered surface per panel, sized to the grid cell rather than to its
+   table. Shrink-to-fit is what produced the ragged right edge this replaces;
+   inside a shell cell the width is already meaningful, so the panel claims it
+   and the payload column absorbs it. */
+.bearers-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--panel);
   border: var(--hairline);
-  border-left: 3px solid var(--warn);
   border-radius: var(--radius);
+  width: 100%;
+  max-width: 100%;
+  outline: none;
 }
-.binding.throttled { border-left-color: var(--crit); }
-.binding.healthy   { border-left-color: var(--ok); }
-.binding-label {
-  display: block;
-  font-size: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
+.bearers-wrap:focus-visible { box-shadow: 0 0 0 2px var(--info); }
+
+/* ── tables ─────────────────────────────────────────────────────────── */
+table.bearers {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-body);
+  table-layout: fixed;
+}
+table.bearers th,
+table.bearers td {
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--ctp-surface0);
+  vertical-align: top;
+  min-width: 0;
+}
+table.bearers thead th {
   color: var(--muted);
-  margin-bottom: 0.15rem;
+  font-size: var(--fs-head);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 500;
+  border-bottom-color: var(--ctp-surface1);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+  vertical-align: bottom;
 }
-.binding-sub { font-family: var(--mono); font-size: 1rem; font-weight: 600; color: var(--ctp-text); }
-.binding-email { font-size: 0.68rem; color: var(--muted); margin-left: 0.4rem; }
-.binding-pct { font-family: var(--mono); font-size: 1rem; font-weight: 600; color: var(--crit); }
-.binding-note { font-size: 0.74rem; color: var(--ctp-subtext0); margin-left: 0.45rem; }
-.binding-none { font-family: var(--mono); font-size: 0.82rem; color: var(--crit); }
-/* Marker on the row the strip refers to — text, so it survives greyscale. */
+table.bearers thead th[title] { cursor: help; }
+table.bearers tbody tr { transition: background 80ms ease-out; }
+/* The zebra was mantle-over-base; on the mantle panel that is the panel's own
+   colour and the stripe disappears. Crust reads as a stripe on mantle.
+   Gated by tests/test_ui_contrast.py as a composited surface. */
+table.bearers tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--ctp-crust) 55%, transparent); }
+/* The panel draws the bottom edge, so a rule under the last row lands one
+   pixel above the border and reads as a double hairline. Child combinators
+   throughout: a descendant selector would also reach a future nested table. */
+table.bearers > tbody > tr:last-child > td { border-bottom: none; }
+table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 55%, transparent); }
+.num { font-family: var(--mono); }
+.is-warn-text { color: var(--warn); font-weight: 600; }
+.is-crit-text { color: var(--crit); font-weight: 600; }
+.muted { color: var(--ctp-subtext0); }
+table.bearers code { font-family: var(--mono); color: var(--ctp-peach); background: transparent; }
+
+/* Numbers stay right-aligned (tabular-nums makes the column scan); words do
+   not — a left-aligned label next to a right-aligned number is the pairing
+   that reads, not two edges of a 480px void. */
+table.bearers th.num, table.bearers td.num { text-align: right; }
+table.bearers th.th-center, table.bearers td.td-center { text-align: center; }
+
+/* ── the binding row ──────────────────────────────────────────────────── */
+/* Marker on the row the hero refers to — text, so it survives greyscale. */
 .binding-tag {
   font-family: var(--mono);
-  font-size: 0.6rem;
+  font-size: var(--fs-tag);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--crit);
   border: 1px solid color-mix(in srgb, var(--crit) 45%, var(--ctp-surface0));
   border-radius: var(--radius-sm);
-  padding: 0.02rem 0.3rem;
-  margin-left: 0.4rem;
+  padding: 0.02rem 0.32rem;
 }
 tr.row-binding > td { background: color-mix(in srgb, var(--crit) 7%, transparent); }
 /* The binding row is the page's decision object, but a 7% tint next to the
@@ -345,371 +502,370 @@ tr.row-binding > td { background: color-mix(in srgb, var(--crit) 7%, transparent
    and the `binding` tag in the cell still carries the meaning as text. */
 tr.row-binding > td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 
-/* ── section heading ────────────────────────────────────────────────── */
-h2 {
-  font-family: var(--mono);
-  font-size: 0.74rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--ctp-subtext0);
-  margin: 0.4rem 0 0.1rem;
+/* ── capacity board ───────────────────────────────────────────────────── */
+/* Three columns, and the row's verdict travels with its name instead of
+   sitting in the last column of a 1560px table — measured, the status was
+   1200px from the subscription it judged, so scanning "which lane is fine"
+   cost a head-turn per row. */
+col.c-sub   { width: 21rem; }
+col.c-meters { width: auto; }
+col.c-burn  { width: 11rem; }
+
+.sub-ident > .ident-row {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-}
-h2 .count { color: var(--muted); font-weight: 400; }
-/* Secondary sections read as secondary: the budget tables are the page, the
-   per-token traffic table is the detail under them. */
-h2.sub { font-size: 0.66rem; color: var(--muted); letter-spacing: 0.08em; }
-h2 .h2-note { font-family: var(--sans); font-size: 0.68rem; text-transform: none; letter-spacing: 0; color: var(--muted); font-weight: 400; }
-
-/* ── shared table styling (bearers + accounts + copilot) ────────────── */
-.bearers-wrap {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  /* The tables shrink-to-fit on purpose (#163), which on a wide screen left
-     three different right edges floating on the page background: providers
-     stopped ~700px short of the subscriptions table directly below it, and the
-     page read as unfinished rather than as dense. The panel is where that
-     leftover width was always meant to land — `table.bearers.subs` already
-     says "let it fall OUTSIDE the table" — and a bordered surface makes the
-     space deliberate instead of ragged, without widening a single column back
-     into the void #163 removed. */
-  background: var(--ctp-mantle);
-  border: var(--hairline);
-  border-radius: var(--radius);
-  /* The panel HUGS its table rather than spanning the page. A full-width panel
-     only relocated the problem: providers then drew ~800px of EMPTY bordered
-     surface, which is more conspicuous than the bare background was. Filling
-     it instead would mean handing a column the surplus, and the columns with
-     room to take it are capped on purpose (the meter bar stops at 24rem
-     because a 1100px bar is not more legible, only longer) — so the slack
-     would land in a void INSIDE a payload cell, which is the #163 regression
-     verbatim. A card sized to its content reads as deliberate. `max-width`
-     leaves the narrow-screen horizontal scroll exactly as it was. */
-  width: fit-content;
-  max-width: 100%;
-  outline: none;
-}
-.bearers-wrap:focus-visible { box-shadow: 0 0 0 2px var(--info); }
-table.bearers {
-  /* Shrink-to-fit, like the lanes and accounts tables (#163): with width:100%
-     the one column that has no declared width swallows the surplus, which is
-     what left a hand's width of nothing between `acct` and `inflight` on a
-     2560px screen. */
-  width: auto;
-  max-width: 100%;
-  border-collapse: collapse;
-  font-size: 0.8rem;
-  table-layout: fixed;
-  min-width: 64rem;
-}
-table.bearers .col-bearer { width: 9rem; }
-table.bearers .col-acct   { width: 7rem; }
-table.bearers .col-num    { width: 6.5rem; }
-table.bearers .col-aimd   { width: 6rem; }
-table.bearers .col-window { width: 10.5rem; }
-table.bearers th,
-table.bearers td {
-  text-align: left;
-  padding: 0.45rem 0.7rem;
-  border-bottom: 1px solid var(--ctp-surface0);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* Numbers stay right-aligned (tabular-nums makes the column scan); words do
-   not — a left-aligned label next to a right-aligned number is the pairing
-   that reads, not two edges of a 480px void. */
-table.bearers th.num,
-table.bearers td.num,
-table.bearers th.col-num,
-table.bearers td.col-num { text-align: right; }
-table.bearers th.th-center,
-table.bearers td.td-center { text-align: center; }
-table.bearers thead th {
-  color: var(--ctp-subtext0);
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 500;
-  border-bottom-color: var(--ctp-surface1);
-  position: sticky;
-  top: 0;
-  /* Matches the panel the table now sits in; on --ctp-base the sticky header
-     was a lighter band cutting across the surface behind it. */
-  background: var(--ctp-mantle);
-  z-index: 1;
-}
-table.bearers thead th[title] { cursor: help; }
-table.bearers tbody tr { transition: background 80ms ease-out; }
-/* The zebra was mantle-over-base; on the mantle panel that is the panel's own
-   colour and the stripe disappears. Crust reads as a stripe on mantle. */
-table.bearers tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--ctp-crust) 55%, transparent); }
-/* The panel draws the bottom edge, so a rule under the last row lands one
-   pixel above the border and reads as a double hairline. Child combinators
-   throughout: a descendant selector would also reach a future nested table. */
-table.bearers > tbody > tr:last-child > td { border-bottom: none; }
-table.bearers tbody tr:hover { background: color-mix(in srgb, var(--ctp-surface0) 55%, transparent); }
-.bearers .num.warn-text { color: var(--warn); font-weight: 600; }
-.util.compact .bar { width: 36px; }
-.util.compact .pct { min-width: 1.5rem; font-size: 0.74rem; }
-table.bearers code { font-family: var(--mono); color: var(--ctp-peach); background: transparent; }
-
-@media (max-width: 920px) {
-  table.bearers:not(.accounts):not(.copilot) th:nth-child(8),
-  table.bearers:not(.accounts):not(.copilot) th:nth-child(9),
-  table.bearers:not(.accounts):not(.copilot) td:nth-child(8),
-  table.bearers:not(.accounts):not(.copilot) td:nth-child(9) { display: none; }
-}
-
-.num { font-family: var(--mono); }
-.aimd { font-family: var(--mono); }
-.aimd.shrunk { color: var(--warn); }
-.aimd.floor  { color: var(--crit); font-weight: 600; }
-
-.tag-rejected {
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  color: var(--crit);
-  border: 1px solid var(--crit);
-  border-radius: var(--radius-sm);
-  padding: 0.02rem 0.28rem;
-  margin-left: 0.3rem;
-}
-
-/* ── per-account usage table ────────────────────────────────────────── */
-.acct { font-family: var(--mono); font-weight: 600; color: var(--accent); }
-.bearers .warn-text { color: var(--warn); }
-.tag-stale {
-  font-family: var(--mono);
-  font-size: 0.62rem;
-  color: var(--ctp-subtext0);
-  border: 1px solid var(--ctp-surface2);
-  border-radius: var(--radius-sm);
-  padding: 0.02rem 0.28rem;
-  margin-left: 0.3rem;
-}
-.tok { font-size: 0.78rem; }
-.tok-fresh    { color: var(--ctp-subtext0); }
-.tok-expiring { color: var(--warn); }
-.tok-expired  { color: var(--crit); font-weight: 600; }
-.reset-in { display: block; font-size: 0.8rem; margin-top: 0.12rem; }
-.reset-at { display: block; font-size: 0.78rem; color: var(--muted); }
-.accounts .email { font-size: 0.66rem; margin-top: 0.12rem; color: var(--muted); }
-/* Same shrink-to-fit as the lanes table: fixed columns + width:100% spreads
-   the surplus BETWEEN columns, which is the gap Pedro read as broken. */
-table.bearers.accounts { width: auto; max-width: 100%; }
-col.c-acct        { width: 13rem; }
-col.c-acct-bearer { width: 9rem; }
-col.c-acct-src    { width: 11rem; }
-col.c-acct-token  { width: 11rem; }
-col.c-acct-win    { width: 11rem; }
-col.c-acct-num    { width: 7rem; }
-
-/* inline utilization bar */
-.util { display: inline-flex; align-items: center; gap: 0.45rem; justify-content: flex-end; }
-.bar { width: 60px; height: 5px; border-radius: 3px; background: var(--ctp-surface0); overflow: hidden; flex: none; }
-.lane-meter .bar { width: auto; }
-.bar > i { display: block; height: 100%; border-radius: 3px; background: var(--ok); }
-.bar > i.warn { background: var(--warn); }
-.bar > i.crit { background: var(--crit); }
-.util .pct { font-family: var(--mono); font-size: 0.74rem; min-width: 2.4rem; text-align: right; }
-
-/* ── Pi provider registry + subscription lanes ─────────────────────── */
-.pi-lane-registry {
-  display: flex;
-  align-items: center;
+  gap: 0.4rem;
   flex-wrap: wrap;
-  gap: 0.35rem 0.55rem;
-  margin: 0.38rem 0 0.12rem;
-  font-family: var(--mono);
-  font-size: 0.68rem;
+  min-width: 0;
 }
-.registry-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.registry-provider { color: var(--ctp-text); border: var(--hairline); border-radius: var(--radius-sm); padding: 0.08rem 0.38rem; }
-.registry-note { color: var(--muted); }
-
-/* ── subscription lanes (every meter the host pays for) ─────────────── */
-/* Shrink-to-fit: with a 100% width the auto column swallows every spare pixel
-   and opens a void between the meters and the status badge. Let the leftover
-   width fall OUTSIDE the table instead of inside a cell. */
-/* The meters column is a genuine payload column that WANTS the surplus, so
-   this table may fill the measure — unlike #163's case, the spare width
-   lands inside the bars, not in a void between two edges. */
-table.bearers.lanes,
-table.bearers.subs { width: auto; min-width: 62rem; max-width: 100%; }
-col.c-sub         { width: 15rem; }
-col.c-pace        { width: 6rem; }
-col.c-eta         { width: 8rem; }
-col.c-sub-status  { width: 20rem; }
-.subs .src-note {
-  font-family: var(--sans);
-  font-size: 0.8rem;
-  color: var(--muted);
+.sub-ident .acct { font-family: var(--mono); font-weight: 600; font-size: var(--fs-title); color: var(--accent); }
+.sub-ident .lane-status { margin-left: auto; }
+.ident-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.05rem 0.35rem;
+  font-size: var(--fs-meta);
+  color: var(--ctp-subtext0);
   margin-top: 0.1rem;
 }
-.plan-cell { white-space: normal !important; }
-.billing { font-family: var(--mono); font-size: 0.66rem; margin-top: 0.12rem; }
+.ident-meta .im-sep { color: var(--ctp-surface2); }
+.ident-meta .im-family { color: var(--muted); }
+.ident-meta .id-tag { margin-left: 0; }
+.im-caption { font-size: var(--fs-meta); color: var(--ctp-subtext0); margin-top: 0.1rem; }
+.account-badge {
+  display: inline-block;
+  padding: 0 0.32rem;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--ctp-text);
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+}
+.billing { display: flex; flex-wrap: wrap; gap: 0.15rem 0.4rem; align-items: baseline; font-size: var(--fs-meta); margin-top: 0.2rem; color: var(--ctp-subtext0); }
 .billing-ok { color: var(--ok); }
 .billing-warn { color: var(--crit); font-weight: 600; }
 .billing-stale { color: var(--warn); }
-.billing-meta { font-family: var(--sans); font-size: 0.8rem; color: var(--ctp-subtext0); margin-top: 0.08rem; }
-.account-badge { display: inline-block; padding: 0.05rem 0.3rem; margin-right: 0.3rem; border: var(--hairline); border-radius: var(--radius-sm); color: var(--ctp-text); font-family: var(--mono); }
-.status-reason { white-space: normal; max-width: 26rem; font-size: 0.8rem; color: var(--ctp-subtext0); margin-top: 0.25rem; }
-.meter-freshness, .refresh-state { font-size: 0.85rem; color: var(--ctp-subtext0); }
-.refresh-lost { color: var(--warn); font-weight: 600; }
-button:disabled { cursor: not-allowed; opacity: 0.6; }
-/* Status vocabulary shared with the lane rows; the account-only verdicts are
-   new (a rejected window, a usage lock, a dead token, a never-seen bearer). */
-.lane-rejected      { color: var(--crit); }
-.lane-error         { color: var(--crit); }
-.lane-token-expired { color: var(--crit); }
-.lane-locked        { color: var(--warn); }
-.lane-unseen        { color: var(--ctp-subtext0); }
-.lane-refused       { color: var(--crit); font-weight: 600; }
-col.c-lane        { width: 13rem; }
-col.c-family      { width: 9rem; }
-col.c-plan        { width: 13rem; }
-/* Meters absorb the width the removed page cap used to waste: a longer bar is
-   a more readable bar, and at 2560px this is where the operator is looking. */
-col.c-meters      { width: auto; min-width: 26rem; }
-col.c-lane-status { width: 7rem; }
-/* The meters cell is the row's payload: give it the slack and keep every
-   meter on one left-aligned baseline grid instead of right-drifting each
-   label to a different x. */
-table.bearers.lanes td:nth-child(4),
-table.bearers.subs td:nth-child(4) { white-space: normal; }
-.lanes code { color: var(--accent); }
-.lane-meter {
-  display: grid;
-  /* Label tight against its bar: an 11rem label column parked the bar a
-     hand's width to the right of the word it measures. */
-  /* The bar is the payload: give it the width the removed page cap used to
-     spend on empty background. 14rem was a cap written when the canvas was
-     capped too, so at 2560px the cell grew and the bar did not. */
-  /* The bar earns width the removed page cap used to waste, but only up to a
-     length the eye can still compare across rows — a 1100px bar at 2560px is
-     not more legible than a 24rem one, it is just longer. */
-  /* 6.5rem clipped `premium_interactions` to `premium_intera…` — a label the
-     operator cannot read is noise. 10rem fits it; anything longer wraps. */
-  grid-template-columns: 10rem minmax(60px, 24rem) 3rem minmax(8rem, 1fr);
-  align-items: baseline;
-  gap: 0.5rem;
-}
-.lane-meter + .lane-meter { margin-top: 0.22rem; }
-.lane-meter .meter-label {
+.billing-meta { color: var(--muted); }
+/* Status carries its meaning in TEXT (WCAG 1.4.1) — colour only reinforces. */
+.lane-status {
   font-family: var(--mono);
-  font-size: 0.8rem;
+  font-size: var(--fs-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.lane-ok        { color: var(--ok); }
+.lane-stale     { color: var(--warn); }
+.lane-unknown   { color: var(--ctp-subtext0); }
+.lane-unseen    { color: var(--ctp-subtext0); }
+.lane-locked    { color: var(--warn); }
+/* A full meter refuses just as hard as a rejected window — same weight. */
+.lane-exhausted { color: var(--crit); font-weight: 600; }
+.lane-rejected  { color: var(--crit); }
+.lane-error     { color: var(--crit); }
+.lane-refused   { color: var(--crit); font-weight: 600; }
+.lane-token-expired { color: var(--crit); }
+.lane-delegated { color: var(--ctp-subtext0); }
+/* A pay-go lane with no usage API is permanently unknown, which is a fact
+   about the provider and not a fault. It used to render in the critical red,
+   i.e. the page cried wolf on a row whose only sin is reporting nothing. */
+.lane-pool-limited { color: var(--warn); font-weight: 600; }
+
+/* ── meters ───────────────────────────────────────────────────────────── */
+/* The trace used to be 348px wide and 5px tall — measured — with the value
+   parked 350px away at the end of the track, so reading one meter meant a
+   350px zig-zag and the row was mostly non-data ink. Compact, and the number
+   sits against the fill it describes.
+
+   Flex with `wrap`, not a four-column grid: in a grid the state/countdown
+   cell is the LAST track, so when the cell cannot fit its contents they
+   overflow sideways and paint over the neighbouring column (measured on the
+   first render of this layout: `resets 2d 04h` over `1.42×`). Wrapping is the
+   correct failure mode — the countdown drops to its own line inside the row
+   instead of onto someone else's.
+
+   And the metrics are a GRID OF THEIR OWN, not a stack: at a 1436px board the
+   meters cell held ~950px and the two meters used ~450 of it, leaving the
+   largest void on the page inside a payload cell (#163 verbatim). Two meters
+   side by side instead of two stacked: shorter rows, no void, and the track
+   absorbs whatever the cell has left over. */
+.sub-meters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(23rem, 1fr));
+  gap: 0.2rem 1.5rem;
+  align-content: start;
+  white-space: normal;
+}
+.meter {
+  display: grid;
+  /* Every track has a minimum the sum of which stays under the cell minimum,
+     so an over-long label wraps INSIDE its own cell instead of pushing the
+     row wider than the table. */
+  grid-template-columns: minmax(4rem, 11rem) minmax(3rem, 1fr) 2.6rem auto;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.meter-label {
+  flex: 0 0 6.5rem;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
   color: var(--ctp-subtext0);
   overflow-wrap: anywhere;
 }
-.lane-meter .util { display: contents; }
-/* State tag + countdown share the grid's fourth cell. As direct grid items the
-   tag stretched to fill its whole track — `spent` read as a broken text input
-   — and a meter carrying BOTH pushed the countdown onto a second row under the
-   label. Flex keeps them on one baseline and sizes the pill to its text. */
-.meter-state { display: flex; align-items: baseline; gap: 0.3rem; min-width: 0; }
-.meter-state .tag-rejected,
-.meter-state .tag-exhausted { flex: none; margin-left: 0; }
-.lane-meter > .muted { grid-column: 2 / 4; }
-.lane-meter .util .pct { text-align: right; }
-.lane-meter .reset-in { display: inline; margin-top: 0; }
-/* ── identity scheme ────────────────────────────────────────────────── */
-/* The email is the identity; a credential-file letter (A/B/C) is a local tag
-   that collides across families and never appears alone. */
-.id-tag {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--ctp-subtext0);
-  margin-left: 0.25rem;
+.meter-label .mi { margin-right: 0.25rem; }
+.meter-note { color: var(--ctp-subtext0); font-size: var(--fs-body); }
+.track {
+  display: inline-block;
+  flex: 1 1 4rem;
+  max-width: 9rem;
+  height: 7px;
+  border-radius: 4px;
+  background: var(--ctp-surface0);
+  position: relative;
+  overflow: hidden;
+  align-self: center;
 }
-.acct { font-family: var(--mono); font-weight: 600; color: var(--accent); }
+.track > i { display: block; height: 100%; border-radius: 4px; background: var(--ok); }
+.track > i.warn { background: var(--warn); }
+.track > i.crit { background: var(--crit); }
+  /* The 90% line the warn threshold sits on, so the track has a scale instead
+     of being a bar you can only compare against other bars.
 
-/* A finite meter that is spent but not the lane's lifeline: red bar says the
-   meter's fact, "spent" names it, the lane badge keeps its own verdict. */
-.tag-exhausted {
+     Drawn as a two-tone notch (dark / light / dark) rather than one flat
+     colour, because a single-colour marker cannot clear WCAG 1.4.11 against
+     BOTH ends of the range it crosses: `--ctp-overlay0` measured 2.11:1 over
+     the critical fill and 2.57:1 over the track, and the light fills (`ok`,
+     `warn`) defeat any light marker the way the dark track defeats any dark
+     one. One of the two edges always contrasts, whichever side the fill is
+     on (cross-family review, 18/09/2026). */
+  border-left: 1px solid var(--ctp-crust);
+  border-right: 1px solid var(--ctp-crust);
+  background: var(--ctp-text);
+.track > u {
+  position: absolute;
+  top: 0;
+  left: 90%;
+  width: 3px;
+  height: 100%;
+  box-sizing: content-box;
+  text-decoration: none;
+}
+.meter .pct { flex: 0 0 2.6rem; font-family: var(--mono); font-size: var(--fs-body); text-align: right; color: var(--ctp-text); }
+/* State tag + countdown share one cell so a rejected meter keeps the one
+   question the operator has ("when does this come back") on the same line. */
+.meter-state { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; min-width: 0; }
+.reset-in { font-size: var(--fs-meta); color: var(--ctp-subtext0); font-family: var(--mono); white-space: nowrap; }
+.reset-at { color: var(--muted); margin-left: 0.3rem; }
+.tag-rejected, .tag-exhausted, .tag-stale {
   font-family: var(--mono);
-  font-size: 0.6rem;
+  font-size: var(--fs-tag);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--ctp-red);
-  border: 1px solid color-mix(in srgb, var(--ctp-red) 40%, var(--ctp-surface0));
   border-radius: var(--radius-sm);
-  padding: 0.02rem 0.28rem;
-  margin-left: 0.3rem;
+  padding: 0.02rem 0.3rem;
+  white-space: nowrap;
 }
+.tag-rejected { color: var(--crit); border: 1px solid color-mix(in srgb, var(--crit) 45%, var(--ctp-surface0)); }
+.tag-exhausted { color: var(--crit); border: 1px solid color-mix(in srgb, var(--crit) 40%, var(--ctp-surface0)); }
+.tag-stale { color: var(--ctp-subtext0); border: 1px solid var(--ctp-surface2); }
 
-/* Status carries its meaning in TEXT (WCAG 1.4.1) — colour only reinforces. */
-.lane-status { font-family: var(--mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.lane-ok        { color: var(--ok); }
-.lane-stale     { color: var(--warn); }
-.lane-unknown   { color: var(--crit); }
-/* A full meter refuses just as hard as a rejected window — same weight. */
-.lane-exhausted { color: var(--crit); font-weight: 600; }
-.lane-delegated { color: var(--ctp-subtext0); }
+/* burn: pace and its projection, one column. Two facts, one glance, and the
+   two narrowest and most decision-relevant numbers on the page stop being
+   separated by two empty columns. */
+.burn { white-space: normal; }
+.burn .pace { display: block; font-family: var(--mono); font-size: var(--fs-title); font-weight: 600; color: var(--ctp-text); }
+.burn .pace.is-warn { color: var(--warn); }
+.burn-eta { display: block; font-size: var(--fs-meta); color: var(--muted); font-family: var(--mono); }
+.burn-eta.is-warn { color: var(--warn); }
+.burn-none { display: block; font-family: var(--mono); font-size: var(--fs-meta); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 
-/* ── copilot panel ──────────────────────────────────────────────────── */
-table.bearers.copilot { min-width: 48rem; }
+/* inline utilisation bar (bearers) */
+.util { display: inline-flex; align-items: center; gap: 0.4rem; justify-content: flex-end; }
+.util.compact .track.small { width: 44px; }
+.util.compact .pct { font-size: var(--fs-meta); min-width: 2rem; }
+.util .pct { font-family: var(--mono); font-size: var(--fs-body); text-align: right; }
+.track.small { width: 44px; height: 6px; flex: none; }
+
+/* ── traffic rail ─────────────────────────────────────────────────────── */
+.rail { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+/* Providers: three columns instead of seven. `upstream`, `in-flight`,
+   `queued`, `cap`, `served` and the AIMD internals were six columns of mostly
+   `—` for two rows; the load cell answers the same question in one glance and
+   the per-column detail is the row tooltip. */
+table.bearers.providers { table-layout: fixed; }
+col.c-prov-name   { width: 14rem; }
+col.c-prov-load   { width: 9rem; }
+col.c-prov-status { width: auto; }
+/* The upstream is visible text under the provider name, not a tooltip: it is
+   how an operator separates a proxy problem from a provider one. Wraps rather
+   than overlapping the next column. */
+.prov-where {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--fs-tag);
+  color: var(--muted);
+  margin-top: 0.1rem;
+  overflow-wrap: anywhere;
+}
+.prov { display: inline-flex; align-items: center; gap: 0.4rem; font-family: var(--mono); font-weight: 600; font-size: var(--fs-body); color: var(--ctp-text); }
+.provider-icon { display: inline-block; min-width: 1.3em; text-align: center; }
+.prov .provider-icon { margin-right: 0; }
+.prov .pdot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.prov-healthy   .pdot { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent); }
+.prov-pacing    .pdot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+.prov-throttled .pdot { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 16%, transparent); }
+.prov-idle      .pdot { background: var(--muted); }
+.prov-tag {
+  font-family: var(--mono);
+  font-size: var(--fs-tag);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  border: 1px solid var(--ctp-surface1);
+  border-radius: var(--radius-sm);
+  padding: 0.02rem 0.32rem;
+  margin-left: 0.4rem;
+}
+.prov-load { white-space: normal; }
+.prov-load .load-now { display: block; font-size: var(--fs-title); font-weight: 600; }
+.prov-load .load-of { color: var(--muted); font-size: var(--fs-body); font-weight: 400; }
+.prov-load .load-total { display: block; font-size: var(--fs-meta); color: var(--muted); }
+.prov-load .load-q { display: block; font-size: var(--fs-meta); color: var(--warn); font-weight: 600; }
+.prov-status { white-space: normal; }
+.prov-state { font-family: var(--mono); font-size: var(--fs-meta); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.prov-state.prov-healthy   { color: var(--ok); }
+.prov-state.prov-pacing    { color: var(--warn); }
+.prov-state.prov-throttled { color: var(--crit); }
+.prov-state.prov-idle      { color: var(--ctp-subtext0); }
+.prov-state.prov-crit      { color: var(--crit); font-weight: 600; }
+.prov-err { display: block; font-family: var(--mono); font-size: var(--fs-meta); color: var(--crit); margin-top: 0.1rem; white-space: normal; }
+.egress { display: block; font-family: var(--mono); font-size: var(--fs-meta); margin-top: 0.05rem; }
+.egress.up   { color: var(--ok); }
+.egress.down { color: var(--crit); }
+.egress.unknown { color: var(--muted); }
+
+/* Per-token table: six columns instead of ten. `req left` (API-key tiers
+   only, always `—` on this host), `retry-after` and `clients` moved into the
+   row tooltip — present, not prominent, which is what the design brief asked
+   for and what ten columns of dashes was failing to do. */
+col.c-tok     { width: 6.5rem; }
+col.c-tok-acct{ width: 9rem; }
+col.c-tok-slots { width: 6rem; }
+col.c-tok-n   { width: 4.5rem; }
+col.c-tok-win { width: 7rem; }
+.slot-now { font-family: var(--mono); font-weight: 600; }
+.slot-now .slot-of { color: var(--muted); font-weight: 400; }
+/* The AIMD ceiling is shown only when the live cap has fallen below it — a
+   number that is news, not a number that repeats the row. Amber when shrunk,
+   red at the floor, so "the proxy is throttling itself" is visible in the
+   column rather than only in a tooltip. */
+.slot-hard { display: block; font-family: var(--mono); font-size: var(--fs-tag); color: var(--warn); }
+.slot-hard.is-floor { color: var(--crit); font-weight: 600; }
+.retry-after { font-family: var(--mono); color: var(--warn); }
+.req-left { display: block; font-family: var(--mono); font-size: var(--fs-tag); color: var(--muted); }
+
+/* Registered providers: a fact about the catalog, kept with the routing truth
+   it belongs to rather than as a strip in the middle of the capacity board. */
+.registry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  margin: 0.15rem 0 0;
+  font-family: var(--mono);
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+.registry-label { text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+.registry-provider { color: var(--ctp-text); border: var(--hairline); border-radius: var(--radius-sm); padding: 0.05rem 0.4rem; }
+.registry-note { color: var(--muted); }
+
+/* ── copilot ──────────────────────────────────────────────────────────── */
 .copilot .org { font-family: var(--mono); font-weight: 600; color: var(--accent); }
-.copilot .plan { font-family: var(--mono); font-size: 0.74rem; color: var(--info); text-transform: uppercase; letter-spacing: 0.04em; }
-.copilot .feat { font-family: var(--mono); font-size: 0.7rem; color: var(--ctp-subtext0); }
+.copilot .plan { font-family: var(--mono); font-size: var(--fs-body); color: var(--info); text-transform: uppercase; letter-spacing: 0.04em; }
+.copilot .feat { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ctp-subtext0); }
 .copilot .feat.on { color: var(--ok); }
 .copilot .feat.off { color: var(--muted); }
-.copilot .err-cell { color: var(--crit); font-family: var(--mono); font-size: 0.74rem; }
-.seat-bar { display: inline-flex; align-items: center; gap: 0.4rem; font-family: var(--mono); font-size: 0.74rem; }
-.seat-bar .seat-track { width: 48px; height: 5px; border-radius: 3px; background: var(--ctp-surface0); overflow: hidden; flex: none; }
+.copilot .err-cell { color: var(--crit); font-family: var(--mono); font-size: var(--fs-body); white-space: normal; }
+.seat-bar { display: inline-flex; align-items: center; gap: 0.4rem; font-family: var(--mono); font-size: var(--fs-meta); }
+.seat-bar .seat-track { width: 48px; height: 6px; border-radius: 3px; background: var(--ctp-surface0); overflow: hidden; flex: none; }
 .seat-bar .seat-track > i { display: block; height: 100%; background: var(--info); }
 
-/* ── advisor ────────────────────────────────────────────────────────── */
-.muted { color: var(--ctp-subtext0); }
+/* ── status / identity banner ─────────────────────────────────────────── */
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--panel);
+  border: var(--hairline);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.95rem;
+}
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.status .verdict { font-family: var(--mono); font-weight: 600; font-size: var(--fs-body); letter-spacing: 0.02em; color: var(--ctp-subtext0); }
+.status .detail { color: var(--ctp-subtext0); font-size: var(--fs-body); max-width: var(--measure); min-width: 0; overflow-wrap: anywhere; }
+.status.crit, .status.identity-banner { border-left-color: var(--crit); }
+.status.crit .dot, .status.identity-banner .dot { background: var(--crit); }
+.status.crit .verdict, .status.identity-banner .verdict { color: var(--crit); }
+
+/* ── advisor ──────────────────────────────────────────────────────────── */
 button {
   background: var(--ctp-surface0);
   color: var(--ctp-text);
   border: var(--hairline-strong);
   border-radius: var(--radius-sm);
-  padding: 0.4rem 0.85rem;
+  padding: 0.35rem 0.8rem;
   font: inherit;
   cursor: pointer;
 }
 button:hover { background: var(--ctp-surface1); border-color: var(--info); }
 button:active { background: var(--ctp-surface2); }
-/* Header action: sits in the badge row, so it wears the badge's weight. */
+button:disabled { cursor: not-allowed; opacity: 0.55; }
+/* Header action: it sits in the badge row, but it is the one control on the
+   page — so it wears a button's affordance (a border that reads as pressable
+   and an accent label) instead of the badge's, which is what made it
+   indistinguishable from the four static pills beside it. */
 button.ghost {
-  background: var(--ctp-mantle);
-  border: var(--hairline);
-  color: var(--ctp-subtext0);
+  background: var(--ctp-surface0);
+  border: var(--hairline-strong);
+  color: var(--ctp-text);
   font-family: var(--mono);
-  font-size: 0.72rem;
-  /* 0.16rem gave a 22px-tall button — under the 24px minimum target
-     (WCAG 2.2 SC 2.5.8). Padding, not font-size, so the header row's rhythm
-     is unchanged. */
-  padding: 0.3rem 0.55rem;
+  font-size: var(--fs-meta);
+  padding: 0.28rem 0.6rem;
   border-radius: var(--radius-sm);
 }
-button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, var(--ctp-surface0)); background: var(--ctp-mantle); }
+button.ghost.primary { border-color: color-mix(in srgb, var(--info) 45%, var(--ctp-surface1)); color: var(--info); }
+button.ghost:hover:not(:disabled) { color: var(--info); border-color: var(--info); background: color-mix(in srgb, var(--info) 10%, var(--ctp-surface0)); }
 #advisor-out:empty { display: none; }
-.htmx-indicator { display: none; margin-left: 0.5rem; color: var(--warn); font-family: var(--mono); }
+.htmx-indicator { display: none; margin-left: 0.5rem; color: var(--warn); font-family: var(--mono); font-size: var(--fs-meta); }
 .htmx-request .htmx-indicator { display: inline; }
 .advisor-output {
   max-width: var(--measure);
-  margin-top: 0.8rem;
+  margin-top: 0.7rem;
   padding: 0.8rem 1rem;
-  background: var(--ctp-mantle);
+  background: var(--panel);
   border: var(--hairline);
   border-left: 3px solid var(--info);
   border-radius: var(--radius);
 }
-.advisor-output h3 { margin: 0 0 0.35rem; color: var(--info); font-size: 0.9rem; }
+.advisor-output h3 { margin: 0 0 0.35rem; color: var(--info); font-size: var(--fs-title); }
 .advisor-output.err { border-left-color: var(--crit); }
 .advisor-output.err h3 { color: var(--crit); }
-.advisor-empty { margin-top: 0.8rem; padding: 0.6rem 0.9rem; background: var(--ctp-mantle); border: 1px dashed var(--ctp-surface1); border-radius: var(--radius-sm); font-size: 0.78rem; }
-.advisor-empty code { font-family: var(--mono); font-size: 0.74rem; color: var(--ctp-peach); background: var(--ctp-crust); padding: 0.05rem 0.3rem; border-radius: var(--radius-sm); }
-.advisor-output pre { background: var(--ctp-crust); padding: 0.55rem; border-radius: var(--radius-sm); overflow: auto; font-size: 0.74rem; color: var(--ctp-subtext1); }
-.advisor-auto { padding: 0.55rem 0.9rem; background: var(--ctp-mantle); border: var(--hairline); border-left: 3px solid var(--warn); border-radius: var(--radius); }
-.advisor-auto .aa-tag { font-family: var(--mono); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.09em; color: var(--warn); margin-right: 0.5rem; }
-.advisor-auto .advisor-trigger { color: var(--muted); font-family: var(--mono); font-size: 0.7rem; }
+.advisor-empty { margin-top: 0.7rem; padding: 0.6rem 0.9rem; background: var(--panel); border: 1px dashed var(--ctp-surface1); border-radius: var(--radius-sm); font-size: var(--fs-body); }
+.advisor-empty code { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ctp-peach); background: var(--ctp-crust); padding: 0.05rem 0.3rem; border-radius: var(--radius-sm); }
+.advisor-output pre { background: var(--ctp-crust); padding: 0.55rem; border-radius: var(--radius-sm); overflow: auto; font-size: var(--fs-meta); color: var(--ctp-subtext1); }
+.advisor-auto {
+  padding: 0.6rem 0.95rem;
+  background: var(--panel);
+  border: var(--hairline);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius);
+}
+.advisor-auto .aa-tag { font-family: var(--mono); font-size: var(--fs-tag); text-transform: uppercase; letter-spacing: 0.08em; color: var(--warn); margin-right: 0.5rem; }
+.advisor-auto .advisor-trigger { color: var(--muted); font-family: var(--mono); font-size: var(--fs-meta); }
 .advisor-auto .markdown.clamp {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -717,10 +873,10 @@ button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--
   overflow: hidden;
   margin-top: 0.3rem;
 }
-.advisor-auto .markdown, .advisor-output .markdown { white-space: pre-wrap; color: var(--ctp-subtext1); font-size: 0.82rem; }
+.advisor-auto .markdown, .advisor-output .markdown { white-space: pre-wrap; color: var(--ctp-subtext1); font-size: var(--fs-body); max-width: var(--measure); }
 .advisor-output .markdown b, .advisor-auto .markdown b { color: var(--ctp-text); }
 
-/* ── focus + motion ─────────────────────────────────────────────────── */
+/* ── focus + motion ───────────────────────────────────────────────────── */
 /* One ring, every keyboard-reachable control, drawn OUTSIDE the element so it
    never resizes the layout it lands on. `:focus-visible` keeps it off pointer
    clicks. WCAG 2.1 SC 2.4.7 (focus visible) + SC 1.4.11 (the ring itself is
@@ -732,10 +888,10 @@ button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--
 }
 
 /* The dashboard's motion is functional (a row tint on hover, a switch knob
-   sliding, an SVG spark redrawing every 2 s), so the reduced-motion answer is
-   to make state changes INSTANT, not to delete them: the tint and the knob
-   position still carry meaning. Never a global 0.01ms kill — that keeps the
-   animation running and only hides it. */
+   sliding, an SVG spark redrawing every 2 s, the staleness cue on `.as-of`),
+   so the reduced-motion answer is to make state changes INSTANT, not to
+   delete them: the tint and the knob position still carry meaning. Never a
+   global 0.01ms kill — that keeps the animation running and only hides it. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -745,10 +901,17 @@ button.ghost:hover { color: var(--info); border-color: color-mix(in srgb, var(--
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
+  /* The one exemption, and it is the opposite of a decoration: `.as-of`'s
+     ANIMATION IS THE INFORMATION. Its 6s duration is the disconnect detector,
+     so zeroing it would delete the signal for exactly the users who asked for
+     less motion. Keeping it running is the accessible choice here — the
+     element never moves, it only recolours once, at the end. */
+  .as-of,
+  .as-of::after { animation-duration: 6s !important; }
 }
 
-/* ── footer ─────────────────────────────────────────────────────────── */
-footer { margin-top: auto; border-top: var(--hairline); padding-top: 0.8rem; color: var(--muted); font-size: 0.74rem; }
+/* ── footer ───────────────────────────────────────────────────────────── */
+footer { margin-top: auto; border-top: var(--hairline); padding-top: 0.65rem; color: var(--muted); font-size: var(--fs-meta); font-family: var(--mono); }
 /* 24px minimum target (WCAG 2.2 SC 2.5.8). The links were 14px tall — fine
    with a mouse, a coin-toss with a thumb. Padding, not font-size, so the
    footer's density is unchanged. */
@@ -761,30 +924,48 @@ footer a {
 }
 footer a:hover { color: var(--info); text-decoration: underline; }
 
-/* ── config editor ──────────────────────────────────────────────────── */
-.config-section { margin-top: 1rem; border: var(--hairline); border-radius: var(--radius-sm); background: transparent; padding: 0.3rem 0; }
+/* ── config editor ────────────────────────────────────────────────────── */
+/* Sized to its own summary. It used to span the page — six words on the left,
+   a hint 2400px to the right, nothing between, which reads as a broken row
+   rather than a control. */
+.config-section {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 0.2rem;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
 .config-section > summary {
-  cursor: pointer; font-family: var(--mono); font-size: 0.86rem; color: var(--ctp-subtext0);
-  padding: 0.5rem 0.8rem; user-select: none; display: flex; flex-wrap: wrap; gap: 0.4rem 0.65rem; align-items: baseline;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: var(--fs-body);
+  color: var(--ctp-subtext0);
+  padding: 0.5rem 0.8rem;
+  user-select: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.65rem;
+  align-items: baseline;
 }
 .config-section > summary:hover { color: var(--ctp-text); }
 .config-section[open] > summary { color: var(--ctp-text); border-bottom: var(--hairline); }
-.config-section > summary .summary-hint { margin-left: auto; font-size: 0.7rem; color: var(--muted); }
+.config-section > summary .summary-hint { font-size: var(--fs-meta); color: var(--muted); }
 .config-section > summary .summary-hint::after { content: attr(data-closed); }
 .config-section[open] > summary .summary-hint::after { content: attr(data-open); }
-.config-toast { font-family: var(--mono); font-size: 0.78rem; padding: 0.45rem 0.75rem; border-radius: 0; margin: 0.7rem 0 0; }
+.config-toast { font-family: var(--mono); font-size: var(--fs-body); padding: 0.45rem 0.75rem; border-radius: 0; margin: 0.7rem 0 0; }
 .config-toast.ok  { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); border-left: 3px solid var(--ok); }
 .config-toast.err { background: color-mix(in srgb, var(--crit) 12%, transparent); color: var(--crit); border-left: 3px solid var(--crit); }
-.config-head { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.6rem 0.8rem; border-bottom: var(--hairline); font-family: var(--mono); color: var(--muted); font-size: 0.68rem; }
+.config-head { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.6rem 0.8rem; border-bottom: var(--hairline); font-family: var(--mono); color: var(--muted); font-size: var(--fs-meta); }
 .config-head span:not(:last-child)::after { content: "·"; margin-left: 0.4rem; color: var(--ctp-surface2); }
 .config-list { display: flex; flex-direction: column; }
 .config-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.9rem; align-items: center; padding: 0.75rem 0.8rem; border-bottom: var(--hairline); }
 .config-row.overridden { border-left: 3px solid var(--info); padding-left: calc(0.8rem - 3px); }
 .config-title { display: flex; flex-wrap: wrap; gap: 0.4rem 0.6rem; align-items: baseline; }
 .config-title .name { color: var(--ctp-text); font-weight: 500; }
-.config-title code { color: var(--muted); background: transparent; font-size: 0.7rem; }
-.config-copy .help { color: var(--ctp-subtext0); font-size: 0.74rem; margin: 0.2rem 0 0; line-height: 1.45; max-width: 76ch; }
-.config-facts { display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem; margin-top: 0.4rem; font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+.config-title code { color: var(--muted); background: transparent; font-size: var(--fs-meta); }
+.config-copy .help { color: var(--ctp-subtext0); font-size: var(--fs-body); margin: 0.2rem 0 0; line-height: 1.45; max-width: 76ch; }
+.config-facts { display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem; margin-top: 0.4rem; font-family: var(--mono); font-size: var(--fs-meta); color: var(--muted); }
 .config-facts b { color: var(--ctp-subtext1); font-weight: 500; }
 .config-row.overridden .config-facts .state { color: var(--info); }
 .config-control { display: flex; gap: 0.4rem; align-items: center; justify-content: flex-end; }
@@ -792,7 +973,7 @@ footer a:hover { color: var(--info); text-decoration: underline; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .config-form input[type="number"], .config-form input[type="text"] {
   background: var(--ctp-base); border: var(--hairline); color: var(--ctp-text);
-  padding: 0.28rem 0.5rem; border-radius: var(--radius-sm); font-family: var(--mono); font-size: 0.78rem; width: 7rem;
+  padding: 0.28rem 0.5rem; border-radius: var(--radius-sm); font-family: var(--mono); font-size: var(--fs-body); width: 7rem;
   transition: border-color 120ms ease-out;
 }
 .config-form input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
@@ -803,7 +984,7 @@ footer a:hover { color: var(--info); text-decoration: underline; }
    (3:1 against the adjacent colour) and vanishes for anyone who cannot compare
    two dark greys. Keep the swap AND draw a ring. */
 .config-form input:focus-visible { border-color: var(--info); }
-.switch { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-family: var(--mono); color: var(--ctp-subtext0); font-size: 0.74rem; }
+.switch { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-family: var(--mono); color: var(--ctp-subtext0); font-size: var(--fs-meta); }
 .switch input { position: absolute; opacity: 0; pointer-events: none; }
 .switch span { width: 2.1rem; height: 1.1rem; border-radius: 999px; border: var(--hairline-strong); background: var(--ctp-base); position: relative; transition: border-color 120ms ease-out, background 120ms ease-out; }
 .switch span::before { content: ""; position: absolute; width: 0.7rem; height: 0.7rem; left: 0.18rem; top: 0.16rem; border-radius: 999px; background: var(--muted); transition: transform 120ms ease-out, background 120ms ease-out; }
@@ -811,17 +992,31 @@ footer a:hover { color: var(--info); text-decoration: underline; }
 .switch input:checked + input + span::before { transform: translateX(1rem); background: var(--info); }
 .switch input:focus-visible + input + span { outline: 2px solid var(--info); outline-offset: 2px; }
 .switch em { font-style: normal; min-width: 1.4rem; }
-.config-control button.reset { background: transparent; border: var(--hairline); color: var(--muted); padding: 0.18rem 0.5rem; font-family: var(--mono); font-size: 0.86rem; line-height: 1; border-radius: var(--radius-sm); cursor: pointer; transition: color 120ms ease-out, border-color 120ms ease-out; }
+.config-control button.reset { background: transparent; border: var(--hairline); color: var(--muted); padding: 0.18rem 0.5rem; font-family: var(--mono); font-size: var(--fs-body); line-height: 1; border-radius: var(--radius-sm); cursor: pointer; transition: color 120ms ease-out, border-color 120ms ease-out; }
 .config-control button.reset:hover { border-color: var(--warn); color: var(--warn); }
-.config-foot { margin: 0.7rem 0.8rem 0.4rem; font-size: 0.68rem; color: var(--muted); }
+.config-foot { margin: 0.7rem 0.8rem 0.4rem; font-size: var(--fs-meta); color: var(--muted); }
 .config-foot code { background: var(--ctp-crust); padding: 0.1rem 0.32rem; border-radius: var(--radius-sm); color: var(--ctp-subtext0); }
 @media (max-width: 760px) { .config-row { grid-template-columns: 1fr; } .config-control { justify-content: flex-start; } }
 
-.identity-banner { margin-bottom: 0.5rem; }
-.src { font-size: 0.68rem; padding: 0.06rem 0.36rem; border-radius: var(--radius-sm); background: var(--ctp-surface0); color: var(--ctp-subtext0); }
+.src { font-size: var(--fs-meta); padding: 0.06rem 0.36rem; border-radius: var(--radius-sm); background: var(--ctp-surface0); color: var(--ctp-subtext0); }
 .src-endpoint { color: var(--info); }
 .src-proxy { color: var(--accent); }
 .src-cache { color: var(--ctp-subtext1); }
 .src-none { color: var(--muted); }
 .locked-note { color: var(--warn); }
 .endpoint-err { display: inline; margin-left: 0.3rem; cursor: help; }
+
+/* ── narrow screens ───────────────────────────────────────────────────── */
+/* Below the shell's two-column threshold every table keeps its columns and
+   scrolls inside its own panel; the panel is the scroll container, so the
+   PAGE never gains a horizontal scrollbar (the acceptance probe measures
+   that). The hero drops to one column so its facts wrap under the verdict
+   rather than being squeezed beside it. */
+@media (max-width: 900px) {
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-verdict, .hero-detail { grid-column: 1; }
+  .hero-facts { grid-column: 1; grid-row: 3; align-self: start; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }
+  .meter { grid-template-columns: minmax(4rem, 8rem) minmax(3rem, 1fr) 2.4rem auto; }
+  .sub-meters { grid-template-columns: minmax(0, 1fr); }
+  .sub-ident .lane-status { margin-left: 0; }
+}
