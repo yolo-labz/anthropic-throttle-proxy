@@ -361,3 +361,38 @@ def test_hero_omits_the_facts_block_when_nothing_is_binding():
     hero = re.search(r'<section class="hero[^"]*".*?</section>', html, re.S).group(0)
     assert "HEALTHY" in hero
     assert "blocked" not in hero and "takes traffic next" not in hero
+
+
+def test_every_meter_track_can_shrink_instead_of_overflowing():
+    """A grid track that bottoms out at max-content overflows its cell.
+
+    Measured live 18/09/2026, on the installed package: the Z.AI row's
+    `resets 2h 17m 19/09/2026 02:48 UTC` — the absolute stamp #227 added beside
+    the countdown — overflowed its cell by 50px and painted into the `7d` label
+    of the meter beside it. It needed a browser to see, because the page-level
+    overflow probe deliberately skips panel interiors (those scroll on purpose),
+    but the CAUSE is checkable at source: a `auto` track bottom-limits at
+    max-content, so anything long enough makes the row wider than its cell.
+    """
+    block = re.search(r"\n\.meter\s*\{([^}]*)\}", _css()).group(1)
+    tracks = re.search(r"grid-template-columns:\s*([^;]+);", block).group(1)
+    for track in re.findall(r"minmax\([^)]*\)|[^\s(]+", tracks):
+        if track.startswith("minmax("):
+            minimum = track[len("minmax(") : -1].split(",")[0].strip()
+            assert minimum == "0" or minimum.endswith(("rem", "%")), (
+                f"track {track!r} cannot shrink below a content minimum"
+            )
+        else:
+            assert track != "auto", (
+                f"track {track!r} bottom-limits at max-content, so a long value "
+                "overflows the cell instead of wrapping inside it"
+            )
+
+    # ...and the wrappers have to be allowed to wrap, or narrowing the track
+    # only moves the overflow.
+    state = re.search(r"\n\.meter-state\s*\{([^}]*)\}", _css()).group(1)
+    assert "flex-wrap: wrap" in state, ".meter-state must wrap"
+    assert "min-width: 0" in state, ".meter-state must be allowed to shrink"
+    reset = re.search(r"\n\.reset-in\s*\{([^}]*)\}", _css()).group(1)
+    assert "min-width: 0" in reset, ".reset-in must be allowed to shrink"
+    assert "nowrap" not in reset, ".reset-in must wrap rather than overflow"

@@ -600,8 +600,12 @@ col.c-burn  { width: 11rem; }
   display: grid;
   /* Every track has a minimum the sum of which stays under the cell minimum,
      so an over-long label wraps INSIDE its own cell instead of pushing the
-     row wider than the table. */
-  grid-template-columns: minmax(4rem, 11rem) minmax(3rem, 1fr) 2.6rem auto;
+     row wider than the table. The LAST track is `minmax(0, auto)` rather than
+     `auto`: `auto` bottom-limits at max-content, so a long value could make the
+     row wider than the cell and paint into the neighbouring meter — measured
+     live 18/09/2026 on the Z.AI row, where `resets 2h 17m 19/09/2026 02:48 UTC`
+     overflowed its cell by 50px and collided with the `7d` label beside it. */
+  grid-template-columns: minmax(4rem, 11rem) minmax(3rem, 1fr) 2.6rem minmax(0, auto);
   align-items: baseline;
   gap: 0.4rem;
   min-width: 0;
@@ -653,10 +657,14 @@ col.c-burn  { width: 11rem; }
 }
 .meter .pct { flex: 0 0 2.6rem; font-family: var(--mono); font-size: var(--fs-body); text-align: right; color: var(--ctp-text); }
 /* State tag + countdown share one cell so a rejected meter keeps the one
-   question the operator has ("when does this come back") on the same line. */
-.meter-state { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; min-width: 0; }
-.reset-in { font-size: var(--fs-meta); color: var(--ctp-subtext0); font-family: var(--mono); white-space: nowrap; }
-.reset-at { color: var(--muted); margin-left: 0.3rem; }
+   question the operator has ("when does this come back") on the same line.
+   Wrapping, not overflowing, when the absolute reset stamp lands: `#227` added
+   `19/09/2026 02:48 UTC` beside the countdown, which is ~20 characters the cell
+   does not always have. */
+.meter-state { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: baseline; gap: 0.15rem 0.4rem; min-width: 0; }
+.reset-in { font-size: var(--fs-meta); color: var(--ctp-subtext0); font-family: var(--mono); min-width: 0; overflow-wrap: anywhere; }
+/* Its own line, so the countdown stays the scannable half of the pair. */
+.reset-at { display: block; color: var(--muted); margin-left: 0; }
 .tag-rejected, .tag-exhausted, .tag-stale {
   font-family: var(--mono);
   font-size: var(--fs-tag);
