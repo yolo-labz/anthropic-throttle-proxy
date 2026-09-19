@@ -7,6 +7,14 @@ window was the 7d (representative_claim=seven_day, 87%) with an already-reset 5h
 that correctly showed the 5h window as "0% · reset".
 """
 
+# The panel renderers live in `ui_render.py` so this suite and
+# `test_ui_layout.py` exercise the SAME template context rather than two copies
+# of it — a context kept in two places drifts, and then one suite quietly stops
+# testing the panel the other one does.
+from ui_render import render_meter as _render_meter
+from ui_render import render_stats as _render_stats
+from ui_render import render_subscription as _render_subscription
+
 from anthropic_throttle_proxy.ui import routes
 
 NOW = 1000.0
@@ -424,57 +432,6 @@ def test_retry_after_renders_as_a_duration_not_raw_seconds():
     assert routes._retry_after_text(None) == ""
     # Never swallow a value it cannot parse — show it rather than blank it.
     assert routes._retry_after_text({"retry-after": "soon"}) == "soon"
-
-
-def _render_stats(**over: object) -> str:
-    import jinja2
-
-    from anthropic_throttle_proxy.ui import routes
-
-    context = {
-        "subscriptions": [],
-        "bearers": [],
-        "providers": [],
-        "signals": [],
-        "status": None,
-        "lanes": None,
-        "last_advisor": None,
-        "served": 0,
-        "inflight": 0,
-        "queued": 0,
-        "holds": 0,
-        "retries": 0,
-        "disconnects": 0,
-    }
-    context.update(over)
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader(str(routes._TEMPLATES)), autoescape=True
-    )
-    return env.get_template("partials/stats.html").render(**context)
-
-
-def _render_subscription(row: dict) -> str:
-    return _render_stats(subscriptions=[row])
-
-
-def _render_meter(meter: dict) -> str:
-    """Render one subscription row's meters cell through the real template."""
-    return _render_subscription(
-        {
-            "id": "x",
-            "identity": "x",
-            "sub": "",
-            "family": "anthropic",
-            "plan": "",
-            "src": "proxy",
-            "meters": [meter],
-            "pace": None,
-            "pace_warn": False,
-            "eta": "",
-            "status": "rejected" if meter.get("rejected") else "ok",
-            "detail": "",
-        }
-    )
 
 
 def test_pi_registry_strip_names_every_configured_provider_with_icons():

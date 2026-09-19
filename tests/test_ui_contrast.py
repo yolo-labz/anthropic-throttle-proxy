@@ -37,6 +37,14 @@ COMPOSITED_ROWS = {
     "zebra (odd row on the panel)": ("--ctp-crust", 0.55, "--ctp-mantle"),
     "row hover": ("--ctp-surface0", 0.55, "--ctp-mantle"),
     "binding row": ("--crit", 0.07, "--ctp-mantle"),
+    # 18/09/2026: the lifetime-counter tile is inset against the gauge strip it
+    # sits in. It carries --muted text at the floor size and a --crit value, so
+    # it is a real text surface, not decoration.
+    "totals gauge (inset on the strip)": ("--ctp-crust", 0.45, "--ctp-mantle"),
+    # Pre-existing, ungated until now: the config editor's save/reset toasts
+    # tint their own status colour over whatever the page is standing on.
+    "config toast ok": ("--ok", 0.12, "--ctp-base"),
+    "config toast err": ("--crit", 0.12, "--ctp-base"),
 }
 
 # Tokens used as TEXT colour anywhere in style.css. Decorative-only tokens
@@ -157,3 +165,21 @@ def test_every_text_token_is_declared():
     composited = [part for top, _, backdrop in COMPOSITED_ROWS.values() for part in (top, backdrop)]
     missing = [t for t in (*TEXT_TOKENS, *SURFACES, *composited) if t not in decls]
     assert not missing, f"tokens missing from :root: {missing}"
+
+
+def test_the_stale_refresh_stamp_is_legible_inverted():
+    """The one place text is drawn light-on-colour rather than colour-on-dark.
+
+    `.as-of` ends its animation as `--ctp-base` on a `--warn` fill, which is
+    the whole disconnect signal: if that pair were unreadable the page would
+    say "last known" in a colour nobody can read, i.e. not say it at all.
+    Inverting a dark theme's text token onto a light chip is exactly the kind
+    of pair a per-surface sweep misses, because the surface is the TEXT.
+    """
+    decls = _declarations()
+    ratio = contrast_ratio(_resolve("--ctp-base", decls), _resolve("--warn", decls))
+    assert ratio >= AA_NORMAL_TEXT, (
+        f"the stale stamp draws --ctp-base on --warn at {ratio:.2f}:1, below the "
+        f"WCAG 1.4.3 AA floor of {AA_NORMAL_TEXT}:1 — the disconnect cue would "
+        "be unreadable at the exact moment it matters"
+    )

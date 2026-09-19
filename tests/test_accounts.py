@@ -385,9 +385,12 @@ async def test_ui_stats_renders_accounts_panel(tmp_path, monkeypatch):
     finally:
         proxy.bearer_state.pop(bid, None)
 
-    # Accounts merged into the one Subscriptions table (#165): the account and
-    # the lane answered the same question from two data sources.
-    assert "Subscriptions ·" in html
+    # Accounts merged into the one capacity board (#165): the account and the
+    # lane answered the same question from two data sources. Renamed from
+    # "Subscriptions" in the 18/09 UX pass — "capacity" is the question the
+    # panel answers, and the old heading shared a word with three other places
+    # on the page that meant something different by it.
+    assert "Capacity ·" in html
     assert ">A</span>" in html  # account label chip, subscriptions + bearers
     assert bid in html  # bearer row still carries the hash
     assert "62%" in html
@@ -405,7 +408,7 @@ async def test_ui_stats_hides_panel_when_unconfigured(monkeypatch):
     # anywhere (no bearers, no lanes, no YAML rows) the panel hides.
     monkeypatch.setenv("FLEET_UI_CONFIG", "/nonexistent/fleet-ui.yaml")
     html = await _render_stats()
-    assert "Subscriptions ·" not in html
+    assert "Capacity ·" not in html
 
 
 # ── endpoint truth (PR #55) ─────────────────────────────────────────────
@@ -583,7 +586,11 @@ async def test_ui_stats_renders_identity_banner(tmp_path, monkeypatch):
     html = await _render_stats()
     assert "accounts collapsed" in html
     assert "same@x" in html
-    assert ">endpoint</div>" in html  # provenance of the merged row's numbers
+    # Provenance of the merged row's numbers. It moved into the identity cell's
+    # metadata line in the 18/09 pass — the same fact, on the same row, one
+    # column left of where it used to be — so the assertion follows it rather
+    # than being dropped.
+    assert 'class="im-src"' in html and ">endpoint</span>" in html
 
 
 # ── FR-005 distinctness guard: local identity fallback + partial collision ──

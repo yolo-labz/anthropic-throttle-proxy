@@ -170,3 +170,79 @@ Open the page mid-incident. If an operator cannot answer, in one screen and
 without scrolling: *what is limiting us, since when, which subscription still
 has room, and when does the binding window reset* — the redesign has not
 landed, whatever it looks like.
+
+### Hierarchy pass (18/09/2026, #232)
+
+The structure above had landed twice and the page still read as unfinished.
+This pass measured it instead of arguing about it, because "it still looks
+wrong" is not actionable and a computed-style census is.
+
+**What the census found** (`getComputedStyle` + `getBoundingClientRect` over
+21 named elements and every panel, at 2560x1080):
+
+| | before | after |
+|---|---|---|
+| distinct font sizes on the page | **9** (8.7, 9.57, 10.44, 10.73, 11.31, 11.6, 11.89px) | **6** (10.5 → 24px) |
+| panel title (`h2`) | 10.73px | 14.25px |
+| its own column headers | 11.31px | 10.5px |
+| row identity | 11.6px | 14.25px |
+| hero verdict | 11.89px | 24px |
+| meter track | 348px wide, 5px tall | ≤ 9rem, 7px |
+| panel right edges | 1794 / 1349 / **1137** | 2536 / 2536 / 2536 |
+| total page height | 1255px | 1000px |
+| sparkline aspect | 22:1 | ~15:1, with a drawn baseline |
+
+Three of those are the whole story. **The panel title was smaller than its own
+column headers, which were smaller than the row identities under them** — every
+level of the document was the same size as every other, which is what finding 5
+("uniform typographic weight") actually describes and why two previous passes
+did not remove it. **The bearers panel ended 1423px short of the viewport**,
+i.e. 56% of the screen was painted with nothing, with three different right
+edges stacked above it. And **the page did not fit the screen it was read on**.
+
+**One scale, seven ranks, and a test.** `--fs-hero / value / title / body /
+meta / head / tag`, plus the root `15px` literal. `tests/test_ui_layout.py`
+fails the build on any `font-size` that does not resolve to one of them, on a
+non-monotonic scale, on an inline size in a template, and on a panel title that
+does not outrank its headers. The census is the reason: a hand-written 13px is
+how the old spread came back twice.
+
+**The hero.** Verdict + duration + binding constraint + reopen time + way out
+were a thin strip, a conditional strip, and a clause inside a sentence naming a
+bearer hash. They are one panel, at 24px, at the top.
+
+**Proximity.** The verdict moved beside the name it judges — it was 1200px away,
+a head-turn per row while scanning. `family`, observed plan, provenance and
+billing moved into the identity cell; `pace` and `exhausts` became one BURN
+column, so the two decision numbers are adjacent instead of two empty columns
+apart. Seven columns became three; ten became six, with the always-`—` ones
+(`requests-remaining`, `retry-after`, client fan-out, AIMD hard cap) in the row
+tooltip — the per-row expand S4.3 asked for, in the cheapest form that keeps
+the data on the page.
+
+**The shell.** Two columns above 1600px, one below, and the breakpoint is the
+sum of the two columns' own minimums rather than a round number. `auto-fit` was
+tried first and measured opening **four** tracks at 2560px and drawing two: the
+dead third of the viewport came straight back. `tests/test_ui_layout.py` now
+fails an intrinsic track count in the shell.
+
+**A disconnect detector with no JavaScript.** `#stats` is re-rendered every 2s,
+so `.as-of` is a new element every 2s and its CSS animation restarts with it.
+Stop the swaps — dead server, killed proxy, dropped network — and the animation
+completes, turning the stamp amber and appending "last known". Verified in a
+real browser by aborting `/ui/stats` mid-poll: still `· live` at 2.5s, `· last
+known` on a `--warn` chip at 7.5s, back to `· live` after reload. It is
+explicitly exempted from the global `prefers-reduced-motion` kill, because here
+the animation *is* the information: zeroing its duration would delete the
+signal for exactly the users who asked for less motion.
+
+**What is still not done.** The rail leaves empty space below it at 2560px when
+there are few providers. The single-column fallback (1180–1600px) runs ~1350px
+tall, so a laptop still scrolls for the last panel. Neither breaks the
+falsifier, which is about the operator's own screen; both are recorded rather
+than quietly rounded off.
+
+**Falsifier, re-run.** At 2560x1080 the page is 1000px tall and answers, in one
+screen without scrolling: what is limiting us (hero, 24px, with the measured
+reason), since when (the same line), which subscription still has room (BURN
+column, ranked), and when the binding window reopens (the hero's second fact).
