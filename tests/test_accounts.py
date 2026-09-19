@@ -41,6 +41,7 @@ def _clear_account_module_state() -> None:
     accounts._endpoint_locks.clear()
     accounts._verify_locks.clear()
     accounts._endpoint_backoff.clear()
+    accounts._endpoint_failures.clear()
     accounts._endpoint_cache_loaded = False
     limiter._retry_after_state = None
 
@@ -813,6 +814,40 @@ async def test_refresh_endpoint_polls_via_loopback(monkeypatch, tmp_path):
     assert seen == ["http://127.0.0.1:8765/api/oauth/usage"]
 
 
+def _endpoint_poll_harness(monkeypatch, tmp_path, *, status):
+    """A one-account usage-poll harness with a stubbed `_get_json`.
+
+    Shared by every test that drives `refresh_endpoint` through a failing or
+    recovering endpoint: the credential file, the loopback base, the identity
+    stub and the status-parameterised fetcher were copy-pasted into each one,
+    and the copies drifted (one of them returned a bodyless 200 and then
+    asserted a recovery against it).
+    """
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 7200) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+
+    async def _noop_email(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(accounts, "_refresh_email", _noop_email)
+    body = {
+        "five_hour": {"utilization": 10.0, "resets_at": _iso(NOW + 3600)},
+        "seven_day": {"utilization": 10.0, "resets_at": _iso(NOW + DAY)},
+    }
+    state = {"calls": 0, "status": status, "body": body}
+
+    async def _stub(_url, _token):
+        state["calls"] += 1
+        # A 200 with no body is NOT a recovery: `_refresh_one` treats it as
+        # another failure.
+        return (state["status"], state["body"] if state["status"] == 200 else None)
+
+    monkeypatch.setattr(accounts, "_get_json", _stub)
+    return cred, state
+
+
 async def test_refresh_endpoint_backs_off_after_failed_poll(monkeypatch, tmp_path):
     """A failed usage poll backs off for ``ENDPOINT_TTL_S`` before retrying.
 
@@ -823,26 +858,7 @@ async def test_refresh_endpoint_backs_off_after_failed_poll(monkeypatch, tmp_pat
     ``_endpoint_backoff`` gate must suppress re-polls inside the window while a
     recovering (200) poll clears it so normal cadence resumes.
     """
-    cred = tmp_path / "c.json"
-    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 3600) * 1000))
-    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
-    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
-
-    async def _noop_email(*_a, **_k):
-        return None
-
-    monkeypatch.setattr(accounts, "_refresh_email", _noop_email)
-    state = {"calls": 0, "status": 429}
-    ok_body = {
-        "five_hour": {"utilization": 10.0, "resets_at": _iso(NOW + 3600)},
-        "seven_day": {"utilization": 10.0, "resets_at": _iso(NOW + DAY)},
-    }
-
-    async def _stub(_url, _token):
-        state["calls"] += 1
-        return (state["status"], ok_body if state["status"] == 200 else None)
-
-    monkeypatch.setattr(accounts, "_get_json", _stub)
+    cred, state = _endpoint_poll_harness(monkeypatch, tmp_path, status=429)
     ttl = accounts.ENDPOINT_TTL_S
 
     await accounts.refresh_endpoint(NOW)  # poll fails → backoff armed
@@ -852,10 +868,18 @@ async def test_refresh_endpoint_backs_off_after_failed_poll(monkeypatch, tmp_pat
     assert state["calls"] == 1  # no self-429 loop
     await accounts.refresh_endpoint(NOW + ttl + 1)  # window elapsed → one retry
     assert state["calls"] == 2
+    # That SECOND consecutive failure arms twice the TTL (19/09/2026): the old
+    # arithmetic here assumed every failure re-armed the normal cadence, which
+    # is exactly the no-op backoff that let a blackholed endpoint be polled 739
+    # times in a row. The intent of this test — no self-429 loop — is unchanged
+    # and asserted by the first three lines.
+    await accounts.refresh_endpoint(NOW + 2 * ttl + 2)  # still inside the grown window
+    assert state["calls"] == 2
     state["status"] = 200  # account recovers
-    await accounts.refresh_endpoint(NOW + 2 * ttl + 2)
+    await accounts.refresh_endpoint(NOW + 4 * ttl)  # past the grown window
     assert state["calls"] == 3
     assert str(cred) not in accounts._endpoint_backoff  # 200 cleared the backoff
+    assert str(cred) not in accounts._endpoint_failures  # ...and the failure streak
 
 
 async def test_refresh_endpoint_honors_failed_poll_retry_after(monkeypatch, tmp_path):
@@ -1246,3 +1270,77 @@ async def test_401_tombstones_disk_entry(tmp_path, monkeypatch):
     await accounts.refresh_endpoint(NOW + accounts.ENDPOINT_TTL_S + 1)
 
     assert str(cred) not in json.loads(cache_file.read_text())  # tombstoned on disk
+
+
+# ── usage-poll backoff growth (19/09/2026) ───────────────────────────────────
+
+
+def test_failed_poll_backoff_grows_and_is_bounded_by_the_staleness_ceiling():
+    """The backoff must actually BACK OFF, and must not outlive the reading.
+
+    The previous expression was `now + max(ENDPOINT_TTL_S, retry_after or 0)`,
+    and `ENDPOINT_TTL_S` IS the normal poll TTL — so a dead endpoint was
+    re-polled at exactly its normal cadence, forever, and the word "backoff"
+    described nothing. Measured live 19/09/2026 against a deliberately
+    blackholed upstream: 739 consecutive failures at 91.5 s intervals, four
+    journal lines each, ~3,800 lines a day.
+
+    Bounded by `ENDPOINT_STALE_MAX_S` on purpose: that is the age at which a
+    reading stops being used at all, so backing off beyond it would trade
+    journal noise for a panel that is blank when the endpoint quietly returns.
+    """
+    ttl = accounts.ENDPOINT_TTL_S
+
+    def at(failures: int) -> float:
+        return accounts._failed_poll_backoff_until(NOW, None, failures) - NOW
+
+    assert at(0) == ttl, "an unarmed estimate must not back off at all"
+    assert at(1) == ttl, "a single blip keeps the calibrated 90s cadence"
+    assert at(2) == 2 * ttl, "growth starts at the second consecutive failure"
+    assert at(3) == 4 * ttl
+    assert at(20) == accounts.ENDPOINT_STALE_MAX_S, "must clamp at the staleness ceiling"
+    assert all(at(n) <= accounts.ENDPOINT_STALE_MAX_S for n in range(40))
+
+    # A Retry-After still wins when it is longer than the exponential step...
+    assert accounts._failed_poll_backoff_until(NOW, 600.0, 2) - NOW == 600.0
+    # ...and is NOT capped by our own ceiling: a Retry-After is the endpoint
+    # telling us when it will accept polls again, and truncating it re-creates
+    # the 13/07 429 noise this path exists to avoid.
+    assert accounts._failed_poll_backoff_until(NOW, 99999.0, 3) - NOW == 99999.0
+
+
+def test_poll_failure_streak_is_recorded_and_cleared():
+    """A failure that forgets to increment is a backoff that never grows."""
+    accounts._endpoint_failures.clear()
+    try:
+        assert [accounts._note_poll_failure("/x") for _ in range(3)] == [1, 2, 3]
+        assert accounts._endpoint_failures["/x"] == 3
+    finally:
+        accounts._endpoint_failures.clear()
+
+
+async def test_a_permanently_failing_endpoint_stops_being_polled_every_ttl(monkeypatch, tmp_path):
+    """The live shape: a cancelled provider behind a blackholed upstream.
+
+    Ten TTLs of a continuously failing poll must produce far fewer fetches than
+    one-per-TTL, while a recovery still resumes normal cadence.
+    """
+    cred, state = _endpoint_poll_harness(monkeypatch, tmp_path, status=None)
+    ttl = accounts.ENDPOINT_TTL_S
+
+    # Ten opportunities one TTL apart, every one of which fails.
+    for step in range(10):
+        await accounts.refresh_endpoint(NOW + step * (ttl + 1))
+
+    assert state["calls"] < 5, (
+        f"a permanently failing endpoint was polled {state['calls']} times in ten "
+        "TTLs — the backoff is not backing off"
+    )
+    assert accounts._endpoint_failures[str(cred)] >= 2
+
+    # ...and a recovery clears the streak so normal cadence resumes immediately.
+    state["status"] = 200
+    accounts._endpoint_backoff[str(cred)] = 0.0  # the ceiling has now elapsed
+    await accounts.refresh_endpoint(NOW + 3600)
+    assert str(cred) not in accounts._endpoint_failures, "a 200 must forget the streak"
+    assert str(cred) not in accounts._endpoint_backoff

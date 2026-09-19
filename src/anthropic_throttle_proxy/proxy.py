@@ -2048,8 +2048,17 @@ async def _retry_direct_once(
         retry_where = "during upstream-retry"
     if via == "central":
         attempt.context["via"] = "direct-fallback"
-    state["upstream_retries"] += 1
-    M_UPSTREAM_RETRIES.inc()
+    # Telemetry polls are counted separately from fleet traffic. The retry
+    # counter is read as upstream pushback — on the dashboard's `N retries` and
+    # on `/metrics` — and a self-inflicted poll against a dead account endpoint
+    # is neither pushback nor fleet traffic. Measured live 19/09/2026: the
+    # figure stood at 739 with EVERY increment coming from the refresher
+    # polling `127.0.0.1:<port>/api/oauth/usage` through its own loopback. The
+    # `_is_oauth_telemetry_path` exclusion already covers pushback-retry,
+    # fast-fail, AIMD and the history ring; this is the counter it missed.
+    if not _is_oauth_telemetry_path(path):
+        state["upstream_retries"] += 1
+        M_UPSTREAM_RETRIES.inc()
 
     lock: asyncio.Lock | None = None
     if via == "central" and config.QUEUE_MODE == "off" and config.CENTRAL_URL:

@@ -372,6 +372,48 @@ async def test_exhausted_retry_returns_502(env, monkeypatch) -> None:
     assert config.state["upstream_retries"] >= 1
 
 
+@pytest.mark.parametrize(
+    ("path", "counted"),
+    [
+        # Read-only account telemetry, polled through the proxy's own loopback
+        # by the dashboard refresher. Measured live 19/09/2026: the retry
+        # counter read 739 with EVERY increment coming from this poll against a
+        # deliberately blackholed upstream, so the dashboard's `N retries` —
+        # which is read as upstream pushback — was entirely self-inflicted.
+        ("/api/oauth/usage", False),
+        ("/api/oauth/profile", False),
+        # Real fleet traffic still counts.
+        ("/v1/messages", True),
+    ],
+)
+async def test_telemetry_retries_are_not_counted_as_upstream_pushback(
+    env, monkeypatch, path: str, counted: bool
+) -> None:
+    """The retry counter must describe fleet traffic, not the proxy's own polls.
+
+    `_is_oauth_telemetry_path` already keeps telemetry out of pushback-retry,
+    fast-fail, AIMD and the history ring; the retry counter was the one place it
+    was missed. A poll that can never succeed must not make the fleet look like
+    it is being throttled.
+    """
+    tc, _ = env
+    monkeypatch.setattr(config, "CENTRAL_URL", "")
+    monkeypatch.setattr(config, "UPSTREAM", "http://127.0.0.1:1")
+    config.state["upstream_retries"] = 0
+
+    resp = await tc.get(path, headers={"Authorization": "Bearer dead-upstream"})
+    await _settle()
+    assert resp.status == 502  # both attempts failed, as they must on a dead port
+
+    if counted:
+        assert config.state["upstream_retries"] >= 1
+    else:
+        assert config.state["upstream_retries"] == 0, (
+            f"{path} is an internal telemetry poll; counting its retries as "
+            "upstream pushback is what put 739 phantom retries on the board"
+        )
+
+
 async def test_forward_once_propagates_client_disconnect(monkeypatch) -> None:
     """Regression: local client disconnects must not look like central failure.
 
