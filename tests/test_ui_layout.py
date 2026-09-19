@@ -396,3 +396,30 @@ def test_every_meter_track_can_shrink_instead_of_overflowing():
     reset = re.search(r"\n\.reset-in\s*\{([^}]*)\}", _css()).group(1)
     assert "min-width: 0" in reset, ".reset-in must be allowed to shrink"
     assert "nowrap" not in reset, ".reset-in must wrap rather than overflow"
+
+
+def test_no_caption_is_truncated_and_no_email_can_outrun_its_column():
+    """Two live clipping defects from 18/09/2026, both invisible to the page
+    probe (they are inside a panel, or inside `text-overflow`).
+
+    * `.gauge-detail` was `nowrap` + ellipsis, so `(in-flight + queued) ÷ live
+      cap` — the definition of what the saturation tile measures — lost 54px of
+      itself at every width up to 1180px. A caption that says which quantity a
+      number is cannot be the thing that gets dropped.
+    * `phsb5321@gmail.com` has no break opportunity, so it painted 22px past its
+      column and over the `(C)` credential tag at 1600 AND 1920px.
+    """
+    detail = re.search(r"\n\.gauge-detail\s*\{([^}]*)\}", _css()).group(1)
+    assert "text-overflow" not in detail, "a gauge caption must not be truncated"
+    assert "nowrap" not in detail, "a gauge caption must be allowed to wrap"
+
+    account = re.search(r"\ncol\.c-tok-acct\s*\{\s*width:\s*([0-9.]+)rem", _css())
+    assert account, "the token table's account column lost its width"
+    assert float(account.group(1)) >= 12, (
+        "an 18-character address plus its credential tag needs at least 12rem, "
+        "or it overflows the cell (measured: 9rem clipped by 22px)"
+    )
+    css = _css()
+    assert re.search(r"table\.bearers\.tokens td:nth-child\(2\)\s*\{[^}]*overflow-wrap", css), (
+        "the account cell must be allowed to break a long address"
+    )

@@ -347,13 +347,17 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
      Ordered in the MARKUP, not with `order`, so the reading order a screen
      reader gets still matches the visual one (WCAG 1.3.2). */
 }
+/* The caption is a DEFINITION — "(in-flight + queued) ÷ live cap" says which
+   quantity the tile is showing — so truncating it is information loss, not
+   tidiness. It was `nowrap` + ellipsis and lost 54px of itself at every width
+   up to 1180px (measured live 18/09/2026), which is exactly the laptop a
+   two-column shell is not for and the tile is. Wrap instead. */
 .gauge-detail {
   color: var(--muted);
   font-size: var(--fs-meta);
   font-family: var(--mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 .gauge-detail .is-crit-text { color: var(--crit); font-weight: 500; }
 .gauge-detail .holds { color: var(--warn); font-weight: 500; }
@@ -758,10 +762,17 @@ col.c-prov-status { width: auto; }
    row tooltip — present, not prominent, which is what the design brief asked
    for and what ten columns of dashes was failing to do. */
 col.c-tok     { width: 6.5rem; }
-col.c-tok-acct{ width: 9rem; }
+/* 9rem clipped `phsb5321@gmail.com` by 22px at 1600 AND 1920px — an address has
+   no break opportunity, so it painted the `(C)` credential tag out of the cell
+   rather than wrapping (measured live, 18/09/2026). Wider, and allowed to
+   break. */
+col.c-tok-acct{ width: 12rem; }
 col.c-tok-slots { width: 6rem; }
 col.c-tok-n   { width: 4.5rem; }
 col.c-tok-win { width: 7rem; }
+/* An email with no break opportunity is the one value in this table that can
+   outgrow its column; let it wrap rather than paint over its neighbour. */
+table.bearers.tokens td:nth-child(2) { overflow-wrap: anywhere; }
 .slot-now { font-family: var(--mono); font-weight: 600; }
 .slot-now .slot-of { color: var(--muted); font-weight: 400; }
 /* The AIMD ceiling is shown only when the live cap has fallen below it — a

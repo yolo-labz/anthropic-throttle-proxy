@@ -97,7 +97,13 @@ def main(argv: list[str]) -> int:
     ]
     for width, kind, count in failures:
         print(f"CLIPPED {count} element(s) {kind} at {width}px", file=sys.stderr)
-    print("font sizes rendered:", dict(collections.Counter(report[str(widths[0])]["font_sizes"])))
+    # stderr, not stdout: stdout is the JSON, and a summary line appended to it
+    # makes the output unparseable by the next tool in the pipe.
+    print(
+        "font sizes rendered:",
+        dict(collections.Counter(report[str(widths[0])]["font_sizes"])),
+        file=sys.stderr,
+    )
     return 1 if failures else 0
 
 
