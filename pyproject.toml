@@ -30,6 +30,13 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.7",
 ]
+# The browser-receipt delivery gate (specs/227-dashboard-audit/browser-receipt.py).
+# Its own group rather than part of `dev`: `uv sync` installs `dev` by default,
+# and this pulls a ~90 MB browser backend for a gate that CI deliberately does
+# not run. `uv sync --group delivery` when you want to run it.
+delivery = [
+    "playwright>=1.50",
+]
 
 [build-system]
 requires = ["hatchling"]
