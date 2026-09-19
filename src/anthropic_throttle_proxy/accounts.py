@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -496,6 +497,13 @@ _endpoint_backoff: dict[str, float] = {}
 # by the first success. Bounded by the number of configured credential paths.
 _endpoint_failures: dict[str, int] = {}
 
+# Same shape for the PROFILE endpoint, tracked separately: usage and profile
+# have independent rate-limit domains, so a healthy usage poll must not reset a
+# throttled profile's window (or vice versa).
+_email_backoff: dict[str, float] = {}
+_email_failures: dict[str, int] = {}
+_email_locks: dict[str, asyncio.Lock] = {}
+
 # 90 * 2**steps, capped at the staleness ceiling (see `_failed_poll_backoff_until`):
 # 90s -> 180 -> 360 -> 720 -> 1440 -> 1800 -> 1800 ...
 _FAILURE_BACKOFF_STEPS = 5
@@ -764,6 +772,13 @@ def _note_poll_failure(path: str) -> int:
     return streak
 
 
+def _note_email_failure(path: str) -> int:
+    """Count one more consecutive failed PROFILE poll; return the streak."""
+    streak = _email_failures.get(path, 0) + 1
+    _email_failures[path] = streak
+    return streak
+
+
 def _failed_poll_backoff_until(now: float, retry_after: float | None, failures: int = 0) -> float:
     """Next usage-poll attempt time after a failed fetch.
 
@@ -875,7 +890,9 @@ async def _get_json(url: str, token: str) -> JsonResult:
         return 0, None
 
 
-async def _refresh_email(path: str, token: str, expect_mtime: int | None = None) -> None:
+async def _refresh_email(
+    path: str, token: str, expect_mtime: int | None = None, *, force: bool = False
+) -> None:
     """Profile email, re-fetched only when the credential file changed.
 
     ``expect_mtime`` is the credential mtime observed when ``token`` was READ.
@@ -883,6 +900,22 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
     re-checked AFTER the network round-trip — so a rotation landing mid-probe
     can never certify the OLD token's email against the NEW file (Codex MAJOR:
     the guard would mark a wrong identity as verified).
+
+    A failed profile read now backs off on its own streak, honouring its own
+    ``Retry-After``. It used to retry on every usage poll — measured 19/09/2026
+    with usage returning 200 while profile returned ``429 Retry-After: 2397``:
+    the profile endpoint was hit again at +91 s and +182 s, i.e. the same
+    ignore-the-explicit-window defect this module's usage backoff was just
+    fixed for, one function over. The two endpoints have separate rate-limit
+    domains, so they need separate streaks: a healthy usage poll must not make
+    an exhausted profile poll look healthy.
+
+    ``force=True`` skips the window without clearing it. The collision guard's
+    verify-before-warn probe is an explicit decision to read THIS credential
+    now, and waiting out an automatic backoff is the one thing that must not
+    happen there: the whole point is to resolve a suspected duplicate before
+    alarming about it. A forced probe that fails still records its failure, so
+    the window is armed either way.
     """
     try:
         mtime = os.stat(path).st_mtime_ns
@@ -893,18 +926,34 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
     cached = _email_cache.get(path)
     if cached is not None and cached[0] == mtime:
         return
-    status, body, _retry_after, _budget_lock_retry_after_s = _json_result_parts(
-        await _get_json(_oauth_base() + _PROFILE_PATH, token)
-    )
-    if status == 200 and body:
-        email = (body.get("account") or {}).get("email")
-        if isinstance(email, str) and email:
-            try:
-                if os.stat(path).st_mtime_ns != mtime:
-                    return  # rotated mid-probe — this email belongs to the OLD token
-            except OSError:
+    lock = _email_locks.setdefault(path, asyncio.Lock())
+    async with lock:
+        # Re-check under the lock: a concurrent refresh that just succeeded (or
+        # just backed off) must not be duplicated by this one.
+        cached = _email_cache.get(path)
+        if cached is not None and cached[0] == mtime:
+            return
+        now = time.time()
+        if not force and now < _email_backoff.get(path, 0.0):
+            return  # inside the profile endpoint's own window — keep the label
+        status, body, retry_after, _budget_lock_retry_after_s = _json_result_parts(
+            await _get_json(_oauth_base() + _PROFILE_PATH, token)
+        )
+        if status == 200 and body:
+            email = (body.get("account") or {}).get("email")
+            if isinstance(email, str) and email:
+                try:
+                    if os.stat(path).st_mtime_ns != mtime:
+                        return  # rotated mid-probe — this email belongs to the OLD token
+                except OSError:
+                    return
+                _email_cache[path] = (mtime, email)
+                _email_backoff.pop(path, None)
+                _email_failures.pop(path, None)
                 return
-            _email_cache[path] = (mtime, email)
+        _email_backoff[path] = _failed_poll_backoff_until(
+            now, retry_after, failures=_note_email_failure(path)
+        )
 
 
 async def _refresh_one(path: str, now: float) -> None:
@@ -1103,7 +1152,7 @@ async def force_verify_email(path: str) -> str | None:
         if token is None:
             return None
         _email_cache.pop(path, None)  # force _refresh_email past its mtime short-circuit
-        await _refresh_email(path, token, expect_mtime=mtime)
+        await _refresh_email(path, token, expect_mtime=mtime, force=True)
         cached = _email_cache.get(path)
         return cached[1] if cached is not None else None
 

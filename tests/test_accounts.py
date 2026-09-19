@@ -42,6 +42,9 @@ def _clear_account_module_state() -> None:
     accounts._verify_locks.clear()
     accounts._endpoint_backoff.clear()
     accounts._endpoint_failures.clear()
+    accounts._email_backoff.clear()
+    accounts._email_failures.clear()
+    accounts._email_locks.clear()
     accounts._endpoint_cache_loaded = False
     limiter._retry_after_state = None
 
@@ -1338,9 +1341,98 @@ async def test_a_permanently_failing_endpoint_stops_being_polled_every_ttl(monke
     )
     assert accounts._endpoint_failures[str(cred)] >= 2
 
-    # ...and a recovery clears the streak so normal cadence resumes immediately.
+    # ...and a recovery clears the streak when the grown deadline NATURALLY
+    # lapses. The first version of this test hand-cleared `_endpoint_backoff`,
+    # which would have passed even if the deadline never expired (review minor).
+    deadline = accounts._endpoint_backoff[str(cred)]
+    assert deadline > NOW, "a failed poll must have armed a deadline"
     state["status"] = 200
-    accounts._endpoint_backoff[str(cred)] = 0.0  # the ceiling has now elapsed
-    await accounts.refresh_endpoint(NOW + 3600)
+    await accounts.refresh_endpoint(deadline - 1)  # inside the grown window
+    assert str(cred) in accounts._endpoint_failures, "no poll may happen before the deadline"
+    await accounts.refresh_endpoint(deadline + 1)  # naturally past it
     assert str(cred) not in accounts._endpoint_failures, "a 200 must forget the streak"
     assert str(cred) not in accounts._endpoint_backoff
+
+
+async def test_a_throttled_profile_poll_honors_its_own_retry_after(monkeypatch, tmp_path):
+    """The profile endpoint backs off on its own streak, honouring its window.
+
+    Found by the 19/09/2026 review, one function over from the usage fix:
+    `_refresh_email` discarded its `Retry-After` and cached only SUCCESSES, so
+    it retried on every usage poll. Reproduced with usage returning 200 while
+    profile returned `429 Retry-After: 2397` — the profile endpoint was hit
+    again at +91 s and +182 s, i.e. exactly the ignore-the-explicit-window
+    defect the usage backoff was just fixed for.
+
+    The two endpoints have independent rate-limit domains, so they need
+    independent streaks: a healthy usage poll must not make an exhausted
+    profile poll look healthy.
+    """
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 7200) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+
+    profile_calls = {"n": 0}
+    retry_after = 2397.0
+    token = accounts._read_token(str(cred))
+
+    async def _get_json(url, _token):
+        if url.endswith(accounts._PROFILE_PATH):
+            profile_calls["n"] += 1
+            return 429, None, retry_after
+        return 200, _usage_body(u7=10.0), None
+
+    monkeypatch.setattr(accounts, "_get_json", _get_json)
+
+    await accounts._refresh_email(str(cred), token)
+    assert profile_calls["n"] == 1
+    assert accounts._email_backoff[str(cred)] == pytest.approx(time.time() + retry_after, abs=5), (
+        "the profile endpoint's own Retry-After must be honoured in full"
+    )
+
+    # 91 s later — the usage TTL, and well inside the profile window.
+    accounts._email_backoff[str(cred)] = time.time() + retry_after
+    await accounts._refresh_email(str(cred), token)
+    assert profile_calls["n"] == 1, "profile was re-polled inside its own Retry-After window"
+
+
+async def test_a_forced_verification_is_not_blocked_by_the_automatic_window(monkeypatch, tmp_path):
+    """The collision guard's verify-before-warn probe must beat the backoff.
+
+    `force_verify_email` exists to resolve a SUSPECTED duplicate before the
+    guard alarms, and it deliberately bypasses caches. The first version of the
+    profile backoff gated it too, so a suspected collision could sit unresolved
+    for the whole window — the opposite of what that path is for. A forced
+    probe skips the window WITHOUT clearing it, so a failure still arms it.
+    """
+    cred = tmp_path / "c.json"
+    _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 7200) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    monkeypatch.setattr(config, "LISTEN_PORT", 8765)
+
+    calls = {"n": 0}
+    healthy = {"on": False}
+
+    async def _get_json(url, _token):
+        calls["n"] += 1
+        if healthy["on"]:
+            return 200, {"account": {"email": "someone@pm.me"}}
+        return 429, None
+
+    monkeypatch.setattr(accounts, "_get_json", _get_json)
+
+    await accounts.force_verify_email(str(cred))  # fails → arms the window
+    assert calls["n"] == 1
+    assert str(cred) in accounts._email_backoff
+
+    # A plain refresh inside the window stands down...
+    await accounts._refresh_email(str(cred), accounts._read_token(str(cred)))
+    assert calls["n"] == 1, "the automatic path must respect the window"
+
+    # ...and a FORCED one still probes, which is the whole point of the guard.
+    healthy["on"] = True
+    verified = await accounts.force_verify_email(str(cred))
+    assert calls["n"] == 2, "a forced verification was blocked by the automatic window"
+    assert verified == "someone@pm.me"
+    assert str(cred) not in accounts._email_failures, "a successful probe clears the streak"

@@ -13,7 +13,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from anthropic_throttle_proxy import config, forwarding, limiter, pacing, proxy
+from anthropic_throttle_proxy import config, forwarding, limiter, metrics, pacing, proxy
 from anthropic_throttle_proxy.ui import advisor_impl
 from anthropic_throttle_proxy.ui.routes import attach_ui
 
@@ -400,18 +400,25 @@ async def test_telemetry_retries_are_not_counted_as_upstream_pushback(
     monkeypatch.setattr(config, "CENTRAL_URL", "")
     monkeypatch.setattr(config, "UPSTREAM", "http://127.0.0.1:1")
     config.state["upstream_retries"] = 0
+    before = metrics.REGISTRY.get_sample_value("anthropic_upstream_retries_total") or 0.0
 
     resp = await tc.get(path, headers={"Authorization": "Bearer dead-upstream"})
     await _settle()
     assert resp.status == 502  # both attempts failed, as they must on a dead port
 
+    # BOTH counters, not just the state dict: `/metrics` is where the figure is
+    # actually read, and moving `M_UPSTREAM_RETRIES.inc()` outside the exclusion
+    # would otherwise pass (review minor).
+    metric = metrics.REGISTRY.get_sample_value("anthropic_upstream_retries_total") or 0.0
     if counted:
         assert config.state["upstream_retries"] >= 1
+        assert metric > before, "a real fleet retry must reach /metrics"
     else:
         assert config.state["upstream_retries"] == 0, (
             f"{path} is an internal telemetry poll; counting its retries as "
             "upstream pushback is what put 739 phantom retries on the board"
         )
+        assert metric == before, "a telemetry retry must not reach /metrics either"
 
 
 async def test_forward_once_propagates_client_disconnect(monkeypatch) -> None:
