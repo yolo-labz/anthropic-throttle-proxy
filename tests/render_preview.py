@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import jinja2
@@ -51,10 +52,15 @@ def _meter(
     reset_at: str = "",
     window_mins: int | None = None,
 ) -> dict:
+    # #227 derives the icon from `window_mins` before falling back to the label,
+    # and renders the absolute UTC reset beside the countdown. The preview
+    # derives `reset_at` the same way `presentation._reset_at` does rather than
+    # leaving it empty: the stamp is what overflowed a meter cell on the live
+    # page (18/09/2026), and a preview that omits the field cannot show it.
+    if not reset_at and resets_at is not None:
+        reset_at = datetime.fromtimestamp(resets_at, UTC).strftime("%d/%m/%Y %H:%M UTC")
     return {
         "label": label,
-        # #227 derives its icon from `window_mins` before falling back to the
-        # label, and adds `reset_at` (the absolute UTC reset) beside `reset_in`.
         "icon": {"5h": "⏱️", "7d": "📅"}.get(label, "📊"),
         "pct": pct,
         "reset_in": reset_in,
