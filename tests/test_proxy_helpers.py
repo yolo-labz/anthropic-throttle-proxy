@@ -2056,6 +2056,12 @@ async def _promote_swap_scene(
         accounts._verify_locks,
     ):
         cache.clear()
+    # The profile probe's own failure memory. A scene where the stub changes
+    # from failing to healthy mid-test does not advance the clock, so without
+    # this the second probe is still inside the window a REAL failure would
+    # have armed — which is the new behaviour working, not a broken verifier.
+    accounts._email_backoff.clear()
+    accounts._email_failures.clear()
 
     async def fake_get_json(url: str, token: str):
         if "profile" in url:

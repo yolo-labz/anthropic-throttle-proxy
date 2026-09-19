@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -492,6 +493,20 @@ _endpoint_cache_loaded = False
 # staleness display (``account_view``) stays honest — this gates *attempts*,
 # not *freshness*.
 _endpoint_backoff: dict[str, float] = {}
+# path -> consecutive failed polls. Drives `_failed_poll_backoff_until`; cleared
+# by the first success. Bounded by the number of configured credential paths.
+_endpoint_failures: dict[str, int] = {}
+
+# Same shape for the PROFILE endpoint, tracked separately: usage and profile
+# have independent rate-limit domains, so a healthy usage poll must not reset a
+# throttled profile's window (or vice versa).
+_email_backoff: dict[str, float] = {}
+_email_failures: dict[str, int] = {}
+_email_locks: dict[str, asyncio.Lock] = {}
+
+# 90 * 2**steps, capped at the staleness ceiling (see `_failed_poll_backoff_until`):
+# 90s -> 180 -> 360 -> 720 -> 1440 -> 1800 -> 1800 ...
+_FAILURE_BACKOFF_STEPS = 5
 # path -> (cred mtime_ns, email). Keyed by credential mtime so a re-/login
 # (the 11/06 contamination vector) invalidates the email instantly — the
 # 24h-style time cache the picker first shipped hid a collision for up to a
@@ -744,9 +759,61 @@ def _json_result_parts(
     return status, body, retry_after, budget_lock_retry_after
 
 
-def _failed_poll_backoff_until(now: float, retry_after: float | None) -> float:
-    """Next usage-poll attempt time after a failed fetch."""
-    return now + max(ENDPOINT_TTL_S, retry_after or 0.0)
+def _note_poll_failure(path: str) -> int:
+    """Count one more consecutive failed poll for ``path``; return the streak.
+
+    Kept next to `_failed_poll_backoff_until` rather than inlined at the three
+    call sites so the streak has exactly one definition: a failure that forgets
+    to increment is a backoff that never grows, which is the defect this
+    replaces.
+    """
+    streak = _endpoint_failures.get(path, 0) + 1
+    _endpoint_failures[path] = streak
+    return streak
+
+
+def _note_email_failure(path: str) -> int:
+    """Count one more consecutive failed PROFILE poll; return the streak."""
+    streak = _email_failures.get(path, 0) + 1
+    _email_failures[path] = streak
+    return streak
+
+
+def _failed_poll_backoff_until(now: float, retry_after: float | None, failures: int = 0) -> float:
+    """Next usage-poll attempt time after a failed fetch.
+
+    Exponential in the number of CONSECUTIVE failures, because a poll that has
+    already failed N times will usually fail N+1 times too — and the previous
+    version could not express that. It returned
+    ``now + max(ENDPOINT_TTL_S, retry_after or 0)``, i.e. **the normal poll
+    cadence**: `ENDPOINT_TTL_S` IS the TTL, so a dead endpoint was re-polled
+    every 90 s forever and "backoff" was a no-op (cross-family review of the
+    19/09 pass found the same shape once before in the lanes cache).
+
+    Measured live 19/09/2026, on a deliberately blackholed upstream
+    (`THROTTLE_UPSTREAM=http://127.0.0.1:1`, Anthropic cancelled): **739
+    consecutive failures, one every 91.5 s**, each producing four journal lines
+    — ~3,800 lines a day for a provider that cannot answer, and a retry counter
+    that climbs without ever recovering.
+
+    The first repeat failure still waits `ENDPOINT_TTL_S`, unchanged: that
+    cadence was calibrated by the 10/07 self-429 incident and a single blip
+    should not cost the panel its reading. Growth starts at the SECOND
+    consecutive failure, which is the only thing the old expression could not
+    distinguish from the first.
+
+    OUR OWN delay is capped at `ENDPOINT_STALE_MAX_S`, not an arbitrary hour:
+    that is the age at which a reading stops being used at all, so backing off
+    past it would trade journal noise for a panel that is blank when the
+    endpoint quietly comes back. An explicit Retry-After is NOT capped — that is
+    the endpoint telling us when it will accept polls again, and truncating it
+    re-creates the 13/07 noise this function's callers were written for.
+    """
+    steps = min(max(failures - 1, 0), _FAILURE_BACKOFF_STEPS)
+    delay = min(ENDPOINT_TTL_S * (2**steps), ENDPOINT_STALE_MAX_S)
+    if retry_after:
+        delay = max(delay, retry_after)
+    return now + delay
 
 
 # Poll cadence while the bearer's MESSAGES Retry-After window is active. The
@@ -823,7 +890,9 @@ async def _get_json(url: str, token: str) -> JsonResult:
         return 0, None
 
 
-async def _refresh_email(path: str, token: str, expect_mtime: int | None = None) -> None:
+async def _refresh_email(
+    path: str, token: str, expect_mtime: int | None = None, *, force: bool = False
+) -> None:
     """Profile email, re-fetched only when the credential file changed.
 
     ``expect_mtime`` is the credential mtime observed when ``token`` was READ.
@@ -831,6 +900,22 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
     re-checked AFTER the network round-trip — so a rotation landing mid-probe
     can never certify the OLD token's email against the NEW file (Codex MAJOR:
     the guard would mark a wrong identity as verified).
+
+    A failed profile read now backs off on its own streak, honouring its own
+    ``Retry-After``. It used to retry on every usage poll — measured 19/09/2026
+    with usage returning 200 while profile returned ``429 Retry-After: 2397``:
+    the profile endpoint was hit again at +91 s and +182 s, i.e. the same
+    ignore-the-explicit-window defect this module's usage backoff was just
+    fixed for, one function over. The two endpoints have separate rate-limit
+    domains, so they need separate streaks: a healthy usage poll must not make
+    an exhausted profile poll look healthy.
+
+    ``force=True`` skips the window without clearing it. The collision guard's
+    verify-before-warn probe is an explicit decision to read THIS credential
+    now, and waiting out an automatic backoff is the one thing that must not
+    happen there: the whole point is to resolve a suspected duplicate before
+    alarming about it. A forced probe that fails still records its failure, so
+    the window is armed either way.
     """
     try:
         mtime = os.stat(path).st_mtime_ns
@@ -841,18 +926,34 @@ async def _refresh_email(path: str, token: str, expect_mtime: int | None = None)
     cached = _email_cache.get(path)
     if cached is not None and cached[0] == mtime:
         return
-    status, body, _retry_after, _budget_lock_retry_after_s = _json_result_parts(
-        await _get_json(_oauth_base() + _PROFILE_PATH, token)
-    )
-    if status == 200 and body:
-        email = (body.get("account") or {}).get("email")
-        if isinstance(email, str) and email:
-            try:
-                if os.stat(path).st_mtime_ns != mtime:
-                    return  # rotated mid-probe — this email belongs to the OLD token
-            except OSError:
+    lock = _email_locks.setdefault(path, asyncio.Lock())
+    async with lock:
+        # Re-check under the lock: a concurrent refresh that just succeeded (or
+        # just backed off) must not be duplicated by this one.
+        cached = _email_cache.get(path)
+        if cached is not None and cached[0] == mtime:
+            return
+        now = time.time()
+        if not force and now < _email_backoff.get(path, 0.0):
+            return  # inside the profile endpoint's own window — keep the label
+        status, body, retry_after, _budget_lock_retry_after_s = _json_result_parts(
+            await _get_json(_oauth_base() + _PROFILE_PATH, token)
+        )
+        if status == 200 and body:
+            email = (body.get("account") or {}).get("email")
+            if isinstance(email, str) and email:
+                try:
+                    if os.stat(path).st_mtime_ns != mtime:
+                        return  # rotated mid-probe — this email belongs to the OLD token
+                except OSError:
+                    return
+                _email_cache[path] = (mtime, email)
+                _email_backoff.pop(path, None)
+                _email_failures.pop(path, None)
                 return
-            _email_cache[path] = (mtime, email)
+        _email_backoff[path] = _failed_poll_backoff_until(
+            now, retry_after, failures=_note_email_failure(path)
+        )
 
 
 async def _refresh_one(path: str, now: float) -> None:
@@ -891,11 +992,14 @@ async def _refresh_one(path: str, now: float) -> None:
                 # rate-limit domain, and the only evidence that can contradict
                 # a stale window) but at a relaxed cadence so a long window is
                 # never hammered by UI auto-refresh.
+                _endpoint_backoff.pop(path, None)
+                _endpoint_failures.pop(path, None)
                 _endpoint_backoff[path] = now + min(
                     max(ENDPOINT_TTL_S, retry_after_remaining), _RETRY_AFTER_GATE_CAP_S
                 )
             else:
                 _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
+            _endpoint_failures.pop(path, None)  # ...and forget the failure streak
             _maybe_clear_stale_retry_after(token, usage, now)
             await _refresh_email(path, token, expect_mtime=token_mtime)
         elif status == 401:
@@ -909,7 +1013,9 @@ async def _refresh_one(path: str, now: float) -> None:
             }
             _persist_endpoint_cache()  # tombstone: a dead cred cannot re-seed
             # aged numbers after a restart (persist drops the usage-less entry)
-            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
+            _endpoint_backoff[path] = _failed_poll_backoff_until(
+                now, retry_after, failures=_note_poll_failure(path)
+            )
         elif entry is not None:
             # 429/5xx/timeout: keep serving the stale entry (the panel ages
             # it out at the stale ceiling) but mark the failure and back off so
@@ -918,14 +1024,18 @@ async def _refresh_one(path: str, now: float) -> None:
             # otherwise a 90 s retry cadence rediscovers long OAuth windows and
             # creates the same 429 noise every UI refresh cycle.
             entry["err"] = f"usage endpoint unavailable ({status or 'timeout'})"
-            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
+            _endpoint_backoff[path] = _failed_poll_backoff_until(
+                now, retry_after, failures=_note_poll_failure(path)
+            )
         else:
             _endpoint_cache[path] = {
                 "fetched": 0.0,
                 "usage": None,
                 "err": f"usage endpoint unavailable ({status or 'timeout'})",
             }
-            _endpoint_backoff[path] = _failed_poll_backoff_until(now, retry_after)
+            _endpoint_backoff[path] = _failed_poll_backoff_until(
+                now, retry_after, failures=_note_poll_failure(path)
+            )
         if status not in (200, 401) and budget_lock_retry_after:
             # Display-only evidence. Do NOT call limiter.note_retry_after or
             # write bearer_state: telemetry remains isolated from message AIMD.
@@ -1042,7 +1152,7 @@ async def force_verify_email(path: str) -> str | None:
         if token is None:
             return None
         _email_cache.pop(path, None)  # force _refresh_email past its mtime short-circuit
-        await _refresh_email(path, token, expect_mtime=mtime)
+        await _refresh_email(path, token, expect_mtime=mtime, force=True)
         cached = _email_cache.get(path)
         return cached[1] if cached is not None else None
 
