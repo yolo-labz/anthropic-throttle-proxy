@@ -317,7 +317,12 @@ def _context() -> dict:
             {
                 "bearer_id": "c0de9a11",
                 "account": "B",
-                "identity": "pedro@proton.me",
+                # The longest shape the real host produces, not a short stub: an
+                # 18-character address with no break opportunity is what painted
+                # 22px past its column at 1600 and 1920px on the live page
+                # (18/09/2026), and a preview that only ever renders
+                # `pedro@pm.me` cannot show it. Same lesson as `reset_at`.
+                "identity": "phsb5321@gmail.com",
                 "inflight": 0,
                 "queued": 0,
                 "served": 1156,
