@@ -2817,3 +2817,102 @@ def test_account_route_malformed_scoped_no_crash(monkeypatch) -> None:
         monkeypatch, [_acct("aaa", "TOKA", "A", "Sonnet", None)]
     )
     assert (bid, label) == ("aaa", "A")  # scoped util=None → not folded, no crash
+
+
+# ── auth probe backoff (19/09/2026) ─────────────────────────────────────────
+
+
+def test_auth_probe_delay_grows_and_is_bounded(monkeypatch):
+    """A probe that can never answer must not be retried at full rate forever.
+
+    The loop slept `max(30.0, AUTH_PROBE_INTERVAL_S)` on EVERY path, so an
+    unreachable upstream was probed at the healthy-lane cadence indefinitely and
+    logged a line per attempt. That is the same defect the account usage poll
+    was fixed for on 19/09/2026 — 739 consecutive failures at a flat 91.5 s —
+    one `log()` short of it.
+    """
+    monkeypatch.setattr(config, "AUTH_PROBE_INTERVAL_S", 300.0)
+
+    assert proxy._auth_probe_delay(0) == 300.0, "a healthy lane keeps its cadence"
+    assert proxy._auth_probe_delay(1) == 300.0, "the first retry is not punished"
+    assert proxy._auth_probe_delay(2) == 600.0
+    assert proxy._auth_probe_delay(3) == 1200.0
+    assert proxy._auth_probe_delay(4) == 1800.0, "clamped at the ceiling"
+    assert all(proxy._auth_probe_delay(n) <= proxy._AUTH_PROBE_MAX_BACKOFF_S for n in range(50))
+
+    # A fast cadence still has a floor, and still backs off from it.
+    monkeypatch.setattr(config, "AUTH_PROBE_INTERVAL_S", 0.0)
+    assert proxy._auth_probe_delay(0) == 30.0
+    assert proxy._auth_probe_delay(2) == 60.0
+
+
+class _StopLoop(Exception):
+    """Raised by the fake sleep to end the auth-probe loop after N sleeps."""
+
+
+async def _auth_probe_loop_sleeps(monkeypatch, probe, steps: int) -> list[float]:
+    """Run the real auth-probe loop for ``steps`` sleeps; return the delays.
+
+    `proxy.asyncio` is replaced with a stub namespace so the intercepted `sleep`
+    is the loop's and not the one pytest-asyncio is standing on.
+    """
+    import types
+
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        if len(sleeps) >= steps:
+            raise _StopLoop
+
+    monkeypatch.setattr(proxy, "_probe_upstream_auth_once", probe)
+    monkeypatch.setattr(proxy, "asyncio", types.SimpleNamespace(sleep=fake_sleep))
+    monkeypatch.setattr(proxy, "log", lambda *_a, **_k: None)
+    monkeypatch.setattr(config, "AUTH_PROBE_INTERVAL_S", 300.0)
+
+    with pytest.raises(_StopLoop):
+        await proxy._upstream_auth_loop()
+    return sleeps
+
+
+async def test_the_auth_probe_loop_actually_backs_off(monkeypatch):
+    """The LOOP, not the helper — a helper nothing calls would pass on its own."""
+
+    async def always_fails() -> None:
+        raise RuntimeError("upstream unreachable")
+
+    sleeps = await _auth_probe_loop_sleeps(monkeypatch, always_fails, steps=5)
+
+    assert sleeps == [300.0, 600.0, 1200.0, 1800.0, 1800.0], (
+        "a permanently failing probe must slow down; a constant list here is the "
+        "defect: it probes an unreachable upstream forever at full rate"
+    )
+
+
+async def test_the_auth_probe_loop_forgets_a_streak_that_ended(monkeypatch):
+    """A probe that answers resets the cadence, so a blip costs one retry."""
+    results: list[Exception | None] = [RuntimeError("down"), RuntimeError("down"), None, None]
+
+    async def flaky() -> None:
+        outcome = results.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    sleeps = await _auth_probe_loop_sleeps(monkeypatch, flaky, steps=4)
+
+    assert sleeps == [300.0, 600.0, 300.0, 300.0], (
+        "the third probe returned a verdict, so the fourth must be back at the "
+        f"healthy cadence: {sleeps}"
+    )
+
+
+def test_auth_probe_failure_logs_shrink_as_the_streak_grows():
+    """One down upstream is one fact, not one line per attempt.
+
+    Doubling-only logging is what makes a day-long outage cost ~10 lines
+    instead of 2,880. Asserted on the predicate the loop uses rather than by
+    driving the loop, because the loop's sleep is what makes it a loop.
+    """
+    logged = [n for n in range(1, 129) if n & (n - 1) == 0]
+    assert logged == [1, 2, 4, 8, 16, 32, 64, 128], "log on the first failure and each doubling"
+    assert len(logged) < 130 / 10, "the whole point is that it is far below one-per-attempt"

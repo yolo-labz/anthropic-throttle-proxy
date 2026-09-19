@@ -4101,14 +4101,49 @@ def _is_anthropic_message(body: bytes) -> bool:
     return isinstance(payload, dict) and payload.get("type") == "message"
 
 
+# Ceiling for the auth probe's failure backoff. The verdict feeds lane
+# selection, so an unreachable upstream must not be probed harder than this —
+# but it must still be re-probed, because it is also how a recovered lane is
+# noticed at all.
+_AUTH_PROBE_MAX_BACKOFF_S = 1800.0
+# Doublings allowed before the ceiling applies (30s base → ~16 min at 5).
+_AUTH_PROBE_BACKOFF_STEPS = 6
+
+
+def _auth_probe_delay(failures: int) -> float:
+    """Seconds to wait before the next auth probe.
+
+    `AUTH_PROBE_INTERVAL_S` is a healthy-lane cadence, and the loop used it on
+    every path — so a probe that could never answer was repeated at full rate
+    forever and logged on every attempt. Measured on the usage-endpoint sibling
+    of this loop on 19/09/2026: 739 consecutive failures at a flat 91.5 s, four
+    journal lines each. The same shape, one `log()` removed.
+
+    A failed probe is re-tried at 2x, 4x, 8x … the base up to
+    `_AUTH_PROBE_MAX_BACKOFF_S`; a probe that returns a verdict resets it.
+    """
+    base = max(30.0, config.AUTH_PROBE_INTERVAL_S)
+    if failures <= 0:
+        return base
+    steps = min(failures - 1, _AUTH_PROBE_BACKOFF_STEPS)
+    return min(base * (2**steps), _AUTH_PROBE_MAX_BACKOFF_S)
+
+
 async def _upstream_auth_loop() -> None:
     """Refresh the credential verdict on a slow timer. Key-owning lanes only."""
+    failures = 0
     while True:
         try:
             await _probe_upstream_auth_once()
         except Exception as exc:  # inconclusive: network/TLS/timeout
-            log(f"upstream auth probe error: {exc!r}")
-        await asyncio.sleep(max(30.0, config.AUTH_PROBE_INTERVAL_S))
+            failures += 1
+            # Log on the first failure and then only on each doubling: an
+            # upstream that is down for a day is one fact, not 2,880 of them.
+            if failures & (failures - 1) == 0:
+                log(f"upstream auth probe error: {exc!r} (consecutive failures: {failures})")
+        else:
+            failures = 0
+        await asyncio.sleep(_auth_probe_delay(failures))
 
 
 async def _upstream_auth_context(_app: web.Application):
