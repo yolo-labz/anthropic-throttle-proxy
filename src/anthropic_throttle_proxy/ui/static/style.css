@@ -230,6 +230,10 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
   line-height: 1.1;
   letter-spacing: -0.01em;
   color: var(--ctp-subtext0);
+  /* One long word is the whole content of this element, so it is the one place
+     on the page a single token can widen the document. Breaking is the last
+     resort; the width query below is the first. */
+  overflow-wrap: anywhere;
 }
 /* "THROTTLED for 12m" — duration is what separates a transient from an
    outage, and the verdict alone never said it. */
@@ -1031,6 +1035,15 @@ footer a:hover { color: var(--info); text-decoration: underline; }
    PAGE never gains a horizontal scrollbar (the acceptance probe measures
    that). The hero drops to one column so its facts wrap under the verdict
    rather than being squeezed beside it. */
+/* The verdict is the largest text on the page — but a word that does not fit is
+   not a hero, it is an obstruction. At a phone's accessibility zoom (390px at
+   200% is 195 CSS px) `SUBSCRIPTIONS` set at 24px mono is ~184px wide and
+   pushed the document 20px sideways; measured in Chromium, 19/09/2026. The hero
+   steps down one rank and stays the largest text there. */
+@media (max-width: 480px) {
+  .hero .verdict { font-size: var(--fs-value); }
+}
+
 @media (max-width: 900px) {
   .hero { grid-template-columns: minmax(0, 1fr); }
   .hero-verdict, .hero-detail { grid-column: 1; }
