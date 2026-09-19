@@ -1,9 +1,14 @@
+<span id="stats-meta" hidden data-revision="{{ asset_v | default('') }}" data-local="{{ 'true' if show_local | default(true) else 'false' }}"></span>
+{% if partial_response | default(false) and show_local | default(true) %}
+<span id="config-summary" class="muted" hx-swap-oob="true">{{ config_count | default('—') }} settings · {{ override_count | default('—') }} overrides · autosave on change</span>
+{% endif %}
 {% if status %}
 <div class="status {{ status.level }}">
   <span class="dot"></span>
   <span class="verdict">{{ status.verdict }}</span>
-  {% if status.since %}<span class="since" title="How long the fleet has held this verdict">for {{ status.since }}</span>{% endif %}
+  {% if status.since %}<span class="since" title="How long this proxy has held this verdict">for {{ status.since }}</span>{% endif %}
   <span class="detail">{{ status.detail }}</span>
+  <span class="muted as-of" title="Server render time of this panel. The page re-renders every 2s — a stamp that stops moving means the refresh disconnected and these readings are last known, not live.">as of {{ as_of | default('—') }}</span>
 </div>
 {# The binding constraint is the page's decision object, not a clause inside a
    sentence: which paid subscription is blocked, until when, and what takes the
@@ -11,14 +16,21 @@
 {% if status.binding %}
 <div class="binding {{ status.level }}" role="status" aria-label="Binding constraint">
   <div class="binding-what">
-    <span class="binding-label">blocked</span>
+    {# "Blocked" is a capability claim, so only an upstream refusal earns it.
+       `_compute_status` also builds a binding object for PACING — a window
+       past the warn line that is still `allowed` — and the page labelled that
+       `blocked` with a `reopens in`, which turns queue pressure into a quota
+       refusal (cross-family review, 18/09/2026). The measured reason is
+       already on the object as `evidence`; the wording follows it. #}
+    {% set refused = status.binding.evidence == "throttled" %}
+    <span class="binding-label">{{ "blocked" if refused else "binding constraint" }}</span>
     <span class="binding-sub">{{ status.binding.subscription or status.binding.bearer_id }}</span>
     {% if status.binding.sub %}<span class="binding-email">{{ status.binding.sub }}</span>{% endif %}
   </div>
   <div class="binding-window">
     <span class="binding-label">{{ status.binding.window }} window</span>
     <span class="binding-pct">{{ status.binding.pct }}%</span>
-    {% if status.binding.resets_in %}<span class="binding-note">reopens in {{ status.binding.resets_in }}</span>
+    {% if status.binding.resets_in %}<span class="binding-note">{{ "reopens in" if refused else "resets in" }} {{ status.binding.resets_in }}</span>
     {% elif status.binding.retry_after %}<span class="binding-note">retry-after {{ status.binding.retry_after }}s</span>{% endif %}
   </div>
   <div class="binding-next">
@@ -26,6 +38,12 @@
     {% if status.binding.next_usable %}
       <span class="binding-sub">{{ status.binding.next_usable }}</span>
       <span class="binding-note">{{ status.binding.next_usable_pct }}% used</span>
+    {% elif status.binding.next_usable_unknown %}
+      {# A sibling exists but carries no reading we can trust. That is a
+         different fact from "every sibling is blocked", and only one of the
+         two is knowable here — so the page says the one it knows. #}
+      <span class="binding-none">no verified alternative</span>
+      <span class="binding-note">a sibling exists but its capacity is unmeasured or its endpoint is failing</span>
     {% else %}
       <span class="binding-none">nothing — every sibling is blocked too</span>
     {% endif %}
@@ -36,7 +54,9 @@
 
 {# Four golden signals as 60-minute traces. A scalar with no baseline cannot
    be judged — `served 87` is a busy hour or a dead one depending on when. #}
-<section class="signals" aria-label="Rate, errors, latency and saturation over the last hour">
+{% if show_local | default(true) %}
+<h2>Local proxy · process-local counters</h2>
+<section class="signals" aria-label="Local proxy rate, errors, latency and saturation over the last hour; native subscription requests are not counted">
   {% for s in signals %}
   <div class="signal{% if s.level %} is-{{ s.level }}{% endif %}">
     <span class="sig-label">{{ s.label }}</span>
@@ -63,6 +83,7 @@
       {%- if disconnects %} · <b class="is-crit-text">{{ disconnects }}</b> disconnects{% endif %}</span>
   </div>
 </section>
+{% endif %}
 
 {# Auto-diagnosis fires on a throttle event, so it belongs where the operator
    is already looking (S4.5) — above the tables, not under a standing prose
@@ -77,63 +98,13 @@
 </div>
 {% endif %}
 
-{% if providers %}
-<h2>Providers · <span class="count">{{ providers | length }}</span></h2>
-<section id="providers-scroll" class="bearers-wrap" tabindex="0" aria-label="Routing providers and lane health">
-<table class="bearers providers">
-  <colgroup>
-    <col class="c-prov-name" /><col class="c-prov-upstream" /><col class="c-n" />
-    <col class="c-n" /><col class="c-n" /><col class="c-n-sm" /><col class="c-prov-status" />
-  </colgroup>
-  <thead>
-    <tr>
-      <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH">provider</th>
-      <th scope="col" title="Upstream base URL this provider forwards to">upstream</th>
-      <th scope="col" title="Lifetime requests served through this provider since it started">served</th>
-      <th scope="col" class="th-center" title="Requests in flight through this provider right now">in-flight</th>
-      <th scope="col" class="th-center" title="Requests queued waiting for a slot on this provider">queued</th>
-      <th scope="col" class="th-center" title="Concurrency ceiling (MAX / per-lane cap)">cap</th>
-      <th scope="col" title="Reachability + upstream egress health">status</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for p in providers %}
-    <tr>
-      <td>
-        <span class="prov prov-{{ p.level }}"><span class="pdot"></span><span class="provider-icon" aria-hidden="true">{{ p.icon }}</span>{{ p.name }}</span>
-        {% if p.kind == "primary" %}<span class="prov-tag">primary</span>{% endif %}
-      </td>
-      <td class="prov-upstream" title="{{ p.upstream }}">{{ p.upstream or "—" }}</td>
-      <td class="num">{{ "{:,}".format(p.served) }}</td>
-      <td class="td-center num">{% if p.ok %}{{ p.inflight }}{% else %}<span class="muted">—</span>{% endif %}</td>
-      <td class="td-center num{% if p.ok and p.queued %} warn-text{% endif %}">{% if p.ok %}{{ p.queued }}{% else %}<span class="muted">—</span>{% endif %}</td>
-      <td class="td-center num">{{ p.max_concurrent or "—" }}</td>
-      <td class="td-center prov-status">
-        {% if not p.ok %}
-          <span class="prov-state prov-idle">unreachable</span>
-          {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
-        {% elif p.auth_dead %}
-          <span class="prov-state prov-crit" title="The lane is reachable but its own credential is rejected upstream — it can serve nothing">key rejected</span>
-          {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
-        {% else %}
-          <span class="prov-state prov-{{ p.level }}">{{ p.level }}</span>
-          <span class="egress {{ 'up' if p.egress_ok else 'down' }}">egress {{ 'ok' if p.egress_ok else 'down' }}</span>
-        {% endif %}
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</section>
-{% endif %}
-
 {% if lanes and lanes.registry %}
-<div class="pi-lane-registry" aria-label="Providers enabled in Pi's generated lane registry">
-  <span class="registry-label">Pi routes</span>
+<div class="pi-lane-registry" aria-label="Registered providers; registration does not establish permission or eligibility">
+  <span class="registry-label">Registered providers</span>
   {% for lane in lanes.registry %}
     <span class="registry-provider"><span aria-hidden="true">{{ lane.icon }}</span> {{ lane.provider }}</span>
   {% endfor %}
-  <span class="registry-note">same registry drives routing + meters</span>
+  <span class="registry-note">catalog membership, not current eligibility</span>
 </div>
 {% endif %}
 
@@ -145,7 +116,7 @@
 {% endif %}
 {% if subscriptions %}
 <h2>Subscriptions · <span class="count">{{ subscriptions | length }}</span>
-  {% if lanes and lanes.stale %}<span class="tag-stale" title="The lane probe timer has not written in over 2 intervals — non-Anthropic readings below predate it">report stale</span>{% endif %}
+  {% if lanes and (lanes.stale or lanes.error) %}<span class="tag-stale" title="Old or untrusted observation time — not current capacity">report stale / untrusted</span>{% endif %}
 </h2>
 {% if identity and identity.collapsed %}
 <div class="status crit identity-banner" role="alert">
@@ -154,7 +125,17 @@
   <span class="detail">every configured credential file belongs to {{ identity.email }} — switching accounts is cosmetic and half the fleet capacity is gone (a hand-/login likely wrote the browser's active account into the wrong dir).</span>
 </div>
 {% endif %}
-<section id="subs-scroll" class="bearers-wrap" tabindex="0" aria-label="Every subscription this host pays for, with its remaining budget">
+{% if lanes %}
+<p class="meter-freshness">Meter report:
+  {% if lanes.age_s is not none %}{{ lanes.age_s | int }}s old{% else %}observation time unknown{% endif %}
+  · sampling interval {% if lanes.interval_s %}{{ lanes.interval_s | int }}s{% else %}unknown{% endif %} (not the 2s page refresh)
+  {% if lanes.next_sample_in_s is defined and lanes.next_sample_in_s is not none %}· next sample expected in {{ lanes.next_sample_in_s | int }}s{% endif %}
+  {% if lanes.observed_at %}· observed {{ lanes.observed_at }}{% endif %}
+  {% if lanes.error %}· {{ lanes.error }}{% endif %}
+  {% if lanes.stale %}· <strong>stale — not current capacity</strong>{% endif %}
+</p>
+{% endif %}
+<section id="subs-scroll" class="bearers-wrap" tabindex="0" aria-label="Configured subscription meters; observed usage does not prove model eligibility">
 <table class="bearers subs">
   <colgroup>
     <col class="c-sub" /><col class="c-family" /><col class="c-plan" />
@@ -162,28 +143,30 @@
   </colgroup>
   <thead>
     <tr>
-      <th scope="col" title="Anthropic accounts are measured live through this proxy's bearers; every other lane comes from the out-of-process probe report">subscription</th>
+      <th scope="col" title="Configured account identity; provenance and observation age are shown separately">subscription</th>
       <th scope="col" title="Model family. The gate reviewer must come from a different one.">family</th>
       <th scope="col" title="Plan tier the provider reports">plan</th>
       <th scope="col" title="Every window this subscription publishes, fullest first">meters</th>
-      <th scope="col" class="num" title="7d burn pace: utilisation ÷ elapsed cycle fraction. 1.00× = on budget; ≥1.15× = fleet-pace alert.">pace</th>
+      <th scope="col" class="num" title="Binding-window usage divided by elapsed cycle fraction; projection only, not guaranteed capacity">pace estimate</th>
       <th scope="col" title="Projected exhaustion at the current pace, when it lands before the reset">exhausts</th>
       <th scope="col" title="ok · rejected (window refused) · locked (usage cooldown) · token expired · unseen (no request served yet) · stale/unknown (probe)">status</th>
     </tr>
   </thead>
   <tbody>
     {% for s in subscriptions %}
-    <tr{% if s.is_binding %} class="row-binding"{% endif %}>
+    <tr id="subscription-{{ s.id }}" data-subscription-id="{{ s.id }}"{% if s.is_binding %} class="row-binding"{% endif %}>
       <td>
         <span class="provider-icon" aria-hidden="true">{{ s.icon or "🤖" }}</span>
+        {% if s.account_badge %}<span class="account-badge">{{ s.account_badge }}</span>{% endif %}
         <span class="acct">{{ s.label or s.identity }}</span>
-        {% if s.label and s.label != s.identity %}<span class="src-note">{{ s.identity }}</span>{% endif %}
-        {% if s.id != s.identity %}<span class="id-tag" title="Local credential/report label — the visible provider identity is authoritative">({{ s.id }})</span>{% endif %}
+        {% if s.label and s.label != s.identity %}<div class="src-note">{{ s.identity }}</div>{% endif %}
+        {% if s.id != s.identity %}<div class="id-tag" title="Local report identifier">{{ s.id }}</div>{% endif %}
         {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
       </td>
       <td class="muted">{{ s.family or "—" }}</td>
       <td class="plan-cell">
-        <span class="muted">{{ s.plan or "—" }}</span>
+        <span class="muted" title="Observed provider plan">{{ s.plan or "not observed" }}</span>
+        {% if s.plan_caption and s.plan_caption != s.plan %}<div class="src-note{% if s.plan_conflict %} warn-text{% endif %}">Configured caption: {{ s.plan_caption }}</div>{% endif %}
         {% if s.billing %}
           <div class="billing {% if s.billing.current is sameas true %}billing-ok{% elif s.billing.current is sameas false %}billing-warn{% else %}billing-stale{% endif %}" title="Provider plan status: {{ s.billing.plan_status }} · raw payment type: {{ s.billing.payment_type }}">
             {% if s.billing.current is sameas true %}✅ billing current
@@ -223,7 +206,7 @@
                 {% if m.rejected %}<span class="tag-rejected">rejected</span>
                 {% elif m.exhausted_ok %}<span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
                 {% endif %}
-                {% if m.reset_in %}<span class="reset-in">{{ "reopens in" if m.rejected or m.exhausted_ok else "resets" }} {{ m.reset_in }}</span>
+                {% if m.reset_in %}<span class="reset-in"{% if m.resets_at %} data-reset-epoch="{{ m.resets_at }}"{% endif %}>{{ "reopens in" if m.rejected or m.exhausted_ok else "resets" }} {{ m.reset_in }}{% if m.reset_at %}<span class="reset-at">{{ m.reset_at }}</span>{% endif %}</span>
                 {% elif m.note %}<span class="reset-in">{{ m.note }}</span>{% endif %}
               </span>
             {% else %}
@@ -239,11 +222,62 @@
           <span class="muted">{{ "no reading" if s.detail else "—" }}</span>
         {% endif %}
       </td>
-      <td class="num{% if s.pace_warn %} warn-text{% endif %}">{{ "%.2f×" | format(s.pace) if s.pace is not none else "—" }}</td>
-      <td class="muted">{{ "in " + s.eta if s.eta else "—" }}</td>
+      <td class="num{% if s.pace_warn %} warn-text{% endif %}" title="Usage divided by elapsed window: a linear projection, not a guarantee">{{ "%.2f×" | format(s.pace) if s.pace is not none else "—" }}</td>
+      <td class="muted" title="Estimated exhaustion only when a valid pace projects it before reset">{{ "in " + s.eta if s.eta else "not projected" }}</td>
       <td>
         <span class="lane-status lane-{{ s.status | replace(' ', '-') }}" {% if s.detail %}title="{{ s.detail }}"{% endif %}><span aria-hidden="true">{{ s.status_icon or "❔" }}</span> {{ s.status }}</span>
+        {% if s.detail %}<div class="status-reason">{{ s.detail }}</div>{% endif %}
         {% if s.src %}<div class="src-note" title="Where this row's numbers come from">{{ s.src }}</div>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</section>
+{% endif %}
+
+{% if providers %}
+<h2>Providers · <span class="count">{{ providers | length }}</span></h2>
+<section id="providers-scroll" class="bearers-wrap" tabindex="0" aria-label="Routing providers and lane health">
+<table class="bearers providers">
+  <colgroup>
+    <col class="c-prov-name" /><col class="c-prov-upstream" /><col class="c-n" />
+    <col class="c-n" /><col class="c-n" /><col class="c-n-sm" /><col class="c-prov-status" />
+  </colgroup>
+  <thead>
+    <tr>
+      <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH">provider</th>
+      <th scope="col" title="Upstream base URL this provider forwards to">upstream</th>
+      <th scope="col" title="Lifetime requests served through this provider since it started">served</th>
+      <th scope="col" class="th-center" title="Requests in flight through this provider right now">in-flight</th>
+      <th scope="col" class="th-center" title="Requests queued waiting for a slot on this provider">queued</th>
+      <th scope="col" class="th-center" title="Concurrency ceiling (MAX / per-lane cap)">cap</th>
+      <th scope="col" title="Proxy HTTP availability; DNS resolution does not verify auth or inference">status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in providers %}
+    <tr>
+      <td>
+        <span class="prov prov-{{ p.level }}"><span class="pdot"></span><span class="provider-icon" aria-hidden="true">{{ p.icon }}</span>{{ p.name }}</span>
+        {% if p.kind == "primary" %}<span class="prov-tag">primary</span>{% endif %}
+      </td>
+      <td class="prov-upstream" title="{{ p.upstream }}">{{ p.upstream or "—" }}</td>
+      <td class="num">{{ "{:,}".format(p.served) }}</td>
+      <td class="td-center num">{% if p.ok %}{{ p.inflight }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="td-center num{% if p.ok and p.queued %} warn-text{% endif %}">{% if p.ok %}{{ p.queued }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="td-center num">{{ p.max_concurrent or "—" }}</td>
+      <td class="td-center prov-status">
+        {% if not p.ok %}
+          <span class="prov-state prov-idle">unreachable</span>
+          {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
+        {% elif p.auth_dead %}
+          <span class="prov-state prov-crit" title="The lane is reachable but its own credential is rejected upstream — it can serve nothing">key rejected</span>
+          {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
+        {% else %}
+          <span class="prov-state prov-{{ p.level }}">{{ p.level }}</span>
+          <span class="egress" title="DNS resolution only — TCP, authentication and inference are not verified">DNS {{ 'resolved' if p.egress_ok is sameas true else ('failed' if p.egress_ok is sameas false else 'unmeasured') }}</span>
+        {% endif %}
       </td>
     </tr>
     {% endfor %}

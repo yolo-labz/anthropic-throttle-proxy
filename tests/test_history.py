@@ -116,6 +116,7 @@ def test_status_carries_how_long_the_verdict_has_held():
         [{"bearer_id": "b1", "unified": None, "limiter": None, "queued": 0}],
         queue_mode="fair",
         now=1220.0,
+        credential_verdicts={"b1": {"ok": True}},
     )
     assert status["verdict"] == "HEALTHY"
     assert status["since"] == "12m"

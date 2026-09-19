@@ -15,7 +15,7 @@ from pathlib import Path
 import jinja2
 
 from anthropic_throttle_proxy import history
-from anthropic_throttle_proxy.ui import routes, signals
+from anthropic_throttle_proxy.ui import presentation, routes, signals
 
 NOW = time.time()
 
@@ -41,13 +41,27 @@ def _seed_history() -> None:
         )
 
 
-def _meter(label: str, pct: float | None, reset_in: str = "", note: str = "") -> dict:
+def _meter(
+    label: str,
+    pct: float | None,
+    reset_in: str = "",
+    note: str = "",
+    *,
+    resets_at: float | None = None,
+    reset_at: str = "",
+    window_mins: int | None = None,
+) -> dict:
     return {
         "label": label,
+        # #227 derives its icon from `window_mins` before falling back to the
+        # label, and adds `reset_at` (the absolute UTC reset) beside `reset_in`.
         "icon": {"5h": "⏱️", "7d": "📅"}.get(label, "📊"),
         "pct": pct,
         "reset_in": reset_in,
         "note": note,
+        "resets_at": resets_at,
+        "reset_at": reset_at,
+        "window_mins": window_mins,
     }
 
 
@@ -61,6 +75,17 @@ def _context() -> dict:
             "since": "23m",
             "detail": "2 of 4 bearers pacing · binding: 7d window 94% on b144f62f",
         },
+        # #227 context. The preview has to carry them or the template raises on
+        # `lanes.age_s` — which is exactly how this tool was found broken: the
+        # PR's own acceptance gate needs a rendered page, and the page would
+        # not render at all.
+        "as_of": time.strftime("%H:%M:%S", time.localtime(NOW)),
+        "show_local": True,
+        "partial_response": False,
+        "config_count": 14,
+        "override_count": 3,
+        "build": "/nix/store/…-anthropic-throttle-proxy-0.1.0/lib/python3.13/site-packages",
+        "fleet_ui_config_error": None,
         "providers": [
             {
                 "name": "anthropic",
@@ -100,8 +125,16 @@ def _context() -> dict:
                 "sub": "pedro@pm.me",
                 "family": "anthropic",
                 "plan": "max20",
+                # A configured caption that disagrees with the observed plan is
+                # the #227 conflict shape: it must render as an annotation, not
+                # as a replacement for the observation.
+                "plan_caption": "max 20×",
+                "plan_conflict": True,
                 "src": "endpoint",
-                "meters": [_meter("7d", 94, "2d 04h"), _meter("5h", 61, "1h 12m")],
+                "meters": [
+                    _meter("7d", 94, "2d 04h", resets_at=NOW + 2 * 86400, window_mins=10080),
+                    _meter("5h", 61, "1h 12m", resets_at=NOW + 4320, window_mins=300),
+                ],
                 "pace": 1.42,
                 "pace_warn": True,
                 "eta": "1d 22h",
@@ -115,7 +148,10 @@ def _context() -> dict:
                 "family": "anthropic",
                 "plan": "max20",
                 "src": "proxy",
-                "meters": [_meter("7d", 38, "2d 04h"), _meter("5h", 12, "1h 12m")],
+                "meters": [
+                    _meter("7d", 38, "2d 04h", resets_at=NOW + 2 * 86400, window_mins=10080),
+                    _meter("5h", 12, "1h 12m", resets_at=NOW + 4320, window_mins=300),
+                ],
                 "pace": 0.71,
                 "pace_warn": False,
                 "eta": "",
@@ -126,13 +162,17 @@ def _context() -> dict:
                 "id": "chatgpt:work",
                 "identity": "Codex A",
                 "icon": "🌀",
+                "account_badge": "A",
                 "sub": "",
                 "family": "openai",
                 "plan": "pro",
                 "src": "report",
                 # Full meter: the preview must show what an exhausted lane looks
                 # like, because that is the state the table used to render `ok`.
-                "meters": [_meter("codex", 100, "14h 59m"), _meter("codex_bengalfox", 54, "17h")],
+                "meters": [
+                    _meter("codex", 100, "14h 59m", resets_at=NOW + 53940),
+                    _meter("codex_bengalfox", 54, "17h", resets_at=NOW + 61200),
+                ],
                 # EXHAUSTED, so no burn projection: _build_subscriptions drops
                 # pace + ETA once a subscription is already refusing. The
                 # preview builds rows directly, so it has to mirror that or the
@@ -151,7 +191,10 @@ def _context() -> dict:
                 "family": "chinese-frontier",
                 "plan": "Pro V3",
                 "src": "Pi meter report",
-                "meters": [_meter("7d", 2, "5d 05h"), _meter("5h", 1, "1h 52m")],
+                "meters": [
+                    _meter("7d", 2, "5d 05h", resets_at=NOW + 450000, window_mins=10080),
+                    _meter("5h", 1, "1h 52m", resets_at=NOW + 6720, window_mins=300),
+                ],
                 "pace": 0.4,
                 "pace_warn": False,
                 "eta": "",
@@ -222,6 +265,14 @@ def _context() -> dict:
         ],
         "lanes": {
             "stale": False,
+            # #227 freshness block: the meters come from an out-of-process
+            # probe whose cadence is NOT the 2 s page poll, and the page has to
+            # say so on its own.
+            "age_s": 42.0,
+            "interval_s": 900.0,
+            "observed_at": time.strftime("%d/%m/%Y %H:%M UTC", time.gmtime(NOW - 42)),
+            "next_sample_in_s": 858.0,
+            "error": "",
             "registry": [
                 {"icon": "✳️", "provider": "Claude"},
                 {"icon": "🌀", "provider": "Codex"},
@@ -281,12 +332,24 @@ def _context() -> dict:
     }
 
 
-def main(out: Path) -> None:
+def _subscription_only(ctx: dict) -> dict:
+    """The `defaults.show_primary: false` projection, through the real code path.
+
+    Not a hand-built variant: `presentation.apply_display` is what production
+    calls, so a preview that diverges from it would accept a layout the server
+    never renders.
+    """
+    return presentation.apply_display(ctx, {"defaults": {"show_primary": False}})
+
+
+def main(out: Path, mode: str = "local") -> None:
     _seed_history()
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(routes._TEMPLATES)), autoescape=True
     )
     ctx = _context()
+    if mode == "subscriptions":
+        ctx = _subscription_only(ctx)
     # Production derives the badge icon from the status word; the fixture used
     # to omit it on every row but Z.AI, so the preview drew `❔ ok` — a shrug
     # next to a healthy lane. A preview that misreports the thing it exists to
@@ -300,6 +363,6 @@ def main(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("usage: render_preview.py <out.html>")
-    main(Path(sys.argv[1]))
+    if not 1 < len(sys.argv) < 4:
+        sys.exit("usage: render_preview.py <out.html> [local|subscriptions]")
+    main(Path(sys.argv[1]), sys.argv[2] if len(sys.argv) == 3 else "local")

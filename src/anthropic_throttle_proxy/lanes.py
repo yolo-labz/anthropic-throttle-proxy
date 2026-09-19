@@ -21,6 +21,7 @@ every lane to ``stale`` instead of rendering decades-old percentages as truth.
 from __future__ import annotations
 
 import json
+import math
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,16 +80,27 @@ def report_path() -> str:
 
 
 def _pct(value: Any) -> float | None:
-    """Coerce a percentage to float; anything non-numeric → None (unknown)."""
+    """Coerce a percentage to float; anything non-numeric → None (unknown).
+
+    ``math.isfinite`` raises ``OverflowError`` on an integer too large to
+    convert to float — and this reads ARBITRARY JSON, so ``intervalSeconds:
+    10**400`` in the report file crashed ``_read``, which crashed
+    ``_collect_view``, which is to say a malformed number in a file written by
+    another process took the dashboard down (cross-family review, 18/09/2026).
+    A number the platform cannot represent is not a reading.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        if not math.isfinite(value):
+            return None
+        return float(value)
+    except (OverflowError, ValueError):
+        return None
 
 
 def _epoch(value: Any) -> float | None:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    return float(value)
+    return _pct(value)
 
 
 def _window_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
@@ -107,7 +119,7 @@ def _window_meters(lane: dict[str, Any]) -> list[dict[str, Any]]:
                 "label": str(meter.get("limitId") or "?"),
                 "used_pct": _pct(meter.get("usedPercent")),
                 "resets_at": _epoch(meter.get("resetsAt")),
-                "window_mins": meter.get("windowMins"),
+                "window_mins": _pct(meter.get("windowMins")),
                 "allowance": meter.get("allowance"),
                 "current": meter.get("current"),
                 "remaining": meter.get("remaining"),
@@ -360,7 +372,16 @@ def _age_s(generated: Any, now: float) -> float | None:
     return now - written.timestamp()
 
 
-EMPTY: dict[str, Any] = {"lanes": [], "registry": [], "age_s": None, "stale": False}
+EMPTY: dict[str, Any] = {
+    "lanes": [],
+    "registry": [],
+    "age_s": None,
+    "stale": False,
+    "interval_s": None,
+    "observed_at": None,
+    "next_sample_in_s": None,
+    "error": "report missing, unreadable or malformed",
+}
 
 
 def _read(now: float) -> dict[str, Any]:
@@ -375,11 +396,33 @@ def _read(now: float) -> dict[str, Any]:
         return EMPTY
     if not isinstance(raw, dict) or not isinstance(raw.get("lanes"), list):
         return EMPTY
-    interval = raw.get("intervalSeconds")
-    interval = float(interval) if isinstance(interval, (int, float)) else 900.0
+    raw_interval = raw.get("intervalSeconds")
+    interval = _pct(raw_interval)
+    if interval is not None and interval <= 0:
+        interval = None
     age = _age_s(raw.get("generatedAt"), now)
-    stale = age is not None and age > interval * _STALE_INTERVALS
-    lanes = [_normalize(lane, stale, now) for lane in raw["lanes"] if isinstance(lane, dict)]
+    error = ""
+    if age is None or age < 0 or not math.isfinite(age):
+        age = None
+        error = "observation timestamp missing, invalid or in the future"
+    if interval is None:
+        # Review B4: a MISSING cadence is not a 900-second cadence. Guessing
+        # one let the page certify staleness and project a next-sample time
+        # from an invented number; both stay uncertified until the report
+        # declares its own interval.
+        missing = raw_interval is None
+        detail = "sampling interval missing" if missing else "sampling interval invalid"
+        error = " · ".join(filter(None, [error, detail]))
+    stale = age is not None and interval is not None and age > interval * _STALE_INTERVALS
+    lanes = []
+    for source in raw["lanes"]:
+        if not isinstance(source, dict):
+            continue
+        lane = _normalize(source, stale or bool(error), now)
+        if error and source.get("status") == "ok":
+            lane["status"] = "unknown"
+            lane["reason"] = " · ".join(filter(None, [lane.get("reason"), error]))
+        lanes.append(lane)
     lanes.sort(key=lambda lane: (lane["family"], lane["id"]))
     registry = []
     registry_providers = raw.get("registryProviders")
@@ -388,13 +431,35 @@ def _read(now: float) -> dict[str, Any]:
             continue
         icon, provider = _PROVIDER.get(provider_id, ("🤖", provider_id))
         registry.append({"id": provider_id, "icon": icon, "provider": provider})
-    return {"lanes": lanes, "registry": registry, "age_s": age, "stale": stale}
+    return {
+        "lanes": lanes,
+        "registry": registry,
+        "age_s": age,
+        "stale": stale,
+        "interval_s": interval,
+        "observed_at": datetime.fromtimestamp(now - age, UTC).strftime("%d/%m/%Y %H:%M UTC")
+        if age is not None
+        else None,
+        "next_sample_in_s": max(0, interval - age)
+        if interval is not None and age is not None
+        else None,
+        "error": error,
+    }
 
 
 def view(now: float) -> dict[str, Any]:
-    """Lane view for the dashboard. TTL-cached; empty when no report exists."""
+    """Lane view for the dashboard. TTL-cached; empty when no report exists.
+
+    The cache expires on a bounded window, not on ``elapsed < TTL``: with the
+    unbounded form a clock that moves BACKWARD (NTP step, a VM restored from
+    snapshot, a suspend/resume on a laptop) made ``now - cached`` negative, the
+    test passed, and the previously fresh snapshot was served without ever
+    re-reading the report — a stale reading that heals itself only once wall
+    time catches back up (cross-family review, 18/09/2026). A negative age is
+    not freshness; it is a clock we cannot reason about.
+    """
     global _cache
-    if _cache is not None and now - _cache[0] < TTL_S:
+    if _cache is not None and 0.0 <= now - _cache[0] < TTL_S:
         return _cache[1]
     snapshot = _read(now)
     _cache = (now, snapshot)
