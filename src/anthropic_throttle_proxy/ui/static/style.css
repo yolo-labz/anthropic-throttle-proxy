@@ -626,7 +626,17 @@ col.c-burn  { width: 11rem; }
   overflow-wrap: anywhere;
 }
 .meter-label .mi { margin-right: 0.25rem; }
-.meter-note { color: var(--ctp-subtext0); font-size: var(--fs-body); }
+/* `unlimited` and `no reading` are NOTES, not readings: they have no track and
+   no percentage. Left in the track column they started at the bar's left edge
+   and read as a bar that failed to render; spanning to the end of the row puts
+   them where the value would be.
+
+   `2 / -1`, not `1 / -1`, so the note still starts under the bar rather than
+   under the label. That is only correct while the meter grid HAS a second
+   column — the narrow-screen query below collapses it to one, and `2 / -1` on a
+   single-column grid creates an implicit second track: measured 390px page
+   height jumped 2.1k -> 5.8k from exactly this. */
+.meter-note { grid-column: 2 / -1; color: var(--ctp-subtext0); font-size: var(--fs-body); }
 .track {
   display: inline-block;
   flex: 1 1 4rem;
@@ -690,9 +700,11 @@ col.c-burn  { width: 11rem; }
    two narrowest and most decision-relevant numbers on the page stop being
    separated by two empty columns. */
 .burn { white-space: normal; }
+.burn .burn-none { display: inline; }
+.burn .burn-eta { display: block; }
 .burn .pace { display: block; font-family: var(--mono); font-size: var(--fs-title); font-weight: 600; color: var(--ctp-text); }
 .burn .pace.is-warn { color: var(--warn); }
-.burn-eta { display: block; font-size: var(--fs-meta); color: var(--muted); font-family: var(--mono); }
+.burn-eta { display: block; font-size: var(--fs-meta); color: var(--muted); font-family: var(--mono); white-space: nowrap; }
 .burn-eta.is-warn { color: var(--warn); }
 .burn-none { display: block; font-family: var(--mono); font-size: var(--fs-meta); text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
 
@@ -1048,7 +1060,16 @@ footer a:hover { color: var(--info); text-decoration: underline; }
   .hero { grid-template-columns: minmax(0, 1fr); }
   .hero-verdict, .hero-detail { grid-column: 1; }
   .hero-facts { grid-column: 1; grid-row: 3; align-self: start; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }
-  .meter { grid-template-columns: minmax(4rem, 8rem) minmax(3rem, 1fr) 2.4rem auto; }
+  /* A meter carries four fields and the state field alone can be
+     `resets 14h 59m 21/09/2026 02:14 UTC` — ~230px, wider than this whole
+     column. Four tracks therefore cannot fit, and a grid never wraps: it
+     overflows, and the row grows by a wrapped track. So the state deliberately
+     moves to its OWN full-width row below the label/track/percentage, which is
+     the same information in a shape that fits. */
+  .meter { grid-template-columns: minmax(3.5rem, 7rem) minmax(2.5rem, 1fr) 2.2rem; }
+  .meter-state { grid-column: 1 / -1; }
   .sub-meters { grid-template-columns: minmax(0, 1fr); }
+  /* One column here, so a note spans the whole row, not "from the second". */
+  .meter-note { grid-column: 1 / -1; }
   .sub-ident .lane-status { margin-left: 0; }
 }

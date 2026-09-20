@@ -423,3 +423,70 @@ def test_no_caption_is_truncated_and_no_email_can_outrun_its_column():
     assert re.search(r"table\.bearers\.tokens td:nth-child\(2\)\s*\{[^}]*overflow-wrap", css), (
         "the account cell must be allowed to break a long address"
     )
+
+
+# ── repeated non-data ink (20/09/2026) ──────────────────────────────────────
+
+
+def _row(**over: object) -> dict:
+    base = {
+        "id": "x",
+        "identity": "x",
+        "family": "openai",
+        "plan": "pro",
+        "status": "ok",
+        "meters": [{"label": "codex", "pct": 12, "reset_in": "6d 8h"}],
+    }
+    base.update(over)
+    return base
+
+
+@pytest.mark.parametrize(
+    ("label", "badge", "shown"),
+    [
+        # live shape: the fleet-ui label already carries the letter
+        ("Codex C — Pro", "C", False),
+        ("Codex A", "A", False),
+        ("Codex B", "B", False),
+        # a label that does NOT name the credential still needs the badge
+        ("chatgpt:work", "A", True),
+        ("", "A", True),
+    ],
+)
+def test_the_credential_badge_is_omitted_when_the_label_already_says_it(
+    label: str, badge: str, shown: bool
+):
+    """`Codex C — Pro  C` is a row that reads as a typo.
+
+    The badge exists to tell two identically-named credentials apart; when the
+    label already names the credential the badge repeats it. Measured on the
+    live page 20/09/2026: three of six rows carried the duplicate.
+    """
+    html = _render(subscriptions=[_row(label=label, account_badge=badge)])
+    assert ('class="account-badge"' in html) is shown
+
+
+def test_one_word_states_why_there_is_no_burn_projection():
+    """Every refusing row used to spell out `refusing, not projected`, wrapped
+    to two lines, six times over — which is the definition of non-data ink."""
+    refusing = _render(subscriptions=[_row(status="exhausted", pace=None, eta="")])
+    assert ">refusing</span>" in refusing
+    assert "not projected" not in refusing
+
+    no_window = _render(subscriptions=[_row(status="ok", pace=None, eta="")])
+    assert ">no window</span>" in no_window
+    assert "no window to project" not in no_window
+
+
+def test_the_capacity_heading_does_not_repeat_the_hero_sentence():
+    """In subscription-only display the h2 note was the hero detail verbatim,
+    one row below it."""
+    hero_sentence = "model eligibility is not verified"
+    html = _render(
+        show_local=False,
+        status={"level": "idle", "verdict": "SUBSCRIPTIONS", "since": "", "detail": hero_sentence},
+        subscriptions=[_row()],
+    )
+    assert html.count(hero_sentence) == 1, (
+        "the eligibility disclaimer belongs in the hero, not repeated under the panel heading"
+    )
