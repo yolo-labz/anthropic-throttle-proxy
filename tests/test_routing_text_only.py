@@ -6,6 +6,7 @@ These assertions pin both halves of the contract: the rewrite happens for a
 chat-completions target, and NOTHING is touched for any other target (the
 Anthropic lane requires those block types).
 """
+
 import json
 import sys
 
@@ -15,22 +16,30 @@ from anthropic_throttle_proxy.routing import normalize_text_content_blocks as no
 
 ZAI = "https://api.z.ai/api/coding/paas/v4/chat/completions"
 ANTHROPIC = "https://api.anthropic.com/v1/messages"
-BODY = json.dumps({
-    "model": "glm-5.3",
-    "messages": [
-        {"role": "assistant", "content": [
-            {"type": "thinking", "thinking": "internal reasoning"},
-            {"type": "text", "text": "here is the plan"},
-            {"type": "toolCall", "name": "bash", "arguments": {"command": "ls"}},
-        ]},
-        {"role": "user", "content": [
-            {"type": "toolResult", "content": [{"type": "text", "text": "file-a\nfile-b"}]},
-            {"type": "image", "source": {"data": "AAA"}},
-        ]},
-        {"role": "assistant", "content": [{"type": "thinking", "thinking": "only thinking"}]},
-        {"role": "user", "content": "plain string content"},
-    ],
-}).encode()
+BODY = json.dumps(
+    {
+        "model": "glm-5.3",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "internal reasoning"},
+                    {"type": "text", "text": "here is the plan"},
+                    {"type": "toolCall", "name": "bash", "arguments": {"command": "ls"}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "toolResult", "content": [{"type": "text", "text": "file-a\nfile-b"}]},
+                    {"type": "image", "source": {"data": "AAA"}},
+                ],
+            },
+            {"role": "assistant", "content": [{"type": "thinking", "thinking": "only thinking"}]},
+            {"role": "user", "content": "plain string content"},
+        ],
+    }
+).encode()
 
 out = norm(BODY, ZAI)
 doc = json.loads(out)
@@ -58,8 +67,9 @@ assert "plain string content" in contents, contents
 assert len(contents) == 3, contents
 
 # 4b. a LAST message emptied by normalisation must get a placeholder, not vanish
-last_only = json.dumps({"messages": [
-    {"role": "user", "content": [{"type": "thinking", "thinking": "x"}]}]}).encode()
+last_only = json.dumps(
+    {"messages": [{"role": "user", "content": [{"type": "thinking", "thinking": "x"}]}]}
+).encode()
 assert json.loads(norm(last_only, ZAI))["messages"][-1]["content"] == "[no text content]"
 
 # 5. plain string content is untouched
@@ -74,10 +84,19 @@ assert norm(b"", ZAI) == b""
 assert norm(b'{"messages": "nope"}', ZAI) == b'{"messages": "nope"}'
 
 # 8. OpenAI-style tool_calls is flattened and the key removed
-tc = json.dumps({"messages": [
-    {"role": "assistant", "content": "", "tool_calls": [
-        {"type": "function", "function": {"name": "grep", "arguments": "{}"}}]},
-]}).encode()
+tc = json.dumps(
+    {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"type": "function", "function": {"name": "grep", "arguments": "{}"}}
+                ],
+            },
+        ]
+    }
+).encode()
 tcd = json.loads(norm(tc, ZAI))
 assert "tool_calls" not in tcd["messages"][-1], tcd
 assert "grep" in tcd["messages"][-1]["content"], tcd
