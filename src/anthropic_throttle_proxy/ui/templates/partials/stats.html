@@ -133,7 +133,10 @@
 {% if subscriptions %}
 <section class="board" aria-label="Configured subscription meters; observed usage does not prove model eligibility">
   <h2 id="subs-heading">Capacity · <span class="count">{{ subscriptions | length }}</span>
-    <span class="h2-note">{{ 'configured subscriptions, fullest binding window first' if show_local | default(true) else 'read-only account meters; model eligibility is not verified' }}</span>
+    {# The ordering hint, not the disclaimer: in subscription-only display the
+       hero already says "read-only account meters; model eligibility is not
+       verified", and this line repeated it word for word one row below. #}
+    <span class="h2-note">fullest binding window first</span>
     {% if lanes and (lanes.stale or lanes.error) %}<span class="tag-stale" title="Old or untrusted observation time — not current capacity">{{ 'report stale / untrusted' if lanes.stale else 'report untrusted' }}</span>{% endif %}
   </h2>
   {# Freshness is a property of the meters, so it lives in the panel's own
@@ -169,7 +172,11 @@
           <div class="ident-row">
             <span class="provider-icon" aria-hidden="true">{{ s.icon or "🤖" }}</span>
             <span class="acct">{{ s.label or s.identity }}</span>
-            {% if s.account_badge %}<span class="account-badge" title="Local credential label">{{ s.account_badge }}</span>{% endif %}
+            {# A/B/C is a local credential label, and `Codex C — Pro` already
+               carries the C — the badge beside it read as a typo (`Codex C —
+               Pro  C`). Shown only when the label does not already name it. #}
+            {% if s.account_badge and s.account_badge not in (s.label or "") %}
+            <span class="account-badge" title="Local credential label">{{ s.account_badge }}</span>{% endif %}
             {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
             {# The verdict belongs beside the name it judges. It used to sit in
                the last column of a 1560px table — 1200px from the row it
@@ -234,10 +241,14 @@
           {% set refusing = s.status in ("rejected", "exhausted", "refused", "error", "token expired") %}
           {% if s.pace is not none %}
             <span class="pace{% if s.pace_warn %} is-warn{% endif %}" title="Usage divided by elapsed window: a linear projection, not a guarantee">{{ "%.2f×" | format(s.pace) }}</span>
-            <span class="burn-eta{% if s.pace_warn and s.eta %} is-warn{% endif %}">{% if s.eta %}out in {{ s.eta }}{% else %}no exhaustion projected{% endif %}</span>
+            <span class="burn-eta{% if s.pace_warn and s.eta %} is-warn{% endif %}">{% if s.eta %}out in {{ s.eta }}{% else %}no exhaustion{% endif %}</span>
           {% else %}
-            <span class="burn-none">—</span>
-            <span class="burn-eta">{% if refusing %}refusing, not projected{% else %}no window to project{% endif %}</span>
+            {# Both branches used to spell the reason out — `refusing, not
+               projected` / `no window to project` — which wrapped to two lines on
+               four of six rows and said the same thing six times. The reason is
+               one word, and the dash above it already carries "no number". #}
+            <span class="burn-none" title="{{ 'this subscription is already refusing, so a burn projection would describe the past' if refusing else 'no metered window to project a burn rate from' }}">—</span>
+            <span class="burn-eta">{% if refusing %}refusing{% else %}no window{% endif %}</span>
           {% endif %}
         </td>
       </tr>
