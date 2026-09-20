@@ -40,8 +40,8 @@ from .routing import (
     default_lanes,
     infer_role_from_body,
     lane_usable,
-    remap_body_model,
     normalize_text_content_blocks,
+    remap_body_model,
     select_lane,
     session_key_from_body,
 )
