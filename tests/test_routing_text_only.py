@@ -8,11 +8,8 @@ Anthropic lane requires those block types).
 """
 
 import json
-import sys
 
-sys.path.insert(0, "src")
-
-from anthropic_throttle_proxy.routing import normalize_text_content_blocks as norm  # noqa: E402
+from anthropic_throttle_proxy.routing import normalize_text_content_blocks as norm
 
 ZAI = "https://api.z.ai/api/coding/paas/v4/chat/completions"
 ANTHROPIC = "https://api.anthropic.com/v1/messages"
