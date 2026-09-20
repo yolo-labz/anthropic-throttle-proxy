@@ -65,6 +65,7 @@ __all__ = [
     "lane_usable",
     "select_lane",
     "remap_body_model",
+    "normalize_text_content_blocks",
     "session_key_from_body",
 ]
 
@@ -706,6 +707,118 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
     if not isinstance(obj, dict):
         return raw
     obj["model"] = new_model
+    return json.dumps(obj).encode()
+
+
+# Z.AI's OpenAI-compatible chat-completions endpoint accepts ONLY
+# ``{"type": "text"}`` content blocks. Measured 20/09/2026 against the live
+# lane: every replayed agent history came back
+#
+#     400 {"code":"1210","message":"messages.content.type is invalid,
+#          allowed values: ['text']"}
+#
+# and the proxy log showed it as
+# ``upstream_400 path=/api/coding/paas/v4/chat/completions model=glm``. The
+# trigger is a transcript that ran on another provider family: one seat's
+# history carried 217 ``thinking`` blocks plus ``toolCall``/``toolResult``
+# blocks, and those types do not exist on this endpoint. The Anthropic lane is
+# untouched by design — it REQUIRES those block types, which is why this is
+# keyed on the target path and not applied to every forward.
+TEXT_ONLY_PATH = "/chat/completions"
+
+
+def _part_as_text(part: Any) -> str | None:
+    """Flatten one content block to plain text, or ``None`` to drop it.
+
+    Tool calls and tool results become text because the model must still SEE
+    them — silently dropping a tool result makes the model hallucinate output it
+    can no longer read. ``thinking`` is dropped instead of stringified: it is
+    another provider's internal reasoning, so forwarding it as visible text
+    would pollute the context and pay tokens for something the model never
+    acted on.
+    """
+    if isinstance(part, str):
+        return part
+    if not isinstance(part, dict):
+        return None
+    kind = part.get("type")
+    if kind == "text":
+        return part.get("text") or ""
+    if kind in ("thinking", "redacted_thinking"):
+        return None
+    if kind in ("toolCall", "tool_use", "function_call", "function"):
+        # OpenAI-shaped tool_calls wrap the payload: {"type": "function",
+        # "function": {"name": ..., "arguments": ...}}. Found by the test, not
+        # by reading the docs - the flat shape alone left these silent, and a
+        # silently dropped tool call is worse than a rejected request.
+        fn = part.get("function") if isinstance(part.get("function"), dict) else {}
+        name = part.get("name") or part.get("toolName") or fn.get("name") or "tool"
+        args = part.get("arguments") or part.get("input") or fn.get("arguments") or ""
+        try:
+            args = json.dumps(args) if not isinstance(args, str) else args
+        except Exception:
+            args = str(args)
+        return f"[tool call: {name}({args[:400]})]"
+    if kind in ("toolResult", "tool_result"):
+        body = part.get("content")
+        if isinstance(body, list):
+            body = " ".join(x for x in (_part_as_text(p) for p in body) if x)
+        return f"[tool result] {str(body)[:4000]}"
+    if kind in ("image", "image_url", "input_image"):
+        return "[image omitted: this lane accepts text only]"
+    # Unknown block: keep its text if it has any, otherwise drop it.
+    text = part.get("text")
+    return text if isinstance(text, str) else None
+
+
+def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
+    """Rewrite OpenAI-shaped ``messages[].content`` blocks so every entry is text.
+
+    No-op unless ``target`` is a text-only chat-completions endpoint, and a
+    no-op on any parse failure (same contract as :func:`remap_body_model`: the
+    proxy must never be the reason a forward dies).
+
+    Also flattens OpenAI-style ``tool_calls`` on a message into a text block and
+    removes the key, since that field carries the same non-text shape the lane
+    refuses. A message left with no content at all is dropped, EXCEPT the last
+    one, which is given a placeholder so the request still has a final turn.
+    """
+    if not raw or TEXT_ONLY_PATH not in (target or ""):
+        return raw
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    messages = obj.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return raw
+    rewritten: list[Any] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            rewritten.append(message)
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            texts = [t for t in (_part_as_text(p) for p in content) if t]
+            message = {**message, "content": "\n".join(texts) if texts else ""}
+        calls = message.get("tool_calls")
+        if isinstance(calls, list):
+            rendered = [t for t in (_part_as_text(c) for c in calls) if t]
+            if rendered:
+                joined = "\n".join(rendered)
+                existing = message.get("content")
+                message = {**message, "content": (f"{existing}\n{joined}" if existing else joined)}
+            message = {k: v for k, v in message.items() if k != "tool_calls"}
+        rewritten.append(message)
+    kept = [m for m in rewritten if not (isinstance(m, dict) and m.get("content") == "")]
+    dropped = len(rewritten) - len(kept)
+    if not kept:
+        kept = [{**rewritten[-1], "content": "[no text content]"}]
+    elif dropped and isinstance(rewritten[-1], dict) and rewritten[-1].get("content") == "":
+        kept = kept[:-1] + [{**rewritten[-1], "content": "[no text content]"}]
+    obj["messages"] = kept
     return json.dumps(obj).encode()
 
 

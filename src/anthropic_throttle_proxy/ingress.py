@@ -41,6 +41,7 @@ from .routing import (
     infer_role_from_body,
     lane_usable,
     remap_body_model,
+    normalize_text_content_blocks,
     select_lane,
     session_key_from_body,
 )
@@ -922,6 +923,11 @@ async def _forward(request: web.Request) -> web.StreamResponse:
         if is_messages and full_body is not None:
             target_model = lane.models.get(role)
             body_data = remap_body_model(full_body, target_model) if target_model else full_body
+            # Z.AI's chat-completions lane refuses any non-text content block
+            # (400 code 1210) once a history has run on another provider family,
+            # so flatten those blocks here. Keyed on the target path, so the
+            # Anthropic lane — which requires tool/thinking blocks — is untouched.
+            body_data = normalize_text_content_blocks(body_data, target)
         elif is_messages:
             body_data = _chain_stream(request.content, prefix, buffered_rest)
         else:
