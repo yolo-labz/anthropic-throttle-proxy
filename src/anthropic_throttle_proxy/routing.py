@@ -37,7 +37,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
 
 __all__ = [
     "ROLES",
