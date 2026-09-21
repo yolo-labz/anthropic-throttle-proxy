@@ -716,11 +716,33 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
 TEXT_ONLY_PATH = "/api/coding/paas/v4/chat/completions"
 
 
-def _part_as_text(part: Any) -> str | None:
-    """Render a known internal block, drop thinking, or reject an unknown shape.
+# The kinds this function models. A dict block whose kind is NOT one of
+# these is unmodelled, not malformed: it gets a placeholder instead of aborting
+# the rewrite (see ``_part_as_text``).
+_KNOWN_BLOCK_TYPES = frozenset(
+    {
+        "text",
+        "thinking",
+        "redacted_thinking",
+        "toolCall",
+        "tool_use",
+        "function_call",
+        "function",
+        "toolResult",
+        "tool_result",
+        "image",
+        "image_url",
+        "input_image",
+    }
+)
 
-    A rejection aborts the whole rewrite: upstream, not this proxy, validates
-    malformed/unknown blocks. Arguments and tool output are never truncated.
+
+def _part_as_text(part: Any) -> str | None:
+    """Render one content block, drop thinking, or reject a malformed shape.
+
+    A rejection aborts the whole rewrite: upstream, not this proxy, validates a
+    structurally malformed block. A well-formed block of an unmodelled KIND is
+    NOT malformed (see below). Arguments and tool output are never truncated.
     """
     if isinstance(part, str):
         return part
@@ -750,6 +772,18 @@ def _part_as_text(part: Any) -> str | None:
         return f"[tool result] {body}"
     if kind in ("image", "image_url", "input_image"):
         return "[image omitted: this lane accepts text only]"
+    # A well-formed block of a kind this lane does not model (`document`,
+    # `audio`, `server_tool_use`, `web_search_tool_result`, any future kind)
+    # must NOT abort the rewrite. Aborting hands the endpoint the very 1210
+    # this function exists to prevent, and because the rewrite is all-or-nothing,
+    # one unmodelled block would un-fix every turn in the request. A string
+    # `text` is preserved when the block carries one; otherwise the kind becomes
+    # an explicit placeholder. A KNOWN kind with a malformed payload still
+    # aborts (transactional passthrough) — the earlier gate's contract — as does
+    # a block with no usable `type` at all.
+    if isinstance(kind, str) and kind and kind not in _KNOWN_BLOCK_TYPES:
+        text = part.get("text")
+        return text if isinstance(text, str) else f"[{kind} omitted: this lane accepts text only]"
     raise ValueError("unsupported content block")
 
 
