@@ -6,6 +6,18 @@ host activation. Latest incident first.
 
 ---
 
+## 21/09/2026 — PR #236 normalizer repair candidate (not deployed)
+
+R7 imported #236's exact four commits into `237-normalizer-swarm`, repaired
+turn loss, native-tool deletion, malformed-block crashes, broad endpoint matching
+and silent argument/result truncation, and moved the unreachable ingress call
+to the actual per-attempt forwarding boundary. Synthetic exact-head regressions:
+original proposal 65 failed / 31 passed; repair 96 passed; full suite 1302 passed.
+See [the canonical swarm report](docs/swarm-2026-09-21.md) and
+[spec 237](specs/237-normalizer-repair/spec.md) for scope, provenance and evidence.
+Independent review, CI disposition and landing belong to the coordinator.
+No proxy restart, deployment, routing/capacity change or real API probe occurred.
+
 ## 14/09/2026 — recovery reconciled; whole-diff review remains blocked
 
 Remote REST readback at 18:24 BRT: PR #227 is OPEN and draft, head

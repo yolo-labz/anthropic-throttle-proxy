@@ -1,0 +1,561 @@
+ae9e9e9f96aa01ec0275b6ceae495e9a4c797506
+Original imported from: /var/tmp/pi-agent-1000/6cadd4d8752249e2.3705690.8c7231fddb73/original-236.tRnBVx/src/anthropic_throttle_proxy/routing.py
+..F.FFFFFFFFFFFFFFFFFFFFFF............FFF.FFFFFF.FFFFFF.FFFFFF.FFFFFFFFF [ 75%]
+F..FFFFFFFF.F....FF.....                                                 [100%]
+=================================== FAILURES ===================================
+_______ test_final_emptied_turn_never_deletes_preceding_turn[1-prefix1] ________
+tests/test_routing_text_only.py:56: in test_final_emptied_turn_never_deletes_preceding_turn
+    assert out == prefix + [{"role": "assistant", "content": "[no text content]"}]
+E   AssertionError: assert [{'content': ... 'assistant'}] == [{'content': ... 'assistant'}]
+E     
+E     At index 0 diff: {'role': 'assistant', 'content': '[no text content]'} != {'role': 'user', 'content': 'KEEP THIS REQUEST'}
+E     Right contains one more item: {'content': '[no text content]', 'role': 'assistant'}
+E     Use -v to get more diff
+_______ test_final_emptied_turn_never_deletes_preceding_turn[2-prefix1] ________
+tests/test_routing_text_only.py:56: in test_final_emptied_turn_never_deletes_preceding_turn
+    assert out == prefix + [{"role": "assistant", "content": "[no text content]"}]
+E   AssertionError: assert [{'content': ... 'assistant'}] == [{'content': ... 'assistant'}]
+E     
+E     At index 0 diff: {'role': 'assistant', 'content': '[no text content]'} != {'role': 'user', 'content': 'KEEP THIS REQUEST'}
+E     Right contains one more item: {'content': '[no text content]', 'role': 'assistant'}
+E     Use -v to get more diff
+__________________ test_native_tool_protocol_survives[-None] ___________________
+tests/test_routing_text_only.py:69: in test_native_tool_protocol_survives
+    assert len(out) == 3
+E   AssertionError: assert 2 == 3
+E    +  where 2 = len([{'content': '[tool call: read({})]', 'role': 'assistant'}, {'content': 'continue', 'role': 'user'}])
+____________________ test_native_tool_protocol_survives[-] _____________________
+tests/test_routing_text_only.py:69: in test_native_tool_protocol_survives
+    assert len(out) == 3
+E   AssertionError: assert 2 == 3
+E    +  where 2 = len([{'content': '[tool call: read({})]', 'role': 'assistant'}, {'content': 'continue', 'role': 'user'}])
+________________ test_native_tool_protocol_survives[-content2] _________________
+tests/test_routing_text_only.py:69: in test_native_tool_protocol_survives
+    assert len(out) == 3
+E   AssertionError: assert 2 == 3
+E    +  where 2 = len([{'content': 'calling\n[tool call: read({})]', 'role': 'assistant'}, {'content': 'continue', 'role': 'user'}])
+________________ test_native_tool_protocol_survives[-content3] _________________
+tests/test_routing_text_only.py:69: in test_native_tool_protocol_survives
+    assert len(out) == 3
+E   AssertionError: assert 2 == 3
+E    +  where 2 = len([{'content': '[tool call: read({})]', 'role': 'assistant'}, {'content': 'continue', 'role': 'user'}])
+____________ test_native_tool_protocol_survives[actual result-None] ____________
+tests/test_routing_text_only.py:70: in test_native_tool_protocol_survives
+    assert out[0]["tool_calls"] == calls
+           ^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'tool_calls'
+______________ test_native_tool_protocol_survives[actual result-] ______________
+tests/test_routing_text_only.py:70: in test_native_tool_protocol_survives
+    assert out[0]["tool_calls"] == calls
+           ^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'tool_calls'
+__________ test_native_tool_protocol_survives[actual result-content2] __________
+tests/test_routing_text_only.py:70: in test_native_tool_protocol_survives
+    assert out[0]["tool_calls"] == calls
+           ^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'tool_calls'
+__________ test_native_tool_protocol_survives[actual result-content3] __________
+tests/test_routing_text_only.py:70: in test_native_tool_protocol_survives
+    assert out[0]["tool_calls"] == calls
+           ^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'tool_calls'
+__________________ test_native_call_without_content_survives ___________________
+tests/test_routing_text_only.py:77: in test_native_call_without_content_survives
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "...: tool()]"}]}' == b'{"model": "...unction"}]}]}'
+E     
+E     At index 57 diff: b'c' != b't'
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block0] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+           ^^^^^^^^^^^^^^
+/var/tmp/pi-agent-1000/6cadd4d8752249e2.3705690.8c7231fddb73/original-236.tRnBVx/src/anthropic_throttle_proxy/routing.py:805: in normalize_text_content_blocks
+    message = {**message, "content": "\n".join(texts) if texts else ""}
+                                     ^^^^^^^^^^^^^^^^
+E   TypeError: sequence item 0: expected str instance, int found
+______ test_malformed_nested_blocks_pass_through_transactionally[block1] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... content]"}]}' == b'{"model": "...t": null}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block2] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... content]"}]}' == b'{"model": "...: "text"}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block3] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+           ^^^^^^^^^^^^^^
+/var/tmp/pi-agent-1000/6cadd4d8752249e2.3705690.8c7231fddb73/original-236.tRnBVx/src/anthropic_throttle_proxy/routing.py:804: in normalize_text_content_blocks
+    texts = [t for t in (_part_as_text(p) for p in content) if t]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/var/tmp/pi-agent-1000/6cadd4d8752249e2.3705690.8c7231fddb73/original-236.tRnBVx/src/anthropic_throttle_proxy/routing.py:804: in <genexpr>
+    texts = [t for t in (_part_as_text(p) for p in content) if t]
+                         ^^^^^^^^^^^^^^^^
+/var/tmp/pi-agent-1000/6cadd4d8752249e2.3705690.8c7231fddb73/original-236.tRnBVx/src/anthropic_throttle_proxy/routing.py:765: in _part_as_text
+    body = " ".join(x for x in (_part_as_text(p) for p in body) if x)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: sequence item 0: expected str instance, int found
+______ test_malformed_nested_blocks_pass_through_transactionally[block4] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... result] "}]}' == b'{"model": "...false]}]}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block5] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "...object\'}"}]}' == b'{"model": "...object"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block6] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "...bad\']()]"}]}' == b'{"model": "...nts": {}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block7] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "...: tool()]"}]}' == b'{"model": "... ["bad"]}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block8] _______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... content]"}]}' == b'{"model": "...OT DROP"}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+________ test_malformed_nested_blocks_pass_through_transactionally[123] ________
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... content]"}]}' == b'{"model": "...nt": [123]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_______ test_malformed_nested_blocks_pass_through_transactionally[None] ________
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... content]"}]}' == b'{"model": "...t": [null]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______ test_malformed_nested_blocks_pass_through_transactionally[block11] ______
+tests/test_routing_text_only.py:104: in test_malformed_nested_blocks_pass_through_transactionally
+    assert norm(raw, ZAI) == raw
+E   assert b'{"model": "... content]"}]}' == b'{"model": "...ent": [[]]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+______________ test_original_empty_content_does_not_delete_turn[] ______________
+tests/test_routing_text_only.py:132: in test_original_empty_content_does_not_delete_turn
+    assert len(out) == 2
+E   AssertionError: assert 1 == 2
+E    +  where 1 = len([{'content': 'keep', 'role': 'user'}])
+__________ test_original_empty_content_does_not_delete_turn[content1] __________
+tests/test_routing_text_only.py:132: in test_original_empty_content_does_not_delete_turn
+    assert len(out) == 2
+E   AssertionError: assert 1 == 2
+E    +  where 1 = len([{'content': 'keep', 'role': 'user'}])
+__________ test_original_empty_content_does_not_delete_turn[content2] __________
+tests/test_routing_text_only.py:132: in test_original_empty_content_does_not_delete_turn
+    assert len(out) == 2
+E   AssertionError: assert 1 == 2
+E    +  where 1 = len([{'content': 'keep', 'role': 'user'}])
+__ test_arguments_preserved_without_truthiness_or_truncation[toolCall-False] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(false)]'
+E     
+E     - [tool call: read(false)]
+E     ?                  -----
+E     + [tool call: read()]
+____ test_arguments_preserved_without_truthiness_or_truncation[toolCall-0] _____
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(0)]'
+E     
+E     - [tool call: read(0)]
+E     ?                  -
+E     + [tool call: read()]
+___ test_arguments_preserved_without_truthiness_or_truncation[toolCall-None] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(null)]'
+E     
+E     - [tool call: read(null)]
+E     ?                  ----
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[toolCall-args4] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read({})]'
+E     
+E     - [tool call: read({})]
+E     ?                  --
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[toolCall-args5] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read([])]'
+E     
+E     - [tool call: read([])]
+E     ?                  --
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[toolCall-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: ...xxxxxxxxxxx)]' == '[tool call: ...xxxxxxxTAIL)]'
+E     
+E     Skipping 407 identical leading characters in diff, use -v to show
+E     - xxxxxxxxxxxTAIL)]
+E     ?           -----
+E     + xxxxxxxxxx)]
+__ test_arguments_preserved_without_truthiness_or_truncation[tool_use-False] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(false)]'
+E     
+E     - [tool call: read(false)]
+E     ?                  -----
+E     + [tool call: read()]
+____ test_arguments_preserved_without_truthiness_or_truncation[tool_use-0] _____
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(0)]'
+E     
+E     - [tool call: read(0)]
+E     ?                  -
+E     + [tool call: read()]
+___ test_arguments_preserved_without_truthiness_or_truncation[tool_use-None] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(null)]'
+E     
+E     - [tool call: read(null)]
+E     ?                  ----
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[tool_use-args4] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read({})]'
+E     
+E     - [tool call: read({})]
+E     ?                  --
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[tool_use-args5] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read([])]'
+E     
+E     - [tool call: read([])]
+E     ?                  --
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[tool_use-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: ...xxxxxxxxxxx)]' == '[tool call: ...xxxxxxxTAIL)]'
+E     
+E     Skipping 407 identical leading characters in diff, use -v to show
+E     - xxxxxxxxxxxTAIL)]
+E     ?           -----
+E     + xxxxxxxxxx)]
+_ test_arguments_preserved_without_truthiness_or_truncation[function_call-False] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(false)]'
+E     
+E     - [tool call: read(false)]
+E     ?                  -----
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[function_call-0] __
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(0)]'
+E     
+E     - [tool call: read(0)]
+E     ?                  -
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[function_call-None] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(null)]'
+E     
+E     - [tool call: read(null)]
+E     ?                  ----
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[function_call-args4] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read({})]'
+E     
+E     - [tool call: read({})]
+E     ?                  --
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[function_call-args5] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read([])]'
+E     
+E     - [tool call: read([])]
+E     ?                  --
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[function_call-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: ...xxxxxxxxxxx)]' == '[tool call: ...xxxxxxxTAIL)]'
+E     
+E     Skipping 407 identical leading characters in diff, use -v to show
+E     - xxxxxxxxxxxTAIL)]
+E     ?           -----
+E     + xxxxxxxxxx)]
+__ test_arguments_preserved_without_truthiness_or_truncation[function-False] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(false)]'
+E     
+E     - [tool call: read(false)]
+E     ?                  -----
+E     + [tool call: read()]
+____ test_arguments_preserved_without_truthiness_or_truncation[function-0] _____
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(0)]'
+E     
+E     - [tool call: read(0)]
+E     ?                  -
+E     + [tool call: read()]
+___ test_arguments_preserved_without_truthiness_or_truncation[function-None] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(null)]'
+E     
+E     - [tool call: read(null)]
+E     ?                  ----
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[function-args4] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read({})]'
+E     
+E     - [tool call: read({})]
+E     ?                  --
+E     + [tool call: read()]
+__ test_arguments_preserved_without_truthiness_or_truncation[function-args5] ___
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read([])]'
+E     
+E     - [tool call: read([])]
+E     ?                  --
+E     + [tool call: read()]
+_ test_arguments_preserved_without_truthiness_or_truncation[function-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL] _
+tests/test_routing_text_only.py:142: in test_arguments_preserved_without_truthiness_or_truncation
+    assert _normalized([{"role": "assistant", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool call: ...xxxxxxxxxxx)]' == '[tool call: ...xxxxxxxTAIL)]'
+E     
+E     Skipping 407 identical leading characters in diff, use -v to show
+E     - xxxxxxxxxxxTAIL)]
+E     ?           -----
+E     + xxxxxxxxxx)]
+______________ test_nested_function_arguments_and_anthropic_input ______________
+tests/test_routing_text_only.py:152: in test_nested_function_arguments_and_anthropic_input
+    assert _normalized([{"content": [block]}])[0]["content"] == "[tool call: read(false)]"
+E   AssertionError: assert '[tool call: read()]' == '[tool call: read(false)]'
+E     
+E     - [tool call: read(false)]
+E     ?                  -----
+E     + [tool call: read()]
+____________________ test_tool_result_not_truncated[False] _____________________
+tests/test_routing_text_only.py:160: in test_tool_result_not_truncated
+    assert _normalized([{"role": "user", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool result...xxxxxxxxxxxxx' == '[tool result...MPORTANT TAIL'
+E     
+E     Skipping 4003 identical leading characters in diff, use -v to show
+E     - xxxxxxxxxxxxIMPORTANT TAIL
+E     + xxxxxxxxxxx
+_____________________ test_tool_result_not_truncated[True] _____________________
+tests/test_routing_text_only.py:160: in test_tool_result_not_truncated
+    assert _normalized([{"role": "user", "content": [block]}])[0]["content"] == (
+E   AssertionError: assert '[tool result...xxxxxxxxxxxxx' == '[tool result...MPORTANT TAIL'
+E     
+E     Skipping 4003 identical leading characters in diff, use -v to show
+E     - xxxxxxxxxxxxIMPORTANT TAIL
+E     + xxxxxxxxxxx
+_ test_unrelated_targets_are_byte_identical[https://api.openai.com/v1/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[http://127.0.0.1:8766/api/coding/paas/v4/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[https://api.z.ai.example/api/coding/paas/v4/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[https://example.test/api/coding/paas/v4/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[https://api.z.ai/api/coding/paas/v4/chat/completions/extra] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[https://api.z.ai/other?next=/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[https://api.z.ai:444/api/coding/paas/v4/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[http://api.z.ai/api/coding/paas/v4/chat/completions] _
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_ test_unrelated_targets_are_byte_identical[http://[invalid/chat/completions] __
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_________ test_unrelated_targets_are_byte_identical[/chat/completions] _________
+tests/test_routing_text_only.py:185: in test_unrelated_targets_are_byte_identical
+    assert norm(raw, target) == raw
+E   assert b'{"model": "...ext only]"}]}' == b'{"model": "...l": "x"}}]}]}'
+E     
+E     At index 62 diff: b'"' != b'['
+E     Use -v to get more diff
+_______________ test_direct_chat_request_reaches_wire_normalized _______________
+tests/test_forwarding_text_only.py:87: in test_direct_chat_request_reaches_wire_normalized
+    assert (await response.json())["messages"] == EXPECTED
+E   AssertionError: assert [{'content': ... 'assistant'}] == [{'content': ... 'assistant'}]
+E     
+E     At index 1 diff: {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': 'hidden'}]} != {'role': 'assistant', 'content': '[no text content]'}
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] bearer-new bid=_anon max_concurrent=1 hard_max=3 queue_mode=off
+[anthropic-throttle] queue-bypass method=POST path=/api/coding/paas/v4/chat/completions bid=_anon cid=127.0.0.1:38520 inflight=0 queue_mode=off
+[anthropic-throttle] start  method=POST path=/api/coding/paas/v4/chat/completions bid=_anon cid=127.0.0.1:38520 via=direct model=unknown max_tokens=None lane=normal inflight=1 queued=0
+--------------------------- Captured stderr teardown ---------------------------
+[anthropic-throttle] done   method=POST path=/api/coding/paas/v4/chat/completions status=200 bid=_anon cid=127.0.0.1:38520 via=direct model=unknown elapsed_ms=7 inflight=0 queued=0 served=1 disc=0 retries=0
+______________ test_central_failure_normalizes_only_direct_retry _______________
+tests/test_forwarding_text_only.py:98: in test_central_failure_normalizes_only_direct_retry
+    assert (await response.json())["messages"] == EXPECTED
+E   AssertionError: assert [{'content': ... 'assistant'}] == [{'content': ... 'assistant'}]
+E     
+E     At index 1 diff: {'role': 'assistant', 'content': [{'type': 'thinking', 'thinking': 'hidden'}]} != {'role': 'assistant', 'content': '[no text content]'}
+E     Use -v to get more diff
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] bearer-new bid=_anon max_concurrent=1 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/api/coding/paas/v4/chat/completions bid=_anon cid=127.0.0.1:59778 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/api/coding/paas/v4/chat/completions bid=_anon cid=127.0.0.1:59778 via=central model=unknown max_tokens=None lane=normal inflight=1 queued=0
+[anthropic-throttle] central forward failed: RetryableStatusError('retryable upstream status 502') → marking DOWN, retrying direct
+--------------------------- Captured stderr teardown ---------------------------
+[anthropic-throttle] done   method=POST path=/api/coding/paas/v4/chat/completions status=200 bid=_anon cid=127.0.0.1:59778 via=direct-fallback model=unknown elapsed_ms=8 inflight=0 queued=0 served=2 disc=0 retries=1
+=========================== short test summary info ============================
+FAILED tests/test_routing_text_only.py::test_final_emptied_turn_never_deletes_preceding_turn[1-prefix1]
+FAILED tests/test_routing_text_only.py::test_final_emptied_turn_never_deletes_preceding_turn[2-prefix1]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[-None]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[-]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[-content2]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[-content3]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[actual result-None]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[actual result-]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[actual result-content2]
+FAILED tests/test_routing_text_only.py::test_native_tool_protocol_survives[actual result-content3]
+FAILED tests/test_routing_text_only.py::test_native_call_without_content_survives
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block0]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block1]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block2]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block3]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block4]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block5]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block6]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block7]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block8]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[123]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[None]
+FAILED tests/test_routing_text_only.py::test_malformed_nested_blocks_pass_through_transactionally[block11]
+FAILED tests/test_routing_text_only.py::test_original_empty_content_does_not_delete_turn[]
+FAILED tests/test_routing_text_only.py::test_original_empty_content_does_not_delete_turn[content1]
+FAILED tests/test_routing_text_only.py::test_original_empty_content_does_not_delete_turn[content2]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[toolCall-False]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[toolCall-0]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[toolCall-None]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[toolCall-args4]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[toolCall-args5]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[toolCall-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[tool_use-False]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[tool_use-0]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[tool_use-None]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[tool_use-args4]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[tool_use-args5]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[tool_use-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function_call-False]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function_call-0]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function_call-None]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function_call-args4]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function_call-args5]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function_call-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function-False]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function-0]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function-None]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function-args4]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function-args5]
+FAILED tests/test_routing_text_only.py::test_arguments_preserved_without_truthiness_or_truncation[function-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxTAIL]
+FAILED tests/test_routing_text_only.py::test_nested_function_arguments_and_anthropic_input
+FAILED tests/test_routing_text_only.py::test_tool_result_not_truncated[False]
+FAILED tests/test_routing_text_only.py::test_tool_result_not_truncated[True]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[https://api.openai.com/v1/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[http://127.0.0.1:8766/api/coding/paas/v4/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[https://api.z.ai.example/api/coding/paas/v4/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[https://example.test/api/coding/paas/v4/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[https://api.z.ai/api/coding/paas/v4/chat/completions/extra]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[https://api.z.ai/other?next=/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[https://api.z.ai:444/api/coding/paas/v4/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[http://api.z.ai/api/coding/paas/v4/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[http://[invalid/chat/completions]
+FAILED tests/test_routing_text_only.py::test_unrelated_targets_are_byte_identical[/chat/completions]
+FAILED tests/test_forwarding_text_only.py::test_direct_chat_request_reaches_wire_normalized
+FAILED tests/test_forwarding_text_only.py::test_central_failure_normalizes_only_direct_retry
+65 failed, 31 passed in 0.98s
+
+pytest exit=1 (expected RED=1)

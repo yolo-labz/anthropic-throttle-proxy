@@ -37,7 +37,8 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Final
+from typing import Any, Final
+from urllib.parse import urlsplit
 
 __all__ = [
     "ROLES",
@@ -65,6 +66,7 @@ __all__ = [
     "lane_usable",
     "select_lane",
     "remap_body_model",
+    "normalize_text_content_blocks",
     "session_key_from_body",
 ]
 
@@ -707,6 +709,131 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
         return raw
     obj["model"] = new_model
     return json.dumps(obj).encode()
+
+
+# PR #236 observed 1210 for content[] types on this endpoint, NOT for native
+# tool_calls. This is an identity guard, never an upstream routing override.
+TEXT_ONLY_PATH = "/api/coding/paas/v4/chat/completions"
+
+
+# The kinds this function models. A dict block whose kind is NOT one of
+# these is unmodelled, not malformed: it gets a placeholder instead of aborting
+# the rewrite (see ``_part_as_text``).
+_KNOWN_BLOCK_TYPES = frozenset(
+    {
+        "text",
+        "thinking",
+        "redacted_thinking",
+        "toolCall",
+        "tool_use",
+        "function_call",
+        "function",
+        "toolResult",
+        "tool_result",
+        "image",
+        "image_url",
+        "input_image",
+    }
+)
+
+
+def _part_as_text(part: Any) -> str | None:
+    """Render one content block, drop thinking, or reject a malformed shape.
+
+    A rejection aborts the whole rewrite: upstream, not this proxy, validates a
+    structurally malformed block. A well-formed block of an unmodelled KIND is
+    NOT malformed (see below). Arguments and tool output are never truncated.
+    """
+    if isinstance(part, str):
+        return part
+    if not isinstance(part, dict):
+        raise ValueError("invalid content block")
+    kind = part.get("type")
+    if kind == "text" and isinstance(part.get("text"), str):
+        return part["text"]
+    if kind in ("thinking", "redacted_thinking"):
+        return None
+    if kind in ("toolCall", "tool_use", "function_call", "function"):
+        fn = part.get("function", {})
+        if not isinstance(fn, dict):
+            raise ValueError("invalid function block")
+        name = part.get("name", part.get("toolName", fn.get("name")))
+        if not isinstance(name, str) or not name:
+            raise ValueError("invalid tool name")
+        args = part.get("arguments", part.get("input", fn.get("arguments", "")))
+        args = args if isinstance(args, str) else json.dumps(args)
+        return f"[tool call: {name}({args})]"
+    if kind in ("toolResult", "tool_result"):
+        body = part.get("content")
+        if isinstance(body, list):
+            body = "\n".join(t for p in body if (t := _part_as_text(p)) is not None)
+        if not isinstance(body, str):
+            raise ValueError("invalid tool result")
+        return f"[tool result] {body}"
+    if kind in ("image", "image_url", "input_image"):
+        return "[image omitted: this lane accepts text only]"
+    # A well-formed block of a kind this lane does not model (`document`,
+    # `audio`, `server_tool_use`, `web_search_tool_result`, any future kind)
+    # must NOT abort the rewrite. Aborting hands the endpoint the very 1210
+    # this function exists to prevent, and because the rewrite is all-or-nothing,
+    # one unmodelled block would un-fix every turn in the request. A string
+    # `text` is preserved when the block carries one; otherwise the kind becomes
+    # an explicit placeholder. A KNOWN kind with a malformed payload still
+    # aborts (transactional passthrough) — the earlier gate's contract — as does
+    # a block with no usable `type` at all.
+    if isinstance(kind, str) and kind and kind not in _KNOWN_BLOCK_TYPES:
+        text = part.get("text")
+        return text if isinstance(text, str) else f"[{kind} omitted: this lane accepts text only]"
+    raise ValueError("unsupported content block")
+
+
+def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
+    """Flatten internal content blocks only at the known Z.AI coding endpoint.
+
+    Native tool protocol fields and original empty turns are preserved. Only a
+    turn emptied by removing thinking is dropped (or gets a final placeholder).
+    Malformed/unknown shapes pass through byte-identically, without partial edits.
+    """
+    if not raw:
+        return raw
+    try:
+        endpoint = urlsplit(target)
+        if (
+            endpoint.scheme != "https"
+            or endpoint.hostname != "api.z.ai"
+            or endpoint.port not in (None, 443)
+            or endpoint.path != TEXT_ONLY_PATH
+        ):
+            return raw
+        obj = json.loads(raw)
+        if not isinstance(obj, dict):
+            return raw
+        messages = obj.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return raw
+        kept = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                return raw
+            content = message.get("content")
+            if isinstance(content, list) and content:
+                texts = [t for p in content if (t := _part_as_text(p)) is not None]
+                message = {**message, "content": "\n".join(texts)}
+                native_tool = "tool_calls" in message or "tool_call_id" in message
+                if not texts and not native_tool and message.get("role") != "tool":
+                    if index != len(messages) - 1:
+                        continue
+                    message["content"] = "[no text content]"
+            elif content is not None and not isinstance(content, (str, list)):
+                return raw
+            kept.append(message)
+        if kept == messages:
+            return raw
+        obj["messages"] = kept
+        return json.dumps(obj).encode()
+    except (ValueError, TypeError, RecursionError):
+        # Transactional passthrough includes bad UTF-8 and deeply nested JSON.
+        return raw
 
 
 def session_key_from_body(raw: bytes) -> str | None:

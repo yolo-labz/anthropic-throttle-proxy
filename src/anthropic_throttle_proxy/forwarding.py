@@ -20,6 +20,7 @@ from . import config
 from .config import log
 from .pacing import _pace_dispatch
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
+from .routing import normalize_text_content_blocks
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -366,6 +367,14 @@ async def _forward_once(
     extracted upstream rate-limit headers. Raises ConnectionResetError /
     ClientConnectionResetError on client-side disconnect.
     """
+    # Per-attempt target identity: central receives the original body, while a
+    # direct Z.AI retry gets the same normalization as an initial direct request.
+    if request.method == "POST" and body is not None:
+        normalized = normalize_text_content_blocks(body, url)
+        if normalized != body:
+            body = normalized
+            headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+            headers["Content-Length"] = str(len(body))
     connector = aiohttp.TCPConnector(ssl=True)
     async with aiohttp.ClientSession(
         timeout=client_timeout,
