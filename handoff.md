@@ -6,7 +6,7 @@ host activation. Latest incident first.
 
 ---
 
-## 21/09/2026 — PR #236 normalizer repair candidate (not deployed)
+## 21/09/2026 — Z.AI normalizer repair: MERGED `a977b794` (not deployed)
 
 R7 imported #236's exact four commits into `237-normalizer-swarm`, repaired
 turn loss, native-tool deletion, malformed-block crashes, broad endpoint matching
@@ -17,6 +17,18 @@ See [the canonical swarm report](docs/swarm-2026-09-21.md) and
 [spec 237](specs/237-normalizer-repair/spec.md) for scope, provenance and evidence.
 Independent review, CI disposition and landing belong to the coordinator.
 No proxy restart, deployment, routing/capacity change or real API probe occurred.
+
+**Coordinator follow-up (same day):** the different-family gate ran on the exact
+head and first returned REQUEST CHANGES (no BLOCKER); `f138063` fixed its one
+acted-on finding — unmodelled well-formed block kinds aborted the all-or-nothing
+rewrite, re-arming the 1210 — and the gate then returned APPROVE. Landed as
+`a977b794` (verify.sh 1310 passed), branch deleted, #236 closed as superseded,
+follow-ups in issue #238. The gate was obtained through the sanctioned
+`AskClaude(generatorFamily=openai)` different-family hop onto full GLM-5.3,
+because the Claude holdback is capped and the delegate Z.AI gate refused on
+lane saturation for ~1 h. **Still not deployed**: real `api.z.ai` acceptance of
+the flattened transcript needs a Nix pin bump + `nixos-smart-switch` + a live
+cross-family replay.
 
 ## 14/09/2026 — recovery reconciled; whole-diff review remains blocked
 
