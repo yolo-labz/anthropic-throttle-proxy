@@ -38,6 +38,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 __all__ = [
     "ROLES",
@@ -710,116 +711,95 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
     return json.dumps(obj).encode()
 
 
-# Z.AI's OpenAI-compatible chat-completions endpoint accepts ONLY
-# ``{"type": "text"}`` content blocks. Measured 20/09/2026 against the live
-# lane: every replayed agent history came back
-#
-#     400 {"code":"1210","message":"messages.content.type is invalid,
-#          allowed values: ['text']"}
-#
-# and the proxy log showed it as
-# ``upstream_400 path=/api/coding/paas/v4/chat/completions model=glm``. The
-# trigger is a transcript that ran on another provider family: one seat's
-# history carried 217 ``thinking`` blocks plus ``toolCall``/``toolResult``
-# blocks, and those types do not exist on this endpoint. The Anthropic lane is
-# untouched by design — it REQUIRES those block types, which is why this is
-# keyed on the target path and not applied to every forward.
-TEXT_ONLY_PATH = "/chat/completions"
+# PR #236 observed 1210 for content[] types on this endpoint, NOT for native
+# tool_calls. This is an identity guard, never an upstream routing override.
+TEXT_ONLY_PATH = "/api/coding/paas/v4/chat/completions"
 
 
 def _part_as_text(part: Any) -> str | None:
-    """Flatten one content block to plain text, or ``None`` to drop it.
+    """Render a known internal block, drop thinking, or reject an unknown shape.
 
-    Tool calls and tool results become text because the model must still SEE
-    them — silently dropping a tool result makes the model hallucinate output it
-    can no longer read. ``thinking`` is dropped instead of stringified: it is
-    another provider's internal reasoning, so forwarding it as visible text
-    would pollute the context and pay tokens for something the model never
-    acted on.
+    A rejection aborts the whole rewrite: upstream, not this proxy, validates
+    malformed/unknown blocks. Arguments and tool output are never truncated.
     """
     if isinstance(part, str):
         return part
     if not isinstance(part, dict):
-        return None
+        raise ValueError("invalid content block")
     kind = part.get("type")
-    if kind == "text":
-        return part.get("text") or ""
+    if kind == "text" and isinstance(part.get("text"), str):
+        return part["text"]
     if kind in ("thinking", "redacted_thinking"):
         return None
     if kind in ("toolCall", "tool_use", "function_call", "function"):
-        # OpenAI-shaped tool_calls wrap the payload: {"type": "function",
-        # "function": {"name": ..., "arguments": ...}}. Found by the test, not
-        # by reading the docs - the flat shape alone left these silent, and a
-        # silently dropped tool call is worse than a rejected request.
-        fn = part.get("function") if isinstance(part.get("function"), dict) else {}
-        name = part.get("name") or part.get("toolName") or fn.get("name") or "tool"
-        args = part.get("arguments") or part.get("input") or fn.get("arguments") or ""
-        try:
-            args = json.dumps(args) if not isinstance(args, str) else args
-        except Exception:
-            args = str(args)
-        return f"[tool call: {name}({args[:400]})]"
+        fn = part.get("function", {})
+        if not isinstance(fn, dict):
+            raise ValueError("invalid function block")
+        name = part.get("name", part.get("toolName", fn.get("name")))
+        if not isinstance(name, str) or not name:
+            raise ValueError("invalid tool name")
+        args = part.get("arguments", part.get("input", fn.get("arguments", "")))
+        args = args if isinstance(args, str) else json.dumps(args)
+        return f"[tool call: {name}({args})]"
     if kind in ("toolResult", "tool_result"):
         body = part.get("content")
         if isinstance(body, list):
-            body = " ".join(x for x in (_part_as_text(p) for p in body) if x)
-        return f"[tool result] {str(body)[:4000]}"
+            body = "\n".join(t for p in body if (t := _part_as_text(p)) is not None)
+        if not isinstance(body, str):
+            raise ValueError("invalid tool result")
+        return f"[tool result] {body}"
     if kind in ("image", "image_url", "input_image"):
         return "[image omitted: this lane accepts text only]"
-    # Unknown block: keep its text if it has any, otherwise drop it.
-    text = part.get("text")
-    return text if isinstance(text, str) else None
+    raise ValueError("unsupported content block")
 
 
 def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
-    """Rewrite OpenAI-shaped ``messages[].content`` blocks so every entry is text.
+    """Flatten internal content blocks only at the known Z.AI coding endpoint.
 
-    No-op unless ``target`` is a text-only chat-completions endpoint, and a
-    no-op on any parse failure (same contract as :func:`remap_body_model`: the
-    proxy must never be the reason a forward dies).
-
-    Also flattens OpenAI-style ``tool_calls`` on a message into a text block and
-    removes the key, since that field carries the same non-text shape the lane
-    refuses. A message left with no content at all is dropped, EXCEPT the last
-    one, which is given a placeholder so the request still has a final turn.
+    Native tool protocol fields and original empty turns are preserved. Only a
+    turn emptied by removing thinking is dropped (or gets a final placeholder).
+    Malformed/unknown shapes pass through byte-identically, without partial edits.
     """
-    if not raw or TEXT_ONLY_PATH not in (target or ""):
+    if not raw:
         return raw
     try:
+        endpoint = urlsplit(target)
+        if (
+            endpoint.scheme != "https"
+            or endpoint.hostname != "api.z.ai"
+            or endpoint.port not in (None, 443)
+            or endpoint.path != TEXT_ONLY_PATH
+        ):
+            return raw
         obj = json.loads(raw)
-    except Exception:
+        if not isinstance(obj, dict):
+            return raw
+        messages = obj.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return raw
+        kept = []
+        for index, message in enumerate(messages):
+            if not isinstance(message, dict):
+                return raw
+            content = message.get("content")
+            if isinstance(content, list) and content:
+                texts = [t for p in content if (t := _part_as_text(p)) is not None]
+                message = {**message, "content": "\n".join(texts)}
+                native_tool = "tool_calls" in message or "tool_call_id" in message
+                if not texts and not native_tool and message.get("role") != "tool":
+                    if index != len(messages) - 1:
+                        continue
+                    message["content"] = "[no text content]"
+            elif content is not None and not isinstance(content, (str, list)):
+                return raw
+            kept.append(message)
+        if kept == messages:
+            return raw
+        obj["messages"] = kept
+        return json.dumps(obj).encode()
+    except (ValueError, TypeError, RecursionError):
+        # Transactional passthrough includes bad UTF-8 and deeply nested JSON.
         return raw
-    if not isinstance(obj, dict):
-        return raw
-    messages = obj.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return raw
-    rewritten: list[Any] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            rewritten.append(message)
-            continue
-        content = message.get("content")
-        if isinstance(content, list):
-            texts = [t for t in (_part_as_text(p) for p in content) if t]
-            message = {**message, "content": "\n".join(texts) if texts else ""}
-        calls = message.get("tool_calls")
-        if isinstance(calls, list):
-            rendered = [t for t in (_part_as_text(c) for c in calls) if t]
-            if rendered:
-                joined = "\n".join(rendered)
-                existing = message.get("content")
-                message = {**message, "content": (f"{existing}\n{joined}" if existing else joined)}
-            message = {k: v for k, v in message.items() if k != "tool_calls"}
-        rewritten.append(message)
-    kept = [m for m in rewritten if not (isinstance(m, dict) and m.get("content") == "")]
-    dropped = len(rewritten) - len(kept)
-    if not kept:
-        kept = [{**rewritten[-1], "content": "[no text content]"}]
-    elif dropped and isinstance(rewritten[-1], dict) and rewritten[-1].get("content") == "":
-        kept = kept[:-1] + [{**rewritten[-1], "content": "[no text content]"}]
-    obj["messages"] = kept
-    return json.dumps(obj).encode()
 
 
 def session_key_from_body(raw: bytes) -> str | None:
