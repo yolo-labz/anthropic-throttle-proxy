@@ -38,6 +38,7 @@ from .routing import (
     body_has_tools,
     code_role_rejection_reason,
     default_lanes,
+    fit_chat_completions_body,
     infer_role_from_body,
     lane_usable,
     normalize_text_content_blocks,
@@ -928,6 +929,9 @@ async def _forward(request: web.Request) -> web.StreamResponse:
             # so flatten those blocks here. Keyed on the target path, so the
             # Anthropic lane — which requires tool/thinking blocks — is untouched.
             body_data = normalize_text_content_blocks(body_data, target)
+            # Same lane, same reason: an oversized body is refused outright, and the
+            # ceiling is not published, so fit it rather than learn it the hard way.
+            body_data = fit_chat_completions_body(body_data, target)
         elif is_messages:
             body_data = _chain_stream(request.content, prefix, buffered_rest)
         else:

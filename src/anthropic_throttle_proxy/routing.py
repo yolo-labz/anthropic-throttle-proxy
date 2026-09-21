@@ -66,6 +66,7 @@ __all__ = [
     "select_lane",
     "remap_body_model",
     "normalize_text_content_blocks",
+    "fit_chat_completions_body",
     "session_key_from_body",
 ]
 
@@ -725,6 +726,71 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
 # untouched by design — it REQUIRES those block types, which is why this is
 # keyed on the target path and not applied to every forward.
 TEXT_ONLY_PATH = "/chat/completions"
+
+# Budget for a text-only lane's request body. Measured 21/09/2026: a seat at 707k
+# tokens (~3 MB of JSON) was refused with
+# ``413 Failed to buffer the request body: length limit exceeded`` - and the
+# throttle proxy's own log contained no 413, so the refusal came from further up
+# the lane. We do not know that ceiling: the provider's /models endpoint reports
+# the id and nothing else, its docs advertise 1M tokens for the model while a
+# filed issue has the official API reporting 200K, and our own request died at
+# 707k. Rather than encode a number we cannot verify, fit the body to a
+# conservative budget and let a trimmed request succeed instead of a full one die.
+#
+# ``THROTTLE_CHAT_MAX_BODY_BYTES=0`` disables the trim.
+CHAT_MAX_BODY_BYTES = int(os.environ.get("THROTTLE_CHAT_MAX_BODY_BYTES", str(2 * 1024 * 1024)))
+# Trailing messages kept intact: the model must still see the live turn and the
+# exchange before it, or it resumes with no idea what it was doing.
+CHAT_KEEP_TAIL = max(2, int(os.environ.get("THROTTLE_CHAT_KEEP_TAIL", "6")))
+
+CHAT_TRIM_NOTE = (
+    "[throttle-proxy trimmed {n} earlier message(s) to fit this lane's request "
+    "budget. The full conversation stays in the client; the transcript on disk is "
+    "the source of truth - re-read it if you need something that is missing.]"
+)
+
+
+def fit_chat_completions_body(raw: bytes, target: str) -> bytes:
+    """Drop the oldest messages until the body fits, keeping the anchors and the tail.
+
+    No-op unless ``target`` is a text-only chat-completions endpoint, and a no-op
+    on any parse failure or when the body already fits (same contract as
+    :func:`remap_body_model`: the proxy must never be the reason a forward dies).
+
+    The system prompt is an anchor and is never dropped - trimming the assignment
+    to make room is how a model ends up answering a task it can no longer see.
+    A breadcrumb message records what was removed so the model knows its history
+    was clipped rather than silently inventing the missing part.
+    """
+    if not raw or CHAT_MAX_BODY_BYTES <= 0 or TEXT_ONLY_PATH not in (target or ""):
+        return raw
+    if len(raw) <= CHAT_MAX_BODY_BYTES:
+        return raw
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    messages = obj.get("messages")
+    if not isinstance(messages, list) or len(messages) <= CHAT_KEEP_TAIL + 1:
+        return raw
+    anchor = [m for m in messages[:1] if isinstance(m, dict) and m.get("role") == "system"]
+    body = [m for m in messages if m not in anchor]
+    tail = body[-CHAT_KEEP_TAIL:]
+    head = body[: len(body) - len(tail)]
+    dropped = 0
+    while head and len(json.dumps({**obj, "messages": anchor + head + tail})) > CHAT_MAX_BODY_BYTES:
+        head.pop(0)
+        dropped += 1
+    if not dropped:
+        return raw
+    breadcrumb = {"role": "system", "content": CHAT_TRIM_NOTE.format(n=dropped)}
+    obj["messages"] = anchor + [breadcrumb] + head + tail
+    trimmed = json.dumps(obj).encode()
+    # If dropping history still cannot fit, return the original: a lane that
+    # rejects a big body should reject it, not receive something we mangled.
+    return trimmed if len(trimmed) < len(raw) else raw
 
 
 def _part_as_text(part: Any) -> str | None:
