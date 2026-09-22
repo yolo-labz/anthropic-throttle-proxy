@@ -6,6 +6,43 @@ host activation. Latest incident first.
 
 ---
 
+## 22/09/2026 — Z.AI chat budget RE-LANDED as PR #240 (blocked on the SonarQube origin)
+
+A 707k-token seat died on the Z.AI coding endpoint with `413 Failed to buffer the
+request body: length limit exceeded`, and the ceiling is unpublished (`/models` returns
+only id+`owned_by`; docs say 1M tokens; a filed issue has the official API at 200K).
+PR #240 fits the body instead of encoding that number.
+
+**It is re-landed work that was dropped.** The change is the fifth commit of PR #236's
+branch (`6860c1d`): #237 imported "the exact four commits", and #236 was closed as
+superseded 18 minutes after the fifth was pushed, so nothing carried it. Now landed on
+the post-#237 tree at the seam #237 proved is the real per-attempt egress boundary.
+Contract: system prompt anchored, last `CHAT_KEEP_TAIL` turns kept, the cut never
+separates a tool call from its answer, and what we rewrite must fit the budget — if
+even the protected tail cannot, the ORIGINAL body is forwarded. Default cap
+`1_800_000` sits deliberately under the plausible gate band (~2 MB family: that 413
+text is Bun's buffering error; axum's `DefaultBodyLimit` is 2 MB).
+
+**Different-family gate (full GLM-5.3 on exact head `4660814`) found one BLOCKER and
+it was real:** an uneven cut could land between an assistant `tool_calls` turn and the
+`role:"tool"` turn answering it, emitting an orphaned answer — the proxy causing the
+very refusal it prevents. Reproduced on the pre-fix head (16/30 trimmed native-tool
+transcripts; the new test's own assertion fails 16/30 there) and fixed; also fixed from
+that review: ~10 full-body serializations per request on the event loop, silent
+give-ups, a `.port` regression the predicate extraction introduced, an anchor-blind
+guard, and breadcrumb wording that invited re-read storms. Every finding, with its
+evidence or the reason it was declined, is in `specs/240-zai-chat-body-budget/review.md`.
+
+Verified: RED on base `dfa297c` for the real reason (2,101,056 bytes on the wire against
+a 1,800,000 budget), GREEN after (40 targeted, 1343 full suite, ruff clean, `verify.sh`
+rc=0). **Not deployed** — live `api.z.ai` acceptance needs a Nix pin bump + restart.
+
+**Blocked, not mergeable:** the required `scan` context fails on the 20/09 Dokku /
+SonarQube origin outage (HTTP 530, 8 s into the job, before any analysis). The other
+eight checks are green. 22/09 probes: SonarQube still 530, VM105 (Nix.Server) back on the
+wire, VM101 (dokku) still unreachable. `[pending] Pedro: Dokku VM101 / SonarQube origin
+recovery` — see the vault note's §9; re-run `gh run rerun --failed` once the oracle exits 0.
+
 ## 21/09/2026 — Z.AI normalizer repair: MERGED `a977b794` (not deployed)
 
 R7 imported #236's exact four commits into `237-normalizer-swarm`, repaired
