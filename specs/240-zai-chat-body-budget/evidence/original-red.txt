@@ -1,0 +1,22 @@
+### Pre-fix head RED — behavioral falsifier
+head: dfa297cce51526055a0b6c8fc7464ddae65cf5d9  (docs: record the normalizer gate verdict and the landing (#239))
+date: 2026-09-22T07:58:11-03:00
+This worktree is untouched origin/main. The two test files were copied in;
+the post-fix-only references to M_CHAT_BODY_FITTED and fit_chat_completions_body
+are REMOVED from the copies, because an ImportError would hide the behavioral
+failure behind a collection error. Nothing in src/ was touched.
+
+--- tests/test_forwarding_text_only.py (behavioral; pre-fix body forwarded whole) ---
+E       AttributeError: <module 'anthropic_throttle_proxy.routing' from '/var/tmp/pi-agent-1000/c0e86eeb316f40f8.1611573.d3b52846af97/red-main/src/anthropic_throttle_proxy/routing.py'> has no attribute 'CHAT_MAX_BODY_BYTES'
+E       AttributeError: <module 'anthropic_throttle_proxy.routing' from '/var/tmp/pi-agent-1000/c0e86eeb316f40f8.1611573.d3b52846af97/red-main/src/anthropic_throttle_proxy/routing.py'> has no attribute 'CHAT_MAX_BODY_BYTES'
+E       AttributeError: <module 'anthropic_throttle_proxy.routing' from '/var/tmp/pi-agent-1000/c0e86eeb316f40f8.1611573.d3b52846af97/red-main/src/anthropic_throttle_proxy/routing.py'> has no attribute 'CHAT_MAX_BODY_BYTES'
+E       assert 2101056 <= 1800000
+E        +  where 2101056 = len(b'{"model": "glm-5.3", "messages": [{"role": "system", "content": "ANCHOR: the assignment, never dropped"}, {"role": "...xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}]}')
+FAILED tests/test_forwarding_text_only.py::test_oversize_direct_chat_request_reaches_wire_fitted
+FAILED tests/test_forwarding_text_only.py::test_central_keeps_the_full_body_and_only_the_direct_retry_is_fitted
+FAILED tests/test_forwarding_text_only.py::test_oversize_body_on_a_sibling_protocol_is_untouched
+FAILED tests/test_forwarding_text_only.py::test_default_budget_fits_what_the_unfixed_proxy_forwarded_whole
+4 failed, 7 passed in 0.39s
+
+--- tests/test_routing_chat_budget.py (feature absent on the pre-fix head) ---
+ImportError: cannot import name 'fit_chat_completions_body' from 'anthropic_throttle_proxy.routing'

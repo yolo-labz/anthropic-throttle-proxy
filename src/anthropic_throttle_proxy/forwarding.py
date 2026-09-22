@@ -18,9 +18,10 @@ from aiohttp import web
 
 from . import config
 from .config import log
+from .metrics import M_CHAT_BODY_FITTED
 from .pacing import _pace_dispatch
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
-from .routing import normalize_text_content_blocks
+from .routing import fit_chat_completions_body, normalize_text_content_blocks
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -368,11 +369,21 @@ async def _forward_once(
     ClientConnectionResetError on client-side disconnect.
     """
     # Per-attempt target identity: central receives the original body, while a
-    # direct Z.AI retry gets the same normalization as an initial direct request.
+    # direct Z.AI retry gets the same shaping as an initial direct request. Both
+    # transforms are no-ops off the Z.AI coding endpoint, which is why they can
+    # be chained here without a per-caller guard.
     if request.method == "POST" and body is not None:
         normalized = normalize_text_content_blocks(body, url)
-        if normalized != body:
-            body = normalized
+        fitted = fit_chat_completions_body(normalized, url)
+        if fitted != normalized:
+            # Clipping a model's history is not silent: the operator can see it.
+            M_CHAT_BODY_FITTED.inc()
+            log(
+                f"chat_body_fit path={request.path} original={len(body)} "
+                f"final={len(fitted)} saved={len(body) - len(fitted)}"
+            )
+        if fitted != body:
+            body = fitted
             headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
             headers["Content-Length"] = str(len(body))
     connector = aiohttp.TCPConnector(ssl=True)

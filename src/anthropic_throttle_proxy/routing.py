@@ -716,6 +716,25 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
 TEXT_ONLY_PATH = "/api/coding/paas/v4/chat/completions"
 
 
+def _is_zai_text_only_endpoint(target: str) -> bool:
+    """True only for the real Z.AI coding chat-completions endpoint.
+
+    Both request-shaping transforms below key on this ONE predicate, so they can
+    never disagree about which lane they are allowed to rewrite: a central tier,
+    a sibling protocol path, or any other provider keeps the original bytes.
+    """
+    try:
+        endpoint = urlsplit(target)
+    except ValueError:
+        return False  # malformed URL: not an endpoint this proxy can identify
+    return (
+        endpoint.scheme == "https"
+        and endpoint.hostname == "api.z.ai"
+        and endpoint.port in (None, 443)
+        and endpoint.path == TEXT_ONLY_PATH
+    )
+
+
 # The kinds this function models. A dict block whose kind is NOT one of
 # these is unmodelled, not malformed: it gets a placeholder instead of aborting
 # the rewrite (see ``_part_as_text``).
@@ -794,17 +813,9 @@ def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
     turn emptied by removing thinking is dropped (or gets a final placeholder).
     Malformed/unknown shapes pass through byte-identically, without partial edits.
     """
-    if not raw:
+    if not raw or not _is_zai_text_only_endpoint(target):
         return raw
     try:
-        endpoint = urlsplit(target)
-        if (
-            endpoint.scheme != "https"
-            or endpoint.hostname != "api.z.ai"
-            or endpoint.port not in (None, 443)
-            or endpoint.path != TEXT_ONLY_PATH
-        ):
-            return raw
         obj = json.loads(raw)
         if not isinstance(obj, dict):
             return raw
@@ -834,6 +845,102 @@ def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
     except (ValueError, TypeError, RecursionError):
         # Transactional passthrough includes bad UTF-8 and deeply nested JSON.
         return raw
+
+
+# A 707k-token seat (~3 MB of JSON) died on this lane with
+# ``413 Failed to buffer the request body: length limit exceeded`` while the
+# proxy's own log held no 413 (every other request was status=200), so the
+# ceiling sits further up the lane and is not published: ``/models`` reports only
+# the id and ``owned_by``, the model's documentation advertises 1M tokens, a
+# filed issue has the official API reporting 200K, and our own request died at
+# 707k. Encode no number we cannot verify — FIT the body instead, so a trimmed
+# request succeeds where a full one is refused outright. ``0`` disables the trim.
+#
+# The default deliberately sits UNDER the plausible ceiling rather than at the
+# largest value that might survive. That exact 413 text is Bun's own body
+# buffering error (other deployments report it at ~2.1-2.4 MB bodies), and
+# axum's ``DefaultBodyLimit`` is 2 MB, so "about 2 MB" is the best-supported
+# family of gates in front of a coding lane. Fitting to 2 MiB would clear our
+# own check and still get refused upstream — the failure this exists to remove —
+# whereas a body trimmed a little too far succeeds with its system prompt, live
+# tail and a breadcrumb saying what went missing.
+CHAT_MAX_BODY_BYTES: Final[int] = int(
+    os.environ.get("THROTTLE_CHAT_MAX_BODY_BYTES", str(1_800_000))
+)
+# Trailing turns kept intact: the model must still see the live turn and the
+# exchange before it, or it resumes with no idea what it was doing.
+CHAT_KEEP_TAIL: Final[int] = max(2, int(os.environ.get("THROTTLE_CHAT_KEEP_TAIL", "6")))
+
+CHAT_TRIM_NOTE = (
+    "[throttle-proxy trimmed {n} earlier message(s) to fit this lane's request "
+    "budget. The full conversation is still on the client; the transcript on disk "
+    "is the source of truth - re-read it if you need something that is missing.]"
+)
+
+
+def fit_chat_completions_body(raw: bytes, target: str) -> bytes:
+    """Drop the oldest turns until the body fits this lane's unpublished ceiling.
+
+    No-op unless the target is the Z.AI coding endpoint, and a no-op on any parse
+    failure or when the body already fits — the proxy must never be the reason a
+    forward dies (same contract as :func:`normalize_text_content_blocks`).
+
+    Two rules carry the design. The system prompt is an ANCHOR and is never
+    dropped: trimming the assignment to make room is how a model ends up
+    confidently answering a task it can no longer see. A breadcrumb turn records
+    how many turns were removed, so the model knows its history was clipped
+    instead of silently inventing the missing part.
+
+    If dropping history still cannot fit, the ORIGINAL body is returned: a lane
+    that refuses a big body should refuse it, not receive something mangled.
+    """
+    if not raw or CHAT_MAX_BODY_BYTES <= 0 or not _is_zai_text_only_endpoint(target):
+        return raw
+    if len(raw) <= CHAT_MAX_BODY_BYTES:
+        return raw
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(obj, dict):
+        return raw
+    messages = obj.get("messages")
+    if not isinstance(messages, list) or len(messages) <= CHAT_KEEP_TAIL + 1:
+        return raw
+    first = messages[0]
+    anchor = [first] if isinstance(first, dict) and first.get("role") == "system" else []
+    live = messages[len(anchor) :]
+    tail = live[-CHAT_KEEP_TAIL:]
+    head = live[: len(live) - len(tail)]
+    # Measured with the WIDEST count the breadcrumb could report, so the fitted
+    # body can never come out a few bytes over budget.
+    probe = {"role": "system", "content": CHAT_TRIM_NOTE.format(n=len(head))}
+
+    def fitted(dropped: int) -> int:
+        """Serialized size after dropping ``dropped`` of the oldest head turns."""
+        turns = anchor + ([probe] if dropped else []) + head[dropped:] + tail
+        return len(json.dumps({**obj, "messages": turns}).encode())
+
+    # Dropping a prefix only ever shrinks the body, so binary-search the count
+    # rather than re-serializing a multi-megabyte body once per dropped turn on
+    # the event loop (a 3 MB body with hundreds of turns would stall it).
+    low, high = 0, len(head)
+    while low < high:
+        middle = (low + high) // 2
+        if fitted(middle) <= CHAT_MAX_BODY_BYTES:
+            high = middle
+        else:
+            low = middle + 1
+    if low == 0 or fitted(low) > CHAT_MAX_BODY_BYTES:
+        # Either nothing had to go (a re-dump alone fits, so leave the bytes
+        # alone) or the protected tail alone is past the budget — a lane that
+        # refuses a big body should refuse it, not receive something mangled.
+        return raw
+    obj["messages"] = (
+        anchor + [{"role": "system", "content": CHAT_TRIM_NOTE.format(n=low)}] + head[low:] + tail
+    )
+    trimmed = json.dumps(obj).encode()
+    return trimmed if len(trimmed) < len(raw) else raw
 
 
 def session_key_from_body(raw: bytes) -> str | None:
