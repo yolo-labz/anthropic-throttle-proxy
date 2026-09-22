@@ -43,6 +43,21 @@ eight checks are green. 22/09 probes: SonarQube still 530, VM105 (Nix.Server) ba
 wire, VM101 (dokku) still unreachable. `[pending] Pedro: Dokku VM101 / SonarQube origin
 recovery` — see the vault note's §9; re-run `gh run rerun --failed` once the oracle exits 0.
 
+### Worktree audit (22/09) — two are safe, two must not be removed
+
+Leave these alone unless the evidence below is re-checked; do NOT bulk-prune worktrees:
+
+| Worktree | Branch | Finding |
+|---|---|---|
+| `…-227-pi-queue-wait` | `227-pi-queue-wait` | pushed; **6 commits not in main**; also holds untracked `specs/232-pi-queue-retry-safety/` (1 file, 8 KB) which main lacks. **Preserve.** |
+| `…-228-pi-queue-tests` | `228-pi-queue-tests` | **local-only branch** (no remote, no PR) with **1 commit not in main** plus untracked `specs/227-pi-queue-wait/test-plan.md` (23 KB) absent from main. Removing this worktree loses the only copy of both. **Preserve.** |
+| `…-229-dashboard-truth` | `229-dashboard-truth` | local-only branch, but **0 commits outside main**, and its 3 modified files are strictly OLDER than main (diff vs `origin/main` is removals only — e.g. main already has `apply_display`/`_asset_version(view=…)` that this tree lacks). No unique work. |
+| `…-230-dashboard-data` | `230-dashboard-data` | same shape: 0 commits outside main, the modified file is an older state of one main already has. No unique work. |
+
+The two removable candidates still need `git worktree remove --force`, which would
+discard their stale files; nothing was removed here, so the decision stays with a seat
+that re-checks the claim above.
+
 ## 21/09/2026 — Z.AI normalizer repair: MERGED `a977b794` (not deployed)
 
 R7 imported #236's exact four commits into `237-normalizer-swarm`, repaired
