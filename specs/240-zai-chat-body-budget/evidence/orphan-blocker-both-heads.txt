@@ -1,0 +1,12 @@
+### Gate blocker, verified on both heads with ONE script (no test-file edits)
+date: 2026-09-22T08:09:53-03:00
+shape: native OpenAI tool_calls - assistant tool_calls turn + its role:"tool" answer,
+       uneven randomized sizes, 60 seeds, budget 20_000.
+
+--- OLD head 4660814 (before the fix) ---
+uneven native-tool transcripts: trimmed=60/60  with an ORPHANED tool answer=30
+VERDICT: BLOCKER PRESENT
+
+--- NEW head (working tree, blocker fix applied) ---
+uneven native-tool transcripts: trimmed=60/60  with an ORPHANED tool answer=0
+VERDICT: no orphaned tool answer reaches the wire

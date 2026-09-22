@@ -41,6 +41,7 @@ __all__ = [
     "M_BODY_SHRINK_TRIMMED",
     "M_BODY_SHRINK_BYTES_SAVED",
     "M_CHAT_BODY_FITTED",
+    "M_CHAT_BODY_UNFITTABLE",
     "M_RATELIMIT_REQUESTS_REMAINING",
     "M_RATELIMIT_TOKENS_REMAINING",
     "M_UTIL_5H",
@@ -260,6 +261,16 @@ M_CHAT_BODY_FITTED = Counter(
     "anthropic_chat_body_fitted_total",
     "Z.AI coding chat-completions bodies whose oldest turns were dropped to fit "
     "this lane's unpublished request budget.",
+    registry=REGISTRY,
+)
+# The honest sibling: over budget and NOT fittable even after dropping every turn
+# outside the protected tail. This is the counter that stays red when the lane's
+# real ceiling turns out to be below the guessed budget, so a green
+# M_CHAT_BODY_FITTED can never be mistaken for "the 413 is gone".
+M_CHAT_BODY_UNFITTABLE = Counter(
+    "anthropic_chat_body_unfittable_total",
+    "Z.AI coding chat-completions bodies left over budget after every droppable "
+    "turn was dropped, and therefore forwarded unchanged.",
     registry=REGISTRY,
 )
 # Last-seen upstream rate-limit headroom per bearer (proactive-pacing signal).

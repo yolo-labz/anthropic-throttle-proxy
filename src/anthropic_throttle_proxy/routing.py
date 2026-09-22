@@ -725,14 +725,17 @@ def _is_zai_text_only_endpoint(target: str) -> bool:
     """
     try:
         endpoint = urlsplit(target)
+        # ``.port`` raises on a non-numeric or out-of-range port, so it belongs
+        # inside this guard: the previous inline check swallowed that with the
+        # whole-body try/except, and a config URL must never break a forward.
+        return (
+            endpoint.scheme == "https"
+            and endpoint.hostname == "api.z.ai"
+            and endpoint.port in (None, 443)
+            and endpoint.path == TEXT_ONLY_PATH
+        )
     except ValueError:
-        return False  # malformed URL: not an endpoint this proxy can identify
-    return (
-        endpoint.scheme == "https"
-        and endpoint.hostname == "api.z.ai"
-        and endpoint.port in (None, 443)
-        and endpoint.path == TEXT_ONLY_PATH
-    )
+        return False  # malformed URL or port: not an endpoint this proxy can identify
 
 
 # The kinds this function models. A dict block whose kind is NOT one of
@@ -873,74 +876,153 @@ CHAT_KEEP_TAIL: Final[int] = max(2, int(os.environ.get("THROTTLE_CHAT_KEEP_TAIL"
 
 CHAT_TRIM_NOTE = (
     "[throttle-proxy trimmed {n} earlier message(s) to fit this lane's request "
-    "budget. The full conversation is still on the client; the transcript on disk "
-    "is the source of truth - re-read it if you need something that is missing.]"
+    "budget. Do not re-read files to reconstruct the missing history - ask for the "
+    "specific file or span you need. The full conversation is still on the client.]"
 )
 
 
-def fit_chat_completions_body(raw: bytes, target: str) -> bytes:
+def _answers_a_dropped_call(message: Any) -> bool:
+    """True when this turn is a tool answer whose call is no longer in the body.
+
+    Only ever asked of the FIRST turn kept after dropping a prefix, so any tool
+    answer there is orphaned by construction: an assistant ``tool_calls`` turn and
+    the ``role: "tool"`` turn answering it are one unit, and cutting between them
+    leaves a transcript that a strict validator rejects. That would make the proxy
+    the CAUSE of the refusal it exists to prevent. The content-block form is the
+    Anthropic shape - reachable when the normalizer passed a malformed body
+    through untouched.
+    """
+    if not isinstance(message, dict):
+        return False
+    if message.get("role") == "tool" or "tool_call_id" in message:
+        return True
+    content = message.get("content")
+    return isinstance(content, list) and any(
+        isinstance(part, dict) and part.get("type") in ("tool_result", "toolResult")
+        for part in content
+    )
+
+
+def fit_chat_completions_body(raw: bytes, target: str) -> tuple[bytes, dict[str, Any]]:
     """Drop the oldest turns until the body fits this lane's unpublished ceiling.
 
+    Returns ``(body, meta)`` like :func:`anthropic_throttle_proxy.body_shrink.shrink_body`.
+    ``meta`` always carries ``original_bytes`` and a ``reason``; a trim adds
+    ``final_bytes`` and ``turns_dropped``, and ``fitted`` is true only when the
+    returned body is the rewritten one.
+
     No-op unless the target is the Z.AI coding endpoint, and a no-op on any parse
-    failure or when the body already fits — the proxy must never be the reason a
-    forward dies (same contract as :func:`normalize_text_content_blocks`).
+    failure, unmodelled shape or body that already fits — the proxy must never be
+    the reason a forward dies (same contract as :func:`normalize_text_content_blocks`).
 
-    Two rules carry the design. The system prompt is an ANCHOR and is never
+    Three rules carry the design. The system prompt is an ANCHOR and is never
     dropped: trimming the assignment to make room is how a model ends up
-    confidently answering a task it can no longer see. A breadcrumb turn records
-    how many turns were removed, so the model knows its history was clipped
-    instead of silently inventing the missing part.
+    confidently answering a task it can no longer see. The last
+    ``CHAT_KEEP_TAIL`` turns are kept intact, so the model still sees the live
+    turn and the exchange before it. And the cut never lands between an assistant
+    tool call and the answer to it.
 
-    If dropping history still cannot fit, the ORIGINAL body is returned: a lane
-    that refuses a big body should refuse it, not receive something mangled.
+    If even that cannot fit, the ORIGINAL body is returned with
+    ``reason="unfittable"``: a lane that refuses a big body should refuse it, not
+    receive something mangled.
     """
-    if not raw or CHAT_MAX_BODY_BYTES <= 0 or not _is_zai_text_only_endpoint(target):
-        return raw
-    if len(raw) <= CHAT_MAX_BODY_BYTES:
-        return raw
+    original_bytes = len(raw)
+    if not raw:
+        return raw, {"fitted": False, "reason": "empty", "original_bytes": original_bytes}
+    if CHAT_MAX_BODY_BYTES <= 0:
+        return raw, {"fitted": False, "reason": "disabled", "original_bytes": original_bytes}
+    if not _is_zai_text_only_endpoint(target):
+        return raw, {
+            "fitted": False,
+            "reason": "other-endpoint",
+            "original_bytes": original_bytes,
+        }
+    if original_bytes <= CHAT_MAX_BODY_BYTES:
+        return raw, {"fitted": False, "reason": "under-budget", "original_bytes": original_bytes}
     try:
         obj = json.loads(raw)
     except Exception:
-        return raw
+        return raw, {"fitted": False, "reason": "non-json", "original_bytes": original_bytes}
     if not isinstance(obj, dict):
-        return raw
+        return raw, {"fitted": False, "reason": "non-object", "original_bytes": original_bytes}
     messages = obj.get("messages")
-    if not isinstance(messages, list) or len(messages) <= CHAT_KEEP_TAIL + 1:
-        return raw
+    if not isinstance(messages, list) or not messages:
+        return raw, {"fitted": False, "reason": "no-messages", "original_bytes": original_bytes}
     first = messages[0]
     anchor = [first] if isinstance(first, dict) and first.get("role") == "system" else []
     live = messages[len(anchor) :]
+    if len(live) <= CHAT_KEEP_TAIL:
+        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
     tail = live[-CHAT_KEEP_TAIL:]
     head = live[: len(live) - len(tail)]
     # Measured with the WIDEST count the breadcrumb could report, so the fitted
     # body can never come out a few bytes over budget.
     probe = {"role": "system", "content": CHAT_TRIM_NOTE.format(n=len(head))}
 
-    def fitted(dropped: int) -> int:
-        """Serialized size after dropping ``dropped`` of the oldest head turns."""
-        turns = anchor + ([probe] if dropped else []) + head[dropped:] + tail
-        return len(json.dumps({**obj, "messages": turns}).encode())
+    # Size the turns ONCE and search over the numbers. Re-serializing the whole
+    # body per probe would stall the event loop: a 3 MB body costs ~10 full dumps
+    # that way, and ``client_max_size`` admits up to 128 MiB. ``json.dumps`` is
+    # context-free for a single turn, so each turn's size here is exact.
+    empty = len(json.dumps({**obj, "messages": []}).encode())
+    anchor_bytes = len(json.dumps(anchor[0]).encode()) if anchor else 0
+    breadcrumb_bytes = len(json.dumps(probe).encode())
+    sizes = [len(json.dumps(turn).encode()) for turn in live]
+    suffix = [0] * (len(live) + 1)
+    for index in range(len(live) - 1, -1, -1):
+        suffix[index] = suffix[index + 1] + sizes[index]
 
-    # Dropping a prefix only ever shrinks the body, so binary-search the count
-    # rather than re-serializing a multi-megabyte body once per dropped turn on
-    # the event loop (a 3 MB body with hundreds of turns would stall it).
-    low, high = 0, len(head)
+    def fitted_bytes(dropped: int) -> int:
+        """Serialized body size after dropping ``dropped`` of the oldest turns."""
+        kept = len(anchor) + (1 if dropped else 0) + len(live) - dropped
+        return (
+            empty
+            + anchor_bytes
+            + (breadcrumb_bytes if dropped else 0)
+            + suffix[dropped]
+            + 2 * (kept - 1)
+        )
+
+    if fitted_bytes(0) <= CHAT_MAX_BODY_BYTES:
+        # Nothing needs to go: the turns fit, only the client's own formatting did
+        # not. Never drop history to win an argument about whitespace.
+        return raw, {
+            "fitted": False,
+            "reason": "fits-when-compact",
+            "original_bytes": original_bytes,
+        }
+    if fitted_bytes(len(head)) > CHAT_MAX_BODY_BYTES:
+        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
+    # Dropping a prefix only ever shrinks the body, so binary-search the count.
+    low, high = 1, len(head)
     while low < high:
         middle = (low + high) // 2
-        if fitted(middle) <= CHAT_MAX_BODY_BYTES:
+        if fitted_bytes(middle) <= CHAT_MAX_BODY_BYTES:
             high = middle
         else:
             low = middle + 1
-    if low == 0 or fitted(low) > CHAT_MAX_BODY_BYTES:
-        # Either nothing had to go (a re-dump alone fits, so leave the bytes
-        # alone) or the protected tail alone is past the budget — a lane that
-        # refuses a big body should refuse it, not receive something mangled.
-        return raw
+    # An orphaned tool answer is an invalid transcript, and the proxy must never
+    # be the reason a forward dies: drop the answer too. Dropping more only
+    # shrinks, so the budget still holds.
+    while low < len(head) and _answers_a_dropped_call(head[low]):
+        low += 1
+    if _answers_a_dropped_call(head[low] if low < len(head) else tail[0]):
+        # Every remaining cut would keep an orphan, or would eat the live tail.
+        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
     obj["messages"] = (
         anchor + [{"role": "system", "content": CHAT_TRIM_NOTE.format(n=low)}] + head[low:] + tail
     )
     trimmed = json.dumps(obj).encode()
-    return trimmed if len(trimmed) < len(raw) else raw
+    # The belt on the sizing arithmetic: never emit a body we did not verify, and
+    # never replace the client's bytes with something bigger.
+    if len(trimmed) > CHAT_MAX_BODY_BYTES or len(trimmed) >= original_bytes:
+        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
+    return trimmed, {
+        "fitted": True,
+        "reason": "fitted",
+        "original_bytes": original_bytes,
+        "final_bytes": len(trimmed),
+        "turns_dropped": low,
+    }
 
 
 def session_key_from_body(raw: bytes) -> str | None:

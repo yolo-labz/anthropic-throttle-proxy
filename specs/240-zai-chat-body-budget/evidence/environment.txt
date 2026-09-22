@@ -1,3 +1,4 @@
+head under test: 46608142756da3171f7d93be0f639743c783c58b (plus the uncommitted gate response below)
 date: 2026-09-22T07:58:17-03:00
 host: desktop  (Linux 6.12.108)
 branch: 240-zai-chat-body-budget

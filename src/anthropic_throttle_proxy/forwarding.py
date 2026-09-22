@@ -18,7 +18,7 @@ from aiohttp import web
 
 from . import config
 from .config import log
-from .metrics import M_CHAT_BODY_FITTED
+from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 from .routing import fit_chat_completions_body, normalize_text_content_blocks
@@ -374,14 +374,19 @@ async def _forward_once(
     # be chained here without a per-caller guard.
     if request.method == "POST" and body is not None:
         normalized = normalize_text_content_blocks(body, url)
-        fitted = fit_chat_completions_body(normalized, url)
-        if fitted != normalized:
+        fitted, fit_meta = fit_chat_completions_body(normalized, url)
+        if fit_meta.get("fitted"):
             # Clipping a model's history is not silent: the operator can see it.
             M_CHAT_BODY_FITTED.inc()
             log(
-                f"chat_body_fit path={request.path} original={len(body)} "
-                f"final={len(fitted)} saved={len(body) - len(fitted)}"
+                f"chat_body_fit path={request.path} normalized={len(normalized)} "
+                f"final={len(fitted)} turns_dropped={fit_meta['turns_dropped']}"
             )
+        elif fit_meta.get("reason") == "unfittable":
+            # The 413 this exists to prevent is still coming. Count it, or the
+            # next hunt starts blind and the fitted counter reads green.
+            M_CHAT_BODY_UNFITTABLE.inc()
+            log(f"chat_body_unfittable path={request.path} normalized={len(normalized)}")
         if fitted != body:
             body = fitted
             headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}

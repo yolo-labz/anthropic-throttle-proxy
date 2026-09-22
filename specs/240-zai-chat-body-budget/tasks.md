@@ -8,7 +8,11 @@
 - [x] T006 Unit falsifiers + real forwarding-path regressions (incl. central-keeps-original and retry coverage).
 - [x] T007 RED on exact original head `dfa297c` for the behavioral reason; GREEN after; full pytest + Ruff.
 - [x] T008 Observability: counter + log line so a clipped history is countable, not silent.
-- [ ] T009 Coordinator: exact-head different-family review, CI disposition and landing.
+- [x] T011 Different-family gate on the exact head: one BLOCKER, four MAJOR, several MINOR (see `review.md`).
+- [x] T012 Fix the blocker: never cut between a tool call and its answer; reproduce it on the pre-fix head first (16/30) and re-verify (0/30).
+- [x] T013 Fix the accepted majors: O(one dump per turn) sizing, `(body, meta)` + an unfittable counter so a give-up is visible.
+- [x] T014 Fix the accepted minors: the `.port` regression, the anchor-aware guard, log-field accuracy, breadcrumb reworded against re-read storms.
+- [ ] T009 Coordinator: CI disposition and landing.
 - [ ] T010 Separately authorized deployment and live cross-family replay (needs a Nix pin bump + service restart).
 
 ## Considered and rejected: reusing `body_shrink.py`
