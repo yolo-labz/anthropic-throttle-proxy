@@ -24,6 +24,14 @@ one script against both heads, same fixture:
 The test's own assertion, driven against the old implementation (only the new meta-tuple
 unpacking adapted), fails **16/30** — `evidence/orphan-assertion-on-old-head.txt`.
 
+Both legs come from one short script, kept out of the repo on purpose: it has to reuse
+the test's fixture verbatim (deterministic aperiodic sizes, `40 + (i*i*37 + seed*97) % 1300`
+for the call and `40 + (i*53 + seed*211) % 1300` for the answer) and the `orphans()` check,
+and the repo's own slop gate correctly refuses that duplicated code. Reproduce instead:
+checkout `4660814`, copy `tool_transcript`/`orphans` out of `tests/test_routing_chat_budget.py`,
+run the loop for `seed in range(30)` and count the outputs where `orphans(kept)` is
+non-empty. The expected numbers are the two rows above.
+
 **Fix:** `_answers_a_dropped_call` + snap the cut forward past any leading tool answer;
 when every remaining cut would keep an orphan (or would eat the protected tail) the
 original body is returned with `reason="unfittable"`. Covers both shapes: native
