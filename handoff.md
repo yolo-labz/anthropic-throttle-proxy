@@ -6,6 +6,20 @@ host activation. Latest incident first.
 
 ---
 
+## 23/09/2026 — MiMo Pi queue wait (243, source-only)
+
+New bounded client slice, not a relaunch of the frozen 227 worker. Reuses main's
+retry-safety engine for `mimo-desktop/mimo-*` at HTTP loopback `:8773`, exact
+`/v1/chat/completions`; ZAI keeps its existing tuple and behavior. The real journal
+shows 2/4/8/16-second retries against 210–241-second advice. Actual Pi 0.85.1
+replay: RED 55 failures before the gate extension; GREEN 216 native/unit cases,
+plus 1,337 Python tests and ruff. MiMo's stream-only registration requires an
+already-configured provider; no catalog, auth or endpoint override.
+
+See [acceptance and raw receipts](specs/243-mimo-pi-queue-wait/evidence.md).
+**No installation, reload, restart, deployment or live recovery claim.**
+Activation is a separate authorized slice; source tests do not revive old tabs.
+
 ## 23/09/2026 — MiMo shared cooldown (rollout in progress)
 
 Spec 242 fixes a reproduced OpenAI-path omission: a sibling Chat Completions

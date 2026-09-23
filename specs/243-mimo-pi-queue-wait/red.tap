@@ -1,0 +1,1538 @@
+TAP version 13
+# Subtest: mimo native: adapter version is exactly 0.85.1
+ok 1 - mimo native: adapter version is exactly 0.85.1
+  ---
+  duration_ms: 3.404053
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6 waits 210/241s with maxRetries=0
+not ok 2 - mimo native: mimo-v2.6 waits 210/241s with maxRetries=0
+  ---
+  duration_ms: 716.047235
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:68:5'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   210001,
+    -   241001
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 210001
+    1: 241001
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:73:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: mimo-v2.6 waits 210/241s with maxRetries=2
+not ok 3 - mimo native: mimo-v2.6 waits 210/241s with maxRetries=2
+  ---
+  duration_ms: 34.131094
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:68:5'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   210001,
+    -   241001
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 210001
+    1: 241001
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:73:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=0
+not ok 4 - mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=0
+  ---
+  duration_ms: 20.006437
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:68:5'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   210001,
+    -   241001
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 210001
+    1: 241001
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:73:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=2
+not ok 5 - mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=2
+  ---
+  duration_ms: 9.267381
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:68:5'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   210001,
+    -   241001
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 210001
+    1: 241001
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:73:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=0
+not ok 6 - mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=0
+  ---
+  duration_ms: 10.883012
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:68:5'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   210001,
+    -   241001
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 210001
+    1: 241001
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:73:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=2
+not ok 7 - mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=2
+  ---
+  duration_ms: 10.086859
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:68:5'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+    + []
+    - [
+    -   210001,
+    -   241001
+    - ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 210001
+    1: 241001
+  actual:
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:73:16)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: bounded first wait exceeds budget
+not ok 8 - mimo native: bounded first wait exceeds budget
+  ---
+  duration_ms: 9.537243
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:95:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /admission wait budget exhausted/. Input:
+    
+    'Server requested 210s retry delay (max: 1s). 503 proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue\n'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    Server requested 210s retry delay (max: 1s). 503 proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue
+    
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:103:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: bounded cumulative waits exceed budget
+not ok 9 - mimo native: bounded cumulative waits exceed budget
+  ---
+  duration_ms: 7.727292
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:95:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    1 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:99:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: bounded rejection ceiling
+not ok 10 - mimo native: bounded rejection ceiling
+  ---
+  duration_ms: 17.311513
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:95:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    1 !== 3
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 3
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:99:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: ineligible missing marker passes through
+ok 11 - mimo native: ineligible missing marker passes through
+  ---
+  duration_ms: 10.136644
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible missing queue stamp passes through
+ok 12 - mimo native: ineligible missing queue stamp passes through
+  ---
+  duration_ms: 8.221943
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong marker passes through
+ok 13 - mimo native: ineligible wrong marker passes through
+  ---
+  duration_ms: 8.87028
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong queue stamp passes through
+ok 14 - mimo native: ineligible wrong queue stamp passes through
+  ---
+  duration_ms: 8.475655
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible missing newline passes through
+ok 15 - mimo native: ineligible missing newline passes through
+  ---
+  duration_ms: 9.199801
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible extra newline passes through
+ok 16 - mimo native: ineligible extra newline passes through
+  ---
+  duration_ms: 5.578525
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible body prefix passes through
+ok 17 - mimo native: ineligible body prefix passes through
+  ---
+  duration_ms: 4.825791
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong body passes through
+ok 18 - mimo native: ineligible wrong body passes through
+  ---
+  duration_ms: 6.038642
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 401 passes through
+ok 19 - mimo native: ineligible status 401 passes through
+  ---
+  duration_ms: 8.430202
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 403 passes through
+ok 20 - mimo native: ineligible status 403 passes through
+  ---
+  duration_ms: 7.195784
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 429 passes through
+ok 21 - mimo native: ineligible status 429 passes through
+  ---
+  duration_ms: 5.92098
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 500 passes through
+ok 22 - mimo native: ineligible status 500 passes through
+  ---
+  duration_ms: 5.652576
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 529 passes through
+ok 23 - mimo native: ineligible status 529 passes through
+  ---
+  duration_ms: 5.172927
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible foreign provider
+ok 24 - mimo native: ineligible foreign provider
+  ---
+  duration_ms: 5.053
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible other desktop provider
+ok 25 - mimo native: ineligible other desktop provider
+  ---
+  duration_ms: 4.550494
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible non-MiMo model
+ok 26 - mimo native: ineligible non-MiMo model
+  ---
+  duration_ms: 4.538044
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible foreign host
+ok 27 - mimo native: ineligible foreign host
+  ---
+  duration_ms: 5.239477
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible https
+ok 28 - mimo native: ineligible https
+  ---
+  duration_ms: 4.710333
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong port
+ok 29 - mimo native: ineligible wrong port
+  ---
+  duration_ms: 6.659416
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible crossed ZAI lane
+ok 30 - mimo native: ineligible crossed ZAI lane
+  ---
+  duration_ms: 7.815175
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible crossed ZAI path
+ok 31 - mimo native: ineligible crossed ZAI path
+  ---
+  duration_ms: 6.264939
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible path prefix
+ok 32 - mimo native: ineligible path prefix
+  ---
+  duration_ms: 5.989705
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible query
+ok 33 - mimo native: ineligible query
+  ---
+  duration_ms: 7.863878
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible fragment
+ok 34 - mimo native: ineligible fragment
+  ---
+  duration_ms: 18.172007
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible credentials
+ok 35 - mimo native: ineligible credentials
+  ---
+  duration_ms: 5.089339
+  type: 'test'
+  ...
+# Subtest: mimo native: redirect cannot lend provenance
+ok 36 - mimo native: redirect cannot lend provenance
+  ---
+  duration_ms: 4.756268
+  type: 'test'
+  ...
+# Subtest: mimo native: foreign final URL cannot lend provenance
+ok 37 - mimo native: foreign final URL cannot lend provenance
+  ---
+  duration_ms: 5.355361
+  type: 'test'
+  ...
+# Subtest: mimo native: final query cannot lend provenance
+ok 38 - mimo native: final query cannot lend provenance
+  ---
+  duration_ms: 5.651782
+  type: 'test'
+  ...
+# Subtest: mimo native: unrelated raw503 keeps maxRetries=1
+ok 39 - mimo native: unrelated raw503 keeps maxRetries=1
+  ---
+  duration_ms: 13.586229
+  type: 'test'
+  ...
+# Subtest: mimo native: unrelated quota429 keeps maxRetries=1
+ok 40 - mimo native: unrelated quota429 keeps maxRetries=1
+  ---
+  duration_ms: 9.794627
+  type: 'test'
+  ...
+# Subtest: mimo native: unrelated wrong body keeps maxRetries=1
+ok 41 - mimo native: unrelated wrong body keeps maxRetries=1
+  ---
+  duration_ms: 13.969895
+  type: 'test'
+  ...
+# Subtest: mimo native: cancellation during REAL admission sleep never redispatches
+not ok 42 - mimo native: cancellation during REAL admission sleep never redispatches
+  ---
+  duration_ms: 8.225771
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:196:1'
+  failureType: 'testCodeFailure'
+  error: 'must reach the admission sleep, not abort the fetch'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:204:12)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: stamped rejection has exactly zero usage and no earlier event
+ok 43 - mimo native: stamped rejection has exactly zero usage and no earlier event
+  ---
+  duration_ms: 7.817814
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: content
+not ok 44 - mimo native event guard: content
+  ---
+  duration_ms: 12.295263
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: reason
+not ok 45 - mimo native event guard: reason
+  ---
+  duration_ms: 12.324681
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: stopReason
+not ok 46 - mimo native event guard: stopReason
+  ---
+  duration_ms: 15.593488
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.input=1
+not ok 47 - mimo native event guard: usage.input=1
+  ---
+  duration_ms: 13.782472
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.input=null
+not ok 48 - mimo native event guard: usage.input=null
+  ---
+  duration_ms: 10.089511
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.input=undefined
+not ok 49 - mimo native event guard: usage.input=undefined
+  ---
+  duration_ms: 11.146504
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.input=0
+not ok 50 - mimo native event guard: usage.input=0
+  ---
+  duration_ms: 10.180159
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.output=1
+not ok 51 - mimo native event guard: usage.output=1
+  ---
+  duration_ms: 9.629287
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.output=null
+not ok 52 - mimo native event guard: usage.output=null
+  ---
+  duration_ms: 10.208676
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.output=undefined
+not ok 53 - mimo native event guard: usage.output=undefined
+  ---
+  duration_ms: 11.130235
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.output=0
+not ok 54 - mimo native event guard: usage.output=0
+  ---
+  duration_ms: 10.135675
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=1
+not ok 55 - mimo native event guard: usage.cacheRead=1
+  ---
+  duration_ms: 11.256092
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=null
+not ok 56 - mimo native event guard: usage.cacheRead=null
+  ---
+  duration_ms: 9.972587
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=undefined
+not ok 57 - mimo native event guard: usage.cacheRead=undefined
+  ---
+  duration_ms: 19.336439
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=0
+not ok 58 - mimo native event guard: usage.cacheRead=0
+  ---
+  duration_ms: 9.897914
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=1
+not ok 59 - mimo native event guard: usage.cacheWrite=1
+  ---
+  duration_ms: 9.269664
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=null
+not ok 60 - mimo native event guard: usage.cacheWrite=null
+  ---
+  duration_ms: 10.587624
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=undefined
+not ok 61 - mimo native event guard: usage.cacheWrite=undefined
+  ---
+  duration_ms: 10.422284
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=0
+not ok 62 - mimo native event guard: usage.cacheWrite=0
+  ---
+  duration_ms: 9.553943
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=1
+not ok 63 - mimo native event guard: usage.totalTokens=1
+  ---
+  duration_ms: 7.978711
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=null
+not ok 64 - mimo native event guard: usage.totalTokens=null
+  ---
+  duration_ms: 10.120395
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=undefined
+not ok 65 - mimo native event guard: usage.totalTokens=undefined
+  ---
+  duration_ms: 8.47796
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=0
+not ok 66 - mimo native event guard: usage.totalTokens=0
+  ---
+  duration_ms: 10.550481
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.input=1
+not ok 67 - mimo native event guard: cost.input=1
+  ---
+  duration_ms: 9.515622
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.input=null
+not ok 68 - mimo native event guard: cost.input=null
+  ---
+  duration_ms: 9.112293
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.input=undefined
+not ok 69 - mimo native event guard: cost.input=undefined
+  ---
+  duration_ms: 8.014273
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.input=0
+not ok 70 - mimo native event guard: cost.input=0
+  ---
+  duration_ms: 8.162312
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.output=1
+not ok 71 - mimo native event guard: cost.output=1
+  ---
+  duration_ms: 10.212446
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.output=null
+not ok 72 - mimo native event guard: cost.output=null
+  ---
+  duration_ms: 8.507745
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.output=undefined
+not ok 73 - mimo native event guard: cost.output=undefined
+  ---
+  duration_ms: 9.10289
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.output=0
+not ok 74 - mimo native event guard: cost.output=0
+  ---
+  duration_ms: 10.457962
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=1
+not ok 75 - mimo native event guard: cost.cacheRead=1
+  ---
+  duration_ms: 9.040584
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=null
+not ok 76 - mimo native event guard: cost.cacheRead=null
+  ---
+  duration_ms: 6.86875
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=undefined
+not ok 77 - mimo native event guard: cost.cacheRead=undefined
+  ---
+  duration_ms: 8.530592
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=0
+not ok 78 - mimo native event guard: cost.cacheRead=0
+  ---
+  duration_ms: 17.973539
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=1
+not ok 79 - mimo native event guard: cost.cacheWrite=1
+  ---
+  duration_ms: 8.581667
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=null
+not ok 80 - mimo native event guard: cost.cacheWrite=null
+  ---
+  duration_ms: 8.172573
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=undefined
+not ok 81 - mimo native event guard: cost.cacheWrite=undefined
+  ---
+  duration_ms: 9.4075
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=0
+not ok 82 - mimo native event guard: cost.cacheWrite=0
+  ---
+  duration_ms: 8.815623
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.total=1
+not ok 83 - mimo native event guard: cost.total=1
+  ---
+  duration_ms: 9.345154
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.total=null
+not ok 84 - mimo native event guard: cost.total=null
+  ---
+  duration_ms: 9.219466
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.total=undefined
+not ok 85 - mimo native event guard: cost.total=undefined
+  ---
+  duration_ms: 11.866856
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native event guard: cost.total=0
+not ok 86 - mimo native event guard: cost.total=0
+  ---
+  duration_ms: 9.554872
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:240:3'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:255:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo native: partial text stream is never replayed
+ok 87 - mimo native: partial text stream is never replayed
+  ---
+  duration_ms: 7.617017
+  type: 'test'
+  ...
+# Subtest: mimo native: partial thinking stream is never replayed
+ok 88 - mimo native: partial thinking stream is never replayed
+  ---
+  duration_ms: 6.612497
+  type: 'test'
+  ...
+# Subtest: mimo native: partial toolcall stream is never replayed
+ok 89 - mimo native: partial toolcall stream is never replayed
+  ---
+  duration_ms: 5.683961
+  type: 'test'
+  ...
+# Subtest: mimo native: caller options and wire serialization survive redispatch
+not ok 90 - mimo native: caller options and wire serialization survive redispatch
+  ---
+  duration_ms: 13.774546
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:281:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    1 !== 2
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:301:12)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: mimo extension: real loader overlay preserves models.json configuration
+not ok 91 - mimo extension: real loader overlay preserves models.json configuration
+  ---
+  duration_ms: 1016.320539
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:312:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    -   'mimo-desktop',
+        'zai'
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'mimo-desktop'
+    1: 'zai'
+  actual:
+    0: 'zai'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:314:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..91
+# tests 91
+# suites 0
+# pass 36
+# fail 55
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2793.417687
