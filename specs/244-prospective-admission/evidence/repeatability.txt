@@ -1,0 +1,21 @@
+run 1: 6 failed, 3 passed in 0.27s
+run 2: 6 failed, 3 passed in 0.27s
+run 3: 6 failed, 3 passed in 0.30s
+run 4: 6 failed, 3 passed in 0.27s
+run 5: 6 failed, 3 passed in 0.25s
+run 6: 6 failed, 3 passed in 0.25s
+run 7: 6 failed, 3 passed in 0.26s
+run 8: 6 failed, 3 passed in 0.27s
+run 9: 6 failed, 3 passed in 0.29s
+run 10: 6 failed, 3 passed in 0.25s
+run 11: 6 failed, 3 passed in 0.27s
+run 12: 6 failed, 3 passed in 0.25s
+run 13: 6 failed, 3 passed in 0.25s
+run 14: 6 failed, 3 passed in 0.28s
+run 15: 6 failed, 3 passed in 0.27s
+run 16: 6 failed, 3 passed in 0.25s
+run 17: 6 failed, 3 passed in 0.28s
+run 18: 6 failed, 3 passed in 0.25s
+run 19: 6 failed, 3 passed in 0.30s
+run 20: 6 failed, 3 passed in 0.26s
+20/20: exactly six budget-invariant failures and three positive controls passed

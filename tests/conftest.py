@@ -2,9 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from anthropic_throttle_proxy import fleet_ui_config, limiter
+from anthropic_throttle_proxy import config, fleet_ui_config, limiter, pacing
+
+
+@pytest.fixture
+def proxy_admission_state(monkeypatch):
+    """Shared isolation for HTTP admission tests; never use another test's pools."""
+    limiter.set_lock(asyncio.Lock())
+    pacing.set_lock(asyncio.Lock())
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
+    monkeypatch.setitem(config.state, "inflight", 0)
+    monkeypatch.setitem(config.state, "queued", 0)
+    yield
+    config.bearer_limiters.clear()
+    config.bearer_state.clear()
 
 
 @pytest.fixture(autouse=True)

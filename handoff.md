@@ -20,6 +20,25 @@ See [acceptance and raw receipts](specs/243-mimo-pi-queue-wait/evidence.md).
 **No installation, reload, restart, deployment or live recovery claim.**
 Activation is a separate authorized slice; source tests do not revive old tabs.
 
+## 23/09/2026 — Prospective admission evidence, not enforcement
+
+[Spec 244](specs/244-prospective-admission/spec.md) supplies a loopback-only,
+red-capable concurrent-request oracle: `PYTHONPATH=tests uv run pytest -q
+-p conftest specs/244-prospective-admission/check_admission.py` → six budget failures, three positive
+controls; same result 20/20 runs. Two slots plus an eight-second gap still
+admit 120 requested output-reservation units against a fictional 100-unit
+budget. Two bearer keys mapped to one fixture account reach four concurrent
+streams. Completed requests and retries have no request-window debit.
+
+These are **fixture budgets, not Token Plan caps**. Full suite: 1338 passed,
+including an artifact check of the exact six raw RED spec assertions, with no
+skip/xfail markers; no production or client code changed. The
+[caller audit and minimum opt-in proposal](specs/244-prospective-admission/plan.md)
+cover ordinary/held-SSE retries, direct fallback and internal generation probes.
+Provider input/cache/output accounting, account authority and restart debt are
+still implementation prerequisites. No deployment or incident-resolution claim.
+Native-wait work is a separate track; no `clients/` file is touched here.
+
 ## 23/09/2026 — MiMo shared cooldown (rollout in progress)
 
 Spec 242 fixes a reproduced OpenAI-path omission: a sibling Chat Completions
