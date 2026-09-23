@@ -6,6 +6,17 @@ host activation. Latest incident first.
 
 ---
 
+## 23/09/2026 — MiMo dashboard telemetry (delivery in progress)
+
+Spec 241 adds an opt-in independently expiring MiMo report and a read-only,
+identity-checked console sampler. No inference routing or payment action is in
+this slice. Targeted suite 47 passed; full suite 1,321 passed; Ruff clean.
+See [the collection and rollback contract](specs/241-mimo-plan-meter/plan.md).
+The authenticated browser stays on its existing supervisor host; only allowlisted
+credit counters leave it. A successful sample is not evidence of safe private-work
+routing. Do not activate the shared proxy package across inference lanes merely
+to enable this dashboard row.
+
 ## 21/09/2026 — Z.AI normalizer repair: MERGED `a977b794` (not deployed)
 
 R7 imported #236's exact four commits into `237-normalizer-swarm`, repaired

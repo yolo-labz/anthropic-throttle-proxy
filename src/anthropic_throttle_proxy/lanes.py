@@ -53,6 +53,7 @@ _FAMILY = {
     # Chinese-frontier generator may not be reviewed by another one.
     "zai": "chinese-frontier",
     "deepseek": "chinese-frontier",
+    "mimo": "chinese-frontier",
 }
 
 _PROVIDER = {
@@ -61,6 +62,7 @@ _PROVIDER = {
     "codex": ("🌀", "Codex"),
     "zai": ("✨", "Z.AI"),
     "deepseek": ("🐋", "DeepSeek"),
+    "mimo": ("Ⓜ️", "MiMo"),
     "copilot": ("🐙", "Copilot"),
     "groq": ("🚀", "Groq"),
     "deepinfra": ("🌙", "DeepInfra"),
@@ -276,7 +278,7 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     status = str(lane.get("status") or "unknown")
     if stale and status == "ok":
         status = "stale"
-    meters = _window_meters(lane) if kind in {"codex", "zai"} else []
+    meters = _window_meters(lane) if kind in {"codex", "zai", "mimo"} else []
     if kind == "copilot":
         meters = _copilot_meters(lane)
     if not meters:
@@ -384,8 +386,8 @@ EMPTY: dict[str, Any] = {
 }
 
 
-def _read(now: float) -> dict[str, Any]:
-    path = report_path()
+def _read(now: float, path: str | None = None) -> dict[str, Any]:
+    path = report_path() if path is None else path
     if not path:
         return EMPTY
     try:
@@ -462,5 +464,31 @@ def view(now: float) -> dict[str, Any]:
     if _cache is not None and 0.0 <= now - _cache[0] < TTL_S:
         return _cache[1]
     snapshot = _read(now)
+    # MiMo is sampled by the authenticated browser host, independently of the
+    # local lane timer. Reuse the same reader so its own timestamp/cadence,
+    # not another provider's successful refresh, decides freshness.
+    mimo_path = os.environ.get("THROTTLE_MIMO_REPORT", "").strip()
+    if mimo_path:
+        mimo = _read(now, mimo_path)
+        rows = [
+            lane for lane in mimo["lanes"] if lane["id"] == "mimo:plan" and lane["kind"] == "mimo"
+        ]
+        if len(rows) != 1:
+            rows = [
+                _normalize(
+                    {
+                        "id": "mimo:plan",
+                        "kind": "mimo",
+                        "status": "unknown",
+                        "reason": "MiMo report missing, malformed or ambiguous",
+                    },
+                    False,
+                    now,
+                )
+            ]
+        snapshot = {
+            **snapshot,
+            "lanes": [lane for lane in snapshot["lanes"] if lane["id"] != "mimo:plan"] + rows,
+        }
     _cache = (now, snapshot)
     return snapshot
