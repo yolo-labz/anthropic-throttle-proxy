@@ -6,7 +6,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from anthropic_throttle_proxy import config, forwarding, limiter, pacing, proxy
+from anthropic_throttle_proxy import config, forwarding, proxy
 
 ERROR = {"code": "429", "message": "Too many requests", "type": "limitation"}
 SSE = b'data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
@@ -38,7 +38,7 @@ def test_shared_pause_covers_generation_not_telemetry(path, expected):
     [("off", False, False), ("fair", False, False), ("fair", True, False), ("fair", True, True)],
 )
 async def test_openai_burst_is_admitted_before_upstream_not_retried_as_a_herd(
-    monkeypatch, mode, first_pushback, shared_backoff
+    monkeypatch, proxy_admission_state, mode, first_pushback, shared_backoff
 ):
     active = peak = refused = calls = 0
     sent_at = []
@@ -78,42 +78,33 @@ async def test_openai_burst_is_admitted_before_upstream_not_retried_as_a_herd(
         }.items():
             monkeypatch.setattr(config, key, value)
         monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
-        limiter.set_lock(asyncio.Lock())
-        pacing.set_lock(asyncio.Lock())
-        config.bearer_limiters.clear()
-        config.bearer_state.clear()
-        config.state.update(inflight=0, queued=0)
         app = web.Application()
         app.on_response_prepare.append(forwarding.stamp_proxy_marker)
         app.router.add_route("*", "/{path:.*}", proxy.handler)
-        try:
-            async with TestClient(TestServer(app)) as client:
+        async with TestClient(TestServer(app)) as client:
 
-                async def call():
-                    async with client.post(
-                        "/v1/chat/completions",
-                        data=body,
-                        headers={"Authorization": "Bearer test-key"},
-                    ) as response:
-                        return response.status, await response.read()
+            async def call():
+                async with client.post(
+                    "/v1/chat/completions",
+                    data=body,
+                    headers={"Authorization": "Bearer test-key"},
+                ) as response:
+                    return response.status, await response.read()
 
-                if shared_backoff:
-                    status, _ = await call()
-                    assert status == 429
-                results = await asyncio.gather(*(call() for _ in range(6)))
-                if shared_backoff:
-                    assert sent_at[1] - sent_at[0] >= 0.045, "sibling bypassed shared cooldown"
-            if mode == "off":
-                assert refused > 0  # cold-start probation may serialize the first call only
-                assert sum(status == 429 for status, _ in results) == refused
-            else:
-                assert refused == int(first_pushback)
-                assert calls == 6 + int(first_pushback)
-                assert results == [(200, SSE)] * 6
-            assert 1 <= peak <= 2
-            if not first_pushback:
-                assert peak == 2
-            assert config.state["inflight"] == config.state["queued"] == 0
-        finally:
-            config.bearer_limiters.clear()
-            config.bearer_state.clear()
+            if shared_backoff:
+                status, _ = await call()
+                assert status == 429
+            results = await asyncio.gather(*(call() for _ in range(6)))
+            if shared_backoff:
+                assert sent_at[1] - sent_at[0] >= 0.045, "sibling bypassed shared cooldown"
+        if mode == "off":
+            assert refused > 0  # cold-start probation may serialize the first call only
+            assert sum(status == 429 for status, _ in results) == refused
+        else:
+            assert refused == int(first_pushback)
+            assert calls == 6 + int(first_pushback)
+            assert results == [(200, SSE)] * 6
+        assert 1 <= peak <= 2
+        if not first_pushback:
+            assert peak == 2
+        assert config.state["inflight"] == config.state["queued"] == 0

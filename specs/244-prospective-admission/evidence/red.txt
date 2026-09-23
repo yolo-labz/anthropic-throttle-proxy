@@ -1,0 +1,134 @@
+...FFFFFF                                                                [100%]
+=================================== FAILURES ===================================
+____ test_two_slots_do_not_oversubscribe_fixture_token_window[/v1/messages] ____
+specs/244-prospective-admission/check_admission.py:168: in test_two_slots_do_not_oversubscribe_fixture_token_window
+    within_budget(sum(x["output_bound"] for x in receipt["attempts"]), 100, "output reservation")
+specs/244-prospective-admission/check_admission.py:32: in within_budget
+    raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
+E   check_admission.BudgetExceeded: output reservation: 120 > fictional budget 100
+----------------------------- Captured stdout call -----------------------------
+{"attempts": [{"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}], "dispatch_times": [0.0, 8.0], "peak": 2}
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] body_passthrough bid=c6458c44 model=fixture-model bytes=122 reason=under-cap
+[anthropic-throttle] retry-probe-begin bid=c6458c44
+[anthropic-throttle] bearer-new bid=c6458c44 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/messages bid=c6458c44 cid=127.0.0.1:41996 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/messages bid=c6458c44 cid=127.0.0.1:41996 via=direct model=fixture-model max_tokens=60 lane=normal inflight=1 queued=0
+[anthropic-throttle] body_passthrough bid=c6458c44 model=fixture-model bytes=122 reason=under-cap
+[anthropic-throttle] retry-probe-finish bid=c6458c44 result=open
+[anthropic-throttle] queue+ method=POST path=/v1/messages bid=c6458c44 cid=127.0.0.1:42002 inflight=1 queued=1
+[anthropic-throttle] start  method=POST path=/v1/messages bid=c6458c44 cid=127.0.0.1:42002 via=direct model=fixture-model max_tokens=60 lane=normal inflight=2 queued=0
+[anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=c6458c44 cid=127.0.0.1:41996 via=direct model=fixture-model elapsed_ms=3 inflight=1 queued=0 served=4 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=c6458c44 cid=127.0.0.1:42002 via=direct model=fixture-model elapsed_ms=2 inflight=0 queued=0 served=5 disc=0 retries=0
+_ test_two_slots_do_not_oversubscribe_fixture_token_window[/v1/chat/completions] _
+specs/244-prospective-admission/check_admission.py:168: in test_two_slots_do_not_oversubscribe_fixture_token_window
+    within_budget(sum(x["output_bound"] for x in receipt["attempts"]), 100, "output reservation")
+specs/244-prospective-admission/check_admission.py:32: in within_budget
+    raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
+E   check_admission.BudgetExceeded: output reservation: 120 > fictional budget 100
+----------------------------- Captured stdout call -----------------------------
+{"attempts": [{"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}], "dispatch_times": [0.0, 8.0], "peak": 2}
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] retry-probe-begin bid=c6458c44
+[anthropic-throttle] bearer-new bid=c6458c44 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:54730 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:54730 via=direct model=fixture-model max_tokens=60 lane=normal inflight=1 queued=0
+[anthropic-throttle] retry-probe-finish bid=c6458c44 result=open
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:54740 inflight=1 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:54740 via=direct model=fixture-model max_tokens=60 lane=normal inflight=2 queued=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:54730 via=direct model=fixture-model elapsed_ms=3 inflight=1 queued=0 served=6 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:54740 via=direct model=fixture-model elapsed_ms=2 inflight=0 queued=0 served=7 disc=0 retries=0
+___ test_two_slots_do_not_oversubscribe_fixture_token_window[/v1/responses] ____
+specs/244-prospective-admission/check_admission.py:168: in test_two_slots_do_not_oversubscribe_fixture_token_window
+    within_budget(sum(x["output_bound"] for x in receipt["attempts"]), 100, "output reservation")
+specs/244-prospective-admission/check_admission.py:32: in within_budget
+    raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
+E   check_admission.BudgetExceeded: output reservation: 120 > fictional budget 100
+----------------------------- Captured stdout call -----------------------------
+{"attempts": [{"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}], "dispatch_times": [0.0, 8.0], "peak": 2}
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] retry-probe-begin bid=c6458c44
+[anthropic-throttle] bearer-new bid=c6458c44 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/responses bid=c6458c44 cid=127.0.0.1:53612 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/responses bid=c6458c44 cid=127.0.0.1:53612 via=direct model=fixture-model max_tokens=None lane=normal inflight=1 queued=0
+[anthropic-throttle] retry-probe-finish bid=c6458c44 result=open
+[anthropic-throttle] queue+ method=POST path=/v1/responses bid=c6458c44 cid=127.0.0.1:53614 inflight=1 queued=1
+[anthropic-throttle] start  method=POST path=/v1/responses bid=c6458c44 cid=127.0.0.1:53614 via=direct model=fixture-model max_tokens=None lane=normal inflight=2 queued=0
+[anthropic-throttle] done   method=POST path=/v1/responses status=200 bid=c6458c44 cid=127.0.0.1:53612 via=direct model=fixture-model elapsed_ms=3 inflight=1 queued=0 served=8 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/responses status=200 bid=c6458c44 cid=127.0.0.1:53614 via=direct model=fixture-model elapsed_ms=2 inflight=0 queued=0 served=9 disc=0 retries=0
+_________________ test_two_keys_share_fixture_account_capacity _________________
+specs/244-prospective-admission/check_admission.py:175: in test_two_keys_share_fixture_account_capacity
+    within_budget(receipt["peak"], 2, "account concurrency")
+specs/244-prospective-admission/check_admission.py:32: in within_budget
+    raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
+E   check_admission.BudgetExceeded: account concurrency: 4 > fictional budget 2
+----------------------------- Captured stdout call -----------------------------
+{"attempts": [{"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}], "dispatch_times": [0.0, 8.0, 16.0, 24.0], "peak": 4}
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] retry-probe-begin bid=c6458c44
+[anthropic-throttle] bearer-new bid=c6458c44 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:38966 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:38966 via=direct model=fixture-model max_tokens=60 lane=normal inflight=1 queued=0
+[anthropic-throttle] retry-probe-begin bid=5dc0f863
+[anthropic-throttle] bearer-new bid=5dc0f863 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=5dc0f863 cid=127.0.0.1:38982 inflight=1 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=5dc0f863 cid=127.0.0.1:38982 via=direct model=fixture-model max_tokens=60 lane=normal inflight=2 queued=0
+[anthropic-throttle] retry-probe-finish bid=c6458c44 result=open
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:38994 inflight=2 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:38994 via=direct model=fixture-model max_tokens=60 lane=normal inflight=3 queued=0
+[anthropic-throttle] retry-probe-finish bid=5dc0f863 result=open
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=5dc0f863 cid=127.0.0.1:39006 inflight=3 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=5dc0f863 cid=127.0.0.1:39006 via=direct model=fixture-model max_tokens=60 lane=normal inflight=4 queued=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:38966 via=direct model=fixture-model elapsed_ms=6 inflight=3 queued=0 served=10 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=5dc0f863 cid=127.0.0.1:38982 via=direct model=fixture-model elapsed_ms=5 inflight=2 queued=0 served=11 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:38994 via=direct model=fixture-model elapsed_ms=3 inflight=1 queued=0 served=12 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=5dc0f863 cid=127.0.0.1:39006 via=direct model=fixture-model elapsed_ms=3 inflight=0 queued=0 served=13 disc=0 retries=0
+________ test_completed_requests_still_count_in_fixture_request_window _________
+specs/244-prospective-admission/check_admission.py:183: in test_completed_requests_still_count_in_fixture_request_window
+    within_budget(len(receipt["attempts"]), 2, "requests inside 60s")
+specs/244-prospective-admission/check_admission.py:32: in within_budget
+    raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
+E   check_admission.BudgetExceeded: requests inside 60s: 4 > fictional budget 2
+----------------------------- Captured stdout call -----------------------------
+{"attempts": [{"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}], "dispatch_times": [0.0, 8.0, 16.0, 24.0], "peak": 2}
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] retry-probe-begin bid=c6458c44
+[anthropic-throttle] bearer-new bid=c6458c44 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47050 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47050 via=direct model=fixture-model max_tokens=60 lane=normal inflight=1 queued=0
+[anthropic-throttle] retry-probe-finish bid=c6458c44 result=open
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47058 inflight=1 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47058 via=direct model=fixture-model max_tokens=60 lane=normal inflight=2 queued=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:47050 via=direct model=fixture-model elapsed_ms=3 inflight=1 queued=0 served=14 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:47058 via=direct model=fixture-model elapsed_ms=2 inflight=0 queued=0 served=15 disc=0 retries=0
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47050 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47050 via=direct model=fixture-model max_tokens=60 lane=normal inflight=1 queued=0
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47058 inflight=1 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:47058 via=direct model=fixture-model max_tokens=60 lane=normal inflight=2 queued=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:47050 via=direct model=fixture-model elapsed_ms=2 inflight=1 queued=0 served=16 disc=0 retries=0
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:47058 via=direct model=fixture-model elapsed_ms=2 inflight=0 queued=0 served=17 disc=0 retries=0
+____________ test_retry_consumes_another_fixture_request_allocation ____________
+specs/244-prospective-admission/check_admission.py:190: in test_retry_consumes_another_fixture_request_allocation
+    within_budget(len(receipt["attempts"]), 1, "attempts including retry")
+specs/244-prospective-admission/check_admission.py:32: in within_budget
+    raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
+E   check_admission.BudgetExceeded: attempts including retry: 2 > fictional budget 1
+----------------------------- Captured stdout call -----------------------------
+{"attempts": [{"account": "account-one", "model": "fixture-model", "output_bound": 60}, {"account": "account-one", "model": "fixture-model", "output_bound": 60}], "dispatch_times": [0.0, 8.0], "peak": 1}
+----------------------------- Captured stderr call -----------------------------
+[anthropic-throttle] retry-probe-begin bid=c6458c44
+[anthropic-throttle] bearer-new bid=c6458c44 max_concurrent=2 hard_max=2 queue_mode=fair
+[anthropic-throttle] queue+ method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:58852 inflight=0 queued=1
+[anthropic-throttle] start  method=POST path=/v1/chat/completions bid=c6458c44 cid=127.0.0.1:58852 via=direct model=fixture-model max_tokens=60 lane=normal inflight=1 queued=0
+[anthropic-throttle] rate-pushback-retry bid=c6458c44 status=429 retry=1/1 pause=0.001 retry_after=0.0 synthetic_pause=True
+[anthropic-throttle] aimd-shrink bid=c6458c44 status=429 max_concurrent=1 retry_after=0.0 pause=0.001 synthetic_pause=True (budget/real-retry-after pushback)
+[anthropic-throttle] retry-probe-finish bid=c6458c44 result=open
+[anthropic-throttle] done   method=POST path=/v1/chat/completions status=200 bid=c6458c44 cid=127.0.0.1:58852 via=direct model=fixture-model elapsed_ms=4 inflight=0 queued=0 served=19 disc=0 retries=0
+=========================== short test summary info ============================
+FAILED specs/244-prospective-admission/check_admission.py::test_two_slots_do_not_oversubscribe_fixture_token_window[/v1/messages]
+FAILED specs/244-prospective-admission/check_admission.py::test_two_slots_do_not_oversubscribe_fixture_token_window[/v1/chat/completions]
+FAILED specs/244-prospective-admission/check_admission.py::test_two_slots_do_not_oversubscribe_fixture_token_window[/v1/responses]
+FAILED specs/244-prospective-admission/check_admission.py::test_two_keys_share_fixture_account_capacity
+FAILED specs/244-prospective-admission/check_admission.py::test_completed_requests_still_count_in_fixture_request_window
+FAILED specs/244-prospective-admission/check_admission.py::test_retry_consumes_another_fixture_request_allocation
+6 failed, 3 passed in 0.33s
