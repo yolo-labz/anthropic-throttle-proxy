@@ -87,6 +87,19 @@ git diff --check
 [python-tests.txt](python-tests.txt). Ruff: all checks passed, 74 files already
 formatted; node syntax and diff checks exit 0: [static-checks.txt](static-checks.txt).
 
+## Delivery pointers
+
+- Source PR: https://github.com/yolo-labz/anthropic-throttle-proxy/pull/243
+- Own vault save-state PR: https://github.com/phsb5321/Notes/pull/1818
+- Canonical note: `1. Projects/Anthropic-Throttle-Fleet/243-MiMo-Pi-Queue-Wait-SAVE-STATE.md`
+- Executable source/test commit: `836da9214841daf2cdde05000aaaff876337523d`.
+  Subsequent delivery-pointer edits do not change executable files.
+- No model review ran: the one GPT advisory request was refused because a judge
+  requires the generator-family exclusion; excluding OpenAI leaves no authorized
+  reviewer under this task's GPT-only direction. No alternate lane or bypass;
+  no model approval is claimed. Executable acceptance and actual repository
+  permissions/checks are the delivery gates.
+
 ## Boundary / rollback
 
 No installation, extension reload, service restart, deployment, live inference,
