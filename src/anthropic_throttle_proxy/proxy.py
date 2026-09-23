@@ -58,6 +58,7 @@ from . import __build__ as _build_identity
 from . import __version__ as _version
 from . import config
 from . import history as _history
+from . import lanes as _lanes
 from . import limiter as _limiter
 from . import pacing as _pacing
 from .body_shrink import shrink_body
@@ -3041,6 +3042,23 @@ async def _forward_with_retry(
         return response
 
 
+def _plan_lane_has_headroom(now: float | None = None) -> bool:
+    """True when THIS instance's plan meter is fresh and below the pressure line.
+
+    The evidence is the out-of-process lane report — the same file the dashboard
+    reads — so this costs a cached file read and never a credential or an
+    outbound call. Every way of answering "we do not know" returns False, which
+    keeps the conservative budget backoff as the default.
+    """
+    lane_id = config.PLAN_METER_LANE
+    if not lane_id:
+        return False
+    used = _lanes.plan_meter_used_percent(lane_id, now if now is not None else time.time())
+    if used is None:
+        return False
+    return used < config.PLAN_PRESSURE_PERCENT
+
+
 def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> bool:
     """True when the OAuth unified windows say a 429 is BUDGET, not concurrency.
 
@@ -3085,7 +3103,15 @@ def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> boo
         ):
             unified = cached
     if not unified:
-        return True
+        # No budget headers on the response AND no fresh cached sample. Two very
+        # different situations collapse into this branch, so consult the one
+        # budget source that is not a header: the lane report. A plan lane whose
+        # meter is fresh and far from its allowance cannot be at a budget wall —
+        # its 429 is concurrency/rate. (MiMo Token Plan, 23/09/2026: headerless
+        # 429 at ~6 % of an 82 B-credit month was read as budget, bought a 30 s
+        # synthetic hold and collapsed the lane to one slot under fleet load.)
+        # Unknown, stale or absent meter still means budget.
+        return not _plan_lane_has_headroom()
     statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
     if any(s in ("allowed_warning", "rejected") for s in statuses):
         return True
