@@ -573,6 +573,13 @@ def _build_providers(
         sibling_dns = f.get("upstream_egress_ok")
         sibling_dns = sibling_dns if isinstance(sibling_dns, bool) else None
         sibling_name = str(f.get("name") or "?")
+        # A sibling probe is BINARY reachability, not the primary's 4-state
+        # pacing. Map a failed probe to the neutral "idle" (grey dot) so a dead
+        # lane is never pixel-identical to a rate-limited-but-serving primary
+        # ("throttled", red dot).
+        level = "idle"
+        if ok:
+            level = "crit" if auth_dead else "healthy"
         providers.append(
             {
                 "name": sibling_name,
@@ -587,11 +594,7 @@ def _build_providers(
                 "queued": int(f.get("queued") or 0),
                 "served": int(f.get("served") or 0),
                 "max_concurrent": int(f.get("max_concurrent") or 0),
-                # A sibling probe is BINARY reachability, not the primary's
-                # 4-state pacing. Map a failed probe to the neutral "idle"
-                # (grey dot) so a dead lane is never pixel-identical to a
-                # rate-limited-but-serving primary ("throttled", red dot).
-                "level": "crit" if (ok and auth_dead) else ("healthy" if ok else "idle"),
+                "level": level,
                 "auth_dead": auth_dead,
                 "err": str(f.get("err") or "")
                 or (str(f.get("upstream_auth_error") or "") if auth_dead else ""),
@@ -1266,7 +1269,7 @@ def _live_cap() -> int:
     number that changes on pushback, and blocking the event loop for it would
     break the <50 ms health budget the same loop serves.
     """
-    return sum(lim.max_concurrent for lim in list(_proxy.bearer_limiters.values()))
+    return sum(lim.max_concurrent for lim in _proxy.bearer_limiters.values())
 
 
 def _counter(key: str) -> int:

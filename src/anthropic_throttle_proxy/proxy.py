@@ -1280,7 +1280,8 @@ def _note_bearer_credential(
     if captured:
         try:
             _etype, detail = _error_envelope_fields(captured)
-        except (ValueError, TypeError, UnicodeDecodeError):
+        except (ValueError, TypeError):
+            # UnicodeDecodeError derives from ValueError; listing it is noise.
             detail = ""
     reason = _credential_dead_reason(status, captured)
     if reason:
@@ -1552,9 +1553,8 @@ def _route_to_selected_auth(
     headers: dict[str, str], incoming_bid: str, selected: dict[str, object]
 ) -> tuple[str, str | None]:
     selected_bid = str(selected["bearer_id"])
-    for key in list(headers):
-        if key.lower() in {"authorization", "x-api-key"}:
-            del headers[key]
+    for key in [k for k in headers if k.lower() in {"authorization", "x-api-key"}]:
+        del headers[key]
     token = str(selected["token"])
     label = str(selected.get("label") or "")
     if selected.get("auth_type") == "api_key":
@@ -1679,7 +1679,7 @@ def _route_account_if_enabled(
     (spec 3) biases selection toward the account with headroom on that model's
     scoped weekly meter.
     """
-    if method != "POST" or "v1/messages" not in path:
+    if method != "POST" or MESSAGES_SUBPATH not in path:
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
@@ -1869,10 +1869,22 @@ def _try_retry_after_reroute(
     return next_bid, next_headers
 
 
+# The Claude Messages route, in the two spellings this module needs: a bare
+# subpath for substring/equality checks against aiohttp's ``request.path``
+# (which arrives without the leading slash) and the absolute form for the
+# upstream URL and the retry-after path test. Named so the six call sites
+# cannot drift apart (Sonar python:S1192).
+MESSAGES_SUBPATH = "v1/messages"
+MESSAGES_PATH = f"/{MESSAGES_SUBPATH}"
+
+# Emitted on every JSON response or re-mapped request we synthesise locally.
+CONTENT_TYPE_JSON = "application/json"
+
+
 def _retry_after_blocks_path(path: str) -> bool:
     """Retry-After admission pauses apply to generation traffic, not probes."""
     normalized = "/" + path.strip("/")
-    return normalized.endswith(("/v1/messages", "/chat/completions", "/responses"))
+    return normalized.endswith((MESSAGES_PATH, "/chat/completions", "/responses"))
 
 
 def _retry_after_remaining_for_path(limiter: FairBearerLimiter, path: str) -> float:
@@ -2182,7 +2194,7 @@ def _relayed_entitlement_verdict(attempt: _Attempt) -> bool | None:
 
 def _entitlement_scoped(attempt: _Attempt, bid: str, body: bytes | bytearray | None) -> bool:
     """Shared scope gate. ``body`` is the caller's choice of evidence."""
-    if attempt.context.get("method") != "POST" or attempt.context.get("path") != "v1/messages":
+    if attempt.context.get("method") != "POST" or attempt.context.get("path") != MESSAGES_SUBPATH:
         return False
     if bid == API_KEY_BEARER_ID:
         return False
@@ -2356,7 +2368,7 @@ def _synthetic_one_token_probe_response(
         return None
     if not request.headers.get("User-Agent", "").startswith("claude-cli/"):
         return None
-    if request.method != "POST" or path != "v1/messages":
+    if request.method != "POST" or path != MESSAGES_SUBPATH:
         return None
     if req_max_tokens != 1 or req_has_tools or not body or len(body) > 2048:
         return None
@@ -2468,8 +2480,10 @@ async def _emit_keepalive_frames(response: web.StreamResponse, interval_ms: int)
         await asyncio.sleep(interval_s)
         try:
             await response.write(b": keepalive\n\n")
-        except (ConnectionResetError, aiohttp.ClientConnectionResetError, OSError):
+        except OSError:
             # Client disconnected while we were holding; stop silently.
+            # ConnectionResetError and aiohttp's ClientConnectionResetError are
+            # both OSError subclasses — naming them again adds nothing.
             return
 
 
@@ -2528,70 +2542,70 @@ async def _forward_once_into_sse(
     from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 
     connector = aiohttp.TCPConnector(ssl=True)
-    try:
-        async with aiohttp.ClientSession(
-            timeout=client_timeout, connector=connector, auto_decompress=False
-        ) as session:
-            await _pace_dispatch()
-            try:
-                async with session.request(
-                    request.method, url, headers=headers, data=body, allow_redirects=False
-                ) as upstream:
-                    meta = _extract_ratelimit(upstream.headers)
-                    # Throttle / error status: return body as captured, no piping.
-                    if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
-                        upstream_body = await upstream.read()
-                        note_upstream_auth(upstream.status, upstream_body)
-                        meta.update(
-                            _extract_zai_ratelimit_from_body(
-                                upstream_body,
-                                quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
-                            )
+    async with aiohttp.ClientSession(
+        timeout=client_timeout, connector=connector, auto_decompress=False
+    ) as session:
+        await _pace_dispatch()
+        try:
+            async with session.request(
+                request.method, url, headers=headers, data=body, allow_redirects=False
+            ) as upstream:
+                meta = _extract_ratelimit(upstream.headers)
+                # Throttle / error status: return body as captured, no piping.
+                if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
+                    upstream_body = await upstream.read()
+                    note_upstream_auth(upstream.status, upstream_body)
+                    meta.update(
+                        _extract_zai_ratelimit_from_body(
+                            upstream_body,
+                            quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
                         )
-                        # Surface the proxy-private queue-timeout marker to the
-                        # caller so the hold can classify a relayed central
-                        # queue-timeout 503 (no AIMD shrink — invariant 7).
-                        # _extract_ratelimit does NOT capture this header, so add
-                        # it explicitly — and ONLY from a sibling proxy tier
-                        # (MARKER_HEADER present), never a spoofing upstream
-                        # (anti-spoof, matching _stream_response; Codex BLOCKER).
-                        if config.MARKER_HEADER in upstream.headers:
-                            # A sibling tier answered. Record THAT — an entitlement
-                            # verdict is authoritative in both directions (present
-                            # = gate, absent = central already ruled it out), so
-                            # the hold must be able to tell "no sibling spoke"
-                            # from "sibling said no" (Codex third pass).
-                            meta[config.MARKER_HEADER] = "1"
-                            for header in (
-                                config.QUEUE_TIMEOUT_HEADER,
-                                config.ENTITLEMENT_REFUSAL_HEADER,
-                            ):
-                                if header in upstream.headers:
-                                    meta[header] = upstream.headers[header]
-                        captured = bytearray(upstream_body[: 1024 * 1024])
-                        return upstream.status, meta, captured, None
-                    # 2xx: stop the keepalive emitter BEFORE the first body byte
-                    # so it can never interleave a `: keepalive` comment into the
-                    # real SSE frames, then pipe chunks into the prepared sse_resp.
-                    notify_success_headers(request, upstream.status)
-                    if cancel_keepalive is not None:
-                        await cancel_keepalive()
-                    captured = bytearray()
-                    cap_limit = 1024 * 1024
-                    async for chunk in upstream.content.iter_any():
-                        if not chunk:
-                            break
-                        await sse_resp.write(chunk)
-                        if len(captured) < cap_limit:
-                            captured.extend(chunk[: cap_limit - len(captured)])
-                    await sse_resp.write_eof()
+                    )
+                    # Surface the proxy-private queue-timeout marker to the
+                    # caller so the hold can classify a relayed central
+                    # queue-timeout 503 (no AIMD shrink — invariant 7).
+                    # _extract_ratelimit does NOT capture this header, so add
+                    # it explicitly — and ONLY from a sibling proxy tier
+                    # (MARKER_HEADER present), never a spoofing upstream
+                    # (anti-spoof, matching _stream_response; Codex BLOCKER).
+                    if config.MARKER_HEADER in upstream.headers:
+                        # A sibling tier answered. Record THAT — an entitlement
+                        # verdict is authoritative in both directions (present
+                        # = gate, absent = central already ruled it out), so
+                        # the hold must be able to tell "no sibling spoke"
+                        # from "sibling said no" (Codex third pass).
+                        meta[config.MARKER_HEADER] = "1"
+                        for header in (
+                            config.QUEUE_TIMEOUT_HEADER,
+                            config.ENTITLEMENT_REFUSAL_HEADER,
+                        ):
+                            if header in upstream.headers:
+                                meta[header] = upstream.headers[header]
+                    captured = bytearray(upstream_body[: 1024 * 1024])
                     return upstream.status, meta, captured, None
-            except aiohttp.ClientConnectionResetError:
+                # 2xx: stop the keepalive emitter BEFORE the first body byte
+                # so it can never interleave a `: keepalive` comment into the
+                # real SSE frames, then pipe chunks into the prepared sse_resp.
+                notify_success_headers(request, upstream.status)
+                if cancel_keepalive is not None:
+                    await cancel_keepalive()
+                captured = bytearray()
+                cap_limit = 1024 * 1024
+                async for chunk in upstream.content.iter_any():
+                    if not chunk:
+                        break
+                    await sse_resp.write(chunk)
+                    if len(captured) < cap_limit:
+                        captured.extend(chunk[: cap_limit - len(captured)])
+                await sse_resp.write_eof()
+                return upstream.status, meta, captured, None
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            if isinstance(exc, aiohttp.ClientConnectionResetError):
+                # A reset mid-relay is the client's problem, not a stall to
+                # report as a local failure: fall through to the outer
+                # handler, which re-raises it.
                 raise
-            except (TimeoutError, aiohttp.ClientError) as exc:
-                return -1, None, None, exc
-    except aiohttp.ClientConnectionResetError:
-        raise
+            return -1, None, None, exc
 
 
 async def _keepalive_hold_and_retry(
@@ -2646,7 +2660,14 @@ async def _keepalive_hold_and_retry(
         try:
             await keepalive_task
         except asyncio.CancelledError:
-            pass
+            # OUR cancel() above — expected, and deliberately swallowed: this
+            # runs first in the cleanup path, so re-raising would skip the
+            # terminal-SSE emit and leave the client a truncated 200.
+            # An OUTER cancellation (client gone, server shutting down) is a
+            # different event and must still unwind; the task is only
+            # cancelled() once the cancellation we requested has landed.
+            if not keepalive_task.cancelled():
+                raise
         except Exception as ka_err:
             # The emitter died with a real error, not just our cancel. Record it,
             # but NEVER let it propagate out of cleanup: this runs first in the
@@ -2956,7 +2977,7 @@ async def _forward_with_retry(
             and not response.prepared
             and attempt.final_status in THROTTLE_STATUSES
             and request.method == "POST"
-            and path == "v1/messages"
+            and path == MESSAGES_SUBPATH
             and _is_streaming_body(body)
             and wait_deadline is not None
             and time.time() < wait_deadline
@@ -3172,7 +3193,7 @@ def _credential_nudge_response(bid: str, path: str, source: str) -> web.Response
     log(f"credential-nudge bid={bid} path=/{path} source={source}")
     return web.Response(
         status=401,
-        content_type="application/json",
+        content_type=CONTENT_TYPE_JSON,
         text=(
             '{"type":"error","error":{"type":"authentication_error",'
             '"message":"throttle-proxy: active account changed; re-read credentials"}}'
@@ -3338,7 +3359,9 @@ _CREDENTIAL_ASSIGNMENT_RE = re.compile(
 _AUTH_SCHEME_SECRET_RE = re.compile(
     r"\b(bearer|basic) +(?:\"[^\"]*\"|'[^']*'|[^ ,;\"']+)", re.IGNORECASE
 )
-_PREFIXED_SECRET_RE = re.compile(r"\b(?:sk-ant-|sk-proj-|gsk_)[A-Za-z0-9._-]+", re.IGNORECASE)
+# IGNORECASE already covers a-z, so listing both ranges is a duplicate
+# character class (python:S5869).
+_PREFIXED_SECRET_RE = re.compile(r"\b(?:sk-ant-|sk-proj-|gsk_)[A-Z0-9._-]+", re.IGNORECASE)
 
 
 def _bounded_error_field(value: object, limit: int = 512) -> str:
@@ -3525,7 +3548,7 @@ async def _finalize(
 
     _schedule_advisor(bid, final_status, path)
 
-    if attempt.captured and request.method == "POST" and "v1/messages" in path:
+    if attempt.captured and request.method == "POST" and MESSAGES_SUBPATH in path:
         _record_usage(model, model_label, attempt.captured, path)
     if final_status == 413:
         # PR #19/#20: log Anthropic's 413 response body so the operator
@@ -3585,7 +3608,7 @@ def _apply_body_shrink(
         # header dict we forward was built from the ORIGINAL request and would
         # lie about the payload size if we left it untouched.
         headers["Content-Length"] = str(len(body))
-    elif "v1/messages" in path and shrink_meta.get("original_bytes") is not None:
+    elif MESSAGES_SUBPATH in path and shrink_meta.get("original_bytes") is not None:
         reason = shrink_meta.get("reason", "under-cap")
         log(
             f"body_passthrough bid={_bearer_id(request.headers)} "
@@ -4065,13 +4088,13 @@ async def _probe_upstream_auth_once() -> None:
     candidate = _api_key_candidate()
     if candidate is None or not config.AUTH_PROBE_MODEL:
         return
-    url = config.UPSTREAM.rstrip("/") + "/v1/messages"
+    url = config.UPSTREAM.rstrip("/") + MESSAGES_PATH
     timeout = aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT)
     headers = {
         "authorization": f"Bearer {candidate['token']}",
         "x-api-key": str(candidate["token"]),
         "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
+        "content-type": CONTENT_TYPE_JSON,
     }
     payload = {
         "model": config.AUTH_PROBE_MODEL,
@@ -4165,7 +4188,7 @@ def _touch_credential_check(bid: str) -> None:
 
 async def _credential_recheck_one(bid: str, token: str) -> None:
     """One synthetic ``max_tokens: 1`` message on a quarantined account's own token."""
-    url = config.UPSTREAM.rstrip("/") + "/v1/messages"
+    url = config.UPSTREAM.rstrip("/") + MESSAGES_PATH
     timeout = aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT)
     headers = {
         "authorization": f"Bearer {token}",
@@ -4174,7 +4197,7 @@ async def _credential_recheck_one(bid: str, token: str) -> None:
         # 04/08/2026 that the upstream answers identically with and without this
         # header, but a real client sends it, so the probe should too.
         "anthropic-beta": "oauth-2025-04-20",
-        "content-type": "application/json",
+        "content-type": CONTENT_TYPE_JSON,
     }
     payload = {
         "model": config.CREDENTIAL_RECHECK_MODEL,
@@ -4937,6 +4960,10 @@ def _statusline_best_observed(now: float) -> str | None:
     (adversarial review MAJOR).
     """
     ranked: list[tuple[bool, bool, float, str]] = []
+    # Snapshot: every helper below is a pure read, but this statusline path runs
+    # concurrently with request handling that MUTATES bearer_state, so a live
+    # view is a "dictionary changed size during iteration" waiting for load.
+    # Documented exception to python:S7504 (see sonar-project.properties).
     for bid in list(config.bearer_state):
         if bid in _STATUSLINE_PSEUDO_BEARERS or _bearer_credential_dead(bid):
             continue

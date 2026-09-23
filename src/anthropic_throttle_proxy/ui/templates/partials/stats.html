@@ -208,7 +208,10 @@
               <span class="meter-label"><span class="mi" aria-hidden="true">{{ m.icon or "📊" }}</span>{{ m.label }}</span>
               {% if m.pct is not none %}
                 {% set mpct = [[m.pct, 0] | max, 100] | min %}
-                <span class="track" role="img" aria-label="{{ m.label }}: {{ "%.0f" | format(m.pct) }} percent used{% if m.rejected %}, rejected{% endif %}">
+                {# The track is decorative: the meter value is already in the
+                   label and the .pct text beside it, so a role="img" graph
+                   here would announce the same fact twice (Web:S6819). #}
+                <span class="track" aria-hidden="true">
                   <i class="{% if m.rejected or m.pct >= 90 %}crit{% elif m.pct >= 75 %}warn{% endif %}" style="width: {{ mpct }}%"></i>
                   <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
                 </span>

@@ -301,7 +301,10 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
   padding: 0.05rem 0.35rem;
   animation: swap-staleness 6s ease-in forwards;
 }
-.as-of::after { content: " · live"; }
+.as-of::after {
+  content: " · live";
+  animation: swap-staleness-after 6s steps(1, end) forwards;
+}
 @keyframes swap-staleness {
   0%, 88% { color: var(--muted); background: transparent; border-color: transparent; }
   100%    { color: var(--ctp-base); background: var(--warn); border-color: var(--warn); }
@@ -310,7 +313,6 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
   0%, 88% { content: " · live"; }
   100%    { content: " · last known"; }
 }
-.as-of::after { animation: swap-staleness-after 6s steps(1, end) forwards; }
 
 /* ── gauges: the four golden signals ─────────────────────────────────── */
 .gauges {
