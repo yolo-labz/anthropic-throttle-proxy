@@ -2505,8 +2505,10 @@ async def _emit_sse_error_terminal(
     try:
         await response.write(f"event: error\ndata: {payload}\n\n".encode())
         await response.write_eof()
-    except (ConnectionResetError, aiohttp.ClientConnectionResetError, OSError):
+    except OSError:
         # Client already gone; write_eof on a dead socket is expected.
+        # ConnectionResetError and aiohttp's ClientConnectionResetError are both
+        # OSError subclasses — naming them again adds nothing.
         pass
 
 
@@ -4960,11 +4962,11 @@ def _statusline_best_observed(now: float) -> str | None:
     (adversarial review MAJOR).
     """
     ranked: list[tuple[bool, bool, float, str]] = []
-    # Snapshot: every helper below is a pure read, but this statusline path runs
-    # concurrently with request handling that MUTATES bearer_state, so a live
-    # view is a "dictionary changed size during iteration" waiting for load.
-    # Documented exception to python:S7504 (see sonar-project.properties).
-    for bid in list(config.bearer_state):
+    # No snapshot, no list(): every helper below is a synchronous pure read and
+    # the loop contains no await, so bearer_state cannot be mutated underneath
+    # it. (An await would make this a "changed size during iteration" bug — if
+    # one is ever added here, take the snapshot first.)
+    for bid in config.bearer_state:
         if bid in _STATUSLINE_PSEUDO_BEARERS or _bearer_credential_dead(bid):
             continue
         blocked = _bearer_retry_after_remaining(bid) > 0 or _statusline_rejected(bid, now)
