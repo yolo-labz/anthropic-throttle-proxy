@@ -457,6 +457,33 @@ def _read(now: float, path: str | None = None) -> dict[str, Any]:
     }
 
 
+def plan_meter_used_percent(lane_id: str, now: float) -> float | None:
+    """Binding used-% of a plan lane's fullest meter, or None without fresh evidence.
+
+    The caller is classifying an upstream response that carries no budget
+    headers of its own (a MiMo Token Plan 429) and needs to know whether the
+    plan is actually near its allowance. ``None`` is the fail-closed answer and
+    it covers every way the evidence can be missing: no lane id, no report, a
+    stale report, a lane the probe could not read, or meters without a readable
+    percentage.
+    """
+    if not lane_id:
+        return None
+    for lane in view(now).get("lanes") or []:
+        if not isinstance(lane, dict) or str(lane.get("id") or "") != lane_id:
+            continue
+        if str(lane.get("status") or "unknown") != "ok":
+            return None
+        pcts = [
+            float(meter["used_pct"])
+            for meter in lane.get("meters") or []
+            if isinstance(meter, dict) and isinstance(meter.get("used_pct"), int | float)
+        ]
+        # The fullest meter decides: a plan is spent when its tightest window is.
+        return max(pcts) if pcts else None
+    return None
+
+
 def view(now: float) -> dict[str, Any]:
     """Lane view for the dashboard. TTL-cached; empty when no report exists.
 
