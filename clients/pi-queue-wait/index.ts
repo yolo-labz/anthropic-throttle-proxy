@@ -1,9 +1,9 @@
 // index.ts — Pi extension: keep a stamped queue-timeout rejection of the
-// local z.ai lane pending and retry it after the advised delay (spec 227).
+// local ZAI or MiMo lane pending and retry after the advised delay (227/243).
 //
-// Registers a streamSimple override for the EXISTING "zai" provider only.
+// Registers streamSimple overrides for "zai" and "mimo-desktop" only.
 // No models/baseUrl/apiKey/headers are passed, so the configured auth,
-// endpoint, models and request options of the zai provider are preserved
+// endpoint, models and request options of both providers are preserved
 // untouched (documented merge semantics of pi.registerProvider).
 //
 // Import note: the native OpenAI-completions adapter is imported from the
@@ -40,21 +40,25 @@ export default function (pi: ExtensionAPI) {
       }
     },
     // NOTE: deps.allowedBaseUrls is a DI-only test seam and is deliberately
-    // NOT set here — production keeps the strict loopback :8766 gate.
+    // NOT set here — production keeps the provider-specific loopback gates.
   });
 
-  const register = () => pi.registerProvider("zai", { api: "openai-completions", streamSimple });
+  const register = (provider: string) =>
+    pi.registerProvider(provider, { api: "openai-completions", streamSimple });
 
   pi.on("session_start", (_event, ctx) => {
     ui = ctx.ui;
+    // MiMo is user-configured, not built in. Do not invent an empty provider
+    // (or auth entry) on hosts without it; models.json is loaded by this point.
+    if (ctx.modelRegistry.getProvider("mimo-desktop")) register("mimo-desktop");
   });
   pi.on("agent_start", (_event, ctx) => {
     ui = ctx.ui;
   });
 
-  register();
+  register("zai");
 
   // Disabling is removal/reload of the extension only (no toggle commands):
-  // unregistering "zai" could erase another extension's merged overlay, so
+  // unregistering a provider could erase another extension's merged overlay, so
   // this extension never exposes queue-wait-off / queue-wait-on commands.
 }

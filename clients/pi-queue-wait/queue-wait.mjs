@@ -1,5 +1,5 @@
 // queue-wait.mjs — retry engine for the anthropic-throttle-proxy queue-timeout
-// rejection on a local z.ai lane (spec 227).
+// rejection on the local ZAI or MiMo lane (specs 227/243).
 //
 // Public contract (see specs/227-pi-queue-wait/contract.md):
 //   createQueueWaitStream(deps) -> (model, context, options) => AssistantMessageEventStream
@@ -26,7 +26,7 @@ export const QUEUE_MARKER_HEADER = "x-anthropic-throttle-proxy";
 /** Stamp present ONLY on the proxy-generated queue-timeout 503. */
 export const QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout";
 
-/** Only this provider/model/lane is ever intercepted. */
+/** Existing ZAI provider/model/lane constants (kept for compatibility). */
 export const QUEUE_PROVIDER_ID = "zai";
 export const QUEUE_MODEL_ID = "glm-5.3-flash";
 
@@ -90,10 +90,10 @@ function normalizeAllowedBase(entry) {
 
 /**
  * The request-URL gate: http scheme, loopback host, the exact completions
- * path, and port 8766 (or an explicitly allowed DI test base). Foreign
+ * path and port for the selected provider (or an allowed DI test base). Foreign
  * origins, https, other paths, and central proxies never qualify.
  */
-function urlGate(rawUrl, allowedBases) {
+function urlGate(rawUrl, allowedBases, port, completionsPath) {
   let url;
   try {
     url = rawUrl instanceof URL ? rawUrl : new URL(String(rawUrl));
@@ -106,8 +106,8 @@ function urlGate(rawUrl, allowedBases) {
   if (url.username !== "" || url.password !== "") return false;
   if (url.search !== "") return false;
   if (url.hash !== "") return false;
-  if (url.pathname !== QUEUE_COMPLETIONS_PATH) return false;
-  if (url.port === String(QUEUE_DEFAULT_PORT) && (url.host === `127.0.0.1:${QUEUE_DEFAULT_PORT}` || url.host === `localhost:${QUEUE_DEFAULT_PORT}` || url.host === `[::1]:${QUEUE_DEFAULT_PORT}`)) {
+  if (url.pathname !== completionsPath) return false;
+  if (url.port === String(port) && (url.host === `127.0.0.1:${port}` || url.host === `localhost:${port}` || url.host === `[::1]:${port}`)) {
     return true;
   }
   const origin = `${url.protocol}//${url.host}`;
@@ -173,7 +173,7 @@ function allUsageZero(usage) {
  *   - maxWaitMs, maxRejections: ceilings (see QUEUE_WAIT_DEFAULTS)
  *   - allowedBaseUrls: DI-ONLY test seam. Exact http loopback base URLs whose
  *     origin additionally permits interception. Never wired in production:
- *     index.ts must not pass it. Omission keeps the strict :8766 default.
+ *     index.ts must not pass it. Omission keeps each provider's strict port/path.
  */
 export function createQueueWaitStream(deps) {
   const streamSimple = deps?.streamSimple;
@@ -201,9 +201,16 @@ export function createQueueWaitStream(deps) {
 
   return function queueWaitStream(model, context, options) {
     // Provider/model gate: anything else is the native function, un-wrapped.
-    if (model?.provider !== QUEUE_PROVIDER_ID || ![QUEUE_MODEL_ID, "glm-5.3"].includes(model?.id)) {
+    const mimo = model?.provider === "mimo-desktop" &&
+      typeof model?.id === "string" && model.id.startsWith("mimo-") &&
+      model?.api === "openai-completions";
+    if (!mimo && (model?.provider !== QUEUE_PROVIDER_ID || ![QUEUE_MODEL_ID, "glm-5.3"].includes(model?.id))) {
       return streamSimple(model, context, options);
     }
+    // Bind the tuple to the provider: MiMo must never inherit ZAI's lane.
+    const requestUrlGate = (url) => urlGate(url, allowedBases,
+      mimo ? 8773 : QUEUE_DEFAULT_PORT,
+      mimo ? "/v1/chat/completions" : QUEUE_COMPLETIONS_PATH);
 
     const outer = createEventStream();
     const signal = options?.signal;
@@ -243,7 +250,7 @@ export function createQueueWaitStream(deps) {
         // stale stamped 503 from an earlier internal attempt can never
         // justify a later retry.
         const attempt = { rejection: null, capture: null, sawPriorEvent: false };
-        const innerFetch = wrapFetch(options, attempt, allowedBases, now);
+        const innerFetch = wrapFetch(options, attempt, requestUrlGate, now);
         const inner = streamSimple(model, context, { ...(options ?? {}), fetch: innerFetch });
 
         let terminal = null; // { event } when the inner stream ended with an error event
@@ -424,16 +431,16 @@ function isZeroErrorEvent(event) {
 }
 
 /** Reject unrelated responses before cloning or waiting for any body proof. */
-function isQueueResponse(res, requestUrl, allowedBases) {
+function isQueueResponse(res, requestUrl, requestUrlGate) {
   return res?.status === 503 && !res.redirected &&
-    sameLocation(res.url, requestUrl) && urlGate(requestUrl, allowedBases) &&
+    sameLocation(res.url, requestUrl) && requestUrlGate(requestUrl) &&
     res.headers.get(QUEUE_MARKER_HEADER) === "1" &&
     res.headers.get(QUEUE_TIMEOUT_HEADER) === "1";
 }
 
 /** Full response gate: status, both stamps, exact body, same-location, no redirect. */
-function gateResponse(res, requestUrl, text, allowedBases, nowFn) {
-  if (!isQueueResponse(res, requestUrl, allowedBases) || text !== QUEUE_BODY_FULL) return null;
+function gateResponse(res, requestUrl, text, requestUrlGate, nowFn) {
+  if (!isQueueResponse(res, requestUrl, requestUrlGate) || text !== QUEUE_BODY_FULL) return null;
   const nowMs = typeof nowFn === "function" ? nowFn() : nowFn;
   return { retryAfterMs: parseRetryAfterMs(res.headers.get("retry-after"), nowMs) };
 }
@@ -477,7 +484,7 @@ async function awaitCapture(capture, signal) {
  * untouched. Only a proven queue rejection gets a retry-control header overlay
  * when caller-enabled native retries would otherwise escape outer accounting.
  */
-function wrapFetch(options, attempt, allowedBases, nowFn) {
+function wrapFetch(options, attempt, requestUrlGate, nowFn) {
   const nativeFetch = options?.fetch ?? globalThis.fetch;
   let fetchToken = 0; // identity of the currently-dispatched delegated fetch
   return async (input, init) => {
@@ -485,11 +492,11 @@ function wrapFetch(options, attempt, allowedBases, nowFn) {
     attempt.rejection = null;
     attempt.capture = null;
     const requestUrl = effectiveUrl(input);
-    if (effectiveMethod(input, init) !== "POST" || !urlGate(requestUrl, allowedBases)) {
+    if (effectiveMethod(input, init) !== "POST" || !requestUrlGate(requestUrl)) {
       return nativeFetch(input, init);
     }
     const res = await nativeFetch(input, init);
-    if (!isQueueResponse(res, requestUrl, allowedBases)) return res;
+    if (!isQueueResponse(res, requestUrl, requestUrlGate)) return res;
     let clone;
     try {
       clone = res.clone();
@@ -500,7 +507,7 @@ function wrapFetch(options, attempt, allowedBases, nowFn) {
       try {
         const text = await clone.text();
         if (token === fetchToken) {
-          attempt.rejection = gateResponse(res, requestUrl, text, allowedBases, nowFn);
+          attempt.rejection = gateResponse(res, requestUrl, text, requestUrlGate, nowFn);
         }
       } catch {
         if (token === fetchToken) {
