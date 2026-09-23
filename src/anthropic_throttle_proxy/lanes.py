@@ -69,6 +69,14 @@ _PROVIDER = {
     "kimi": ("🌙", "Kimi"),
 }
 
+# Price suffix per billing cycle. An unknown cycle renders no suffix rather
+# than guessing a cadence (python:S3358 keeps the nested ternary out of here).
+_CYCLE_SUFFIX = {"monthly": "/mo", "annual": "/yr"}
+
+# The MiMo plan row's lane id: it is both the id of the synthetic row we mint
+# when the probe reports nothing, and the filter that keeps a stale copy out.
+_MIMO_PLAN_LANE_ID = "mimo:plan"
+
 _cache: tuple[float, dict[str, Any]] | None = None
 
 
@@ -151,7 +159,7 @@ def _billing(lane: dict[str, Any], *, stale: bool) -> dict[str, Any] | None:
     except ValueError:
         date_display = date
     symbol = "$" if currency == "USD" else f"{currency} "
-    suffix = "/mo" if cycle == "monthly" else ("/yr" if cycle == "annual" else "")
+    suffix = _CYCLE_SUFFIX.get(str(cycle), "")
     return {
         # Staleness makes current-plan state unknown, not delinquent and not
         # paid. Keep the last raw facts for diagnosis but remove the verdict.
@@ -471,13 +479,15 @@ def view(now: float) -> dict[str, Any]:
     if mimo_path:
         mimo = _read(now, mimo_path)
         rows = [
-            lane for lane in mimo["lanes"] if lane["id"] == "mimo:plan" and lane["kind"] == "mimo"
+            lane
+            for lane in mimo["lanes"]
+            if lane["id"] == _MIMO_PLAN_LANE_ID and lane["kind"] == "mimo"
         ]
         if len(rows) != 1:
             rows = [
                 _normalize(
                     {
-                        "id": "mimo:plan",
+                        "id": _MIMO_PLAN_LANE_ID,
                         "kind": "mimo",
                         "status": "unknown",
                         "reason": "MiMo report missing, malformed or ambiguous",
@@ -488,7 +498,8 @@ def view(now: float) -> dict[str, Any]:
             ]
         snapshot = {
             **snapshot,
-            "lanes": [lane for lane in snapshot["lanes"] if lane["id"] != "mimo:plan"] + rows,
+            "lanes": [lane for lane in snapshot["lanes"] if lane["id"] != _MIMO_PLAN_LANE_ID]
+            + rows,
         }
     _cache = (now, snapshot)
     return snapshot

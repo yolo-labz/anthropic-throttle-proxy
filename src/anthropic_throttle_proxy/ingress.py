@@ -1122,7 +1122,7 @@ async def _health(_request: web.Request) -> web.Response:
                         else {}
                     ),
                 }
-                for lid, st in list(lane_state.items())
+                for lid, st in lane_state.items()
             },
         }
     )
@@ -1162,12 +1162,10 @@ async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
 
 def _evict_sessions_for_closed_lanes(closed_ids: set[str]) -> int:
     """Drop every session pinned to a now-closed lane. Returns the count evicted."""
-    n = 0
-    for key, pinned in list(_session_lane.items()):
-        if pinned in closed_ids:
-            _session_lane.pop(key, None)
-            n += 1
-    return n
+    stale = [key for key, pinned in _session_lane.items() if pinned in closed_ids]
+    for key in stale:
+        _session_lane.pop(key, None)
+    return len(stale)
 
 
 async def _poll_lanes_once(session: aiohttp.ClientSession) -> None:

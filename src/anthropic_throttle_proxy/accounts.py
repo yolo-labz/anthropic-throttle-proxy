@@ -326,7 +326,7 @@ def _fields_from_cache_usage(usage: dict[str, Any], now: float) -> dict[str, Any
     return fields
 
 
-def _bearer_uncapped_retry_after(bearer: dict[str, Any] | None, now: float) -> float:
+def _bearer_uncapped_retry_after(bearer: dict[str, Any] | None) -> float:
     """Remaining seconds on the bearer's UNCAPPED live Retry-After window.
 
     Reads the raw ``anthropic-ratelimit`` ``retry-after`` captured verbatim into
@@ -360,7 +360,7 @@ def _locked_in(
     locked_until = (endpoint_entry or {}).get("locked_until")
     if isinstance(locked_until, (int, float)) and locked_until > now:
         return _fmt_duration(locked_until - now)
-    remaining = _bearer_uncapped_retry_after(bearer, now)
+    remaining = _bearer_uncapped_retry_after(bearer)
     return _fmt_duration(remaining) if remaining > 0 else None
 
 

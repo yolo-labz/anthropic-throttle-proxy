@@ -608,9 +608,12 @@ def _compute_drain(
 
     # Coarse descriptor kept for logs and dashboards: how many service rounds
     # deep the arrival is. The wait above is the scheduled answer, not this.
-    rounds = (
-        0 if ahead + 1 <= free else math.ceil((ahead + 1 - free) / slots) if slots else ahead + 1
-    )
+    if ahead + 1 <= free:
+        rounds = 0
+    elif slots:
+        rounds = math.ceil((ahead + 1 - free) / slots)
+    else:
+        rounds = ahead + 1
     residual = min(held) if held else 0.0
     if not math.isfinite(wait_s):
         # Only reachable with zero servers: nothing will ever dispatch.
@@ -1278,7 +1281,7 @@ class FairBearerLimiter:
         its normal deque (arrival order within the client kept) and the client
         joins the normal rotation if not already in it.
         """
-        for client_id in list(self._priority_rr):
+        for client_id in self._priority_rr:
             q = self._priority_queues.pop(client_id, None)
             if not q:
                 continue
