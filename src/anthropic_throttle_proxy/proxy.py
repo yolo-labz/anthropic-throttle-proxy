@@ -1747,7 +1747,7 @@ def _route_account_and_claim_retry_probe(
         max_tokens=max_tokens,
         allow_retry_probe=True,
     )
-    if method != "POST" or "v1/messages" not in path or not bid:
+    if method != "POST" or not _retry_after_blocks_path(path) or not bid:
         return bid, label, False
     if bid not in config.bearer_limiters:
         _limiter.require_retry_probe(bid)
@@ -1871,7 +1871,8 @@ def _try_retry_after_reroute(
 
 def _retry_after_blocks_path(path: str) -> bool:
     """Retry-After admission pauses apply to generation traffic, not probes."""
-    return "v1/messages" in path
+    normalized = "/" + path.strip("/")
+    return normalized.endswith(("/v1/messages", "/chat/completions", "/responses"))
 
 
 def _retry_after_remaining_for_path(limiter: FairBearerLimiter, path: str) -> float:

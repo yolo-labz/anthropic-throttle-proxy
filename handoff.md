@@ -6,6 +6,17 @@ host activation. Latest incident first.
 
 ---
 
+## 23/09/2026 — MiMo shared cooldown (rollout in progress)
+
+Spec 242 fixes a reproduced OpenAI-path omission: a sibling Chat Completions
+request could bypass the pause recorded after a headerless 429. Reuse the
+existing cooldown and half-open probe machinery; credential routing stays
+Anthropic-only. Red regression: sibling dispatched at 5 ms in a 50 ms pause.
+Fixed: 16 targeted tests and 1,337 full-suite tests pass. Deploy only to the
+isolated MiMo service; synthetic acceptance is not proof that Xiaomi is serving.
+Live 429s persisted during bounded checking, so affected tabs need separately
+verified recovery instead of another simultaneous retry burst.
+
 ## 23/09/2026 — MiMo dashboard telemetry (delivery in progress)
 
 Spec 241 adds an opt-in independently expiring MiMo report and a read-only,
