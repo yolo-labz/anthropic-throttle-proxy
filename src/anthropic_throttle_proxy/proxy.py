@@ -114,6 +114,7 @@ from .forwarding import (
 from .limiter import (
     FairBearerLimiter,
     QueueWaitTimeout,
+    _FairSlotContext,
     _get_bearer_limiter,
     budget_floored_retry_after,
     cold_drain_estimate,
@@ -177,6 +178,16 @@ from .routing import unified_live_view as _unified_live_view
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
+
+    # The route/probe operations a request's pre-dispatch gate can invoke.
+    # Named once so the phase helpers can take them without repeating four long
+    # annotations (and so two near-identical signatures are not mistaken for
+    # duplication). Annotation-only: never evaluated at runtime.
+    _FinishProbe = Callable[..., None]
+    _TryReroute = Callable[[str, float, str], tuple[str, dict[str, str]] | None]
+    _Reroute = Callable[[], tuple[str, dict[str, str]]]
+    _WaitAlternate = Callable[[], Awaitable[bool]]
+    _WaitReval = Callable[[Callable[[], Awaitable[None]]], Awaitable[bool]]
 
 # Public surface re-exported from the focused sibling modules + defined here.
 # Declared so static analysis treats the re-exports above as intentional.
@@ -4243,65 +4254,56 @@ def _apply_body_shrink(
     return body
 
 
-async def handler(request: web.Request) -> web.StreamResponse:
-    """Main reverse-proxy handler: queue, forward (with retry), and stream back.
+def _finish_retry_probe(probe_lease: dict[str, str], *, success: bool) -> None:
+    """Release this request's half-open retry-probe lease, at most once."""
+    lease_bid = probe_lease["bid"]
+    if lease_bid:
+        _limiter.finish_retry_probe(lease_bid, success=success)
+        probe_lease["bid"] = ""
 
-    Acquires a per-bearer fair slot, picks central-or-direct upstream, forwards
-    the request, streams the response, and on the way out applies AIMD feedback,
-    publishes metrics, fires the optional advisor, and parses SSE usage.
+
+async def _wait_for_revalidation(
+    waiter: Callable[[], Awaitable[None]], wait_deadline: float | None
+) -> bool:
+    """Run ``waiter``, bounded by this request's remaining queue-wait budget.
+
+    False means the wait timed out (or the budget was already spent). Every
+    revalidation wait in the handler is capped this way; ``QUEUE_MAX_WAIT_S=0``
+    leaves ``wait_deadline`` None and the wait unbounded, exactly as the
+    operator asked for.
     """
-    handler_start = time.time()
-    path = request.match_info.get("path", "")
-    # The wait-budget header is CONSUMED here (via _effective_queue_max_wait)
-    # and re-stamped canonically per forward attempt — passing a client's
-    # mixed-case copy through would coexist with the stamped lowercase one,
-    # and the next tier's CIMultiDict.get() would read the client's value
-    # first, defeating the min() (Codex round-2 BLOCKER on PR #83).
-    headers = {
-        k: v
-        for k, v in request.headers.items()
-        if k.lower() not in HOP_HEADERS and k.lower() != config.WAIT_BUDGET_HEADER
-    }
-    bid = _bearer_id(request.headers)
-    cid = _client_id(request)
-    url, client_timeout, via = pick_target(path, request.query_string)
+    wait = None if wait_deadline is None else wait_deadline - time.time()
+    if wait is not None and wait <= 0:
+        return False
     try:
-        body = await request.read() if request.body_exists else None
-    except _CLIENT_DISCONNECT_EXC as exc:
-        return _disconnect_before_forward(request, path, "read-body", bid, cid, via, "unknown", exc)
+        if wait is None:
+            await waiter()
+        else:
+            await asyncio.wait_for(waiter(), timeout=wait)
+    except TimeoutError:
+        return False
+    return True
 
-    # PR #557: extract model from POST /v1/messages body for metrics labels.
-    model = _extract_model_from_body(body) if body else ""
-    model_label = model or "unknown"
 
-    # Priority lane: a short/latency-sensitive call (the /goal Stop-hook
-    # evaluator — small max_tokens, no tools, small body) dispatches from a
-    # dedicated reserve pool so it never starves behind long generations.
-    # Fail-safe: an unparseable/absent max_tokens stays in the normal lane,
-    # and so does any large body — max_tokens caps only the OUTPUT, so a
-    # giant no-tools prompt could otherwise jump the queue.
-    req_max_tokens, req_has_tools = _short_request_hint(body)
-    if (
-        synthetic_response := _synthetic_one_token_probe_response(
-            request, path, body, model_label, req_max_tokens, req_has_tools
-        )
-    ) is not None:
-        return synthetic_response
-    is_priority = _is_priority_request(req_max_tokens, req_has_tools, len(body or b""))
+def _reroute_from_base(
+    route_base_headers: Mapping[str, str],
+    incoming_bid: str,
+    probe_lease: dict[str, str],
+    seen_retry_after_bids: set[str],
+    *,
+    request: web.Request,
+    path: str,
+    model: str,
+    req_max_tokens: int | None,
+) -> tuple[str, dict[str, str]]:
+    """Re-run account routing from the original auth headers.
 
-    if _request_disconnected(request):
-        return _disconnect_before_forward(request, path, "pre-queue", bid, cid, via, model_label)
-
-    # PR #15: trim oversize POST /v1/messages bodies before forwarding so we
-    # do not hand Anthropic a payload they will reject with the 32MB cap.
-    # See body_shrink.py for the algorithm + trade-offs (cache invalidation,
-    # breadcrumb stubs, hard floor on single-attachment overruns).
-    if body is not None and request.method == "POST":
-        body = _apply_body_shrink(request, body, path, model_label, headers)
-
-    incoming_bid = bid
-    route_base_headers = dict(headers)
-    bid, _account_label, probe_claimed = _route_account_and_claim_retry_probe(
+    Returns the new (bid, headers); claims the new bearer's half-open probe into
+    ``probe_lease`` and records it in ``seen_retry_after_bids`` so a reroute
+    never bounces back to a bearer already tried.
+    """
+    headers = dict(route_base_headers)
+    bid, _, claimed = _route_account_and_claim_retry_probe(
         headers,
         incoming_bid,
         method=request.method,
@@ -4309,13 +4311,649 @@ async def handler(request: web.Request) -> web.StreamResponse:
         model=model,
         max_tokens=req_max_tokens,
     )
-    probe_lease = {"bid": bid if probe_claimed else ""}
+    probe_lease["bid"] = bid if claimed else ""
+    seen_retry_after_bids.add(bid)
+    return bid, headers
+
+
+async def _wait_for_alternate_probe(
+    *,
+    bid: str,
+    cid: str,
+    path: str,
+    probe_lease: dict[str, str],
+    probe_waited: set[str],
+    wait_reval: _WaitReval,
+) -> bool:
+    """Park on another bearer's in-flight probe instead of fast-failing.
+
+    ``_account_routing_candidate_score`` scores a bearer ``inf`` while its
+    half-open probe is in flight, so for the lifetime of ONE probe the fleet
+    can look candidate-less even though a healthy account exists. Every
+    request that lands in that window used to take the 429 fast-fail — a
+    dead client turn. Measured 31/07/2026: the first request claimed the
+    probe on the one healthy account, and the next 24 got
+    ``retry-after-fast-fail source=pre-dispatch`` with no ``account-route``
+    line at all. One probe killed 24 tabs.
+
+    A probe resolves in a single upstream round trip, comfortably inside the
+    queue-wait budget, so waiting for it strictly dominates failing. Bounded
+    twice over: each alternate is waited on at most once per request, and
+    every wait goes through ``wait_reval``, which is capped by
+    ``wait_deadline``. That cap is only as strong as the queue-wait knob —
+    ``QUEUE_MAX_WAIT_S=0`` leaves ``wait_deadline`` None and this wait
+    unbounded, exactly as it already leaves the two sibling revalidation
+    waits unbounded; the operator asking for no wait bound gets none
+    here either. Returns True when the caller should re-route.
+
+    Deliberately NOT wired into the post-slot fast-fail: that path holds a
+    dispatch slot, and parking while counted inflight is the failure mode
+    its neighbouring comments exist to prevent. The observed kill was
+    pre-dispatch on every one of the 24 requests.
+
+    A request that already holds a probe lease never parks. It is reachable
+    here: the reroute helper can claim a lease on the new bearer,
+    and a small non-zero window on that bearer then slips past the first
+    site's ``probe_lease["bid"] != bid`` guard. Parking in that state closes
+    a cycle — R1 holds A's lease and waits on B's probe while R2 holds B's
+    and waits on A's — and pins BOTH accounts invisible to routing for the
+    whole queue budget, which is the very pathology this function exists to
+    undo. Nothing is lost by refusing: a lease is only ever claimed on a
+    bearer routing scored under ``MAX_HOLD_RETRY_AFTER_S``, so the fast-fail
+    below returns None for it and the request dispatches rather than dying.
+    """
+    if probe_lease["bid"] or not _account_routing_enabled():
+        return False
+    for alt_bid in _limiter.probe_inflight_bids():
+        if alt_bid == bid or alt_bid in probe_waited:
+            continue
+        probe_waited.add(alt_bid)
+        log(f"retry-after-probe-wait bid={bid} alt={alt_bid} cid={cid} path=/{path}")
+        if await wait_reval(lambda b=alt_bid: _limiter.wait_retry_probe(b)):
+            return True
+    return False
+
+
+def _forward_headers(request: web.Request) -> dict[str, str]:
+    """Headers to forward upstream, minus the ones this tier owns.
+
+    The wait-budget header is CONSUMED here (via _effective_queue_max_wait)
+    and re-stamped canonically per forward attempt — passing a client's
+    mixed-case copy through would coexist with the stamped lowercase one,
+    and the next tier's CIMultiDict.get() would read the client's value
+    first, defeating the min() (Codex round-2 BLOCKER on PR #83).
+    """
+    return {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() not in HOP_HEADERS and k.lower() != config.WAIT_BUDGET_HEADER
+    }
+
+
+async def _read_forward_body(
+    request: web.Request, path: str, bid: str, cid: str, via: str
+) -> tuple[bytes | None, web.Response | None]:
+    """Read the request body; a client that is already gone gets its 499 here."""
+    try:
+        return (await request.read() if request.body_exists else None), None
+    except _CLIENT_DISCONNECT_EXC as exc:
+        return None, _disconnect_before_forward(
+            request, path, "read-body", bid, cid, via, "unknown", exc
+        )
+
+
+def _model_and_priority(
+    request: web.Request, path: str, body: bytes | None
+) -> tuple[str, str, int | None, bool, bool, web.Response | None]:
+    """Model label, the priority-lane hint, and the synthetic probe reply.
+
+    PR #557: extract model from POST /v1/messages body for metrics labels.
+
+    Priority lane: a short/latency-sensitive call (the /goal Stop-hook
+    evaluator — small max_tokens, no tools, small body) dispatches from a
+    dedicated reserve pool so it never starves behind long generations.
+    Fail-safe: an unparseable/absent max_tokens stays in the normal lane,
+    and so does any large body — max_tokens caps only the OUTPUT, so a
+    giant no-tools prompt could otherwise jump the queue.
+
+    Returns (model, model_label, req_max_tokens, req_has_tools, is_priority,
+    synthetic_response); a non-None response is this tier's own answer.
+    """
+    model = _extract_model_from_body(body) if body else ""
+    model_label = model or "unknown"
+    req_max_tokens, req_has_tools = _short_request_hint(body)
+    synthetic_response = _synthetic_one_token_probe_response(
+        request, path, body, model_label, req_max_tokens, req_has_tools
+    )
+    if synthetic_response is not None:
+        return model, model_label, req_max_tokens, req_has_tools, False, synthetic_response
+    is_priority = _is_priority_request(req_max_tokens, req_has_tools, len(body or b""))
+    return model, model_label, req_max_tokens, req_has_tools, is_priority, None
+
+
+def _pre_queue_disconnect_response(
+    request: web.Request, path: str, bid: str, cid: str, via: str, model_label: str
+) -> web.Response | None:
+    """499 when the client vanished after the body read but before any queue."""
+    if _request_disconnected(request):
+        return _disconnect_before_forward(request, path, "pre-queue", bid, cid, via, model_label)
+    return None
+
+
+def _shrink_forward_body(
+    request: web.Request, body: bytes | None, path: str, model_label: str, headers: dict[str, str]
+) -> bytes | None:
+    """PR #15: trim oversize POST /v1/messages bodies before forwarding so we
+    do not hand Anthropic a payload they will reject with the 32MB cap.
+    See body_shrink.py for the algorithm + trade-offs (cache invalidation,
+    breadcrumb stubs, hard floor on single-attachment overruns).
+    """
+    if body is not None and request.method == "POST":
+        return _apply_body_shrink(request, body, path, model_label, headers)
+    return body
+
+
+def _claim_route(
+    request: web.Request,
+    path: str,
+    headers: dict[str, str],
+    bid: str,
+    model: str,
+    req_max_tokens: int | None,
+) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Select the routed account and claim its half-open retry probe.
+
+    Returns (bid, route_base_headers, probe_lease). ``probe_lease`` is the
+    mutable holder ``finish_probe`` empties; it starts claimed only when this
+    call actually won the probe.
+    """
+    route_base_headers = dict(headers)
+    bid, _account_label, probe_claimed = _route_account_and_claim_retry_probe(
+        headers,
+        bid,
+        method=request.method,
+        path=path,
+        model=model,
+        max_tokens=req_max_tokens,
+    )
+    return bid, route_base_headers, {"bid": bid if probe_claimed else ""}
+
+
+def _queue_wait_budget(
+    request: web.Request, handler_start: float
+) -> tuple[float | None, float | None]:
+    """(max_wait, wait_deadline) — the queue-wait budget this request may spend."""
+    max_wait = _effective_queue_max_wait(request.headers)
+    return max_wait, None if max_wait is None else handler_start + max_wait
+
+
+async def _expired_wait_budget_response(
+    bid: str, cid: str, path: str, max_wait: float, finish_probe: Callable[..., None]
+) -> web.Response:
+    """The upstream tier already spent the whole wait budget; don't park."""
+    queue_mode, hard_max = _effective_admission(bid)
+    limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+    finish_probe(success=False)
+    return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait)
+
+
+async def _pre_dispatch_retry_after(
+    *,
+    bid: str,
+    headers: dict[str, str],
+    path: str,
+    retry_after_remaining: float,
+    source: str,
+    finish_probe: _FinishProbe,
+    release_on_reroute: bool,
+    try_reroute: _TryReroute,
+    wait_alternate: _WaitAlternate,
+    reroute: _Reroute,
+) -> tuple[str, dict[str, str], web.Response | None, str]:
+    """Answer an armed Retry-After for a bearer this request may not dispatch on.
+
+    Returns (bid, headers, response, action): ``action`` is ``"reroute"``
+    (re-enter the gate with the returned route), ``"answer"`` (send
+    ``response``) or ``"proceed"`` (no fast-fail fired — the caller decides
+    whether to park on the bearer's own window or to dispatch).
+
+    ``release_on_reroute`` is the one site difference: the standalone
+    pre-dispatch check releases the held probe lease before handing the request
+    back to routing, the probe gate itself does not (its guard means no lease on
+    this bearer is being given up).
+    """
+    rerouted = try_reroute(bid, retry_after_remaining, source)
+    if rerouted is not None:
+        if release_on_reroute:
+            finish_probe(success=False)
+        return rerouted[0], rerouted[1], None, "reroute"
+    # No candidate MAY mean "every alternate is mid-probe", not "every
+    # alternate is capped". Check before killing the turn.
+    if await wait_alternate():
+        new_bid, new_headers = reroute()
+        return new_bid, new_headers, None, "reroute"
+    fast_fail = _retry_after_fast_fail_response(bid, path, retry_after_remaining, source=source)
+    if fast_fail is not None:
+        return bid, headers, fast_fail, "answer"
+    return bid, headers, None, "proceed"
+
+
+async def _pre_dispatch_probe_gate(
+    *,
+    bid: str,
+    headers: dict[str, str],
+    path: str,
+    cid: str,
+    limiter: FairBearerLimiter,
+    retry_after_remaining: float,
+    probe_lease: dict[str, str],
+    finish_probe: _FinishProbe,
+    try_reroute: _TryReroute,
+    wait_alternate: _WaitAlternate,
+    reroute: _Reroute,
+    wait_reval: _WaitReval,
+) -> tuple[str, dict[str, str], web.Response | None, str]:
+    """The gate for a Retry-After-blocked path with no lease on this bearer.
+
+    An armed window reroutes, parks on an alternate's probe, fast-fails, or
+    parks on the bearer's own window; an unarmed one takes (or waits for) the
+    half-open probe lease. Returns (bid, headers, response, action) with the
+    same vocabulary as ``_pre_dispatch_retry_after`` plus ``"proceed"``.
+    """
+    if retry_after_remaining > 0:
+        bid, headers, response, action = await _pre_dispatch_retry_after(
+            bid=bid,
+            headers=headers,
+            path=path,
+            retry_after_remaining=retry_after_remaining,
+            source="pre-dispatch",
+            finish_probe=finish_probe,
+            release_on_reroute=False,
+            try_reroute=try_reroute,
+            wait_alternate=wait_alternate,
+            reroute=reroute,
+        )
+        if action == "reroute":
+            return bid, headers, None, "reroute"
+        if action == "answer":
+            finish_probe(success=False)
+            return bid, headers, response, "answer"
+        if not await wait_reval(limiter.wait_retry_after):
+            return (
+                bid,
+                headers,
+                _queue_wait_timeout_response(bid, cid, path, limiter, 0.0),
+                "answer",
+            )
+        new_bid, new_headers = reroute()
+        return new_bid, new_headers, None, "reroute"
+    if limiter.try_begin_retry_probe():
+        probe_lease["bid"] = bid
+        return bid, headers, None, "proceed"
+    if not limiter.retry_probe_required():
+        return bid, headers, None, "proceed"
+    if not limiter.retry_probe_inflight():
+        # The deadline may have changed between the checks; retry routing
+        # instead of dispatching without a lease.
+        return bid, headers, None, "reroute"
+    if not await wait_reval(limiter.wait_retry_probe):
+        return bid, headers, _queue_wait_timeout_response(bid, cid, path, limiter, 0.0), "answer"
+    new_bid, new_headers = reroute()
+    return new_bid, new_headers, None, "reroute"
+
+
+async def _pre_dispatch_gate(
+    *,
+    path: str,
+    cid: str,
+    bid: str,
+    headers: dict[str, str],
+    probe_lease: dict[str, str],
+    finish_probe: _FinishProbe,
+    try_reroute: _TryReroute,
+    wait_alternate: _WaitAlternate,
+    reroute: _Reroute,
+    wait_reval: _WaitReval,
+) -> tuple[FairBearerLimiter | None, str, dict[str, str], web.Response | None, str]:
+    """The pre-dispatch admission gate: Retry-After, then half-open probe ownership.
+
+    Returns (limiter, bid, headers, response, action): ``"proceed"`` hands the
+    caller the limiter for the slot phase, ``"answer"`` means send
+    ``response``, ``"reroute"`` re-enters this gate with the returned route.
+    """
+    queue_mode, hard_max = _effective_admission(bid)
+    limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
+    if (
+        _retry_after_blocks_path(path)
+        and limiter.retry_probe_required()
+        and probe_lease["bid"] != bid
+    ):
+        bid, headers, response, action = await _pre_dispatch_probe_gate(
+            bid=bid,
+            headers=headers,
+            path=path,
+            cid=cid,
+            limiter=limiter,
+            retry_after_remaining=retry_after_remaining,
+            probe_lease=probe_lease,
+            finish_probe=finish_probe,
+            try_reroute=try_reroute,
+            wait_alternate=wait_alternate,
+            reroute=reroute,
+            wait_reval=wait_reval,
+        )
+        return limiter, bid, headers, response, action
+    if retry_after_remaining > 0:
+        bid, headers, response, action = await _pre_dispatch_retry_after(
+            bid=bid,
+            headers=headers,
+            path=path,
+            retry_after_remaining=retry_after_remaining,
+            source="pre-dispatch",
+            finish_probe=finish_probe,
+            release_on_reroute=True,
+            try_reroute=try_reroute,
+            wait_alternate=wait_alternate,
+            reroute=reroute,
+        )
+        if action == "reroute":
+            return limiter, bid, headers, None, "reroute"
+        if action == "answer":
+            return limiter, bid, headers, response, "answer"
+    # Same escape as the probe gate above; unlike that branch this one is
+    # reachable holding a lease on `bid`, which wait_for_alternate_probe refuses
+    # to park on (see its docstring — that way lies a lease cycle).
+    return limiter, bid, headers, None, "proceed"
+
+
+def _slot_remaining_wait(wait_deadline: float | None) -> float | None:
+    """This request's remaining queue-wait budget; None = unbounded."""
+    if wait_deadline is None:
+        return None
+    return wait_deadline - time.time()
+
+
+async def _post_slot_recheck(
+    *,
+    request: web.Request,
+    path: str,
+    cid: str,
+    bid: str,
+    headers: dict[str, str],
+    attempt: _Attempt,
+    held: _FairSlotContext,
+    model_label: str,
+    req_max_tokens: int | None,
+    via: str,
+    limiter: FairBearerLimiter,
+    counters: _Counters,
+    probe_lease: dict[str, str],
+    try_reroute: _TryReroute,
+) -> tuple[str, dict[str, str], web.Response | None, bool]:
+    """Re-check routing and probe state with the slot held.
+
+    Returns (bid, headers, response, give_back): ``give_back`` True means hand
+    the slot back and re-enter the pre-dispatch gate — this request must never
+    wait on, or dispatch to, a half-open bearer from inside a slot.
+    """
+    if _request_disconnected(request):
+        return bid, headers, _record_closed_before_dispatch(path, "post-queue", attempt), False
+    # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
+    # retune can demote) — log that, not the requested one.
+    _log_request_start(request, path, bid, cid, via, model_label, req_max_tokens, held.priority)
+    # A bearer can cross its 5h/7d target while this request is parked in its
+    # local fair queue. Re-run account routing from the original auth headers
+    # before surfacing a stale 429.
+    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
+    if retry_after_remaining > 0:
+        rerouted = try_reroute(bid, retry_after_remaining, "post-slot")
+        if rerouted is not None:
+            counters.exit_inflight(0)
+            return rerouted[0], rerouted[1], None, True
+        # Honor any outstanding upstream Retry-After for this bearer
+        # before we dispatch — don't spin a request against a
+        # known-closed window.
+        fast_fail = _retry_after_fast_fail_response(
+            bid, path, retry_after_remaining, source="post-slot"
+        )
+        if fast_fail is not None:
+            attempt.final_status = fast_fail.status
+            return bid, headers, fast_fail, False
+    if (
+        _retry_after_blocks_path(path)
+        and limiter.retry_probe_required()
+        and probe_lease["bid"] != bid
+    ):
+        # State changed while this request was queued. Give the
+        # slot back and re-enter the pre-queue gate; never wait
+        # on or dispatch a half-open bearer from inside a slot.
+        counters.exit_inflight(0)
+        return bid, headers, None, True
+    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
+    if retry_after_remaining > 0:
+        # A concurrent response can arm Retry-After after the
+        # post-slot snapshot above. Give this slot back and
+        # re-enter the deadline-bounded routing/probe gate;
+        # never sleep on Retry-After while counted inflight.
+        counters.exit_inflight(0)
+        return bid, headers, None, True
+    if _request_disconnected(request):
+        return bid, headers, _record_closed_before_dispatch(path, "pre-dispatch", attempt), False
+    return bid, headers, None, False
+
+
+async def _run_slot(
+    *,
+    request: web.Request,
+    path: str,
+    cid: str,
+    bid: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    url: str,
+    client_timeout: aiohttp.ClientTimeout,
+    via: str,
+    model: str,
+    model_label: str,
+    req_max_tokens: int | None,
+    is_priority: bool,
+    limiter: FairBearerLimiter,
+    probe_lease: dict[str, str],
+    wait_deadline: float | None,
+    finish_probe: _FinishProbe,
+    try_reroute: _TryReroute,
+) -> tuple[str, dict[str, str], web.Response | None, bool]:
+    """Acquire the fair-queue slot and run one dispatch attempt end to end.
+
+    Returns (bid, headers, response, reroute): a reroute means the slot was
+    given back and the caller must re-enter the pre-dispatch gate with the
+    returned route — it has already run its own finalize. Every other exit
+    answers with ``response`` and finalizes in the inner ``finally``. The queue
+    rollback, client-hold release and terminal probe release run here, once per
+    slot attempt.
+    """
+    bstate = bearer_state[bid]
+    slot_max_wait = _slot_remaining_wait(wait_deadline)
+    if slot_max_wait is not None and slot_max_wait <= 0.0:
+        finish_probe(success=False)
+        # Before registration: an expired budget must not create a
+        # client entry no terminal path would ever prune (Codex BLOCK
+        # on PR #217).
+        return bid, headers, _queue_wait_timeout_response(bid, cid, path, limiter, 0.0), False
+    cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
+    counters = _Counters(bid, cid, bstate, cstate)
+
+    if limiter.queue_enabled:
+        counters.enqueue(request, path)
+    else:
+        log(
+            f"queue-bypass method={request.method} path=/{path} bid={bid} "
+            f"cid={cid} inflight={state['inflight']} queue_mode={config.QUEUE_MODE}"
+        )
+
+    rerouted = False
+    try:
+        async with limiter.slot(cid, priority=is_priority, max_wait=slot_max_wait) as held:
+            counters.dequeue()
+            counters.enter_inflight()
+            t0 = time.time()
+            attempt = _attempt_for_request(request, bid, cid, via, model_label)
+            attempt.started_at = t0
+            try:
+                bid, headers, response, give_back = await _post_slot_recheck(
+                    attempt=attempt,
+                    held=held,
+                    request=request,
+                    path=path,
+                    cid=cid,
+                    bid=bid,
+                    headers=headers,
+                    model_label=model_label,
+                    req_max_tokens=req_max_tokens,
+                    via=via,
+                    limiter=limiter,
+                    counters=counters,
+                    probe_lease=probe_lease,
+                    try_reroute=try_reroute,
+                )
+                if give_back:
+                    rerouted = True
+                    return bid, headers, None, True
+                if response is not None:
+                    return bid, headers, response, False
+                try:
+                    forwarded = await _forward_with_retry(
+                        request,
+                        headers,
+                        body,
+                        path,
+                        via,
+                        url,
+                        client_timeout,
+                        attempt,
+                        bid,
+                        limiter,
+                        # Deadline (not a snapshot): every central attempt re-stamps
+                        # the REMAINING budget, so pushback sleeps between retries
+                        # keep eating it instead of re-granting central a full
+                        # window (Codex round-2 BLOCKER on PR #83).
+                        wait_deadline=wait_deadline,
+                        on_success_headers=(
+                            (lambda: finish_probe(success=True))
+                            if probe_lease["bid"] == bid
+                            else None
+                        ),
+                    )
+                    return bid, headers, forwarded, False
+                except _RetryAfterArmed:
+                    # The bearer we dispatched on answered with a Retry-After
+                    # too long to hold. Record the attempt (this is a REAL
+                    # upstream 429, so it must hit metrics/AIMD), release the
+                    # probe lease so the pre-dispatch gate below is reachable,
+                    # then re-enter routing. Setting `rerouted` suppresses the
+                    # finally-block finalize we just ran ourselves.
+                    await _finalize(
+                        counters,
+                        bid,
+                        limiter,
+                        bstate,
+                        attempt,
+                        t0,
+                        model,
+                        model_label,
+                        request,
+                        path,
+                    )
+                    finish_probe(success=False)
+                    rerouted = True
+                    return bid, headers, None, True
+            finally:
+                if not rerouted:
+                    try:
+                        await _finalize(
+                            counters,
+                            bid,
+                            limiter,
+                            bstate,
+                            attempt,
+                            t0,
+                            model,
+                            model_label,
+                            request,
+                            path,
+                        )
+                    finally:
+                        if probe_lease["bid"] == bid:
+                            finish_probe(success=200 <= attempt.final_status < 300)
+    except QueueWaitTimeout as queue_timeout:
+        # No slot within the wait bound: answer 503 while the client's
+        # transport is still open (the limiter already rolled its queue entry
+        # back via acquire's cancellation path, or never parked the request
+        # at all when the depth was already undrainable; no release is owed).
+        counters.dequeue()
+        finish_probe(success=False)
+        return (
+            bid,
+            headers,
+            _queue_wait_timeout_response(
+                bid, cid, path, limiter, slot_max_wait or 0.0, timeout=queue_timeout
+            ),
+            False,
+        )
+    finally:
+        # PR #575 B1 fix: if we got cancelled between incrementing `queued`
+        # and the inner `async with limiter.slot()` body decrementing it,
+        # roll back the queue counter so it doesn't leak forever and starve
+        # the /__throttle/health gauge.
+        if counters.queued_incremented:
+            counters.dequeue()
+            log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
+        counters.release_client_hold()
+        finish_probe(success=False)
+
+
+async def handler(request: web.Request) -> web.StreamResponse:
+    """Main reverse-proxy handler: queue, forward (with retry), and stream back.
+
+    Acquires a per-bearer fair slot, picks central-or-direct upstream, forwards
+    the request, streams the response, and on the way out applies AIMD feedback,
+    publishes metrics, fires the optional advisor, and parses SSE usage.
+
+    The phases are named helpers: ``_forward_headers`` / ``_read_forward_body`` /
+    ``_model_and_priority`` (preflight), ``_claim_route`` (route + probe claim),
+    ``_pre_dispatch_gate`` (Retry-After + probe gate), ``_run_slot`` →
+    ``_dispatch_in_slot`` → ``_post_slot_recheck`` (admission, dispatch,
+    finalize). The revalidation closures below stay here as thin delegators:
+    they hold this request's mutable route (``bid`` / ``headers`` /
+    ``probe_lease`` / ``seen_retry_after_bids``) while their bodies live in
+    module-level helpers.
+    """
+    handler_start = time.time()
+    path = request.match_info.get("path", "")
+    headers = _forward_headers(request)
+    bid = _bearer_id(request.headers)
+    cid = _client_id(request)
+    url, client_timeout, via = pick_target(path, request.query_string)
+    body, early_response = await _read_forward_body(request, path, bid, cid, via)
+    if early_response is not None:
+        return early_response
+    model, model_label, req_max_tokens, _req_has_tools, is_priority, synthetic_response = (
+        _model_and_priority(request, path, body)
+    )
+    if synthetic_response is not None:
+        return synthetic_response
+    early_response = _pre_queue_disconnect_response(request, path, bid, cid, via, model_label)
+    if early_response is not None:
+        return early_response
+    body = _shrink_forward_body(request, body, path, model_label, headers)
+    incoming_bid = bid
+    bid, route_base_headers, probe_lease = _claim_route(
+        request, path, headers, bid, model, req_max_tokens
+    )
 
     def finish_probe(*, success: bool) -> None:
-        lease_bid = probe_lease["bid"]
-        if lease_bid:
-            _limiter.finish_retry_probe(lease_bid, success=success)
-            probe_lease["bid"] = ""
+        _finish_retry_probe(probe_lease, success=success)
 
     # Cancellation can land at any await after the synchronous route+claim.
     # The task callback is a final safety net; normal exits release eagerly.
@@ -4323,43 +4961,29 @@ async def handler(request: web.Request) -> web.StreamResponse:
     if handler_task is not None:
         handler_task.add_done_callback(lambda _task: finish_probe(success=False))
 
-    async def wait_for_revalidation(waiter: Callable[[], Awaitable[None]]) -> bool:
-        wait = None if wait_deadline is None else wait_deadline - time.time()
-        if wait is not None and wait <= 0:
-            return False
-        try:
-            if wait is None:
-                await waiter()
-            else:
-                await asyncio.wait_for(waiter(), timeout=wait)
-        except TimeoutError:
-            return False
-        return True
-
-    def reroute_after_revalidation() -> None:
-        nonlocal bid, headers
-        headers = dict(route_base_headers)
-        bid, _, claimed = _route_account_and_claim_retry_probe(
-            headers,
-            incoming_bid,
-            method=request.method,
-            path=path,
-            model=model,
-            max_tokens=req_max_tokens,
-        )
-        probe_lease["bid"] = bid if claimed else ""
-        seen_retry_after_bids.add(bid)
-
-    max_wait = _effective_queue_max_wait(request.headers)
+    max_wait, wait_deadline = _queue_wait_budget(request, handler_start)
     if max_wait is not None and max_wait <= 0.0:
         # The upstream tier already spent the whole wait budget; don't park.
-        queue_mode, hard_max = _effective_admission(bid)
-        limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
-        finish_probe(success=False)
-        return _queue_wait_timeout_response(bid, cid, path, limiter, max_wait)
+        return await _expired_wait_budget_response(bid, cid, path, max_wait, finish_probe)
 
-    wait_deadline = None if max_wait is None else handler_start + max_wait
     seen_retry_after_bids = {bid}
+
+    def reroute_after_revalidation() -> tuple[str, dict[str, str]]:
+        nonlocal bid, headers
+        bid, headers = _reroute_from_base(
+            route_base_headers,
+            incoming_bid,
+            probe_lease,
+            seen_retry_after_bids,
+            request=request,
+            path=path,
+            model=model,
+            req_max_tokens=req_max_tokens,
+        )
+        return bid, headers
+
+    async def wait_for_revalidation(waiter: Callable[[], Awaitable[None]]) -> bool:
+        return await _wait_for_revalidation(waiter, wait_deadline)
 
     def try_retry_after_reroute(
         current_bid: str, remaining: float, source: str
@@ -4381,278 +5005,58 @@ async def handler(request: web.Request) -> web.StreamResponse:
     probe_waited: set[str] = set()
 
     async def wait_for_alternate_probe() -> bool:
-        """Park on another bearer's in-flight probe instead of fast-failing.
-
-        ``_account_routing_candidate_score`` scores a bearer ``inf`` while its
-        half-open probe is in flight, so for the lifetime of ONE probe the fleet
-        can look candidate-less even though a healthy account exists. Every
-        request that lands in that window used to take the 429 fast-fail — a
-        dead client turn. Measured 31/07/2026: the first request claimed the
-        probe on the one healthy account, and the next 24 got
-        ``retry-after-fast-fail source=pre-dispatch`` with no ``account-route``
-        line at all. One probe killed 24 tabs.
-
-        A probe resolves in a single upstream round trip, comfortably inside the
-        queue-wait budget, so waiting for it strictly dominates failing. Bounded
-        twice over: each alternate is waited on at most once per request, and
-        every wait goes through ``wait_for_revalidation``, which is capped by
-        ``wait_deadline``. That cap is only as strong as the queue-wait knob —
-        ``QUEUE_MAX_WAIT_S=0`` leaves ``wait_deadline`` None and this wait
-        unbounded, exactly as it already leaves the two sibling revalidation
-        waits below unbounded; the operator asking for no wait bound gets none
-        here either. Returns True when the caller should re-route.
-
-        Deliberately NOT wired into the post-slot fast-fail: that path holds a
-        dispatch slot, and parking while counted inflight is the failure mode
-        its neighbouring comments exist to prevent. The observed kill was
-        pre-dispatch on every one of the 24 requests.
-
-        A request that already holds a probe lease never parks. It is reachable
-        here: ``reroute_after_revalidation`` can claim a lease on the new bearer,
-        and a small non-zero window on that bearer then slips past the first
-        site's ``probe_lease["bid"] != bid`` guard. Parking in that state closes
-        a cycle — R1 holds A's lease and waits on B's probe while R2 holds B's
-        and waits on A's — and pins BOTH accounts invisible to routing for the
-        whole queue budget, which is the very pathology this function exists to
-        undo. Nothing is lost by refusing: a lease is only ever claimed on a
-        bearer routing scored under ``MAX_HOLD_RETRY_AFTER_S``, so the fast-fail
-        below returns None for it and the request dispatches rather than dying.
-        """
-        if probe_lease["bid"] or not _account_routing_enabled():
-            return False
-        for alt_bid in _limiter.probe_inflight_bids():
-            if alt_bid == bid or alt_bid in probe_waited:
-                continue
-            probe_waited.add(alt_bid)
-            log(f"retry-after-probe-wait bid={bid} alt={alt_bid} cid={cid} path=/{path}")
-            if await wait_for_revalidation(lambda b=alt_bid: _limiter.wait_retry_probe(b)):
-                return True
-        return False
+        return await _wait_for_alternate_probe(
+            bid=bid,
+            cid=cid,
+            path=path,
+            probe_lease=probe_lease,
+            probe_waited=probe_waited,
+            wait_reval=wait_for_revalidation,
+        )
 
     while True:
-        queue_mode, hard_max = _effective_admission(bid)
-        # PR #562 chooses the limiter by bearer, so two OAuth tokens get two
-        # independent slot pools. PR #573 makes that limiter a FairBearerLimiter,
-        # dispatched round-robin per client connection.
-        limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
-        retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
-        if (
-            _retry_after_blocks_path(path)
-            and limiter.retry_probe_required()
-            and probe_lease["bid"] != bid
-        ):
-            if retry_after_remaining > 0:
-                rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
-                if rerouted is not None:
-                    bid, headers = rerouted
-                    continue
-                # No candidate MAY mean "every alternate is mid-probe", not
-                # "every alternate is capped". Check before killing the turn.
-                if await wait_for_alternate_probe():
-                    reroute_after_revalidation()
-                    continue
-                if (
-                    fast_fail := _retry_after_fast_fail_response(
-                        bid, path, retry_after_remaining, source="pre-dispatch"
-                    )
-                ) is not None:
-                    finish_probe(success=False)
-                    return fast_fail
-                if not await wait_for_revalidation(limiter.wait_retry_after):
-                    return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
-                reroute_after_revalidation()
-                continue
-            if limiter.try_begin_retry_probe():
-                probe_lease["bid"] = bid
-            elif limiter.retry_probe_required():
-                if not limiter.retry_probe_inflight():
-                    # The deadline may have changed between the checks; retry
-                    # routing instead of dispatching without a lease.
-                    continue
-                if not await wait_for_revalidation(limiter.wait_retry_probe):
-                    return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
-                reroute_after_revalidation()
-                continue
-        if retry_after_remaining > 0:
-            rerouted = try_retry_after_reroute(bid, retry_after_remaining, "pre-dispatch")
-            if rerouted is not None:
-                finish_probe(success=False)
-                bid, headers = rerouted
-                continue
-            # Same escape as above; unlike that branch this one is reachable
-            # holding a lease on `bid`, which wait_for_alternate_probe refuses
-            # to park on (see its docstring — that way lies a lease cycle).
-            if await wait_for_alternate_probe():
-                reroute_after_revalidation()
-                continue
-            if (
-                fast_fail := _retry_after_fast_fail_response(
-                    bid, path, retry_after_remaining, source="pre-dispatch"
-                )
-            ) is not None:
-                return fast_fail
-        bstate = bearer_state[bid]
-        slot_max_wait = None
-        if wait_deadline is not None:
-            slot_max_wait = wait_deadline - time.time()
-            if slot_max_wait <= 0.0:
-                finish_probe(success=False)
-                # Before registration: an expired budget must not create a
-                # client entry no terminal path would ever prune (Codex BLOCK
-                # on PR #217).
-                return _queue_wait_timeout_response(bid, cid, path, limiter, 0.0)
-        cstate = bstate["clients"].setdefault(cid, {"queued": 0, "inflight": 0, "served": 0})
-        counters = _Counters(bid, cid, bstate, cstate)
-
-        if limiter.queue_enabled:
-            counters.enqueue(request, path)
-        else:
-            log(
-                f"queue-bypass method={request.method} path=/{path} bid={bid} "
-                f"cid={cid} inflight={state['inflight']} queue_mode={config.QUEUE_MODE}"
-            )
-
-        try:
-            async with limiter.slot(cid, priority=is_priority, max_wait=slot_max_wait) as held:
-                counters.dequeue()
-                counters.enter_inflight()
-                t0 = time.time()
-                attempt = _attempt_for_request(request, bid, cid, via, model_label)
-                attempt.started_at = t0
-                rerouted = None
-                try:
-                    if _request_disconnected(request):
-                        return _record_closed_before_dispatch(path, "post-queue", attempt)
-                    # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
-                    # retune can demote) — log that, not the requested one.
-                    _log_request_start(
-                        request, path, bid, cid, via, model_label, req_max_tokens, held.priority
-                    )
-                    # A bearer can cross its 5h/7d target while this request is
-                    # parked in its local fair queue. Re-run account routing from
-                    # the original auth headers before surfacing a stale 429.
-                    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
-                    if retry_after_remaining > 0:
-                        rerouted = try_retry_after_reroute(bid, retry_after_remaining, "post-slot")
-                        if rerouted is not None:
-                            counters.exit_inflight(0)
-                            bid, headers = rerouted
-                            continue
-                        # Honor any outstanding upstream Retry-After for this bearer
-                        # before we dispatch — don't spin a request against a
-                        # known-closed window.
-                        if (
-                            fast_fail := _retry_after_fast_fail_response(
-                                bid, path, retry_after_remaining, source="post-slot"
-                            )
-                        ) is not None:
-                            attempt.final_status = fast_fail.status
-                            return fast_fail
-                    if (
-                        _retry_after_blocks_path(path)
-                        and limiter.retry_probe_required()
-                        and probe_lease["bid"] != bid
-                    ):
-                        # State changed while this request was queued. Give the
-                        # slot back and re-enter the pre-queue gate; never wait
-                        # on or dispatch a half-open bearer from inside a slot.
-                        counters.exit_inflight(0)
-                        rerouted = (bid, headers)
-                        continue
-                    retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
-                    if retry_after_remaining > 0:
-                        # A concurrent response can arm Retry-After after the
-                        # post-slot snapshot above. Give this slot back and
-                        # re-enter the deadline-bounded routing/probe gate;
-                        # never sleep on Retry-After while counted inflight.
-                        counters.exit_inflight(0)
-                        rerouted = (bid, headers)
-                        continue
-                    if _request_disconnected(request):
-                        return _record_closed_before_dispatch(path, "pre-dispatch", attempt)
-                    try:
-                        return await _forward_with_retry(
-                            request,
-                            headers,
-                            body,
-                            path,
-                            via,
-                            url,
-                            client_timeout,
-                            attempt,
-                            bid,
-                            limiter,
-                            # Deadline (not a snapshot): every central attempt re-stamps
-                            # the REMAINING budget, so pushback sleeps between retries
-                            # keep eating it instead of re-granting central a full
-                            # window (Codex round-2 BLOCKER on PR #83).
-                            wait_deadline=wait_deadline,
-                            on_success_headers=(
-                                (lambda: finish_probe(success=True))
-                                if probe_lease["bid"] == bid
-                                else None
-                            ),
-                        )
-                    except _RetryAfterArmed:
-                        # The bearer we dispatched on answered with a Retry-After
-                        # too long to hold. Record the attempt (this is a REAL
-                        # upstream 429, so it must hit metrics/AIMD), release the
-                        # probe lease so the pre-dispatch gate below is reachable,
-                        # then re-enter routing. Setting `rerouted` suppresses the
-                        # finally-block finalize we just ran ourselves.
-                        await _finalize(
-                            counters,
-                            bid,
-                            limiter,
-                            bstate,
-                            attempt,
-                            t0,
-                            model,
-                            model_label,
-                            request,
-                            path,
-                        )
-                        finish_probe(success=False)
-                        rerouted = (bid, headers)
-                        continue
-                finally:
-                    if rerouted is None:
-                        try:
-                            await _finalize(
-                                counters,
-                                bid,
-                                limiter,
-                                bstate,
-                                attempt,
-                                t0,
-                                model,
-                                model_label,
-                                request,
-                                path,
-                            )
-                        finally:
-                            if probe_lease["bid"] == bid:
-                                finish_probe(success=200 <= attempt.final_status < 300)
-        except QueueWaitTimeout as queue_timeout:
-            # No slot within the wait bound: answer 503 while the client's
-            # transport is still open (the limiter already rolled its queue entry
-            # back via acquire's cancellation path, or never parked the request
-            # at all when the depth was already undrainable; no release is owed).
-            counters.dequeue()
-            finish_probe(success=False)
-            return _queue_wait_timeout_response(
-                bid, cid, path, limiter, slot_max_wait or 0.0, timeout=queue_timeout
-            )
-        finally:
-            # PR #575 B1 fix: if we got cancelled between incrementing `queued`
-            # and the inner `async with limiter.slot()` body decrementing it,
-            # roll back the queue counter so it doesn't leak forever and starve
-            # the /__throttle/health gauge.
-            if counters.queued_incremented:
-                counters.dequeue()
-                log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
-            counters.release_client_hold()
-            finish_probe(success=False)
+        limiter, bid, headers, response, action = await _pre_dispatch_gate(
+            path=path,
+            cid=cid,
+            bid=bid,
+            headers=headers,
+            probe_lease=probe_lease,
+            finish_probe=finish_probe,
+            try_reroute=try_retry_after_reroute,
+            wait_alternate=wait_for_alternate_probe,
+            reroute=reroute_after_revalidation,
+            wait_reval=wait_for_revalidation,
+        )
+        if action == "answer":
+            assert response is not None
+            return response
+        if action == "reroute":
+            continue
+        assert limiter is not None
+        bid, headers, response, reroute = await _run_slot(
+            request=request,
+            path=path,
+            cid=cid,
+            bid=bid,
+            headers=headers,
+            body=body,
+            url=url,
+            client_timeout=client_timeout,
+            via=via,
+            model=model,
+            model_label=model_label,
+            req_max_tokens=req_max_tokens,
+            is_priority=is_priority,
+            limiter=limiter,
+            probe_lease=probe_lease,
+            wait_deadline=wait_deadline,
+            finish_probe=finish_probe,
+            try_reroute=try_retry_after_reroute,
+        )
+        if reroute:
+            continue
+        assert response is not None
+        return response
 
 
 async def _check_upstream_egress() -> tuple[bool, str]:
