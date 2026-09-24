@@ -4677,15 +4677,10 @@ def _slot_remaining_wait(wait_deadline: float | None) -> float | None:
 async def _post_slot_recheck(
     *,
     request: web.Request,
-    path: str,
-    cid: str,
-    bid: str,
     headers: dict[str, str],
     attempt: _Attempt,
     held: _FairSlotContext,
-    model_label: str,
     req_max_tokens: int | None,
-    via: str,
     limiter: FairBearerLimiter,
     counters: _Counters,
     probe_lease: dict[str, str],
@@ -4696,7 +4691,15 @@ async def _post_slot_recheck(
     Returns (bid, headers, response, give_back): ``give_back`` True means hand
     the slot back and re-enter the pre-dispatch gate — this request must never
     wait on, or dispatch to, a half-open bearer from inside a slot.
+
+    The request's route facts come back out of ``attempt.context`` (this
+    attempt recorded them when it started) rather than as five more arguments.
     """
+    bid = str(attempt.context.get("bid", ""))
+    path = str(attempt.context.get("path", ""))
+    cid = str(attempt.context.get("cid", ""))
+    via = str(attempt.context.get("via", ""))
+    model_label = str(attempt.context.get("model", ""))
     if _request_disconnected(request):
         return bid, headers, _record_closed_before_dispatch(path, "post-queue", attempt), False
     # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
@@ -4746,22 +4749,16 @@ async def _post_slot_recheck(
 async def _run_slot(
     *,
     request: web.Request,
-    path: str,
     cid: str,
     bid: str,
     headers: dict[str, str],
     body: bytes | None,
-    url: str,
-    client_timeout: aiohttp.ClientTimeout,
-    via: str,
+    target: tuple[str, aiohttp.ClientTimeout, str],
     model: str,
-    model_label: str,
-    req_max_tokens: int | None,
-    is_priority: bool,
+    priority_hint: tuple[int | None, bool],
     limiter: FairBearerLimiter,
     probe_lease: dict[str, str],
     wait_deadline: float | None,
-    finish_probe: _FinishProbe,
     try_reroute: _TryReroute,
 ) -> tuple[str, dict[str, str], web.Response | None, bool]:
     """Acquire the fair-queue slot and run one dispatch attempt end to end.
@@ -4773,10 +4770,14 @@ async def _run_slot(
     rollback, client-hold release and terminal probe release run here, once per
     slot attempt.
     """
+    path = request.match_info.get("path", "")
+    url, client_timeout, via = target
+    model_label = model or "unknown"
+    req_max_tokens, is_priority = priority_hint
     bstate = bearer_state[bid]
     slot_max_wait = _slot_remaining_wait(wait_deadline)
     if slot_max_wait is not None and slot_max_wait <= 0.0:
-        finish_probe(success=False)
+        _finish_retry_probe(probe_lease, success=False)
         # Before registration: an expired budget must not create a
         # client entry no terminal path would ever prune (Codex BLOCK
         # on PR #217).
@@ -4805,13 +4806,8 @@ async def _run_slot(
                     attempt=attempt,
                     held=held,
                     request=request,
-                    path=path,
-                    cid=cid,
-                    bid=bid,
                     headers=headers,
-                    model_label=model_label,
                     req_max_tokens=req_max_tokens,
-                    via=via,
                     limiter=limiter,
                     counters=counters,
                     probe_lease=probe_lease,
@@ -4840,7 +4836,7 @@ async def _run_slot(
                         # window (Codex round-2 BLOCKER on PR #83).
                         wait_deadline=wait_deadline,
                         on_success_headers=(
-                            (lambda: finish_probe(success=True))
+                            (lambda: _finish_retry_probe(probe_lease, success=True))
                             if probe_lease["bid"] == bid
                             else None
                         ),
@@ -4865,7 +4861,7 @@ async def _run_slot(
                         request,
                         path,
                     )
-                    finish_probe(success=False)
+                    _finish_retry_probe(probe_lease, success=False)
                     rerouted = True
                     return bid, headers, None, True
             finally:
@@ -4885,14 +4881,16 @@ async def _run_slot(
                         )
                     finally:
                         if probe_lease["bid"] == bid:
-                            finish_probe(success=200 <= attempt.final_status < 300)
+                            _finish_retry_probe(
+                                probe_lease, success=200 <= attempt.final_status < 300
+                            )
     except QueueWaitTimeout as queue_timeout:
         # No slot within the wait bound: answer 503 while the client's
         # transport is still open (the limiter already rolled its queue entry
         # back via acquire's cancellation path, or never parked the request
         # at all when the depth was already undrainable; no release is owed).
         counters.dequeue()
-        finish_probe(success=False)
+        _finish_retry_probe(probe_lease, success=False)
         return (
             bid,
             headers,
@@ -4910,7 +4908,7 @@ async def _run_slot(
             counters.dequeue()
             log(f"queue-leak-rollback bid={bid} cid={cid} (cancelled before slot dispatch)")
         counters.release_client_hold()
-        finish_probe(success=False)
+        _finish_retry_probe(probe_lease, success=False)
 
 
 async def handler(request: web.Request) -> web.StreamResponse:
@@ -5035,22 +5033,16 @@ async def handler(request: web.Request) -> web.StreamResponse:
         assert limiter is not None
         bid, headers, response, reroute = await _run_slot(
             request=request,
-            path=path,
             cid=cid,
             bid=bid,
             headers=headers,
             body=body,
-            url=url,
-            client_timeout=client_timeout,
-            via=via,
+            target=(url, client_timeout, via),
             model=model,
-            model_label=model_label,
-            req_max_tokens=req_max_tokens,
-            is_priority=is_priority,
+            priority_hint=(req_max_tokens, is_priority),
             limiter=limiter,
             probe_lease=probe_lease,
             wait_deadline=wait_deadline,
-            finish_probe=finish_probe,
             try_reroute=try_retry_after_reroute,
         )
         if reroute:
