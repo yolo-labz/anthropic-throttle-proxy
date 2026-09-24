@@ -3543,6 +3543,88 @@ def _schedule_advisor(bid: str, final_status: int, path: str) -> None:
         advisor_task.add_done_callback(_background_tasks.discard)
 
 
+async def _finalize_ratelimit_feedback(
+    bid: str,
+    bstate: dict[str, object],
+    limiter: FairBearerLimiter,
+    attempt: _Attempt,
+    telemetry_path: bool,
+) -> None:
+    """Capture upstream rate-limit headroom and let the unified policy react.
+
+    Telemetry probes are excluded: their endpoint rate limit is not a
+    message-quota signal and would distort the fleet's headroom reading.
+    """
+    meta = attempt.meta
+    if not meta or telemetry_path:
+        return
+    bstate["last_ratelimit"] = meta
+    _publish_ratelimit_gauges(bid, meta)
+    try:
+        await _apply_unified(bid, bstate, limiter, meta)
+    except Exception as ue:
+        log(f"unified-error bid={bid}: {ue!r}")
+
+
+async def _finalize_aimd_feedback(
+    bid: str, limiter: FairBearerLimiter, attempt: _Attempt, telemetry_path: bool
+) -> None:
+    """Apply decorrelated AIMD feedback — unless another mechanism owns it.
+
+    The keepalive-hold applies AIMD per-throttle itself; re-applying here would
+    double-shrink and, on an exhausted 529/queue-timeout hold (terminal
+    synthetic 503), wrongly shrink the bearer (invariants 7 + 9 — Codex BLOCKER).
+    OAuth telemetry 429s (usage/profile) are also exempt — their endpoint rate
+    limit is not a message-quota signal (13/07 incident; see _forward_with_retry).
+    """
+    if attempt.aimd_owned or telemetry_path:
+        return
+    try:
+        await _aimd_feedback(bid, limiter, attempt)
+    except Exception as aimde:
+        log(f"aimd-error bid={bid}: {aimde!r}")
+
+
+async def _finalize_credential_note(
+    bid: str,
+    bstate: dict[str, object],
+    final_status: int,
+    attempt: _Attempt,
+    telemetry_path: bool,
+) -> None:
+    """Record the credential verdict for THIS bearer.
+
+    Telemetry paths are excluded on purpose: /api/oauth/usage has its own
+    endpoint-level 401/403/429 policy (13/07 incident) and must never be read
+    as the message credential failing.
+    """
+    if telemetry_path:
+        return
+    try:
+        _note_bearer_credential(bid, bstate, final_status, attempt.captured)
+    except Exception as cexc:
+        log(f"credential-note-error bid={bid}: {cexc!r}")
+
+
+def _log_final_status_reason(
+    bid: str, model_label: str, attempt: _Attempt, final_status: int, path: str
+) -> None:
+    """Emit the 413/400 body diagnostics for a finished request."""
+    if final_status == 413:
+        # PR #19/#20: log Anthropic's 413 response body so the operator
+        # can read the actual error reason. claude-code's TUI paraphrases
+        # every 413 as "Request too large (max 32MB)" regardless of cause.
+        # PR #20 drops the `and attempt.captured` guard — observed
+        # empirically that some upstream paths return 413 with an empty
+        # body, which made the guard short-circuit and leave the event
+        # entirely undiagnosed. _log_413_reason now handles None / empty
+        # captured by logging `reason=empty_body`, so every 413 produces
+        # at least one diagnostic line.
+        _log_413_reason(bid, model_label, attempt.captured)
+    elif final_status == 400:
+        _log_400_reason(path, attempt)
+
+
 async def _finalize(
     counters: _Counters,
     bid: str,
@@ -3569,26 +3651,9 @@ async def _finalize(
     if not telemetry_path:
         _history.observe(final_status, duration)
 
-    # Capture upstream rate-limit headroom for this bearer.
-    meta = attempt.meta
-    if meta and not telemetry_path:
-        bstate["last_ratelimit"] = meta
-        _publish_ratelimit_gauges(bid, meta)
-        try:
-            await _apply_unified(bid, bstate, limiter, meta)
-        except Exception as ue:
-            log(f"unified-error bid={bid}: {ue!r}")
+    await _finalize_ratelimit_feedback(bid, bstate, limiter, attempt, telemetry_path)
 
-    # The keepalive-hold applies AIMD per-throttle itself; re-applying here would
-    # double-shrink and, on an exhausted 529/queue-timeout hold (terminal
-    # synthetic 503), wrongly shrink the bearer (invariants 7 + 9 — Codex BLOCKER).
-    # OAuth telemetry 429s (usage/profile) are also exempt — their endpoint rate
-    # limit is not a message-quota signal (13/07 incident; see _forward_with_retry).
-    if not attempt.aimd_owned and not telemetry_path:
-        try:
-            await _aimd_feedback(bid, limiter, attempt)
-        except Exception as aimde:
-            log(f"aimd-error bid={bid}: {aimde!r}")
+    await _finalize_aimd_feedback(bid, limiter, attempt, telemetry_path)
 
     # Stamp the entitlement verdict HERE, not at the pushback loop's return:
     # `_maybe_fast_fail_throttle_direct` and the direct-fallback retry return
@@ -3599,32 +3664,13 @@ async def _finalize(
     # fast-fail 429 must not inherit the upstream attempt's fingerprint.
     _stamp_entitlement_refusal(attempt, bid)
 
-    # Credential verdict for THIS bearer. Telemetry paths are excluded on
-    # purpose: /api/oauth/usage has its own endpoint-level 401/403/429 policy
-    # (13/07 incident) and must never be read as the message credential failing.
-    if not telemetry_path:
-        try:
-            _note_bearer_credential(bid, bstate, final_status, attempt.captured)
-        except Exception as cexc:
-            log(f"credential-note-error bid={bid}: {cexc!r}")
+    await _finalize_credential_note(bid, bstate, final_status, attempt, telemetry_path)
 
     _schedule_advisor(bid, final_status, path)
 
     if attempt.captured and request.method == "POST" and MESSAGES_SUBPATH in path:
         _record_usage(model, model_label, attempt.captured, path)
-    if final_status == 413:
-        # PR #19/#20: log Anthropic's 413 response body so the operator
-        # can read the actual error reason. claude-code's TUI paraphrases
-        # every 413 as "Request too large (max 32MB)" regardless of cause.
-        # PR #20 drops the `and attempt.captured` guard — observed
-        # empirically that some upstream paths return 413 with an empty
-        # body, which made the guard short-circuit and leave the event
-        # entirely undiagnosed. _log_413_reason now handles None / empty
-        # captured by logging `reason=empty_body`, so every 413 produces
-        # at least one diagnostic line.
-        _log_413_reason(bid, model_label, attempt.captured)
-    elif final_status == 400:
-        _log_400_reason(path, attempt)
+    _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
     safe_path = _bounded_error_field(path, 256)
     safe_cid = _bounded_error_field(attempt.context.get("cid") or "?", 128)
@@ -4660,6 +4706,38 @@ def _aggregate_drain(drains: list[object], bypass_bearers: int = 0) -> tuple[int
     }
 
 
+def _limiter_observation(bearers: dict[str, dict], bid: str, ok: bool) -> dict | None:
+    """The bearer's limiter snapshot when it is a complete, testable observation.
+
+    ``None`` covers every form of untestable: bearer unusable, no snapshot, or
+    a snapshot without the ``queue_enabled`` flag. An untestable bearer never
+    counts as measured, so it keeps the lane from claiming saturation.
+    """
+    if not ok:
+        return None
+    snapshot = bearers[bid].get("limiter")
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("queue_enabled"), bool):
+        return None
+    return snapshot
+
+
+def _pool_reading(snapshot: dict) -> tuple[int, int, int, int] | None:
+    """``(cap, total, reserve, depth)`` for a queue-enabled snapshot, or None.
+
+    Incomplete when any field is absent/negative, and when ``reserve > total``
+    (the reserve is carved out of inflight, so a larger reserve is untrustworthy).
+    """
+    cap = _nonnegative_int(snapshot, "max_concurrent")
+    total = _nonnegative_int(snapshot, "inflight")
+    reserve = _nonnegative_int(snapshot, "priority_inflight")
+    depth = _nonnegative_int(snapshot, "queued_total")
+    if cap is None or cap <= 0 or total is None or reserve is None or depth is None:
+        return None
+    if reserve > total:
+        return None
+    return cap, total, reserve, depth
+
+
 def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
     """Whether every usable bearer's normal pool would park a new request.
 
@@ -4688,10 +4766,8 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
     bypass_count = 0
 
     for bid, ok in usable.items():
-        if not ok:
-            continue
-        snapshot = bearers[bid].get("limiter")
-        if not isinstance(snapshot, dict) or not isinstance(snapshot.get("queue_enabled"), bool):
+        snapshot = _limiter_observation(bearers, bid, ok)
+        if snapshot is None:
             continue
 
         # Queue mode off never parks a normal request. It is still a complete
@@ -4702,14 +4778,10 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
             bypass_count += 1
             continue
 
-        cap = _nonnegative_int(snapshot, "max_concurrent")
-        total = _nonnegative_int(snapshot, "inflight")
-        reserve = _nonnegative_int(snapshot, "priority_inflight")
-        depth = _nonnegative_int(snapshot, "queued_total")
-        if cap is None or cap <= 0 or total is None or reserve is None or depth is None:
+        reading = _pool_reading(snapshot)
+        if reading is None:
             continue
-        if reserve > total:
-            continue
+        cap, total, reserve, depth = reading
 
         measured_count += 1
         drains.append(snapshot.get("drain"))
