@@ -13,6 +13,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import { createQueueWaitStream } from "./queue-wait.mjs";
+import { normalizeContextForProvider } from "./normalize-families.mjs";
 
 type StatusUi = { setStatus(key: string, text: string | undefined): void };
 
@@ -20,8 +21,20 @@ export default function (pi: ExtensionAPI) {
   let ui: StatusUi | undefined;
 
   const native = openAICompletionsApi();
+  // Family-neutral replay (spec 2435): the adapter turns a FOREIGN `thinking`
+  // block into the assistant's own text when the target model sets
+  // requiresThinkingAsText, so a cross-family replay would hand the previous
+  // model's private reasoning to the new provider as conversation. Drop those
+  // blocks first and leave everything the adapter can synthesize to the
+  // adapter; a context with nothing foreign passes through untouched.
+  const streamSimpleForFamily = (model, context, options) => {
+    const normalized = normalizeContextForProvider(context?.messages, model?.provider);
+    return normalized.changed
+      ? native.streamSimple(model, { ...context, messages: normalized.messages }, options)
+      : native.streamSimple(model, context, options);
+  };
   const streamSimple = createQueueWaitStream({
-    streamSimple: native.streamSimple,
+    streamSimple: streamSimpleForFamily,
     createEventStream: createAssistantMessageEventStream,
     onWait: (info) => {
       try {
