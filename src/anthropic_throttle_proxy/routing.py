@@ -36,6 +36,7 @@ import json
 import os
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Final
 from urllib.parse import urlsplit
@@ -939,6 +940,138 @@ def _answers_a_dropped_call(message: Any) -> bool:
     )
 
 
+def _chat_fit_skip_reason(raw: bytes, target: str) -> str | None:
+    """Why this body needs no fitting at all, or None when it must be examined.
+
+    The cheap no-op contract first, before any parse: no body, the trim disabled by
+    env, a target that is not the Z.AI coding endpoint, or a body already inside
+    the budget. ``target`` goes through the SAME predicate as the text normalizer,
+    so the two request-shaping transforms cannot disagree about which lane they
+    may rewrite.
+    """
+    if not raw:
+        return "empty"
+    if CHAT_MAX_BODY_BYTES <= 0:
+        return "disabled"
+    if not _is_text_only_endpoint(target):
+        return "other-endpoint"
+    if len(raw) <= CHAT_MAX_BODY_BYTES:
+        return "under-budget"
+    return None
+
+
+def _parse_chat_object(raw: bytes) -> tuple[dict[str, Any] | None, str]:
+    """The body as a JSON object, or ``(None, reason)`` for the two unusable shapes."""
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return None, "non-json"
+    if not isinstance(obj, dict):
+        return None, "non-object"
+    return obj, ""
+
+
+def _chat_turn_window(obj: dict[str, Any]) -> tuple[list[Any], list[Any], list[Any]] | None:
+    """Split a chat body into ``(anchor, head, tail)``, or None when it has no messages.
+
+    The system prompt is an ANCHOR and is never dropped: trimming the assignment to
+    make room is how a model ends up confidently answering a task it can no longer
+    see. The last ``CHAT_KEEP_TAIL`` turns are the protected tail, so the model
+    still sees the live turn and the exchange before it. ``head`` is everything
+    before the tail, i.e. the only turns a cut may drop; an empty ``head`` means
+    the protected tail is the whole remainder.
+    """
+    messages = obj.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return None
+    first = messages[0]
+    anchor = [first] if isinstance(first, dict) and first.get("role") == "system" else []
+    live = messages[len(anchor) :]
+    if len(live) <= CHAT_KEEP_TAIL:
+        return anchor, [], live
+    return anchor, live[: len(live) - CHAT_KEEP_TAIL], live[-CHAT_KEEP_TAIL:]
+
+
+def _fitted_size_probe(
+    obj: dict[str, Any], anchor: list[Any], live: list[Any], head: list[Any]
+) -> Callable[[int], int]:
+    """A ``dropped -> serialized size`` probe, sized once instead of re-dumped.
+
+    Measured with the WIDEST count the breadcrumb could report, so the fitted body
+    can never come out a few bytes over budget. Re-serializing the whole body per
+    probe would stall the event loop: a 3 MB body costs ~10 full dumps that way,
+    and ``client_max_size`` admits up to 128 MiB. ``json.dumps`` is context-free
+    for a single turn, so each turn's size here is exact.
+    """
+    probe = {"role": "system", "content": CHAT_TRIM_NOTE.format(n=len(head))}
+    empty = len(json.dumps({**obj, "messages": []}).encode())
+    anchor_bytes = len(json.dumps(anchor[0]).encode()) if anchor else 0
+    breadcrumb_bytes = len(json.dumps(probe).encode())
+    sizes = [len(json.dumps(turn).encode()) for turn in live]
+    suffix = [0] * (len(live) + 1)
+    for index in range(len(live) - 1, -1, -1):
+        suffix[index] = suffix[index + 1] + sizes[index]
+
+    def fitted_bytes(dropped: int) -> int:
+        """Serialized body size after dropping ``dropped`` of the oldest turns."""
+        kept = len(anchor) + (1 if dropped else 0) + len(live) - dropped
+        return (
+            empty
+            + anchor_bytes
+            + (breadcrumb_bytes if dropped else 0)
+            + suffix[dropped]
+            + 2 * (kept - 1)
+        )
+
+    return fitted_bytes
+
+
+def _smallest_fitting_cut(
+    fitted_bytes: Callable[[int], int], head: list[Any], tail: list[Any]
+) -> int | None:
+    """The fewest oldest turns to drop, or None when no cut is safe and sufficient.
+
+    Dropping a prefix only ever shrinks the body, so binary-search the count. An
+    orphaned tool answer is an invalid transcript, and the proxy must never be the
+    reason a forward dies: the cut snaps forward past any answer whose call was
+    dropped too (dropping more only shrinks, so the budget still holds), and when
+    every remaining cut would keep an orphan — or would eat the live tail — None
+    says so and the caller forwards the original body.
+
+    ``0`` is reported when no turn needs dropping at all: the turns fit and only
+    the client's own formatting did not.
+    """
+    if fitted_bytes(0) <= CHAT_MAX_BODY_BYTES:
+        return 0
+    if fitted_bytes(len(head)) > CHAT_MAX_BODY_BYTES:
+        return None
+    low, high = 1, len(head)
+    while low < high:
+        middle = (low + high) // 2
+        if fitted_bytes(middle) <= CHAT_MAX_BODY_BYTES:
+            high = middle
+        else:
+            low = middle + 1
+    while low < len(head) and _answers_a_dropped_call(head[low]):
+        low += 1
+    if _answers_a_dropped_call(head[low] if low < len(head) else tail[0]):
+        return None
+    return low
+
+
+def _rebuild_fitted_body(
+    obj: dict[str, Any], anchor: list[Any], head: list[Any], tail: list[Any], dropped: int
+) -> bytes:
+    """The rewritten body: anchor, breadcrumb, surviving head, protected tail."""
+    obj["messages"] = (
+        anchor
+        + [{"role": "system", "content": CHAT_TRIM_NOTE.format(n=dropped)}]
+        + head[dropped:]
+        + tail
+    )
+    return json.dumps(obj).encode()
+
+
 def fit_chat_completions_body(raw: bytes, target: str) -> tuple[bytes, dict[str, Any]]:
     """Drop the oldest turns until the body fits this lane's unpublished ceiling.
 
@@ -963,62 +1096,24 @@ def fit_chat_completions_body(raw: bytes, target: str) -> tuple[bytes, dict[str,
     receive something mangled.
     """
     original_bytes = len(raw)
-    if not raw:
-        return raw, {"fitted": False, "reason": "empty", "original_bytes": original_bytes}
-    if CHAT_MAX_BODY_BYTES <= 0:
-        return raw, {"fitted": False, "reason": "disabled", "original_bytes": original_bytes}
-    if not _is_text_only_endpoint(target):
-        return raw, {
-            "fitted": False,
-            "reason": "other-endpoint",
-            "original_bytes": original_bytes,
-        }
-    if original_bytes <= CHAT_MAX_BODY_BYTES:
-        return raw, {"fitted": False, "reason": "under-budget", "original_bytes": original_bytes}
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        return raw, {"fitted": False, "reason": "non-json", "original_bytes": original_bytes}
-    if not isinstance(obj, dict):
-        return raw, {"fitted": False, "reason": "non-object", "original_bytes": original_bytes}
-    messages = obj.get("messages")
-    if not isinstance(messages, list) or not messages:
+    skip = _chat_fit_skip_reason(raw, target)
+    if skip is not None:
+        return raw, {"fitted": False, "reason": skip, "original_bytes": original_bytes}
+    obj, parse_reason = _parse_chat_object(raw)
+    if obj is None:
+        return raw, {"fitted": False, "reason": parse_reason, "original_bytes": original_bytes}
+    turns = _chat_turn_window(obj)
+    if turns is None:
         return raw, {"fitted": False, "reason": "no-messages", "original_bytes": original_bytes}
-    first = messages[0]
-    anchor = [first] if isinstance(first, dict) and first.get("role") == "system" else []
-    live = messages[len(anchor) :]
-    if len(live) <= CHAT_KEEP_TAIL:
+    anchor, head, tail = turns
+    if not head:
+        # The protected tail is the whole remainder: there is nothing left to drop.
         return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
-    tail = live[-CHAT_KEEP_TAIL:]
-    head = live[: len(live) - len(tail)]
-    # Measured with the WIDEST count the breadcrumb could report, so the fitted
-    # body can never come out a few bytes over budget.
-    probe = {"role": "system", "content": CHAT_TRIM_NOTE.format(n=len(head))}
-
-    # Size the turns ONCE and search over the numbers. Re-serializing the whole
-    # body per probe would stall the event loop: a 3 MB body costs ~10 full dumps
-    # that way, and ``client_max_size`` admits up to 128 MiB. ``json.dumps`` is
-    # context-free for a single turn, so each turn's size here is exact.
-    empty = len(json.dumps({**obj, "messages": []}).encode())
-    anchor_bytes = len(json.dumps(anchor[0]).encode()) if anchor else 0
-    breadcrumb_bytes = len(json.dumps(probe).encode())
-    sizes = [len(json.dumps(turn).encode()) for turn in live]
-    suffix = [0] * (len(live) + 1)
-    for index in range(len(live) - 1, -1, -1):
-        suffix[index] = suffix[index + 1] + sizes[index]
-
-    def fitted_bytes(dropped: int) -> int:
-        """Serialized body size after dropping ``dropped`` of the oldest turns."""
-        kept = len(anchor) + (1 if dropped else 0) + len(live) - dropped
-        return (
-            empty
-            + anchor_bytes
-            + (breadcrumb_bytes if dropped else 0)
-            + suffix[dropped]
-            + 2 * (kept - 1)
-        )
-
-    if fitted_bytes(0) <= CHAT_MAX_BODY_BYTES:
+    fitted_bytes = _fitted_size_probe(obj, anchor, head + tail, head)
+    cut = _smallest_fitting_cut(fitted_bytes, head, tail)
+    if cut is None:
+        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
+    if cut == 0:
         # Nothing needs to go: the turns fit, only the client's own formatting did
         # not. Never drop history to win an argument about whitespace.
         return raw, {
@@ -1026,28 +1121,7 @@ def fit_chat_completions_body(raw: bytes, target: str) -> tuple[bytes, dict[str,
             "reason": "fits-when-compact",
             "original_bytes": original_bytes,
         }
-    if fitted_bytes(len(head)) > CHAT_MAX_BODY_BYTES:
-        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
-    # Dropping a prefix only ever shrinks the body, so binary-search the count.
-    low, high = 1, len(head)
-    while low < high:
-        middle = (low + high) // 2
-        if fitted_bytes(middle) <= CHAT_MAX_BODY_BYTES:
-            high = middle
-        else:
-            low = middle + 1
-    # An orphaned tool answer is an invalid transcript, and the proxy must never
-    # be the reason a forward dies: drop the answer too. Dropping more only
-    # shrinks, so the budget still holds.
-    while low < len(head) and _answers_a_dropped_call(head[low]):
-        low += 1
-    if _answers_a_dropped_call(head[low] if low < len(head) else tail[0]):
-        # Every remaining cut would keep an orphan, or would eat the live tail.
-        return raw, {"fitted": False, "reason": "unfittable", "original_bytes": original_bytes}
-    obj["messages"] = (
-        anchor + [{"role": "system", "content": CHAT_TRIM_NOTE.format(n=low)}] + head[low:] + tail
-    )
-    trimmed = json.dumps(obj).encode()
+    trimmed = _rebuild_fitted_body(obj, anchor, head, tail, cut)
     # The belt on the sizing arithmetic: never emit a body we did not verify, and
     # never replace the client's bytes with something bigger.
     if len(trimmed) > CHAT_MAX_BODY_BYTES or len(trimmed) >= original_bytes:
@@ -1057,7 +1131,7 @@ def fit_chat_completions_body(raw: bytes, target: str) -> tuple[bytes, dict[str,
         "reason": "fitted",
         "original_bytes": original_bytes,
         "final_bytes": len(trimmed),
-        "turns_dropped": low,
+        "turns_dropped": cut,
     }
 
 
