@@ -280,6 +280,69 @@ def _exhausted_reason(meters: list[dict[str, Any]]) -> str:
     return f"{label} meter at {pct_text}"
 
 
+def _plan_text(lane: dict[str, Any]) -> str:
+    """The plan sentence for a lane row: a meter's own ``planType`` wins."""
+    for meter in lane.get("meters") or []:
+        if isinstance(meter, dict) and meter.get("planType"):
+            return str(meter["planType"])
+    plan = lane.get("plan")
+    return plan if isinstance(plan, str) else ""
+
+
+def _binding_pct(meters: list[dict[str, Any]]) -> float | None:
+    """The fullest READABLE meter — the number that decides this lane's next request."""
+    filled = [m["used_pct"] for m in meters if m["used_pct"] is not None]
+    return max(filled) if filled else None
+
+
+def _capacity_verdict(
+    status: str, meters: list[dict[str, Any]], binding_pct: float | None, reason: str
+) -> tuple[str, str]:
+    """Downgrade an ``ok`` verdict the METERS contradict. Returns (status, reason).
+
+    Two independent walls, both invisible to a status that only repeats the
+    probe's own words:
+
+    A full meter REFUSES. Measured 07/08/2026: with the shared `codex` meter at
+    100%, `codex exec` answers "You've hit your usage limit ... try again at Aug
+    8th, 2026 12:48 PM" - yet the row still read `ok`, because the status came
+    verbatim from the probe report and never looked at the meters. That is the
+    one thing this table must never do: render a lane with no capacity as
+    healthy. Guarded on `ok` so a worse verdict (refused/error/stale) still
+    wins - a stale 100% is untrusted, not proven exhausted, and could already
+    have reset. An `unlimited` meter is live capacity that no percentage can
+    express, so a lane holding one is never exhausted: Copilot's premium bucket
+    runs to 0 while chat and completions keep serving, and calling that lane
+    dead would be the opposite lie.
+
+    A drained wallet refuses exactly like a full window: DeepSeek answers 402 at
+    zero. It cannot reach the branch above because money has no percentage, so
+    it needs its own - otherwise the lane that actually died is the one row
+    still reading `ok`.
+    """
+    if status != "ok":
+        return status, reason
+    has_unlimited = any(m.get("unlimited") for m in meters)
+    if not has_unlimited and binding_pct is not None and binding_pct >= 100.0:
+        # #189 derives this verdict from the meter, so the row arrived with an
+        # empty tooltip: EXHAUSTED and nothing to say why or until when. State
+        # what was measured - which meter is full and when it reopens - and
+        # never paraphrase the provider; if the probe DID carry the upstream's
+        # own words, those win, because they are first-hand.
+        return "exhausted", (reason or _exhausted_reason(meters))
+    drained = next(
+        (
+            m
+            for m in meters
+            if isinstance(m.get("balance_total"), float) and m["balance_total"] <= 0
+        ),
+        None,
+    )
+    if drained is not None:
+        return "exhausted", (reason or f"balance {drained['note']} — the lane refuses at zero")
+    return status, reason
+
+
 def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     kind = str(lane.get("kind") or "?")
     lane_id = str(lane.get("id") or "?")
@@ -298,57 +361,13 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     # Fullest first: the meter that decides whether this lane can take the next
     # request must be the one the eye lands on. Unreadable meters sort last.
     meters.sort(key=lambda m: (m["used_pct"] is None, -(m["used_pct"] or 0.0)))
-    plan = ""
-    for meter in lane.get("meters") or []:
-        if isinstance(meter, dict) and meter.get("planType"):
-            plan = str(meter["planType"])
-            break
-    if not plan and isinstance(lane.get("plan"), str):
-        plan = lane["plan"]
-    # The binding meter is the fullest one — that is the number that decides
-    # whether this lane can take the next request.
-    filled = [m["used_pct"] for m in meters if m["used_pct"] is not None]
-    binding_pct = max(filled) if filled else None
-    # A full meter REFUSES. Measured 07/08/2026: with the shared `codex` meter
-    # at 100%, `codex exec` answers "You've hit your usage limit ... try again
-    # at Aug 8th, 2026 12:48 PM" — yet the row still read `ok`, because the
-    # status came verbatim from the probe report and never looked at the
-    # meters. That is the one thing this table must never do: render a lane
-    # with no capacity as healthy. Guarded on `ok` so a worse verdict
-    # (refused/error/stale) still wins — a stale 100% is untrusted, not proven
-    # exhausted, and could already have reset.
-    # An `unlimited` meter is live capacity that no percentage can express, so a
-    # lane holding one is never exhausted — Copilot's premium bucket runs to 0
-    # while chat and completions keep serving, and calling that lane dead would
-    # be the opposite lie.
-    has_unlimited = any(m.get("unlimited") for m in meters)
+    plan = _plan_text(lane)
+    binding_pct = _binding_pct(meters)
     # .strip() before the truthiness test below: a probe that writes "   "
-    # would otherwise win the `or` and render a blank tooltip — the exact bug
+    # would otherwise win the `or` and render a blank tooltip - the exact bug
     # this reason exists to close.
     reason = str(lane.get("reason") or "").strip()
-    if status == "ok" and not has_unlimited and binding_pct is not None and binding_pct >= 100.0:
-        status = "exhausted"
-        # #189 derives this verdict from the meter, so the row arrived with an
-        # empty tooltip: EXHAUSTED and nothing to say why or until when. State
-        # what was measured — which meter is full and when it reopens — and
-        # never paraphrase the provider; if the probe DID carry the upstream's
-        # own words, those win, because they are first-hand.
-        reason = reason or _exhausted_reason(meters)
-    # A drained wallet refuses exactly like a full window: DeepSeek answers 402
-    # at zero. It cannot reach the branch above because money has no
-    # percentage, so it needs its own — otherwise the lane that actually died
-    # is the one row still reading `ok`.
-    drained = next(
-        (
-            m
-            for m in meters
-            if isinstance(m.get("balance_total"), float) and m["balance_total"] <= 0
-        ),
-        None,
-    )
-    if status == "ok" and drained is not None:
-        status = "exhausted"
-        reason = reason or f"balance {drained['note']} — the lane refuses at zero"
+    status, reason = _capacity_verdict(status, meters, binding_pct, reason)
     icon, provider = _PROVIDER.get(kind, ("🤖", kind or "provider"))
     identity = provider
     if kind == "codex" and ":" in lane_id:
