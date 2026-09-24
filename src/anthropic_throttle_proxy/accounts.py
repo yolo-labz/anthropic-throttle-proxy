@@ -364,6 +364,39 @@ def _locked_in(
     return _fmt_duration(remaining) if remaining > 0 else None
 
 
+def _account_fields(
+    acct: dict[str, Any],
+    bearer: dict[str, Any] | None,
+    endpoint: dict[str, dict[str, Any]] | None,
+    now: float,
+) -> tuple[dict[str, Any], str | None]:
+    """One account's window fields by source precedence, plus the endpoint error.
+
+    ``endpoint`` (fresh ``/api/oauth/usage`` reading — account-scoped server
+    truth, immune to idle-account staleness and token rotation) → ``proxy``
+    (this proxy's last-seen unified headers for the account's current bearer) →
+    ``cache`` (an AGED persisted endpoint reading, so a restart that wiped the
+    in-memory cache still renders this account — the #128 blind spot) →
+    ``none``. The winning source names itself in ``src``, and only the cache
+    leg stamps ``cache_age`` because only it is aged.
+    """
+    usage, endpoint_err = _endpoint_usage(endpoint, acct["path"], now)
+    if usage is not None:
+        return _fields_from_endpoint_usage(usage, now), endpoint_err
+    fields = _fields_from_proxy_headers(bearer, now)
+    if fields["src"] != "none":
+        return fields, endpoint_err
+    cached = _endpoint_cache.get(acct["path"])
+    cached_usage = cached.get("usage") if isinstance(cached, dict) else None
+    if not isinstance(cached_usage, dict):
+        return fields, endpoint_err
+    fields = _fields_from_cache_usage(cached_usage, now)
+    fetched = cached.get("fetched")
+    if isinstance(fetched, (int, float)):
+        fields["cache_age"] = _fmt_duration(now - fetched)
+    return fields, endpoint_err
+
+
 def account_view(
     bearers: list[dict[str, Any]],
     now: float,
@@ -371,36 +404,18 @@ def account_view(
 ) -> list[dict[str, Any]]:
     """Merge credential files, endpoint truth, and per-bearer proxy state.
 
-    Source precedence per account (the ``src`` field names the winner):
-    ``endpoint`` — fresh ``/api/oauth/usage`` reading (account-scoped server
-    truth; immune to idle-account staleness and token rotation) →
-    ``proxy`` — this proxy's last-seen unified headers for the account's
-    current bearer → ``cache`` — an AGED persisted endpoint reading (survives a
-    restart that wiped the in-memory cache; #128) → ``none``. Accounts whose
-    current bearer the proxy has not seen still render — "B invisible" was
-    exactly the 10/06 blind spot, and a budget-locked un-routed account after a
-    restart is the #128 blind spot (six "—" + a cold-poll 429 note).
+    Source precedence per account is ``_account_fields``' job (the ``src`` field
+    names the winner). Accounts whose current bearer the proxy has not seen
+    still render — "B invisible" was exactly the 10/06 blind spot, and a
+    budget-locked un-routed account after a restart is the #128 blind spot (six
+    "—" + a cold-poll 429 note).
     """
     by_id = {b["bearer_id"]: b for b in bearers}
     out: list[dict[str, Any]] = []
     for acct in account_snapshot():
         bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
         endpoint_entry = _endpoint_cache.get(acct["path"]) or (endpoint or {}).get(acct["path"])
-        usage, endpoint_err = _endpoint_usage(endpoint, acct["path"], now)
-        if usage is not None:
-            fields = _fields_from_endpoint_usage(usage, now)
-        else:
-            fields = _fields_from_proxy_headers(bearer, now)
-            if fields["src"] == "none":
-                # No fresh endpoint, no unified header — fall back to the AGED
-                # persisted reading so a restart-blanked account still renders.
-                cached = _endpoint_cache.get(acct["path"])
-                cached_usage = cached.get("usage") if isinstance(cached, dict) else None
-                if isinstance(cached_usage, dict):
-                    fields = _fields_from_cache_usage(cached_usage, now)
-                    fetched = cached.get("fetched")
-                    if isinstance(fetched, (int, float)):
-                        fields["cache_age"] = _fmt_duration(now - fetched)
+        fields, endpoint_err = _account_fields(acct, bearer, endpoint, now)
         email, email_verified = guard_email(acct["path"])
         out.append(
             {
