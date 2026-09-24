@@ -343,24 +343,51 @@ def _capacity_verdict(
     return status, reason
 
 
-def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
-    kind = str(lane.get("kind") or "?")
-    lane_id = str(lane.get("id") or "?")
-    status = str(lane.get("status") or "unknown")
-    if stale and status == "ok":
-        status = "stale"
+def _lane_meters(lane: dict[str, Any], kind: str, now: float) -> list[dict[str, Any]]:
+    """This lane's meters, fullest first, each carrying its own reset clock.
+
+    Kind decides only which meters a lane *has*: window meters for the
+    window-metered kinds, the copilot pair for copilot. Any lane may carry a
+    balance, so that is the fallback and it is checked last — a window-metered
+    lane keeps its windows.
+    """
     meters = _window_meters(lane) if kind in {"codex", "zai", "mimo"} else []
     if kind == "copilot":
         meters = _copilot_meters(lane)
     if not meters:
-        # Any lane may carry a balance; kind decides only which OTHER meters it
-        # has. Checked last so a window-metered lane keeps its windows.
         meters = _balance_meters(lane)
     for meter in meters:
         meter["reset_in"] = _reset_in(meter.get("resets_at"), now)
     # Fullest first: the meter that decides whether this lane can take the next
     # request must be the one the eye lands on. Unreadable meters sort last.
     meters.sort(key=lambda m: (m["used_pct"] is None, -(m["used_pct"] or 0.0)))
+    return meters
+
+
+def _lane_identity(kind: str, lane_id: str, provider: str) -> str:
+    """Provider label, qualified by the lane's own suffix when it has one.
+
+    codex lanes are labelled by account letter (upper-cased) and copilot lanes
+    by their raw suffix; anything else, or no suffix at all, stays the plain
+    provider label.
+    """
+    if ":" not in lane_id:
+        return provider
+    suffix = lane_id.rsplit(":", 1)[1]
+    if kind == "codex":
+        return f"{provider} {suffix.upper()}"
+    if kind == "copilot":
+        return f"{provider} {suffix}"
+    return provider
+
+
+def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
+    kind = str(lane.get("kind") or "?")
+    lane_id = str(lane.get("id") or "?")
+    status = str(lane.get("status") or "unknown")
+    if stale and status == "ok":
+        status = "stale"
+    meters = _lane_meters(lane, kind, now)
     plan = _plan_text(lane)
     binding_pct = _binding_pct(meters)
     # .strip() before the truthiness test below: a probe that writes "   "
@@ -369,16 +396,11 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     reason = str(lane.get("reason") or "").strip()
     status, reason = _capacity_verdict(status, meters, binding_pct, reason)
     icon, provider = _PROVIDER.get(kind, ("🤖", kind or "provider"))
-    identity = provider
-    if kind == "codex" and ":" in lane_id:
-        identity = f"{provider} {lane_id.rsplit(':', 1)[1].upper()}"
-    elif kind == "copilot" and ":" in lane_id:
-        identity = f"{provider} {lane_id.rsplit(':', 1)[1]}"
     return {
         "id": lane_id,
         "kind": kind,
         "provider": provider,
-        "identity": identity,
+        "identity": _lane_identity(kind, lane_id, provider),
         "icon": icon,
         "family": _FAMILY.get(kind, kind),
         "status": status,
