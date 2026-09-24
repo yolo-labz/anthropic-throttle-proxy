@@ -1663,6 +1663,22 @@ def _account_route_decision(
     return None, False
 
 
+def _seed_cold_start_probation(snapshot: list[dict[str, object]]) -> None:
+    """Seed probation for configured cold-start accounts.
+
+    Routing runs before limiter allocation; this is synchronous so the seed
+    cannot race a first-await claim on the same bearer.
+    """
+    for acct in snapshot:
+        configured_bid = acct.get("bearer_id")
+        if (
+            isinstance(acct.get("token"), str)
+            and isinstance(configured_bid, str)
+            and configured_bid not in config.bearer_limiters
+        ):
+            _limiter.require_retry_probe(configured_bid)
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -1700,14 +1716,7 @@ def _route_account_if_enabled(
         if allow_retry_probe:
             # Routing runs before limiter allocation. Seed probation for
             # configured cold-start accounts synchronously (no first-await race).
-            for acct in snapshot:
-                configured_bid = acct.get("bearer_id")
-                if (
-                    isinstance(acct.get("token"), str)
-                    and isinstance(configured_bid, str)
-                    and configured_bid not in config.bearer_limiters
-                ):
-                    _limiter.require_retry_probe(configured_bid)
+            _seed_cold_start_probation(snapshot)
     selected, dead_fallback = _account_route_decision(
         snapshot,
         incoming_bid,
@@ -2513,6 +2522,70 @@ async def _emit_sse_error_terminal(
         pass
 
 
+async def _capture_throttle_upstream(
+    upstream: aiohttp.ClientResponse, meta: dict[str, str]
+) -> tuple[int, dict[str, str], bytearray]:
+    """Read a non-2xx upstream into the captured form, marker headers included.
+
+    Surfaces the proxy-private queue-timeout marker to the caller so the hold
+    can classify a relayed central queue-timeout 503 (no AIMD shrink —
+    invariant 7). ``_extract_ratelimit`` does NOT capture this header, so add
+    it explicitly — and ONLY from a sibling proxy tier (MARKER_HEADER present),
+    never a spoofing upstream (anti-spoof, matching ``_stream_response``;
+    Codex BLOCKER).
+    """
+    from .ratelimit import _extract_zai_ratelimit_from_body
+
+    upstream_body = await upstream.read()
+    note_upstream_auth(upstream.status, upstream_body)
+    meta.update(
+        _extract_zai_ratelimit_from_body(
+            upstream_body,
+            quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
+        )
+    )
+    if config.MARKER_HEADER in upstream.headers:
+        # A sibling tier answered. Record THAT — an entitlement verdict is
+        # authoritative in both directions (present = gate, absent = central
+        # already ruled it out), so the hold must be able to tell "no sibling
+        # spoke" from "sibling said no" (Codex third pass).
+        meta[config.MARKER_HEADER] = "1"
+        for header in (
+            config.QUEUE_TIMEOUT_HEADER,
+            config.ENTITLEMENT_REFUSAL_HEADER,
+        ):
+            if header in upstream.headers:
+                meta[header] = upstream.headers[header]
+    captured = bytearray(upstream_body[: 1024 * 1024])
+    return upstream.status, meta, captured
+
+
+async def _pipe_sse_upstream(
+    request: web.Request,
+    upstream: aiohttp.ClientResponse,
+    sse_resp: web.StreamResponse,
+    cancel_keepalive: Callable[[], Awaitable[None]] | None,
+) -> bytearray:
+    """Pipe a 2xx upstream body into the prepared response, capturing ≤ 1 MiB.
+
+    Stops the keepalive emitter BEFORE the first body byte so it can never
+    interleave a ``: keepalive`` comment into the real SSE frames.
+    """
+    notify_success_headers(request, upstream.status)
+    if cancel_keepalive is not None:
+        await cancel_keepalive()
+    captured = bytearray()
+    cap_limit = 1024 * 1024
+    async for chunk in upstream.content.iter_any():
+        if not chunk:
+            break
+        await sse_resp.write(chunk)
+        if len(captured) < cap_limit:
+            captured.extend(chunk[: cap_limit - len(captured)])
+    await sse_resp.write_eof()
+    return captured
+
+
 async def _forward_once_into_sse(
     request: web.Request,
     headers: dict,
@@ -2542,7 +2615,7 @@ async def _forward_once_into_sse(
     retry).
     """
     from .pacing import _pace_dispatch
-    from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
+    from .ratelimit import _extract_ratelimit
 
     connector = aiohttp.TCPConnector(ssl=True)
     async with aiohttp.ClientSession(
@@ -2556,51 +2629,12 @@ async def _forward_once_into_sse(
                 meta = _extract_ratelimit(upstream.headers)
                 # Throttle / error status: return body as captured, no piping.
                 if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
-                    upstream_body = await upstream.read()
-                    note_upstream_auth(upstream.status, upstream_body)
-                    meta.update(
-                        _extract_zai_ratelimit_from_body(
-                            upstream_body,
-                            quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
-                        )
-                    )
-                    # Surface the proxy-private queue-timeout marker to the
-                    # caller so the hold can classify a relayed central
-                    # queue-timeout 503 (no AIMD shrink — invariant 7).
-                    # _extract_ratelimit does NOT capture this header, so add
-                    # it explicitly — and ONLY from a sibling proxy tier
-                    # (MARKER_HEADER present), never a spoofing upstream
-                    # (anti-spoof, matching _stream_response; Codex BLOCKER).
-                    if config.MARKER_HEADER in upstream.headers:
-                        # A sibling tier answered. Record THAT — an entitlement
-                        # verdict is authoritative in both directions (present
-                        # = gate, absent = central already ruled it out), so
-                        # the hold must be able to tell "no sibling spoke"
-                        # from "sibling said no" (Codex third pass).
-                        meta[config.MARKER_HEADER] = "1"
-                        for header in (
-                            config.QUEUE_TIMEOUT_HEADER,
-                            config.ENTITLEMENT_REFUSAL_HEADER,
-                        ):
-                            if header in upstream.headers:
-                                meta[header] = upstream.headers[header]
-                    captured = bytearray(upstream_body[: 1024 * 1024])
-                    return upstream.status, meta, captured, None
+                    status, meta, captured = await _capture_throttle_upstream(upstream, meta)
+                    return status, meta, captured, None
                 # 2xx: stop the keepalive emitter BEFORE the first body byte
                 # so it can never interleave a `: keepalive` comment into the
                 # real SSE frames, then pipe chunks into the prepared sse_resp.
-                notify_success_headers(request, upstream.status)
-                if cancel_keepalive is not None:
-                    await cancel_keepalive()
-                captured = bytearray()
-                cap_limit = 1024 * 1024
-                async for chunk in upstream.content.iter_any():
-                    if not chunk:
-                        break
-                    await sse_resp.write(chunk)
-                    if len(captured) < cap_limit:
-                        captured.extend(chunk[: cap_limit - len(captured)])
-                await sse_resp.write_eof()
+                captured = await _pipe_sse_upstream(request, upstream, sse_resp, cancel_keepalive)
                 return upstream.status, meta, captured, None
         except (TimeoutError, aiohttp.ClientError) as exc:
             if isinstance(exc, aiohttp.ClientConnectionResetError):
@@ -4389,6 +4423,58 @@ def _verify_suspected_key(suspected: dict[str, list[str]]) -> str:
     return ";".join(f"{email}={','.join(labels)}" for email, labels in sorted(suspected.items()))
 
 
+async def _probe_suspected_labels(flagged: set[str], paths: dict[str, str]) -> None:
+    """Force-verify every flagged label the profile probe has not resolved yet.
+
+    Two passes: the first promotes whatever the probe can resolve, the second
+    re-checks after a short sleep for labels that were still mid-refresh.
+    """
+    from . import accounts
+
+    for attempt in range(2):
+        unresolved = [
+            paths[lb]
+            for lb in sorted(flagged)
+            if lb in paths and not accounts.guard_email(paths[lb])[1]
+        ]
+        if not unresolved:
+            break
+        if attempt:
+            await asyncio.sleep(_IDENTITY_VERIFY_RETRY_S)
+        for path in unresolved:
+            await accounts.force_verify_email(path)
+
+
+def _warn_identity_probe_verdict(key: str, verdict: dict[str, object]) -> None:
+    """Publish gauges and the debounced warnings for a fresh probe verdict."""
+    duplicates = verdict.get("duplicates") or {}
+    still_suspected = verdict.get("suspected") or {}
+    M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
+    M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in still_suspected.values()))
+    # Debounce against interleaved emitters (Codex MINOR): a health poll may
+    # have already warned this verdict while we slept — only the verifier
+    # warns unverified, so that branch is its own once-per-epoch emitter.
+    new_sig = _identity_sig(verdict)
+    changed = new_sig != _identity_warn_state["sig"]
+    _identity_warn_state["sig"] = new_sig
+    if duplicates and changed:
+        _emit_identity_warning(duplicates, verified=True)
+    if still_suspected:
+        if _identity_warn_state["emitted_sus"] != new_sig:
+            _identity_warn_state["emitted_sus"] = new_sig
+            _emit_identity_warning(still_suspected, verified=False)
+    else:
+        # Resolved (verified or cleared): re-arm the unverified emitter so a
+        # LATER re-suspicion (a real new transition) warns again.
+        _identity_warn_state["emitted_sus"] = ""
+        if not duplicates and changed:
+            log(
+                f"account-identity: suspected collision cleared by profile probe ({key})"
+                " — stale .claude.json label (e.g. promote credential swap); stores"
+                " verified distinct."
+            )
+
+
 async def _verify_suspected_identity(key: str, suspected: dict[str, list[str]]) -> None:
     """Probe the live tokens behind a SUSPECTED collision before alarming.
 
@@ -4404,45 +4490,8 @@ async def _verify_suspected_identity(key: str, suspected: dict[str, list[str]]) 
     try:
         flagged = {label for labels in suspected.values() for label in labels}
         paths = {a["label"]: a["path"] for a in accounts.account_snapshot()}
-        for attempt in range(2):
-            unresolved = [
-                paths[lb]
-                for lb in sorted(flagged)
-                if lb in paths and not accounts.guard_email(paths[lb])[1]
-            ]
-            if not unresolved:
-                break
-            if attempt:
-                await asyncio.sleep(_IDENTITY_VERIFY_RETRY_S)
-            for path in unresolved:
-                await accounts.force_verify_email(path)
-        verdict = _account_identity_verdict() or {}
-        duplicates = verdict.get("duplicates") or {}
-        still_suspected = verdict.get("suspected") or {}
-        M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
-        M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in still_suspected.values()))
-        # Debounce against interleaved emitters (Codex MINOR): a health poll may
-        # have already warned this verdict while we slept — only the verifier
-        # warns unverified, so that branch is its own once-per-epoch emitter.
-        new_sig = _identity_sig(verdict)
-        changed = new_sig != _identity_warn_state["sig"]
-        _identity_warn_state["sig"] = new_sig
-        if duplicates and changed:
-            _emit_identity_warning(duplicates, verified=True)
-        if still_suspected:
-            if _identity_warn_state["emitted_sus"] != new_sig:
-                _identity_warn_state["emitted_sus"] = new_sig
-                _emit_identity_warning(still_suspected, verified=False)
-        else:
-            # Resolved (verified or cleared): re-arm the unverified emitter so a
-            # LATER re-suspicion (a real new transition) warns again.
-            _identity_warn_state["emitted_sus"] = ""
-            if not duplicates and changed:
-                log(
-                    f"account-identity: suspected collision cleared by profile probe ({key})"
-                    " — stale .claude.json label (e.g. promote credential swap); stores"
-                    " verified distinct."
-                )
+        await _probe_suspected_labels(flagged, paths)
+        _warn_identity_probe_verdict(key, _account_identity_verdict() or {})
     except Exception as exc:
         log(f"account-identity verification error (non-fatal): {exc!r}")
 
