@@ -218,10 +218,14 @@ boxes ticked.
    ```sh
    pkg=$(systemctl --user show anthropic-throttle-proxy.service \
      -p ExecStart --value | grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-0\.1\.0')
+   # Glob the interpreter version: the deployed package moved from python3.13 to
+   # python3.14 (verified 22/09/2026), and a hard-coded path silently greps a file
+   # that does not exist — which reads as "the code is missing".
    grep -c 'def root_probe\|app.router.add_get("/", root_probe' \
-     "$pkg/lib/python3.13/site-packages/anthropic_throttle_proxy/proxy.py"
+     "$pkg"/lib/python3.*/site-packages/anthropic_throttle_proxy/proxy.py
    # expect >= 2
    ```
+   Same rule for a bare `[ -f ... ]` existence check on that path: glob it.
 7. **Nix gcroot guard** — canonical HM-files must be reachable from a gcroot:
    ```sh
    nix-store --query --roots "$HM_FILES" | grep -E 'system-[0-9]+-link|/run/current-system'

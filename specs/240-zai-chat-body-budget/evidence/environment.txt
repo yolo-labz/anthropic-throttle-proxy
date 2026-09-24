@@ -1,0 +1,14 @@
+head under test: 46608142756da3171f7d93be0f639743c783c58b (plus the uncommitted gate response below)
+date: 2026-09-22T07:58:17-03:00
+host: desktop  (Linux 6.12.108)
+branch: 240-zai-chat-body-budget
+base: origin/main = dfa297cce51526055a0b6c8fc7464ddae65cf5d9
+python: Python 3.13.8
+uv: uv 0.9.2
+aiohttp: 3.13.5
+proxy app client_max_size (the reachability fact):
+src/anthropic_throttle_proxy/proxy.py:5247:    app = web.Application(client_max_size=128 * 1024 * 1024)
+src/anthropic_throttle_proxy/ingress.py:1245:    app = web.Application(client_max_size=128 * 1024 * 1024, middlewares=[_count_served])
+aiohttp's own default + its 413 text (neither matches the observed message):
+128:        client_max_size: int = 1024**2,
+321:            "Maximum request body size {} exceeded, "

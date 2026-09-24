@@ -1,0 +1,8 @@
+### The NEW test's own assertion, driven against the OLD head 4660814
+date: 2026-09-22T08:12:11-03:00
+Only the meta-tuple unpacking is adapted (the old function returns bytes); the
+fixture (tests/test_routing_chat_budget.py::tool_transcript) and the assertion
+(tests/...::orphans) are used verbatim from the test module.
+
+new test's assertion on the OLD head: 16/30 trimmed transcripts FAIL it
+VERDICT: the test IS a falsifier on the old head
