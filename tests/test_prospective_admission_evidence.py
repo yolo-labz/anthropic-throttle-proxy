@@ -38,7 +38,7 @@ async def test_prospective_spec_fails_only_at_the_six_measured_budget_contracts(
             await process.wait()
     output = stdout.decode()
     assert process.returncode == 1, output
-    assert re.search(r"(?m)^6 failed, 3 passed in [\d.]+s$", output), output
+    assert re.search(r"(?m)^6 failed, 3 passed(?:, \d+ warnings?)? in [\d.]+s$", output), output
     failures = re.findall(r"(?m)^E +check_admission\.BudgetExceeded: (.+)$", output)
     assert Counter(failures) == {
         "output reservation: 120 > fictional budget 100": 3,
