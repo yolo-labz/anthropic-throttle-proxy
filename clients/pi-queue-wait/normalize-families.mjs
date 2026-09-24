@@ -44,6 +44,21 @@ export const providerFamily = (provider) => {
   return null;
 };
 
+// Providers whose requests this extension wraps with the normalizer. The
+// harness imports THIS list instead of keeping its own copy, so coverage and
+// registration cannot drift apart: an in-place switch is only allowed toward a
+// provider that is actually normalized (spec 2435). A listed provider that the
+// host does not have is harmless: a switch is only ever attempted toward a
+// model the registry already resolved, so it cannot name an absent provider.
+//
+// deepseek is included: its catalog is Pi-provided (builtin), and a measured
+// fixture proved that registering it with just {api, streamSimple} keeps all
+// three builtin models and its baseUrl intact.
+export const NORMALIZED_PROVIDERS = Object.freeze(["zai", "mimo-desktop", "deepseek"]);
+
+export const normalizesProvider = (provider) =>
+  NORMALIZED_PROVIDERS.includes(String(provider ?? ""));
+
 const REASONING_BLOCK_TYPES = new Set(["thinking", "reasoning"]);
 
 export const boundaryMarker = (family) => `[context normalized from ${family}]`;

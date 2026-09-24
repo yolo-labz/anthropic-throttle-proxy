@@ -64,6 +64,11 @@ export default function (pi: ExtensionAPI) {
     // MiMo is user-configured, not built in. Do not invent an empty provider
     // (or auth entry) on hosts without it; models.json is loaded by this point.
     if (ctx.modelRegistry.getProvider("mimo-desktop")) register("mimo-desktop");
+    // DeepSeek ships in Pi's own catalog, so the overlay only needs {api,
+    // streamSimple}: a measured fixture confirms all three builtin models and
+    // the baseUrl survive registration. The registry guard keeps a host with no
+    // DeepSeek at all from gaining an empty one.
+    if (ctx.modelRegistry.getProvider("deepseek")) register("deepseek");
   });
   pi.on("agent_start", (_event, ctx) => {
     ui = ctx.ui;
