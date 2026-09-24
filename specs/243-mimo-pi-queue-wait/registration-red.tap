@@ -1,0 +1,39 @@
+TAP version 13
+# Subtest: mimo extension: absent MiMo configuration creates no provider or auth entry
+not ok 1 - mimo extension: absent MiMo configuration creates no provider or auth entry
+  ---
+  duration_ms: 1546.538922
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:322:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+        'zai',
+    +   'mimo-desktop'
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 'zai'
+  actual:
+    0: 'zai'
+    1: 'mimo-desktop'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-243-mimo-pi-queue-wait/clients/pi-queue-wait/mimo-replay.test.mjs:330:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1740.29233

@@ -1,9 +1,9 @@
 # pi-queue-wait
 
 A Pi extension that keeps a **stamped queue-timeout rejection** from a local
-[anthropic-throttle-proxy](../../README.md) z.ai lane pending and retries it
-after the advised delay, instead of losing the turn to a transient admission
-failure (spec 227).
+[anthropic-throttle-proxy](../../README.md) ZAI or MiMo lane pending and retries
+it after the advised delay, instead of losing the turn to a transient admission
+failure (specs 227/243).
 
 ## What happens without it
 
@@ -23,9 +23,15 @@ retry, transparently.
 
 ## What it does
 
-- Intercepts **only** `provider=zai`, models `glm-5.3-flash` and `glm-5.3`, POSTs to a
-  permitted loopback HTTP endpoint (default `http://127.0.0.1:8766`) with the
-  exact path `/api/coding/paas/v4/chat/completions`.
+- Intercepts **only** POSTs on these provider-bound loopback HTTP tuples:
+
+  | Provider | Models | Port | Exact path |
+  |---|---|---|---|
+  | `zai` | `glm-5.3-flash`, `glm-5.3` | `8766` | `/api/coding/paas/v4/chat/completions` |
+  | `mimo-desktop` | configured `mimo-*` models using `openai-completions` | `8773` | `/v1/chat/completions` |
+
+  MiMo never inherits ZAI's port/path or vice versa; no model catalog is added.
+  Other MiMo providers, direct upstreams and legacy bridge ports pass through.
 - Treats a response as a queue rejection only when **all** hold: status 503,
   both stamps exactly `1`, no redirect (final URL equals the request URL),
   body byte-equal to the sentence above plus its trailing newline, and the
@@ -50,20 +56,33 @@ retry, transparently.
   only, a response-header overlay (`x-should-retry: false`) prevents native
   retries from bypassing the outer wait budget. The original headers stay untouched.
 - No toggle commands (`queue-wait-off` / `queue-wait-on` do not exist):
-  disabling is removing/reloading this extension only. Unregistering `zai` at
-  runtime could erase another extension's merged provider overlay.
+  disabling is removing/reloading this extension only. Unregistering a provider
+  at runtime could erase another extension's merged overlay.
 
-## Candidate status
+## Source-only delivery status
 
-**Not approved for installation pending exact-head review.** The original
-candidate was denied despite 76 passing tests. A newly bounded
-[retry-safety follow-up](../../specs/232-pi-queue-retry-safety/plan.md) addresses
-native retry accounting, terminal semantics, clock-failure reporting and abort
-identity, with both GLM models covered. The expanded tests failed 10 cases before
-the fix and pass 89/89 afterward. The [original DENY](../../specs/227-pi-queue-wait/transport-review.md)
-is preserved; green tests do not replace the different-family release gate.
+The [original DENY](../../specs/227-pi-queue-wait/transport-review.md) is preserved.
+Main already contains the subsequent native retry accounting, strict terminal
+semantics, clock/abort handling and zero-usage fixes from PR #228. Spec 243 reuses
+that code; it does not reopen the frozen worker candidate.
 
-## Install (after release gates pass)
+The [MiMo acceptance evidence](../../specs/243-mimo-pi-queue-wait/evidence.md)
+records RED→GREEN on **actual Pi 0.85.1**, including 210–241 s advice and native
+`maxRetries > 0`. Long waits use an injected sleep; cancellation also exercises
+the real timer. Tests use synthetic auth and an ephemeral loopback HTTP server,
+never the live proxy. No installation, reload, restart or live recovery claim is
+part of this source delivery.
+
+Run both suites (no inference; Pi must already be available):
+
+```sh
+PI_CODING_AGENT_ROOT=/path/to/pi-coding-agent \
+  node --test clients/pi-queue-wait/*.test.mjs
+```
+
+Missing Pi or a version other than 0.85.1 fails the MiMo gate rather than skipping.
+
+## Install (separate operator-authorized activation only)
 
 Copy this directory into your Pi extensions directory:
 
@@ -77,10 +96,12 @@ loader and imports the sibling plain-ESM `queue-wait.mjs`. The native adapter
 is imported from `@earendil-works/pi-ai/compat`, the loader-safe public entry
 that re-exports the OpenAI-completions factory.
 
-Registration is
-`pi.registerProvider("zai", { api: "openai-completions", streamSimple })` —
-no models/baseUrl/apiKey/headers — so your configured z.ai auth, endpoint,
-models, and request options are preserved.
+Registration uses only `{ api: "openai-completions", streamSimple }` — no
+models/baseUrl/apiKey/headers. ZAI keeps its existing load-time overlay. MiMo is
+overlaid at `session_start` **only if `mimo-desktop` is already configured**;
+absent configuration creates no empty provider/auth entry. Both providers retain
+their configured auth, endpoints, models and caller options. Adding MiMo
+configuration after session start requires a separately authorized extension reload.
 
 ## Knobs
 
@@ -94,7 +115,7 @@ there is no config/env surface in v1):
 | `maxRejections` | `32` | Number of queue rejections that are each followed by exactly one re-dispatch. The `(maxRejections + 1)`-th rejection ends the request with the synthetic give-up error — never the original stamped 503. |
 | `fallbackRetryAfterMs` | `15_000` | Wait used when `Retry-After` is missing, unparsable, or ≤ 0 (conservative, non-hot). |
 | `jitterMaxMs` | `1_000` | Strictly positive jitter bound added to every wait. |
-| `allowedBaseUrls` | *(unset)* | **DI-only test seam.** Exact `http://` loopback base URLs whose origin is additionally eligible. Never set it in production wiring; omission keeps the strict `:8766` default. |
+| `allowedBaseUrls` | *(unset)* | **DI-only test seam.** Exact `http://` loopback base URLs whose origin is additionally eligible. Never set it in production wiring; omission keeps each provider's strict port/path. |
 | `onWait(info \| null)` | no-op | Counters-only wait signal: `{ attempt, delayMs, retryAfterMs, fallback, waitedMs }`, `null` clears. |
 
 Exhaustion/abort surface as ordinary assistant errors whose text is explicit
@@ -106,10 +127,10 @@ the model layer re-enters a hot loop:
 
 ## Safety envelope
 
-- The request-URL gate requires `http:`, a loopback host (`127.0.0.0/8`,
-  `::1`, `localhost`), the exact completions path, port `8766` (or an
-  explicitly allowed test base), and that the final response URL matches —
-  a redirect can never carry the stamps into the verdict.
+- The production request-URL gate requires `http:`, a canonical loopback host
+  (`127.0.0.1`, `::1`, `localhost`), the provider's exact port/path above, no
+  credentials/query/fragment, and the same final response URL. Redirects cannot
+  lend provenance. The DI-only seam may allow other explicit loopback test origins.
 - The sleep happens only after the native attempt has fully ended, so native
   per-attempt HTTP timeouts are done before waiting; the parent AbortSignal
   stays live through the sleep and aborting emits no retry.

@@ -716,28 +716,6 @@ def remap_body_model(raw: bytes, new_model: str) -> bytes:
 TEXT_ONLY_PATH = "/api/coding/paas/v4/chat/completions"
 
 
-def _is_zai_text_only_endpoint(target: str) -> bool:
-    """True only for the real Z.AI coding chat-completions endpoint.
-
-    Both request-shaping transforms below key on this ONE predicate, so they can
-    never disagree about which lane they are allowed to rewrite: a central tier,
-    a sibling protocol path, or any other provider keeps the original bytes.
-    """
-    try:
-        endpoint = urlsplit(target)
-        # ``.port`` raises on a non-numeric or out-of-range port, so it belongs
-        # inside this guard: the previous inline check swallowed that with the
-        # whole-body try/except, and a config URL must never break a forward.
-        return (
-            endpoint.scheme == "https"
-            and endpoint.hostname == "api.z.ai"
-            and endpoint.port in (None, 443)
-            and endpoint.path == TEXT_ONLY_PATH
-        )
-    except ValueError:
-        return False  # malformed URL or port: not an endpoint this proxy can identify
-
-
 # The kinds this function models. A dict block whose kind is NOT one of
 # these is unmodelled, not malformed: it gets a placeholder instead of aborting
 # the rewrite (see ``_part_as_text``).
@@ -759,6 +737,34 @@ _KNOWN_BLOCK_TYPES = frozenset(
 )
 
 
+def _tool_call_text(part: dict[str, Any]) -> str:
+    """``[tool call: name(args)]`` for one tool-use block. Raises if malformed.
+
+    The name and the arguments are what a text-only lane can still carry, and
+    neither is truncated: a half-printed argument list would be worse for the
+    model reading it than a shortened call.
+    """
+    fn = part.get("function", {})
+    if not isinstance(fn, dict):
+        raise ValueError("invalid function block")
+    name = part.get("name", part.get("toolName", fn.get("name")))
+    if not isinstance(name, str) or not name:
+        raise ValueError("invalid tool name")
+    args = part.get("arguments", part.get("input", fn.get("arguments", "")))
+    args = args if isinstance(args, str) else json.dumps(args)
+    return f"[tool call: {name}({args})]"
+
+
+def _tool_result_text(part: dict[str, Any]) -> str:
+    """``[tool result] …`` for one result block. Raises if malformed."""
+    body = part.get("content")
+    if isinstance(body, list):
+        body = "\n".join(t for p in body if (t := _part_as_text(p)) is not None)
+    if not isinstance(body, str):
+        raise ValueError("invalid tool result")
+    return f"[tool result] {body}"
+
+
 def _part_as_text(part: Any) -> str | None:
     """Render one content block, drop thinking, or reject a malformed shape.
 
@@ -776,22 +782,9 @@ def _part_as_text(part: Any) -> str | None:
     if kind in ("thinking", "redacted_thinking"):
         return None
     if kind in ("toolCall", "tool_use", "function_call", "function"):
-        fn = part.get("function", {})
-        if not isinstance(fn, dict):
-            raise ValueError("invalid function block")
-        name = part.get("name", part.get("toolName", fn.get("name")))
-        if not isinstance(name, str) or not name:
-            raise ValueError("invalid tool name")
-        args = part.get("arguments", part.get("input", fn.get("arguments", "")))
-        args = args if isinstance(args, str) else json.dumps(args)
-        return f"[tool call: {name}({args})]"
+        return _tool_call_text(part)
     if kind in ("toolResult", "tool_result"):
-        body = part.get("content")
-        if isinstance(body, list):
-            body = "\n".join(t for p in body if (t := _part_as_text(p)) is not None)
-        if not isinstance(body, str):
-            raise ValueError("invalid tool result")
-        return f"[tool result] {body}"
+        return _tool_result_text(part)
     if kind in ("image", "image_url", "input_image"):
         return "[image omitted: this lane accepts text only]"
     # A well-formed block of a kind this lane does not model (`document`,
@@ -809,6 +802,55 @@ def _part_as_text(part: Any) -> str | None:
     raise ValueError("unsupported content block")
 
 
+def _is_text_only_endpoint(target: str) -> bool:
+    """True only for the Z.AI coding endpoint this rewrite is written for.
+
+    Any other host - including other Z.AI paths and other providers - gets the
+    request byte-identically, which is what keeps the rewrite from acting as a
+    silent content filter everywhere else. Both request-shaping transforms key
+    on this ONE predicate, so the normalizer and the chat-body budget can never
+    disagree about which lane they may rewrite.
+    """
+    try:
+        endpoint = urlsplit(target)
+        # ``.port`` raises on a non-numeric or out-of-range port, so it belongs
+        # inside this guard: the body-budget caller probes this predicate
+        # outside any try/except, and a config URL must never break a forward.
+        return (
+            endpoint.scheme == "https"
+            and endpoint.hostname == "api.z.ai"
+            and endpoint.port in (None, 443)
+            and endpoint.path == TEXT_ONLY_PATH
+        )
+    except ValueError:
+        return False  # malformed URL or port: not an endpoint this proxy can identify
+
+
+def _flatten_message(message: dict[str, Any], *, is_last: bool) -> dict[str, Any] | None:
+    """Flatten one message's block list to text, or None to drop the message.
+
+    ``None`` means the turn flattened to nothing: it carried no text, no native
+    tool protocol and is not a tool-role turn. Dropping that is only safe for an
+    INTERIOR turn - the final message survives with a placeholder, because a
+    request whose last turn is empty is the shape that 1210s this endpoint.
+
+    A content field of an unmodelled shape raises, and the caller turns that
+    into a byte-identical passthrough rather than a partial rewrite.
+    """
+    content = message.get("content")
+    if isinstance(content, list) and content:
+        texts = [t for p in content if (t := _part_as_text(p)) is not None]
+        message = {**message, "content": "\n".join(texts)}
+        native_tool = "tool_calls" in message or "tool_call_id" in message
+        if not texts and not native_tool and message.get("role") != "tool":
+            if not is_last:
+                return None
+            message["content"] = "[no text content]"
+    elif content is not None and not isinstance(content, (str, list)):
+        raise ValueError("unsupported content shape")
+    return message
+
+
 def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
     """Flatten internal content blocks only at the known Z.AI coding endpoint.
 
@@ -816,9 +858,11 @@ def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
     turn emptied by removing thinking is dropped (or gets a final placeholder).
     Malformed/unknown shapes pass through byte-identically, without partial edits.
     """
-    if not raw or not _is_zai_text_only_endpoint(target):
+    if not raw:
         return raw
     try:
+        if not _is_text_only_endpoint(target):
+            return raw
         obj = json.loads(raw)
         if not isinstance(obj, dict):
             return raw
@@ -826,21 +870,13 @@ def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
         if not isinstance(messages, list) or not messages:
             return raw
         kept = []
+        last = len(messages) - 1
         for index, message in enumerate(messages):
             if not isinstance(message, dict):
                 return raw
-            content = message.get("content")
-            if isinstance(content, list) and content:
-                texts = [t for p in content if (t := _part_as_text(p)) is not None]
-                message = {**message, "content": "\n".join(texts)}
-                native_tool = "tool_calls" in message or "tool_call_id" in message
-                if not texts and not native_tool and message.get("role") != "tool":
-                    if index != len(messages) - 1:
-                        continue
-                    message["content"] = "[no text content]"
-            elif content is not None and not isinstance(content, (str, list)):
-                return raw
-            kept.append(message)
+            flattened = _flatten_message(message, is_last=index == last)
+            if flattened is not None:
+                kept.append(flattened)
         if kept == messages:
             return raw
         obj["messages"] = kept
@@ -931,7 +967,7 @@ def fit_chat_completions_body(raw: bytes, target: str) -> tuple[bytes, dict[str,
         return raw, {"fitted": False, "reason": "empty", "original_bytes": original_bytes}
     if CHAT_MAX_BODY_BYTES <= 0:
         return raw, {"fitted": False, "reason": "disabled", "original_bytes": original_bytes}
-    if not _is_zai_text_only_endpoint(target):
+    if not _is_text_only_endpoint(target):
         return raw, {
             "fitted": False,
             "reason": "other-endpoint",

@@ -1,5 +1,5 @@
 // native-replay.mjs — spec 227 test-author worker.
-// Real Pi 0.84.4 adapter + fake loopback proxy + REAL extension loader.
+// Real installed Pi adapter + fake loopback proxy + REAL extension loader.
 // Node built-ins only. Imported by queue-wait.test.mjs (single validator entry:
 //   node --test clients/pi-queue-wait/queue-wait.test.mjs
 // ). No top-level pi-ai import: the unit suite must stay loadable without it.
@@ -643,9 +643,10 @@ export function runNativeReplayTests() {
     }
   });
 
-  test("extension: real Pi loader captures one zai registration; ModelRuntime preserves configured providers", async () => {
+  test("extension: real Pi loader preserves the zai overlay and configured providers", async () => {
     const { registrations } = await loadQueueWaitExtensionRegistration();
-    await runRegistrationPreservationChecks(registrations);
+    // The MiMo suite checks the full registration set and its custom catalog.
+    await runRegistrationPreservationChecks(registrations.filter(r => r.name === "zai"));
   });
 
   test("native: wrong provider is a passthrough even against an eligible-looking 503", async () => {

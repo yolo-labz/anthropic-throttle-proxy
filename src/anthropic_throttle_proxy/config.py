@@ -165,6 +165,17 @@ AIMD_BACKOFF_S = float(os.environ.get("THROTTLE_AIMD_BACKOFF_S", "30"))
 # unified-status=allowed at 19%/23%). The two are told apart by the unified
 # budget headers on the SAME response (see `_pushback_pause`). Hot-tunable.
 CONCURRENCY_COOLDOWN_S = max(0.0, float(os.environ.get("THROTTLE_CONCURRENCY_COOLDOWN_S", "2")))
+# Plan-lane budget evidence for an upstream that sends NO budget headers of its
+# own. The lane report (`lanes.py`) publishes the plan allowance for some lanes
+# — MiMo's Token Plan is one — so a headerless 429 there can be classified
+# against a real meter instead of against an assumption. Unset (the default)
+# keeps every lane on the historical conservative backoff; a set lane whose
+# meter is fresh and below PLAN_PRESSURE_PERCENT is treated as concurrency/rate
+# pushback. UNKNOWN IS NOT HEADROOM: a missing, stale or unreadable meter falls
+# back to the budget classification (23/09/2026 — headerless MiMo 429s at ~6%
+# of a monthly allowance each bought a 30 s synthetic hold + a cap collapse).
+PLAN_METER_LANE = os.environ.get("THROTTLE_PLAN_METER_LANE", "").strip()
+PLAN_PRESSURE_PERCENT = max(0.0, float(os.environ.get("THROTTLE_PLAN_PRESSURE_PERCENT", "80")))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # Adaptive ramp (PR #53, 06/06/2026 stall incident): the live cap recovers via
 # additive-increase every ``AIMD_RAMP_AFTER`` consecutive 200s, but a fixed

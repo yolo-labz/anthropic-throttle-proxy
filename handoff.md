@@ -6,6 +6,61 @@ host activation. Latest incident first.
 
 ---
 
+## 23/09/2026 — MiMo Pi queue wait (243, source-only)
+
+New bounded client slice, not a relaunch of the frozen 227 worker. Reuses main's
+retry-safety engine for `mimo-desktop/mimo-*` at HTTP loopback `:8773`, exact
+`/v1/chat/completions`; ZAI keeps its existing tuple and behavior. The real journal
+shows 2/4/8/16-second retries against 210–241-second advice. Actual Pi 0.85.1
+replay: RED 55 failures before the gate extension; GREEN 216 native/unit cases,
+plus 1,337 Python tests and ruff. MiMo's stream-only registration requires an
+already-configured provider; no catalog, auth or endpoint override.
+
+See [acceptance and raw receipts](specs/243-mimo-pi-queue-wait/evidence.md).
+**No installation, reload, restart, deployment or live recovery claim.**
+Activation is a separate authorized slice; source tests do not revive old tabs.
+
+## 23/09/2026 — Prospective admission evidence, not enforcement
+
+[Spec 244](specs/244-prospective-admission/spec.md) supplies a loopback-only,
+red-capable concurrent-request oracle: `PYTHONPATH=tests uv run pytest -q
+-p conftest specs/244-prospective-admission/check_admission.py` → six budget failures, three positive
+controls; same result 20/20 runs. Two slots plus an eight-second gap still
+admit 120 requested output-reservation units against a fictional 100-unit
+budget. Two bearer keys mapped to one fixture account reach four concurrent
+streams. Completed requests and retries have no request-window debit.
+
+These are **fixture budgets, not Token Plan caps**. Full suite: 1338 passed,
+including an artifact check of the exact six raw RED spec assertions, with no
+skip/xfail markers; no production or client code changed. The
+[caller audit and minimum opt-in proposal](specs/244-prospective-admission/plan.md)
+cover ordinary/held-SSE retries, direct fallback and internal generation probes.
+Provider input/cache/output accounting, account authority and restart debt are
+still implementation prerequisites. No deployment or incident-resolution claim.
+Native-wait work is a separate track; no `clients/` file is touched here.
+
+## 23/09/2026 — MiMo shared cooldown (rollout in progress)
+
+Spec 242 fixes a reproduced OpenAI-path omission: a sibling Chat Completions
+request could bypass the pause recorded after a headerless 429. Reuse the
+existing cooldown and half-open probe machinery; credential routing stays
+Anthropic-only. Red regression: sibling dispatched at 5 ms in a 50 ms pause.
+Fixed: 16 targeted tests and 1,337 full-suite tests pass. Deploy only to the
+isolated MiMo service; synthetic acceptance is not proof that Xiaomi is serving.
+Live 429s persisted during bounded checking, so affected tabs need separately
+verified recovery instead of another simultaneous retry burst.
+
+## 23/09/2026 — MiMo dashboard telemetry (delivery in progress)
+
+Spec 241 adds an opt-in independently expiring MiMo report and a read-only,
+identity-checked console sampler. No inference routing or payment action is in
+this slice. Targeted suite 47 passed; full suite 1,321 passed; Ruff clean.
+See [the collection and rollback contract](specs/241-mimo-plan-meter/plan.md).
+The authenticated browser stays on its existing supervisor host; only allowlisted
+credit counters leave it. A successful sample is not evidence of safe private-work
+routing. Do not activate the shared proxy package across inference lanes merely
+to enable this dashboard row.
+
 ## 22/09/2026 — Z.AI chat budget RE-LANDED as PR #240 (blocked on the SonarQube origin)
 
 A 707k-token seat died on the Z.AI coding endpoint with `413 Failed to buffer the
@@ -42,6 +97,8 @@ SonarQube origin outage (HTTP 530, 8 s into the job, before any analysis). The o
 eight checks are green. 22/09 probes: SonarQube still 530, VM105 (Nix.Server) back on the
 wire, VM101 (dokku) still unreachable. `[pending] Pedro: Dokku VM101 / SonarQube origin
 recovery` — see the vault note's §9; re-run `gh run rerun --failed` once the oracle exits 0.
+
+**24/09/2026 update:** the SonarQube/Dokku origin recovered; the branch was merged with `main`, keeping the #250/#256 refactor — one shared `_is_text_only_endpoint` predicate now carries the `.port` guard, and both request-shaping transforms key on it.
 
 ### Worktree audit (22/09) — two are safe, two must not be removed
 

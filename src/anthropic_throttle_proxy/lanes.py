@@ -53,6 +53,7 @@ _FAMILY = {
     # Chinese-frontier generator may not be reviewed by another one.
     "zai": "chinese-frontier",
     "deepseek": "chinese-frontier",
+    "mimo": "chinese-frontier",
 }
 
 _PROVIDER = {
@@ -61,11 +62,20 @@ _PROVIDER = {
     "codex": ("🌀", "Codex"),
     "zai": ("✨", "Z.AI"),
     "deepseek": ("🐋", "DeepSeek"),
+    "mimo": ("Ⓜ️", "MiMo"),
     "copilot": ("🐙", "Copilot"),
     "groq": ("🚀", "Groq"),
     "deepinfra": ("🌙", "DeepInfra"),
     "kimi": ("🌙", "Kimi"),
 }
+
+# Price suffix per billing cycle. An unknown cycle renders no suffix rather
+# than guessing a cadence (python:S3358 keeps the nested ternary out of here).
+_CYCLE_SUFFIX = {"monthly": "/mo", "annual": "/yr"}
+
+# The MiMo plan row's lane id: it is both the id of the synthetic row we mint
+# when the probe reports nothing, and the filter that keeps a stale copy out.
+_MIMO_PLAN_LANE_ID = "mimo:plan"
 
 _cache: tuple[float, dict[str, Any]] | None = None
 
@@ -149,7 +159,7 @@ def _billing(lane: dict[str, Any], *, stale: bool) -> dict[str, Any] | None:
     except ValueError:
         date_display = date
     symbol = "$" if currency == "USD" else f"{currency} "
-    suffix = "/mo" if cycle == "monthly" else ("/yr" if cycle == "annual" else "")
+    suffix = _CYCLE_SUFFIX.get(str(cycle), "")
     return {
         # Staleness makes current-plan state unknown, not delinquent and not
         # paid. Keep the last raw facts for diagnosis but remove the verdict.
@@ -270,13 +280,76 @@ def _exhausted_reason(meters: list[dict[str, Any]]) -> str:
     return f"{label} meter at {pct_text}"
 
 
+def _plan_text(lane: dict[str, Any]) -> str:
+    """The plan sentence for a lane row: a meter's own ``planType`` wins."""
+    for meter in lane.get("meters") or []:
+        if isinstance(meter, dict) and meter.get("planType"):
+            return str(meter["planType"])
+    plan = lane.get("plan")
+    return plan if isinstance(plan, str) else ""
+
+
+def _binding_pct(meters: list[dict[str, Any]]) -> float | None:
+    """The fullest READABLE meter — the number that decides this lane's next request."""
+    filled = [m["used_pct"] for m in meters if m["used_pct"] is not None]
+    return max(filled) if filled else None
+
+
+def _capacity_verdict(
+    status: str, meters: list[dict[str, Any]], binding_pct: float | None, reason: str
+) -> tuple[str, str]:
+    """Downgrade an ``ok`` verdict the METERS contradict. Returns (status, reason).
+
+    Two independent walls, both invisible to a status that only repeats the
+    probe's own words:
+
+    A full meter REFUSES. Measured 07/08/2026: with the shared `codex` meter at
+    100%, `codex exec` answers "You've hit your usage limit ... try again at Aug
+    8th, 2026 12:48 PM" - yet the row still read `ok`, because the status came
+    verbatim from the probe report and never looked at the meters. That is the
+    one thing this table must never do: render a lane with no capacity as
+    healthy. Guarded on `ok` so a worse verdict (refused/error/stale) still
+    wins - a stale 100% is untrusted, not proven exhausted, and could already
+    have reset. An `unlimited` meter is live capacity that no percentage can
+    express, so a lane holding one is never exhausted: Copilot's premium bucket
+    runs to 0 while chat and completions keep serving, and calling that lane
+    dead would be the opposite lie.
+
+    A drained wallet refuses exactly like a full window: DeepSeek answers 402 at
+    zero. It cannot reach the branch above because money has no percentage, so
+    it needs its own - otherwise the lane that actually died is the one row
+    still reading `ok`.
+    """
+    if status != "ok":
+        return status, reason
+    has_unlimited = any(m.get("unlimited") for m in meters)
+    if not has_unlimited and binding_pct is not None and binding_pct >= 100.0:
+        # #189 derives this verdict from the meter, so the row arrived with an
+        # empty tooltip: EXHAUSTED and nothing to say why or until when. State
+        # what was measured - which meter is full and when it reopens - and
+        # never paraphrase the provider; if the probe DID carry the upstream's
+        # own words, those win, because they are first-hand.
+        return "exhausted", (reason or _exhausted_reason(meters))
+    drained = next(
+        (
+            m
+            for m in meters
+            if isinstance(m.get("balance_total"), float) and m["balance_total"] <= 0
+        ),
+        None,
+    )
+    if drained is not None:
+        return "exhausted", (reason or f"balance {drained['note']} — the lane refuses at zero")
+    return status, reason
+
+
 def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     kind = str(lane.get("kind") or "?")
     lane_id = str(lane.get("id") or "?")
     status = str(lane.get("status") or "unknown")
     if stale and status == "ok":
         status = "stale"
-    meters = _window_meters(lane) if kind in {"codex", "zai"} else []
+    meters = _window_meters(lane) if kind in {"codex", "zai", "mimo"} else []
     if kind == "copilot":
         meters = _copilot_meters(lane)
     if not meters:
@@ -288,57 +361,13 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
     # Fullest first: the meter that decides whether this lane can take the next
     # request must be the one the eye lands on. Unreadable meters sort last.
     meters.sort(key=lambda m: (m["used_pct"] is None, -(m["used_pct"] or 0.0)))
-    plan = ""
-    for meter in lane.get("meters") or []:
-        if isinstance(meter, dict) and meter.get("planType"):
-            plan = str(meter["planType"])
-            break
-    if not plan and isinstance(lane.get("plan"), str):
-        plan = lane["plan"]
-    # The binding meter is the fullest one — that is the number that decides
-    # whether this lane can take the next request.
-    filled = [m["used_pct"] for m in meters if m["used_pct"] is not None]
-    binding_pct = max(filled) if filled else None
-    # A full meter REFUSES. Measured 07/08/2026: with the shared `codex` meter
-    # at 100%, `codex exec` answers "You've hit your usage limit ... try again
-    # at Aug 8th, 2026 12:48 PM" — yet the row still read `ok`, because the
-    # status came verbatim from the probe report and never looked at the
-    # meters. That is the one thing this table must never do: render a lane
-    # with no capacity as healthy. Guarded on `ok` so a worse verdict
-    # (refused/error/stale) still wins — a stale 100% is untrusted, not proven
-    # exhausted, and could already have reset.
-    # An `unlimited` meter is live capacity that no percentage can express, so a
-    # lane holding one is never exhausted — Copilot's premium bucket runs to 0
-    # while chat and completions keep serving, and calling that lane dead would
-    # be the opposite lie.
-    has_unlimited = any(m.get("unlimited") for m in meters)
+    plan = _plan_text(lane)
+    binding_pct = _binding_pct(meters)
     # .strip() before the truthiness test below: a probe that writes "   "
-    # would otherwise win the `or` and render a blank tooltip — the exact bug
+    # would otherwise win the `or` and render a blank tooltip - the exact bug
     # this reason exists to close.
     reason = str(lane.get("reason") or "").strip()
-    if status == "ok" and not has_unlimited and binding_pct is not None and binding_pct >= 100.0:
-        status = "exhausted"
-        # #189 derives this verdict from the meter, so the row arrived with an
-        # empty tooltip: EXHAUSTED and nothing to say why or until when. State
-        # what was measured — which meter is full and when it reopens — and
-        # never paraphrase the provider; if the probe DID carry the upstream's
-        # own words, those win, because they are first-hand.
-        reason = reason or _exhausted_reason(meters)
-    # A drained wallet refuses exactly like a full window: DeepSeek answers 402
-    # at zero. It cannot reach the branch above because money has no
-    # percentage, so it needs its own — otherwise the lane that actually died
-    # is the one row still reading `ok`.
-    drained = next(
-        (
-            m
-            for m in meters
-            if isinstance(m.get("balance_total"), float) and m["balance_total"] <= 0
-        ),
-        None,
-    )
-    if status == "ok" and drained is not None:
-        status = "exhausted"
-        reason = reason or f"balance {drained['note']} — the lane refuses at zero"
+    status, reason = _capacity_verdict(status, meters, binding_pct, reason)
     icon, provider = _PROVIDER.get(kind, ("🤖", kind or "provider"))
     identity = provider
     if kind == "codex" and ":" in lane_id:
@@ -384,18 +413,17 @@ EMPTY: dict[str, Any] = {
 }
 
 
-def _read(now: float) -> dict[str, Any]:
-    path = report_path()
-    if not path:
-        return EMPTY
-    try:
-        raw = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # No report (timer not enabled on this host) or a half-written file the
-        # writer's atomic mv should have prevented: hide the panel, never raise.
-        return EMPTY
-    if not isinstance(raw, dict) or not isinstance(raw.get("lanes"), list):
-        return EMPTY
+def _sample_clock(raw: dict[str, Any], now: float) -> tuple[float | None, float | None, str]:
+    """The report's own cadence and age, plus why either is uncertified.
+
+    Review B4: a MISSING cadence is not a 900-second cadence. Guessing one let
+    the page certify staleness and project a next-sample time from an invented
+    number; both stay uncertified until the report declares its own interval.
+
+    A negative or non-finite age is the same class of lie in the other
+    direction (a clock we cannot reason about), so it degrades to ``None`` with
+    a reason attached rather than being rendered as fresh.
+    """
     raw_interval = raw.get("intervalSeconds")
     interval = _pct(raw_interval)
     if interval is not None and interval <= 0:
@@ -406,14 +434,21 @@ def _read(now: float) -> dict[str, Any]:
         age = None
         error = "observation timestamp missing, invalid or in the future"
     if interval is None:
-        # Review B4: a MISSING cadence is not a 900-second cadence. Guessing
-        # one let the page certify staleness and project a next-sample time
-        # from an invented number; both stay uncertified until the report
-        # declares its own interval.
-        missing = raw_interval is None
-        detail = "sampling interval missing" if missing else "sampling interval invalid"
+        detail = (
+            "sampling interval missing" if raw_interval is None else "sampling interval invalid"
+        )
         error = " · ".join(filter(None, [error, detail]))
-    stale = age is not None and interval is not None and age > interval * _STALE_INTERVALS
+    return interval, age, error
+
+
+def _lane_rows(raw: dict[str, Any], *, stale: bool, error: str, now: float) -> list[dict[str, Any]]:
+    """Normalize every lane in the report, degrading to ``unknown`` on error.
+
+    UNKNOWN IS NOT HEALTHY: a lane the probe reported as ``ok`` cannot stay
+    ``ok`` once the report's own clock is uncertified — it is re-labelled
+    ``unknown`` and inherits the reason, so no consumer can read a stale reading
+    as a live one.
+    """
     lanes = []
     for source in raw["lanes"]:
         if not isinstance(source, dict):
@@ -423,17 +458,44 @@ def _read(now: float) -> dict[str, Any]:
             lane["status"] = "unknown"
             lane["reason"] = " · ".join(filter(None, [lane.get("reason"), error]))
         lanes.append(lane)
+    # Family first so the review-family grouping the dashboard relies on is a
+    # property of the payload, not of the renderer.
     lanes.sort(key=lambda lane: (lane["family"], lane["id"]))
-    registry = []
-    registry_providers = raw.get("registryProviders")
-    for provider_id in registry_providers if isinstance(registry_providers, list) else []:
+    return lanes
+
+
+def _registry_rows(raw: dict[str, Any]) -> list[dict[str, str]]:
+    """Provider rows for the fleet strip, straight from the report's id list."""
+    providers = raw.get("registryProviders")
+    if not isinstance(providers, list):
+        return []
+    rows = []
+    for provider_id in providers:
         if not isinstance(provider_id, str):
             continue
-        icon, provider = _PROVIDER.get(provider_id, ("🤖", provider_id))
-        registry.append({"id": provider_id, "icon": icon, "provider": provider})
+        icon, provider = _PROVIDER.get(provider_id, ("\U0001f916", provider_id))
+        rows.append({"id": provider_id, "icon": icon, "provider": provider})
+    return rows
+
+
+def _read(now: float, path: str | None = None) -> dict[str, Any]:
+    path = report_path() if path is None else path
+    if not path:
+        return EMPTY
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        # No report (timer not enabled on this host) or a half-written file the
+        # writer's atomic mv should have prevented: hide the panel, never raise.
+        return EMPTY
+    if not isinstance(raw, dict) or not isinstance(raw.get("lanes"), list):
+        return EMPTY
+    interval, age, error = _sample_clock(raw, now)
+    stale = age is not None and interval is not None and age > interval * _STALE_INTERVALS
+    lanes = _lane_rows(raw, stale=stale, error=error, now=now)
     return {
         "lanes": lanes,
-        "registry": registry,
+        "registry": _registry_rows(raw),
         "age_s": age,
         "stale": stale,
         "interval_s": interval,
@@ -445,6 +507,33 @@ def _read(now: float) -> dict[str, Any]:
         else None,
         "error": error,
     }
+
+
+def plan_meter_used_percent(lane_id: str, now: float) -> float | None:
+    """Binding used-% of a plan lane's fullest meter, or None without fresh evidence.
+
+    The caller is classifying an upstream response that carries no budget
+    headers of its own (a MiMo Token Plan 429) and needs to know whether the
+    plan is actually near its allowance. ``None`` is the fail-closed answer and
+    it covers every way the evidence can be missing: no lane id, no report, a
+    stale report, a lane the probe could not read, or meters without a readable
+    percentage.
+    """
+    if not lane_id:
+        return None
+    for lane in view(now).get("lanes") or []:
+        if not isinstance(lane, dict) or str(lane.get("id") or "") != lane_id:
+            continue
+        if str(lane.get("status") or "unknown") != "ok":
+            return None
+        pcts = [
+            float(meter["used_pct"])
+            for meter in lane.get("meters") or []
+            if isinstance(meter, dict) and isinstance(meter.get("used_pct"), int | float)
+        ]
+        # The fullest meter decides: a plan is spent when its tightest window is.
+        return max(pcts) if pcts else None
+    return None
 
 
 def view(now: float) -> dict[str, Any]:
@@ -462,5 +551,34 @@ def view(now: float) -> dict[str, Any]:
     if _cache is not None and 0.0 <= now - _cache[0] < TTL_S:
         return _cache[1]
     snapshot = _read(now)
+    # MiMo is sampled by the authenticated browser host, independently of the
+    # local lane timer. Reuse the same reader so its own timestamp/cadence,
+    # not another provider's successful refresh, decides freshness.
+    mimo_path = os.environ.get("THROTTLE_MIMO_REPORT", "").strip()
+    if mimo_path:
+        mimo = _read(now, mimo_path)
+        rows = [
+            lane
+            for lane in mimo["lanes"]
+            if lane["id"] == _MIMO_PLAN_LANE_ID and lane["kind"] == "mimo"
+        ]
+        if len(rows) != 1:
+            rows = [
+                _normalize(
+                    {
+                        "id": _MIMO_PLAN_LANE_ID,
+                        "kind": "mimo",
+                        "status": "unknown",
+                        "reason": "MiMo report missing, malformed or ambiguous",
+                    },
+                    False,
+                    now,
+                )
+            ]
+        snapshot = {
+            **snapshot,
+            "lanes": [lane for lane in snapshot["lanes"] if lane["id"] != _MIMO_PLAN_LANE_ID]
+            + rows,
+        }
     _cache = (now, snapshot)
     return snapshot

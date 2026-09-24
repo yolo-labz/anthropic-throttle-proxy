@@ -765,6 +765,464 @@ async def _probe_lane_health(session: aiohttp.ClientSession, lane: Lane) -> None
         lane_state[lane.id] = await _fresh_lane_state(session, lane, body, now)
 
 
+def _is_messages_request(request: web.Request) -> bool:
+    """The one request shape with role inference, body remap and spillover."""
+    return request.method == "POST" and request.path == "/v1/messages"
+
+
+async def _buffer_message_body(request: web.Request) -> tuple[bytes, bytes, bytes | None]:
+    """Read a ``POST /v1/messages`` body into a re-sendable copy, bounded.
+
+    The role-inspection prefix (ROLE_BODY_READ_LIMIT) is read first; a body that
+    continues is read up to REMAP_BODY_MAX_BYTES so a non-Anthropic lane can
+    re-serialize a remapped body. Anything larger streams once (``full_body``
+    stays None) — that is the memory bound, not a probe timeout.
+    """
+    prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
+    if prefix_complete:
+        return prefix, b"", prefix
+    buffered_rest, rest_complete = await _read_bounded(request.content, REMAP_BODY_MAX_BYTES)
+    if rest_complete:
+        return prefix, buffered_rest, prefix + buffered_rest
+    # else: too large to buffer → full_body stays None (streamed, 1 attempt)
+    return prefix, buffered_rest, None
+
+
+def _tools_floor_role(role: str, full_body: bytes | None) -> str:
+    """Agentic safety floor: a request with ``tools`` needs a tools-capable lane.
+
+    Kimi aborts multi-turn tool-use streaming; GLM has path+key blockers. Force
+    a tools-capable role regardless of model tier or header hint — a consumer
+    must not overflow agentic to a lane that can't handle it (nix w1W:p4
+    pre-flip gate finding).
+
+    This one reads the BUFFERED body, not ``prefix``. A prefix cut at
+    ROLE_BODY_READ_LIMIT is invalid JSON, and ``body_has_tools`` answers False
+    on a parse failure — i.e. it fails OPEN, deleting the floor for exactly the
+    requests that need it (a real claude-code turn ships ~100 KiB of tool
+    schemas, so ``role-hint: bulk`` routed it to Kimi and the turn hung). The
+    neighbours in ``_resolve_role`` fail SAFE on the same truncation (role →
+    "generate", session key → None), so they stay on ``prefix``: widening them
+    would migrate live non-agentic traffic between lanes, which is a routing
+    decision, not this bug. A body too large to buffer at all can't be
+    inspected, so it fails CLOSED to the capable lane.
+
+    #182: a SMALL agentic turn (short max_tokens, small body) becomes "code"
+    instead of "generate" — Codex is proven tools-capable (real Codex is
+    agentic by design), so the floor's job (route only to a lane that can
+    handle tools) is satisfied by "code" too. Everything else agentic keeps the
+    existing "generate" floor unchanged.
+    """
+    if full_body is None:
+        return "generate"
+    if not body_has_tools(full_body):
+        return role
+    # One REJECTION evaluation, used for both the decision and its explanation,
+    # so the metric can never describe a choice the router didn't make. (The
+    # body is still parsed twice overall — once by body_has_tools above —
+    # exactly as before this change.)
+    reject = code_role_rejection_reason(full_body)
+    if reject:
+        M_CODE_ROLE_REJECTED.labels(reason=reject).inc()
+        return "generate"
+    return "code"
+
+
+def _resolve_role(request: web.Request, prefix: bytes, full_body: bytes | None) -> str:
+    """Request role: trusted header hint → body inference → the tools floor."""
+    header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
+    return _tools_floor_role(header_role or infer_role_from_body(prefix), full_body)
+
+
+async def _select_constrained_lane(
+    session: aiohttp.ClientSession, role: str, tried: set[str]
+) -> str | None:
+    """ADR-6a selection: the lane whose FRESH health proves CLASS∧CAPACITY∧open.
+
+    A constrained request re-probes the candidate lane's health at selection
+    time (per-request attribution) and only accepts a lane whose fresh state is
+    subscription-eligible and open. Constrained selection cannot start from
+    cached CAPACITY: that was the stale-health bug. Walk the role chain and ask
+    each candidate's own admission endpoint before deciding whether it is
+    selectable; a rejected candidate is marked tried so no later pass re-probes
+    or serves it.
+    """
+    for candidate in routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED):
+        lane = LANES.get(candidate)
+        if lane is None or candidate in tried:
+            continue
+        await _probe_lane_health(session, lane)
+        if _mode_is_usable_eligible(lane_state.get(candidate)):
+            return candidate
+        tried.add(candidate)
+    return None
+
+
+def _pinned_lane_choice(role: str, sess_key: str, tried: set[str]) -> str | None:
+    """Session-sticky lane on the first pick (cache economics), or None.
+
+    S5 guard: a generate pin to a non-Anthropic lane is only honored while
+    overflow is on (don't silently downgrade). A pin already tried on this
+    request, or one whose cached state is closed, is not a choice.
+    """
+    pinned = _session_lane.get(sess_key)
+    if pinned is None or pinned in tried:
+        return None
+    if not (lane_state.get(pinned) or LaneState(False, 0)).open:
+        return None
+    if role == "generate" and pinned != "anthropic" and not routing.GENERATE_OVERFLOW_ENABLED:
+        return None
+    return pinned
+
+
+def _select_lane_once(
+    role: str, sess_key: str | None, tried: set[str], used_pin: bool
+) -> tuple[str | None, bool]:
+    """One unconstrained selection pass: the session pin, else the role chain.
+
+    Returns the chosen lane id (or None) and whether the pin has now been
+    consulted — it is consumed once per request, not once per attempt.
+    """
+    lane_id: str | None = None
+    if not used_pin and sess_key is not None:
+        lane_id = _pinned_lane_choice(role, sess_key, tried)
+        used_pin = True
+    if lane_id is None:
+        lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+        if lane_id is not None and lane_id in tried:
+            lane_id = None
+        elif lane_id is not None and sess_key is not None:
+            _session_lane[sess_key] = lane_id
+    return lane_id, used_pin
+
+
+async def _next_lane(
+    session: aiohttp.ClientSession,
+    role: str,
+    sess_key: str | None,
+    tried: set[str],
+    used_pin: bool,
+    required_mode: str | None,
+) -> tuple[Lane | None, web.Response | None, bool]:
+    """Select the lane to attempt next, or the answer for a spent chain.
+
+    Returns ``(lane, refusal, used_pin)``; exactly one of the first two is set.
+    ABR-6a constrained requests take ``_select_constrained_lane``, everyone else
+    ``_select_lane_once``. A selected id missing from the registry is a 503 like
+    any other dead end.
+    """
+    if required_mode is not None:
+        lane_id = await _select_constrained_lane(session, role, tried)
+    else:
+        lane_id, used_pin = _select_lane_once(role, sess_key, tried, used_pin)
+
+    if lane_id is None or lane_id in tried:
+        return (
+            None,
+            _no_lane_response(
+                role, required_mode, held_reason="anthropic-capped-overflow-disabled"
+            ),
+            used_pin,
+        )
+    lane = LANES.get(lane_id)
+    if lane is None:
+        return (
+            None,
+            web.json_response(
+                {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
+            ),
+            used_pin,
+        )
+    return lane, None, used_pin
+
+
+def _lane_body(
+    request: web.Request,
+    lane: Lane,
+    role: str,
+    is_messages: bool,
+    full_body: bytes | None,
+    prefix: bytes,
+    buffered_rest: bytes,
+) -> bytes | AsyncIterator[bytes]:
+    """Per-lane request body: built from the buffered full_body (re-sendable) or
+    the one-shot stream (large body / non-messages)."""
+    if is_messages and full_body is not None:
+        target_model = lane.models.get(role)
+        return remap_body_model(full_body, target_model) if target_model else full_body
+    if is_messages:
+        return _chain_stream(request.content, prefix, buffered_rest)
+    return request.content
+
+
+async def _send_upstream(
+    session: aiohttp.ClientSession,
+    request: web.Request,
+    target: str,
+    body_data: bytes | AsyncIterator[bytes],
+    client_timeout: aiohttp.ClientTimeout,
+    required_mode: str | None,
+) -> aiohttp.ClientResponse | web.Response | None:
+    """Forward to ONE lane; ``None`` means "this candidate is out, try the next".
+
+    An unreachable or too-slow lane is a capacity fact for a CONSTRAINED
+    request (ADR-6a: walk on to the next subscription candidate — a transport
+    error must not end the search) and a terminal 503/504 for an unconstrained
+    one.
+    """
+    try:
+        return await session.request(
+            request.method,
+            target,
+            headers=_forward_headers(request),
+            data=body_data,
+            timeout=client_timeout,
+            allow_redirects=False,
+            auto_decompress=False,
+        )
+    except aiohttp.ClientError:
+        if required_mode is not None:
+            return None
+        return web.json_response({"error": "ingress-upstream-unreachable"}, status=503)
+    except TimeoutError:
+        if required_mode is not None:
+            return None
+        return web.json_response({"error": "ingress-upstream-timeout"}, status=504)
+
+
+def _queue_timeout_503(upstream: aiohttp.ClientResponse) -> bool:
+    """A sibling proxy lane's own queue-wait timeout, stamped on its 503."""
+    return upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
+
+
+def _entitlement_refusal(upstream: aiohttp.ClientResponse) -> bool:
+    """An entitlement-gate 429: a REQUEST-SHAPE refusal, not lane pressure.
+
+    Spilling would replay the same doomed body against a sibling lane and
+    marking the lane saturated would take a healthy lane out of rotation
+    (Codex adversarial review, finding 4). Relay it to the client, stamp
+    intact, so the caller learns the shape is the problem.
+    """
+    return (
+        upstream.status == 429
+        and upstream.headers.get(ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
+    )
+
+
+def _is_retryable_response(
+    upstream: aiohttp.ClientResponse, role: str, saturation_503: bool
+) -> bool:
+    """Retryable: saturation-503 (queue full) OR a 429 on a role in
+    _SPILL_ON_429_ROLES.
+
+    For generate, a 429 that leaked through :8765's own pushback retries — the
+    ingress retries internally (queue-and-wait) so claude-code never sees it,
+    matching direct :8765 behavior where the SDK retries on 429. The nix w1W:p4
+    flip-gate: without this, a 429 from :8765 reaches claude-code → 60s
+    rate_limit retry → abort. With this, the ingress absorbs the 429 + retries
+    → succeeds on the next attempt.
+
+    #182/#184: "code" (the Codex lane) is the SAME shape — the ChatGPT usage
+    meter answers a plain 429 "Rate limited" with no stamped saturation header
+    and no Retry-After the ingress can trust, so it must be treated identically:
+    spill to the next lane in the "code" chain (anthropic, then deepseek) rather
+    than streaming the raw 429 to the client. Unlike generate, "code" has no
+    same-lane queue-and-wait fallback below — Codex's meter is account-level
+    saturation (can stay 429 for a while), not a queue that drains in seconds,
+    so spilling to a capable sibling lane is strictly better than retrying the
+    same one.
+    """
+    if saturation_503:
+        return True
+    return (
+        upstream.status == 429
+        and role in _SPILL_ON_429_ROLES
+        and not _entitlement_refusal(upstream)
+    )
+
+
+def _has_spill_target(role: str, tried: set[str], required_mode: str | None) -> bool:
+    """Is there a NEXT lane to spill to?
+
+    Constrained selection must not let a cached direct-key/unknown lane hide a
+    later subscription candidate; the next loop performs each candidate's fresh
+    probes.
+    """
+    if required_mode is not None:
+        return any(
+            candidate in LANES and candidate not in tried
+            for candidate in routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED)
+        )
+    next_lane = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+    return next_lane is not None and next_lane not in tried
+
+
+def _should_queue_retry(
+    role: str, generate_retries: int, required_mode: str | None, saturation_503: bool
+) -> bool:
+    """No overflow lane: for generate, RETRY the same lane (queue-and-wait).
+
+    Matching direct :8765 behavior where claude-code's SDK retries on 503. The
+    ingress retries internally so the client never sees the abort (the nix
+    w1W:p4 flip-gate requirement). A constrained request only queue-waits on a
+    real saturation signal — a bare 429 is not its lane's queue.
+    """
+    return (
+        role == "generate"
+        and generate_retries < GENERATE_QUEUE_RETRIES
+        and (required_mode is None or saturation_503)
+    )
+
+
+def _no_lane_response(role: str, required_mode: str | None, held_reason: str) -> web.Response:
+    """Terminal answer when no lane can serve this request.
+
+    A constrained request gets the pre-egress 403 policy verdict (ADR-6a: never
+    a capacity 503, never a silent downgrade). Unconstrained generate with
+    overflow disabled is HELD (503 + the reason it was held); everything else is
+    the all-lanes-capped 503.
+    """
+    if required_mode is not None:
+        return _policy_refusal(role, required_mode)
+    if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
+        return web.json_response(
+            {"error": "ingress-generate-held", "reason": held_reason}, status=503
+        )
+    return web.json_response({"error": "ingress-all-lanes-capped", "role": role}, status=503)
+
+
+async def _spill_or_requeue(
+    role: str,
+    lane_id: str,
+    tried: set[str],
+    required_mode: str | None,
+    saturation_503: bool,
+    generate_retries: int,
+) -> tuple[web.Response | None, int]:
+    """After a retryable response: spill to the next lane, queue-and-wait, or answer.
+
+    The lane is marked saturated first — except for a constrained request that
+    saw a bare 429, which is not its lane's queue and must not take a healthy
+    lane out of rotation. Returns ``(response, generate_retries)``; a ``None``
+    response means the caller loops. With no spill target, generate queue-waits:
+    the lane is un-marked (it may have drained), the retry sleeps, and the same
+    lane is attempted again. Anything else is the terminal answer.
+    """
+    if required_mode is None or saturation_503:
+        _set_lane_state(lane_id, open_=False, detail="saturated")
+    if _has_spill_target(role, tried, required_mode):
+        return None, generate_retries
+    if _should_queue_retry(role, generate_retries, required_mode, saturation_503):
+        # Un-mark the lane (it may have drained during the retry delay).
+        _set_lane_state(lane_id, open_=True, detail="generate-retry")
+        tried.discard(lane_id)
+        await asyncio.sleep(GENERATE_QUEUE_RETRY_DELAY_S)
+        return None, generate_retries + 1
+    return (
+        _no_lane_response(role, required_mode, held_reason="queue-saturated-after-retries"),
+        generate_retries,
+    )
+
+
+async def _relay_response(
+    request: web.Request,
+    upstream: aiohttp.ClientResponse,
+    role: str,
+    lane_id: str,
+    required_mode: str | None,
+) -> web.StreamResponse:
+    """Stream a non-retryable upstream response back, stamped, and release it.
+
+    r1/C3: stamp ONLY responses to requests carrying the requirement header.
+    Constrained-only means the enum collapses on the wire to ``subscription`` on
+    a served 2xx (the lane passed CLASS∧CAPACITY fresh at selection) and
+    ``unknown`` on the 403 refusal — the full four-value vocabulary is normative
+    for per-lane health only.
+    """
+    try:
+        out_headers = {
+            k: v
+            for k, v in upstream.headers.items()
+            if k.lower() not in _HOP_BY_HOP
+            and k.lower() not in _RESERVED_CREDENTIAL_RESPONSE_HEADERS
+        }
+        resp = web.StreamResponse(status=upstream.status, headers=out_headers)
+        resp.headers[MARKER_HEADER] = "1"
+        resp.headers[ROLE_HEADER] = role
+        resp.headers[LANE_HEADER] = lane_id
+        if required_mode is not None and 200 <= upstream.status < 300:
+            resp.headers[CREDENTIAL_MODE_HEADER] = CREDENTIAL_MODE_SUBSCRIPTION
+        await resp.prepare(request)
+        try:
+            async for chunk in upstream.content.iter_any():
+                if not chunk:
+                    continue
+                await resp.write(chunk)
+            await resp.write_eof()
+        except _CLIENT_DISCONNECT_EXC:
+            # The client closed its socket mid-relay. The local tier already
+            # wraps the identical loop (forwarding.py::_stream_response) so
+            # "the client sees InvalidHTTPResponse" cannot happen; this tier
+            # did not, and every such disconnect escaped as an unhandled
+            # ClientConnectionResetError traceback — 50 of them in the 5.5h
+            # journal window on 18/08/2026, spread across the whole day.
+            #
+            # Nothing is recoverable here: the status and headers are on the
+            # wire and the reader is gone, so the only correct action is to
+            # stop writing and return the prepared response. Re-raising
+            # would only re-create the traceback this fixes.
+            M_CLIENT_DISCONNECTS.labels(phase="relay").inc()
+        return resp
+    finally:
+        upstream.release()
+
+
+async def _attempt_lane(
+    request: web.Request,
+    session: aiohttp.ClientSession,
+    lane: Lane,
+    body_data: bytes | AsyncIterator[bytes],
+    client_timeout: aiohttp.ClientTimeout,
+    *,
+    role: str,
+    required_mode: str | None,
+    tried: set[str],
+    spillable: bool,
+    generate_retries: int,
+) -> tuple[web.Response | None, int]:
+    """One whole attempt against ``lane``: forward, classify, decide.
+
+    Returns ``(response, generate_retries)``. A response is what the client
+    gets — the relayed lane response, or a terminal 503/403. ``None`` means the
+    attempt produced no answer and the caller re-selects: a constrained
+    candidate that never came up, a spill to the next eligible lane, or a
+    same-lane queue-and-wait retry (``generate_retries`` then carries the new
+    count).
+    """
+    target = f"{lane.url}{request.path_qs}"
+    upstream = await _send_upstream(
+        session, request, target, body_data, client_timeout, required_mode
+    )
+    if upstream is None:
+        # Constrained: this candidate is out; the next pass probes the rest.
+        tried.add(lane.id)
+        return None, generate_retries
+    if isinstance(upstream, web.Response):
+        return upstream, generate_retries
+    saturation_503 = _queue_timeout_503(upstream)
+    if _is_retryable_response(upstream, role, saturation_503) and spillable:
+        upstream.release()
+        tried.add(lane.id)
+        return await _spill_or_requeue(
+            role, lane.id, tried, required_mode, saturation_503, generate_retries
+        )
+    # Not a saturation-503 (or not spillable) → stream the response through.
+    return (
+        await _relay_response(request, upstream, role, lane.id, required_mode),
+        generate_retries,
+    )
+
+
 async def _forward(request: web.Request) -> web.StreamResponse:
     """Forward a request to the selected lane, **spilling to the next lane in the
     role chain on a saturation 503** (the coordinator's ask).
@@ -781,6 +1239,11 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     subscription`` is restricted to lanes whose fresh health proves CLASS
     (E1∧E2∧E4) ∧ CAPACITY (E3); refusal is a pre-egress 403 policy verdict,
     never a capacity 503.
+
+    Phase helpers own the body/role resolution (``_buffer_message_body`` +
+    ``_resolve_role``), selection (``_next_lane``), the forward attempt
+    (``_lane_body`` + ``_send_upstream`` + ``_attempt_lane``) and the response
+    stamp (``_relay_response``).
     """
     required_mode = _require_credential_mode(request)
     if isinstance(required_mode, web.Response):
@@ -789,58 +1252,15 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     session: aiohttp.ClientSession = request.app[_SESSION_KEY]
     timeout = aiohttp.ClientTimeout(total=FORWARD_TIMEOUT_S or None)
 
-    is_messages = request.method == "POST" and request.path == "/v1/messages"
+    is_messages = _is_messages_request(request)
     role = "generate"
     sess_key: str | None = None
     prefix = b""
     buffered_rest = b""
     full_body: bytes | None = None  # re-sendable buffered body; None = stream once
     if is_messages:
-        prefix, prefix_complete = await _read_bounded(request.content, ROLE_BODY_READ_LIMIT)
-        if prefix_complete:
-            full_body = prefix
-        else:
-            buffered_rest, rest_complete = await _read_bounded(
-                request.content, REMAP_BODY_MAX_BYTES
-            )
-            if rest_complete:
-                full_body = prefix + buffered_rest
-            # else: too large to buffer → full_body stays None (streamed, 1 attempt)
-        header_role = routing.role_from_header(request.headers.get(ROLE_OVERRIDE_HEADER))
-        role = header_role or infer_role_from_body(prefix)
-        # Agentic safety floor: a request with `tools` needs a tools-capable
-        # lane. Kimi aborts multi-turn tool-use streaming; GLM has path+key
-        # blockers. Force a tools-capable role regardless of model tier or
-        # header hint — a consumer must not overflow agentic to a lane that
-        # can't handle it (nix w1W:p4 pre-flip gate finding).
-        #
-        # This one reads the BUFFERED body, not `prefix`. A prefix cut at
-        # ROLE_BODY_READ_LIMIT is invalid JSON, and `body_has_tools` answers
-        # False on a parse failure — i.e. it fails OPEN, deleting the floor for
-        # exactly the requests that need it (a real claude-code turn ships
-        # ~100 KiB of tool schemas, so `role-hint: bulk` routed it to Kimi and
-        # the turn hung). The neighbours above fail SAFE on the same truncation
-        # (role → "generate", session key → None), so they stay on `prefix`:
-        # widening them would migrate live non-agentic traffic between lanes,
-        # which is a routing decision, not this bug. A body too large to buffer
-        # at all can't be inspected, so it fails CLOSED to the capable lane.
-        #
-        # #182: a SMALL agentic turn (short max_tokens, small body) becomes
-        # "code" instead of "generate" — Codex is proven tools-capable (real
-        # Codex is agentic by design), so the floor's job (route only to a
-        # lane that can handle tools) is satisfied by "code" too. Everything
-        # else agentic keeps the existing "generate" floor unchanged.
-        if full_body is None:
-            role = "generate"
-        elif body_has_tools(full_body):
-            # One REJECTION evaluation, used for both the decision and its
-            # explanation, so the metric can never describe a choice the router
-            # didn't make. (The body is still parsed twice overall — once by
-            # body_has_tools above — exactly as before this change.)
-            reject = code_role_rejection_reason(full_body)
-            role = "generate" if reject else "code"
-            if reject:
-                M_CODE_ROLE_REJECTED.labels(reason=reject).inc()
+        prefix, buffered_rest, full_body = await _buffer_message_body(request)
+        role = _resolve_role(request, prefix, full_body)
         sess_key = session_key_from_body(prefix)
 
     spillable = is_messages and full_body is not None
@@ -849,234 +1269,28 @@ async def _forward(request: web.Request) -> web.StreamResponse:
     generate_retries = 0
 
     while True:
-        # Lane selection: session-sticky on the first pick (cache economics),
-        # else walk the role's chain. S5 guard: a generate pin to a non-Anthropic
-        # lane is only honored while overflow is on (don't silently downgrade).
-        # ADR-6a: a constrained request re-probes the candidate lane's health at
-        # selection time (per-request attribution) and only accepts a lane whose
-        # fresh state is subscription-eligible and open.
-        lane_id: str | None = None
-        if required_mode is not None:
-            # Constrained selection cannot start from cached CAPACITY: that was
-            # the stale-health bug. Walk the role chain and ask each candidate's
-            # own admission endpoint before deciding whether it is selectable.
-            for candidate in routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED):
-                lane = LANES.get(candidate)
-                if lane is None or candidate in tried:
-                    continue
-                await _probe_lane_health(session, lane)
-                if _mode_is_usable_eligible(lane_state.get(candidate)):
-                    lane_id = candidate
-                    break
-                tried.add(candidate)
-        else:
-            if not used_pin and sess_key is not None:
-                pinned = _session_lane.get(sess_key)
-                pin_open = (
-                    pinned is not None
-                    and pinned not in tried
-                    and (lane_state.get(pinned) or LaneState(False, 0)).open
-                )
-                if (
-                    pin_open
-                    and role == "generate"
-                    and pinned != "anthropic"
-                    and not routing.GENERATE_OVERFLOW_ENABLED
-                ):
-                    pin_open = False
-                if pin_open:
-                    lane_id = pinned
-                used_pin = True
-            if lane_id is None:
-                lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
-                if lane_id is not None and lane_id in tried:
-                    lane_id = None
-                elif lane_id is not None and sess_key is not None:
-                    _session_lane[sess_key] = lane_id
-
-        if lane_id is None or lane_id in tried:
-            if required_mode is not None:
-                return _policy_refusal(role, required_mode)
-            if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
-                return web.json_response(
-                    {
-                        "error": "ingress-generate-held",
-                        "reason": "anthropic-capped-overflow-disabled",
-                    },
-                    status=503,
-                )
-            return web.json_response(
-                {"error": "ingress-all-lanes-capped", "role": role}, status=503
-            )
-        lane = LANES.get(lane_id)
-        if lane is None:
-            return web.json_response(
-                {"error": "ingress-lane-not-configured", "lane": lane_id}, status=503
-            )
-        target = f"{lane.url}{request.path_qs}"
-        M_ROUTE_DECISIONS.labels(role=role, lane=lane_id).inc()
-
-        # Build the per-lane body from the buffered full_body (re-sendable) or
-        # the one-shot stream (large body / non-messages).
-        body_data: bytes | AsyncIterator[bytes]
-        if is_messages and full_body is not None:
-            target_model = lane.models.get(role)
-            body_data = remap_body_model(full_body, target_model) if target_model else full_body
-        elif is_messages:
-            body_data = _chain_stream(request.content, prefix, buffered_rest)
-        else:
-            body_data = request.content
-
-        upstream: aiohttp.ClientResponse | None = None
-        try:
-            upstream = await session.request(
-                request.method,
-                target,
-                headers=_forward_headers(request),
-                data=body_data,
-                timeout=timeout,
-                allow_redirects=False,
-                auto_decompress=False,
-            )
-        except aiohttp.ClientError:
-            if required_mode is not None:
-                tried.add(lane_id)
-                continue
-            return web.json_response({"error": "ingress-upstream-unreachable"}, status=503)
-        except TimeoutError:
-            if required_mode is not None:
-                tried.add(lane_id)
-                continue
-            return web.json_response({"error": "ingress-upstream-timeout"}, status=504)
-
-        assert upstream is not None
-        # Retryable: saturation-503 (queue full) OR a 429 on a role in
-        # _SPILL_ON_429_ROLES. For generate, a 429 that leaked through :8765's
-        # own pushback retries — the ingress retries internally (queue-and-wait)
-        # so claude-code never sees it, matching direct :8765 behavior where the
-        # SDK retries on 429. The nix w1W:p4 flip-gate: without this, a 429 from
-        # :8765 reaches claude-code → 60s rate_limit retry → abort. With this,
-        # the ingress absorbs the 429 + retries → succeeds on the next attempt.
-        #
-        # #182/#184: "code" (the Codex lane) is the SAME shape — the ChatGPT
-        # usage meter answers a plain 429 "Rate limited" with no stamped
-        # saturation header and no Retry-After the ingress can trust, so it must
-        # be treated identically: spill to the next lane in the "code" chain
-        # (anthropic, then deepseek) rather than streaming the raw 429 to the
-        # client. Unlike generate, "code" has no same-lane queue-and-wait
-        # fallback below — Codex's meter is account-level saturation (can stay
-        # 429 for a while), not a queue that drains in seconds, so spilling to a
-        # capable sibling lane is strictly better than retrying the same one.
-        is_saturation_503 = (
-            upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
+        lane, refusal, used_pin = await _next_lane(
+            session, role, sess_key, tried, used_pin, required_mode
         )
-        # An entitlement-gate 429 is a REQUEST-SHAPE refusal, not lane pressure:
-        # spilling would replay the same doomed body against a sibling lane and
-        # marking the lane saturated would take a healthy lane out of rotation
-        # (Codex adversarial review, finding 4). Relay it to the client, stamp
-        # intact, so the caller learns the shape is the problem.
-        is_entitlement_refusal = (
-            upstream.status == 429
-            and upstream.headers.get(ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
+        if refusal is not None:
+            return refusal
+        assert lane is not None  # _next_lane returns exactly one of lane/refusal
+        M_ROUTE_DECISIONS.labels(role=role, lane=lane.id).inc()
+        body_data = _lane_body(request, lane, role, is_messages, full_body, prefix, buffered_rest)
+        response, generate_retries = await _attempt_lane(
+            request,
+            session,
+            lane,
+            body_data,
+            timeout,
+            role=role,
+            required_mode=required_mode,
+            tried=tried,
+            spillable=spillable,
+            generate_retries=generate_retries,
         )
-        is_retryable = is_saturation_503 or (
-            upstream.status == 429 and role in _SPILL_ON_429_ROLES and not is_entitlement_refusal
-        )
-        if is_retryable and spillable:
-            upstream.release()
-            upstream = None
-            tried.add(lane_id)
-            if required_mode is None or is_saturation_503:
-                _set_lane_state(lane_id, open_=False, detail="saturated")
-            # Is there a NEXT lane to spill to? Constrained selection must not
-            # let a cached direct-key/unknown lane hide a later subscription
-            # candidate; the next loop performs each candidate's fresh probes.
-            if required_mode is not None:
-                has_next = any(
-                    candidate in LANES and candidate not in tried
-                    for candidate in routing.effective_chain(
-                        role, routing.GENERATE_OVERFLOW_ENABLED
-                    )
-                )
-            else:
-                next_lane = select_lane(
-                    role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED
-                )
-                has_next = next_lane is not None and next_lane not in tried
-            if has_next:
-                continue  # fresh-select/spill to the next eligible lane
-            # No overflow lane. For generate, RETRY the same lane
-            # (queue-and-wait) instead of 503-aborting — matching direct
-            # :8765 behavior where claude-code's SDK retries on 503. The
-            # ingress retries internally so the client never sees the abort
-            # (the nix w1W:p4 flip-gate requirement).
-            if (
-                role == "generate"
-                and generate_retries < GENERATE_QUEUE_RETRIES
-                and (required_mode is None or is_saturation_503)
-            ):
-                generate_retries += 1
-                # Un-mark the lane (it may have drained during the retry delay).
-                _set_lane_state(lane_id, open_=True, detail="generate-retry")
-                tried.discard(lane_id)
-                await asyncio.sleep(GENERATE_QUEUE_RETRY_DELAY_S)
-                continue  # re-select + retry the same lane
-            # Retries exhausted (or non-generate with no overflow) → 503 / 403.
-            if required_mode is not None:
-                return _policy_refusal(role, required_mode)
-            if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
-                return web.json_response(
-                    {
-                        "error": "ingress-generate-held",
-                        "reason": "queue-saturated-after-retries",
-                    },
-                    status=503,
-                )
-            return web.json_response(
-                {"error": "ingress-all-lanes-capped", "role": role}, status=503
-            )
-        # Not a saturation-503 (or not spillable) → stream the response through.
-        try:
-            out_headers = {
-                k: v
-                for k, v in upstream.headers.items()
-                if k.lower() not in _HOP_BY_HOP
-                and k.lower() not in _RESERVED_CREDENTIAL_RESPONSE_HEADERS
-            }
-            resp = web.StreamResponse(status=upstream.status, headers=out_headers)
-            resp.headers[MARKER_HEADER] = "1"
-            resp.headers[ROLE_HEADER] = role
-            resp.headers[LANE_HEADER] = lane_id
-            # r1/C3: stamp ONLY responses to requests carrying the requirement
-            # header. Constrained-only means the enum collapses on the wire to
-            # ``subscription`` on a served 2xx (the lane passed CLASS∧CAPACITY
-            # fresh at selection) and ``unknown`` on the 403 refusal — the
-            # full four-value vocabulary is normative for per-lane health only.
-            if required_mode is not None and 200 <= upstream.status < 300:
-                resp.headers[CREDENTIAL_MODE_HEADER] = CREDENTIAL_MODE_SUBSCRIPTION
-            await resp.prepare(request)
-            try:
-                async for chunk in upstream.content.iter_any():
-                    if not chunk:
-                        continue
-                    await resp.write(chunk)
-                await resp.write_eof()
-            except _CLIENT_DISCONNECT_EXC:
-                # The client closed its socket mid-relay. The local tier already
-                # wraps the identical loop (forwarding.py::_stream_response) so
-                # "the client sees InvalidHTTPResponse" cannot happen; this tier
-                # did not, and every such disconnect escaped as an unhandled
-                # ClientConnectionResetError traceback — 50 of them in the 5.5h
-                # journal window on 18/08/2026, spread across the whole day.
-                #
-                # Nothing is recoverable here: the status and headers are on the
-                # wire and the reader is gone, so the only correct action is to
-                # stop writing and return the prepared response. Re-raising
-                # would only re-create the traceback this fixes.
-                M_CLIENT_DISCONNECTS.labels(phase="relay").inc()
-            return resp
-        finally:
-            upstream.release()
+        if response is not None:
+            return response
 
 
 async def _root_probe(_request: web.Request) -> web.Response:
@@ -1122,7 +1336,7 @@ async def _health(_request: web.Request) -> web.Response:
                         else {}
                     ),
                 }
-                for lid, st in list(lane_state.items())
+                for lid, st in lane_state.items()
             },
         }
     )
@@ -1162,12 +1376,10 @@ async def _poll_one_lane(session: aiohttp.ClientSession, lane: Lane) -> None:
 
 def _evict_sessions_for_closed_lanes(closed_ids: set[str]) -> int:
     """Drop every session pinned to a now-closed lane. Returns the count evicted."""
-    n = 0
-    for key, pinned in list(_session_lane.items()):
-        if pinned in closed_ids:
-            _session_lane.pop(key, None)
-            n += 1
-    return n
+    stale = [key for key, pinned in _session_lane.items() if pinned in closed_ids]
+    for key in stale:
+        _session_lane.pop(key, None)
+    return len(stale)
 
 
 async def _poll_lanes_once(session: aiohttp.ClientSession) -> None:

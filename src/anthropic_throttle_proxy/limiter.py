@@ -608,9 +608,12 @@ def _compute_drain(
 
     # Coarse descriptor kept for logs and dashboards: how many service rounds
     # deep the arrival is. The wait above is the scheduled answer, not this.
-    rounds = (
-        0 if ahead + 1 <= free else math.ceil((ahead + 1 - free) / slots) if slots else ahead + 1
-    )
+    if ahead + 1 <= free:
+        rounds = 0
+    elif slots:
+        rounds = math.ceil((ahead + 1 - free) / slots)
+    else:
+        rounds = ahead + 1
     residual = min(held) if held else 0.0
     if not math.isfinite(wait_s):
         # Only reachable with zero servers: nothing will ever dispatch.
@@ -1213,6 +1216,32 @@ class FairBearerLimiter:
             self._note_completion(lease, priority)
             self._try_dispatch()
 
+    def _next_waiter(
+        self, order: collections.deque[str], queues: dict[str, collections.deque]
+    ) -> asyncio.Future | None:
+        """Pop the next DISPATCHABLE waiter from a rotation. Holds ``_lock``.
+
+        Rotation entries whose queue has gone and futures the client already
+        cancelled are dropped on the way through, so the caller receives either
+        a live waiter or ``None`` when the rotation is exhausted. Re-appending a
+        client that still has work keeps the rotation honest (no client holds
+        the head of the queue).
+        """
+        while order:
+            client_id = order.popleft()
+            q = queues.get(client_id)
+            if not q:
+                continue
+            fut = q.popleft()
+            if q:
+                order.append(client_id)
+            else:
+                queues.pop(client_id, None)
+            if fut.cancelled():
+                continue
+            return fut
+        return None
+
     def _try_dispatch(self) -> None:
         """Wake queued futures. Caller must hold ``_lock``.
 
@@ -1229,9 +1258,10 @@ class FairBearerLimiter:
         ``max_concurrent + PRIORITY_RESERVE_SLOTS``.
 
         Dispatched futures are stamped with the lane that granted the slot
-        (``set_result(True)`` = priority pool) so the awaiting ``acquire``
-        returns the effective lane even if a retune moved the waiter while
-        parked.
+        (``set_result((True, ...))`` = priority pool) so the awaiting
+        ``acquire`` returns the effective lane even if a retune moved the
+        waiter while parked. The counter updates below happen while the lock is
+        still held, so a dispatcher can never observe a granted slot twice.
         """
         if config.PRIORITY_RESERVE_SLOTS <= 0 and self._priority_rr:
             # Reserve hot-tuned to 0 with lane waiters already parked: with the
@@ -1239,35 +1269,17 @@ class FairBearerLimiter:
             # on PR #73) — migrate them into the normal RR structures. They
             # dispatch via the normal loop below, which stamps them demoted.
             self._migrate_priority_to_normal()
-        while self.priority_inflight < config.PRIORITY_RESERVE_SLOTS and self._priority_rr:
-            client_id = self._priority_rr.popleft()
-            q = self._priority_queues.get(client_id)
-            if not q:
-                continue
-            fut = q.popleft()
-            if q:
-                # Client has more queued — re-append at tail to keep rotation honest.
-                self._priority_rr.append(client_id)
-            else:
-                self._priority_queues.pop(client_id, None)
-            if fut.cancelled():
-                continue
+        while self.priority_inflight < config.PRIORITY_RESERVE_SLOTS:
+            fut = self._next_waiter(self._priority_rr, self._priority_queues)
+            if fut is None:
+                break
             self.inflight += 1
             self.priority_inflight += 1
             fut.set_result((True, self._note_dispatch(True)))
-        while (self.inflight - self.priority_inflight) < self.max_concurrent and self._rr_order:
-            client_id = self._rr_order.popleft()
-            q = self._queues.get(client_id)
-            if not q:
-                continue
-            fut = q.popleft()
-            if q:
-                # Client has more queued — re-append at tail to keep rotation honest.
-                self._rr_order.append(client_id)
-            else:
-                self._queues.pop(client_id, None)
-            if fut.cancelled():
-                continue
+        while (self.inflight - self.priority_inflight) < self.max_concurrent:
+            fut = self._next_waiter(self._rr_order, self._queues)
+            if fut is None:
+                break
             self.inflight += 1
             fut.set_result((False, self._note_dispatch(False)))
 
@@ -1278,7 +1290,7 @@ class FairBearerLimiter:
         its normal deque (arrival order within the client kept) and the client
         joins the normal rotation if not already in it.
         """
-        for client_id in list(self._priority_rr):
+        for client_id in self._priority_rr:
             q = self._priority_queues.pop(client_id, None)
             if not q:
                 continue
