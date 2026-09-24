@@ -376,7 +376,7 @@ test("mimo extension: absent MiMo configuration creates no provider or auth entr
     const beforeIds = runtime.getProviders().map(p => p.id).sort();
     const loaded = await loadQueueWaitExtensionRegistration();
     await startExtension(loaded, runtime);
-    assert.deepEqual(loaded.registrations.map(r => r.name), ["zai"]);
+    assert.deepEqual(loaded.registrations.map(r => r.name).sort(), ["deepseek", "zai"], "zai always, deepseek because it ships builtin");
     for (const r of loaded.registrations) runtime.registerProvider(r.name, r.config);
     assert.deepEqual(runtime.getProviders().map(p => p.id).sort(), beforeIds);
     assert.equal(runtime.getProvider("mimo-desktop"), undefined);
@@ -402,7 +402,7 @@ test("mimo extension: real loader overlay preserves models.json configuration", 
     const statuses = [];
     await startExtension(loaded, runtime, statuses);
     const { registrations } = loaded;
-    assert.deepEqual(registrations.map(r => r.name).sort(), ["mimo-desktop", "zai"]);
+    assert.deepEqual(registrations.map(r => r.name).sort(), ["deepseek", "mimo-desktop", "zai"]);
     for (const { config } of registrations) {
       assert.deepEqual(Object.keys(config).sort(), ["api", "streamSimple"]);
       assert.equal(config.api, "openai-completions");

@@ -21,7 +21,7 @@ import path from "node:path";
 import {
   loadPiAi, loadModelRuntimeModule, loadQueueWaitExtensionRegistration, createFakeProxy, sse200,
 } from "./native-replay.mjs";
-import { contextFamilies, normalizeContextForProvider, providerFamily } from "./normalize-families.mjs";
+import { contextFamilies, normalizeContextForProvider, normalizesProvider, providerFamily } from "./normalize-families.mjs";
 
 const FOREIGN_REASONING = "FOREIGN_REASONING_TEXT";
 const TOOL_RESULT = "TOOL_RESULT_TEXT";
@@ -47,6 +47,13 @@ const foreignContext = () => ({
   ],
 });
 
+const deepseekModel = (baseUrl) => ({
+  id: "deepseek-v4-flash", name: "DeepSeek fixture", provider: "deepseek",
+  api: "openai-completions", baseUrl, reasoning: false, input: ["text"],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128000, maxTokens: 8192,
+});
+
 const mimoModel = (baseUrl) => ({
   id: "mimo-v2.6-pro", name: "MiMo fixture", provider: "mimo-desktop",
   api: "openai-completions", baseUrl, reasoning: true,
@@ -62,6 +69,14 @@ async function drain(stream) {
 }
 
 // ── 1. unit ────────────────────────────────────────────────────────────────
+
+test("unit: the covered-provider set is the single source of truth the harness imports", () => {
+  assert.equal(normalizesProvider("zai"), true);
+  assert.equal(normalizesProvider("mimo-desktop"), true);
+  assert.equal(normalizesProvider("deepseek"), true);
+  assert.equal(normalizesProvider("openai-codex"), false, "an unwrapped target must stay fail-closed");
+  assert.equal(normalizesProvider("codex-b"), false);
+});
 
 test("unit: providerFamily mirrors the harness classification", () => {
   assert.equal(providerFamily("deepseek"), "chinese-frontier");
@@ -165,6 +180,42 @@ test("integration: the registered wrapper strips foreign reasoning before it rea
     assert.equal(assistant.tool_calls?.[0]?.function?.name, "bash", "tool call survives the normalization");
     assert.equal(body.messages.some((m) => m.role === "tool"), true, "tool result still pairs with its call");
     assert.equal(JSON.stringify(body).includes(TOOL_RESULT), true, "tool result text survives");
+  } finally {
+    await proxy.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("integration: deepseek is registered and its requests are normalized too", async () => {
+  const { ModelRuntime } = await loadModelRuntimeModule();
+  const proxy = createFakeProxy([sse200()]);
+  const dir = mkdtempSync(path.join(tmpdir(), "deepseek-family-"));
+  try {
+    const baseUrl = await proxy.baseUrl("");
+    // A builtin provider only needs its endpoint redirected; the catalog entry
+    // proves the overlay keeps the builtin models (measured separately).
+    const modelsPath = path.join(dir, "models.json");
+    writeFileSync(modelsPath, JSON.stringify({ providers: { deepseek: { baseUrl } } }));
+    const runtime = await ModelRuntime.create({ authPath: path.join(dir, "auth.json"), modelsPath, refreshOnCreate: false });
+    const builtinModels = runtime.getModels("deepseek").map((m) => m.id).sort();
+    assert.ok(builtinModels.length > 0, "deepseek must exist as a builtin provider");
+    const loaded = await loadQueueWaitExtensionRegistration();
+    for (const extension of loaded.result.extensions) {
+      for (const handler of extension.handlers.get("session_start") ?? []) {
+        await handler({ reason: "startup" }, { modelRegistry: runtime, ui: { setStatus: () => {} } });
+      }
+    }
+    const registered = loaded.registrations.find((r) => r.name === "deepseek");
+    assert.ok(registered, "deepseek must be registered among the normalized providers");
+    assert.deepEqual(runtime.getModels("deepseek").map((m) => m.id).sort(), builtinModels, "builtin catalog survives");
+
+    await drain(registered.config.streamSimple(
+      deepseekModel(baseUrl), foreignContext(),
+      { apiKey: "synthetic-key", fetch: (a, b) => globalThis.fetch(a, b), maxRetries: 0 },
+    ));
+    const body = JSON.parse(proxy.requests[0].body);
+    assert.equal(JSON.stringify(body).includes(FOREIGN_REASONING), false, "no foreign reasoning toward deepseek");
+    assert.equal(body.messages.some((m) => m.role === "tool"), true, "tool pair survives");
   } finally {
     await proxy.close();
     rmSync(dir, { recursive: true, force: true });
