@@ -380,32 +380,34 @@ def _publish_lane_gauges(lanes_view: dict[str, Any]) -> None:
             )
 
 
-def _publish_account_gauges(
-    endpoint: dict[str, dict[str, object]], identity: dict[str, object]
-) -> None:
-    """Mirror endpoint truth into /metrics so Grafana sees what /ui sees."""
-    for label, path in _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
-        usage = (endpoint.get(path) or {}).get("usage")
-        if not isinstance(usage, dict):
-            continue
-        for window, ukey, rkey in (("5h", "util_5h", "reset_5h"), ("7d", "util_7d", "reset_7d")):
-            util, reset = usage.get(ukey), usage.get(rkey)
-            if util is not None:
-                _metrics.M_ACCOUNT_USAGE.labels(label, window).set(util)
-            if reset is not None:
-                _metrics.M_ACCOUNT_RESET.labels(label, window).set(reset)
-        # Spec 2: weekly per-model (scoped) meter — labeled by the model it
-        # currently tracks so a Fable→Sonnet flip is visible per account.
-        scoped = usage.get("scoped")
-        if isinstance(scoped, dict) and scoped.get("util") is not None and scoped.get("model"):
-            model = str(scoped["model"])
-            prev = _scoped_model_seen.get(label)
-            if prev is not None and prev != model:
-                # Model flipped — drop the stale series (prev was published, so
-                # the labelset exists; safe to remove without a guard).
-                _metrics.M_ACCOUNT_SCOPED.remove(label, prev)
-            _scoped_model_seen[label] = model
-            _metrics.M_ACCOUNT_SCOPED.labels(label, model).set(scoped["util"])
+def _publish_account_window_gauges(label: str, usage: dict) -> None:
+    """Publish one account's 5h/7d utilization and reset gauges."""
+    for window, ukey, rkey in (("5h", "util_5h", "reset_5h"), ("7d", "util_7d", "reset_7d")):
+        util, reset = usage.get(ukey), usage.get(rkey)
+        if util is not None:
+            _metrics.M_ACCOUNT_USAGE.labels(label, window).set(util)
+        if reset is not None:
+            _metrics.M_ACCOUNT_RESET.labels(label, window).set(reset)
+
+
+def _publish_account_scoped_gauge(label: str, usage: dict) -> None:
+    """Spec 2: weekly per-model (scoped) meter — labeled by the model it
+    currently tracks so a Fable→Sonnet flip is visible per account."""
+    scoped = usage.get("scoped")
+    if not (isinstance(scoped, dict) and scoped.get("util") is not None and scoped.get("model")):
+        return
+    model = str(scoped["model"])
+    prev = _scoped_model_seen.get(label)
+    if prev is not None and prev != model:
+        # Model flipped — drop the stale series (prev was published, so
+        # the labelset exists; safe to remove without a guard).
+        _metrics.M_ACCOUNT_SCOPED.remove(label, prev)
+    _scoped_model_seen[label] = model
+    _metrics.M_ACCOUNT_SCOPED.labels(label, model).set(scoped["util"])
+
+
+def _publish_identity_gauges(identity: dict[str, object]) -> None:
+    """Publish the distinct-account verdict plus the FR-005 collision counters."""
     suspected = identity.get("suspected") or {}
     if identity["collapsed"]:
         _metrics.M_ACCOUNTS_DISTINCT.set(0)
@@ -423,6 +425,24 @@ def _publish_account_gauges(
     duplicates = identity.get("duplicates") or {}
     _metrics.M_ACCOUNT_COLLISIONS.set(sum(len(labels) for labels in duplicates.values()))
     _metrics.M_ACCOUNT_SUSPECTED.set(sum(len(labels) for labels in suspected.values()))
+
+
+def _publish_account_gauges(
+    endpoint: dict[str, dict[str, object]], identity: dict[str, object]
+) -> None:
+    """Mirror endpoint truth into /metrics so Grafana sees what /ui sees.
+
+    Per-account meters go through ``_publish_account_window_gauges`` and
+    ``_publish_account_scoped_gauge``; the account-identity verdicts through
+    ``_publish_identity_gauges``.
+    """
+    for label, path in _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
+        usage = (endpoint.get(path) or {}).get("usage")
+        if not isinstance(usage, dict):
+            continue
+        _publish_account_window_gauges(label, usage)
+        _publish_account_scoped_gauge(label, usage)
+    _publish_identity_gauges(identity)
 
 
 _PROVIDER_ICONS = {
@@ -681,6 +701,122 @@ def _lane_pace_eta(lane: dict[str, Any], now: float) -> tuple[float | None, str 
     return None, None
 
 
+def _anthropic_meters(account: dict) -> list[dict]:
+    """Window meters plus the pay-go credits row for one Anthropic account."""
+    meters = [
+        m
+        for m in (
+            _window_meter("5h", account.get("win5")),
+            _window_meter("7d", account.get("win7")),
+            _window_meter("7d sonnet", account.get("sonnet")),
+            _window_meter("7d opus", account.get("opus")),
+        )
+        if m is not None
+    ]
+    extra = account.get("extra") or {}
+    if extra.get("used") is not None:
+        meters.append(
+            {
+                "label": "credits",
+                "pct": None,
+                "reset_in": "",
+                "note": f"{extra['used']:.2f} {extra.get('currency') or ''}".strip(),
+            }
+        )
+    return meters
+
+
+def _anthropic_subscription_row(account: dict) -> dict:
+    """One Subscriptions row from a live Anthropic account observation."""
+    status, detail = _account_status(account)
+    # Whether this account may be NAMED as "what takes traffic next".
+    # `_account_status` folds an endpoint failure into the row's detail as
+    # a note while leaving the verdict at `ok`, so an account whose own
+    # usage call came back "credential rejected (401)" still ranked as the
+    # freest lane and got recommended — a routing suggestion built on a
+    # meter we could not read (cross-family review, 18/09/2026). Every
+    # signal that the reading is untrustworthy has to veto the
+    # recommendation, and the absence of a signal is not a signal: the
+    # default is False.
+    credential = account.get("credential")
+    routing_eligible = (
+        status == "ok"
+        and not account.get("endpoint_err")
+        and not account.get("error")
+        and not account.get("locked_in")
+        and not (isinstance(credential, dict) and credential.get("ok") is False)
+    )
+    return {
+        "id": account.get("label") or "?",
+        "provider": "Anthropic",
+        "icon": "✳️",
+        # One identity scheme across every table. The file-label is a
+        # letter (A/B/C) that collides across families — anthropic A is
+        # pedrobalbino@proton.me while codex:a is phsb5321@gmail.com —
+        # so the EMAIL is the identity and the letter is the tag.
+        "identity": account.get("email") or account.get("label") or "?",
+        "sub": account.get("email") or "",
+        # Carried so the status strip can point at THIS row as the
+        # binding constraint instead of naming a bare hash.
+        "bearer_id": account.get("bearer_id") or "",
+        "family": "anthropic",
+        "plan": "",
+        "src": account.get("src") or "",
+        "meters": _anthropic_meters(account),
+        "pace": account.get("pace"),
+        "pace_warn": bool(account.get("pace_warn")),
+        "eta": account.get("eta") or "",
+        "status": status,
+        "status_icon": _STATUS_ICONS.get(status, "❔"),
+        "detail": detail,
+        "billing": None,
+        "routing_eligible": routing_eligible,
+    }
+
+
+def _lane_meters(lane: dict[str, Any]) -> list[dict]:
+    """Meter rows for one out-of-process lane report entry."""
+    return [
+        {
+            "label": m.get("label") or "?",
+            "icon": _METER_ICONS.get(str(m.get("label") or "").lower(), "📊"),
+            "pct": m.get("used_pct"),
+            "reset_in": m.get("reset_in") or "",
+            # A meter may carry its own note (a pay-go lane's remaining
+            # balance); `unlimited` is just the oldest one.
+            "note": m.get("note") or ("unlimited" if m.get("unlimited") else ""),
+            "exhausted_ok": bool(m.get("exhausted_ok")),
+            "window_mins": m.get("window_mins"),
+            "resets_at": m.get("resets_at"),
+            "unlimited": bool(m.get("unlimited")),
+        }
+        for m in lane.get("meters") or []
+    ]
+
+
+def _lane_subscription_row(lane: dict[str, Any], now: float) -> dict:
+    """One Subscriptions row from a lane report entry (burn pace included)."""
+    pace, eta = _lane_pace_eta(lane, now)
+    return {
+        "id": lane.get("id") or "?",
+        "identity": lane.get("identity") or lane.get("provider") or lane.get("id") or "?",
+        "provider": lane.get("provider") or lane.get("kind") or "provider",
+        "icon": lane.get("icon") or "🤖",
+        "sub": "",
+        "family": lane.get("family") or "",
+        "plan": lane.get("plan") or "",
+        "src": "Pi meter report",
+        "meters": _lane_meters(lane),
+        "pace": pace,
+        "pace_warn": pace is not None and pace >= _accounts.PACE_WARN,
+        "eta": eta or "",
+        "status": lane.get("status") or "unknown",
+        "status_icon": _STATUS_ICONS.get(lane.get("status") or "unknown", "❔"),
+        "detail": lane.get("reason") or "",
+        "billing": lane.get("billing"),
+    }
+
+
 def _build_subscriptions(
     accounts: list[dict], lanes_view: dict[str, Any], now: float
 ) -> list[dict]:
@@ -693,117 +829,19 @@ def _build_subscriptions(
     content-free `anthropic:proxy · delegated · "live at the throttle proxy"`
     row whose only job was to point at the other table (Pedro, 04/08/2026:
     "the accounts and subscriptions sections are redundant").
+
+    Row shapes live in ``_anthropic_subscription_row`` / ``_lane_subscription_row``;
+    grouping is ``_sort_subscription_rows``' job.
     """
     rows: list[dict] = []
     for account in accounts:
-        meters = [
-            m
-            for m in (
-                _window_meter("5h", account.get("win5")),
-                _window_meter("7d", account.get("win7")),
-                _window_meter("7d sonnet", account.get("sonnet")),
-                _window_meter("7d opus", account.get("opus")),
-            )
-            if m is not None
-        ]
-        extra = account.get("extra") or {}
-        if extra.get("used") is not None:
-            meters.append(
-                {
-                    "label": "credits",
-                    "pct": None,
-                    "reset_in": "",
-                    "note": f"{extra['used']:.2f} {extra.get('currency') or ''}".strip(),
-                }
-            )
-        status, detail = _account_status(account)
-        # Whether this account may be NAMED as "what takes traffic next".
-        # `_account_status` folds an endpoint failure into the row's detail as
-        # a note while leaving the verdict at `ok`, so an account whose own
-        # usage call came back "credential rejected (401)" still ranked as the
-        # freest lane and got recommended — a routing suggestion built on a
-        # meter we could not read (cross-family review, 18/09/2026). Every
-        # signal that the reading is untrustworthy has to veto the
-        # recommendation, and the absence of a signal is not a signal: the
-        # default is False.
-        credential = account.get("credential")
-        routing_eligible = (
-            status == "ok"
-            and not account.get("endpoint_err")
-            and not account.get("error")
-            and not account.get("locked_in")
-            and not (isinstance(credential, dict) and credential.get("ok") is False)
-        )
-        rows.append(
-            {
-                "id": account.get("label") or "?",
-                "provider": "Anthropic",
-                "icon": "✳️",
-                # One identity scheme across every table. The file-label is a
-                # letter (A/B/C) that collides across families — anthropic A is
-                # pedrobalbino@proton.me while codex:a is phsb5321@gmail.com —
-                # so the EMAIL is the identity and the letter is the tag.
-                "identity": account.get("email") or account.get("label") or "?",
-                "sub": account.get("email") or "",
-                # Carried so the status strip can point at THIS row as the
-                # binding constraint instead of naming a bare hash.
-                "bearer_id": account.get("bearer_id") or "",
-                "family": "anthropic",
-                "plan": "",
-                "src": account.get("src") or "",
-                "meters": meters,
-                "pace": account.get("pace"),
-                "pace_warn": bool(account.get("pace_warn")),
-                "eta": account.get("eta") or "",
-                "status": status,
-                "status_icon": _STATUS_ICONS.get(status, "❔"),
-                "detail": detail,
-                "billing": None,
-                "routing_eligible": routing_eligible,
-            }
-        )
+        rows.append(_anthropic_subscription_row(account))
     for lane in lanes_view.get("lanes") or []:
         # Anthropic is measured above, per account, from live bearer state. The
         # report's placeholder row for it carries no meter by construction.
         if lane.get("kind") == "anthropic":
             continue
-        meters = [
-            {
-                "label": m.get("label") or "?",
-                "icon": _METER_ICONS.get(str(m.get("label") or "").lower(), "📊"),
-                "pct": m.get("used_pct"),
-                "reset_in": m.get("reset_in") or "",
-                # A meter may carry its own note (a pay-go lane's remaining
-                # balance); `unlimited` is just the oldest one.
-                "note": m.get("note") or ("unlimited" if m.get("unlimited") else ""),
-                "exhausted_ok": bool(m.get("exhausted_ok")),
-                "window_mins": m.get("window_mins"),
-                "resets_at": m.get("resets_at"),
-                "unlimited": bool(m.get("unlimited")),
-            }
-            for m in lane.get("meters") or []
-        ]
-        pace, eta = _lane_pace_eta(lane, now)
-        rows.append(
-            {
-                "id": lane.get("id") or "?",
-                "identity": lane.get("identity") or lane.get("provider") or lane.get("id") or "?",
-                "provider": lane.get("provider") or lane.get("kind") or "provider",
-                "icon": lane.get("icon") or "🤖",
-                "sub": "",
-                "family": lane.get("family") or "",
-                "plan": lane.get("plan") or "",
-                "src": "Pi meter report",
-                "meters": meters,
-                "pace": pace,
-                "pace_warn": pace is not None and pace >= _accounts.PACE_WARN,
-                "eta": eta or "",
-                "status": lane.get("status") or "unknown",
-                "status_icon": _STATUS_ICONS.get(lane.get("status") or "unknown", "❔"),
-                "detail": lane.get("reason") or "",
-                "billing": lane.get("billing"),
-            }
-        )
+        rows.append(_lane_subscription_row(lane, now))
 
     # Pace answers "will this last the window". Once the window has already
     # refused, it did not, and the columns become noise: account B rendered
@@ -814,28 +852,36 @@ def _build_subscriptions(
         if row.get("status") in _CLOSED_STATUSES:
             row["pace"], row["pace_warn"], row["eta"] = None, False, ""
 
-    # Grouped by family, fullest first WITHIN each group. A single global
-    # fullest-first sort interleaved the providers (`B · copilot · A · codex:b ·
-    # C · codex:a`), so the eye could not scan "how is Anthropic doing" without
-    # reading every row. Which family is most pressed still leads, because a
-    # group sorts by its own fullest member.
-    def _binding(row: dict) -> float:
-        readings = [m["pct"] for m in row["meters"] if m.get("pct") is not None]
-        return max(readings) if readings else -1.0
+    _sort_subscription_rows(rows)
+    return rows
 
+
+def _row_binding_pct(row: dict) -> float:
+    """The fullest meter reading on a row, or -1.0 when nothing was measured."""
+    readings = [m["pct"] for m in row["meters"] if m.get("pct") is not None]
+    return max(readings) if readings else -1.0
+
+
+def _sort_subscription_rows(rows: list[dict]) -> None:
+    """Grouped by family, fullest first WITHIN each group.
+
+    A single global fullest-first sort interleaved the providers (`B · copilot ·
+    A · codex:b · C · codex:a`), so the eye could not scan "how is Anthropic
+    doing" without reading every row. Which family is most pressed still leads,
+    because a group sorts by its own fullest member.
+    """
     worst_in_family: dict[str, float] = {}
     for row in rows:
         family = row.get("family") or ""
-        worst_in_family[family] = max(worst_in_family.get(family, -1.0), _binding(row))
+        worst_in_family[family] = max(worst_in_family.get(family, -1.0), _row_binding_pct(row))
     rows.sort(
         key=lambda r: (
             -worst_in_family.get(r.get("family") or "", -1.0),
             r.get("family") or "",
-            -_binding(r),
+            -_row_binding_pct(r),
             r.get("id") or "",
         )
     )
-    return rows
 
 
 # Statuses where the subscription is already refusing, so a burn projection is
@@ -868,6 +914,12 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
     bound = status.get("binding")
     if not isinstance(bound, dict):
         return
+    _mark_binding_row(bound, subscriptions)
+    _name_next_usable(bound, subscriptions)
+
+
+def _mark_binding_row(bound: dict, subscriptions: list[dict]) -> None:
+    """Point the binding block at its subscription row and that row's meter."""
     for row in subscriptions:
         if row.get("bearer_id") and row["bearer_id"] == bound["bearer_id"]:
             row["is_binding"] = True
@@ -877,19 +929,31 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
                 if meter.get("label") == bound["window"]:
                     bound["resets_in"] = meter.get("reset_in") or ""
             break
-    # Next usable: an Anthropic sibling with MEASURED headroom AND trustworthy
-    # evidence for the reading. Two independent gates, because they fail
-    # differently:
-    #   * `routing_eligible` — the account may be recommended at all. An
-    #     endpoint error, a locked usage window or a refused credential means
-    #     the meter beside it cannot be trusted, even though its percentage
-    #     looks like every other percentage (cross-family review, 18/09/2026:
-    #     a `credential rejected (401)` account was offered as the way out on
-    #     the strength of a 12% number).
-    #   * a real meter reading — an "unseen" account has no evidence of
-    #     usability, and ranking missing meters as 0% manufactured a routing
-    #     recommendation out of no data (review B2 / finding 8: "takes traffic
-    #     next" must be earned).
+
+
+def _measured_headroom(row: dict) -> float | None:
+    """The row's fullest meter reading, or None when it has no reading at all."""
+    readings = [m["pct"] for m in row.get("meters") or [] if m.get("pct") is not None]
+    return max(readings) if readings else None
+
+
+def _name_next_usable(bound: dict, subscriptions: list[dict]) -> None:
+    """Name the freest serving sibling — or say honestly that none is known.
+
+    Next usable: an Anthropic sibling with MEASURED headroom AND trustworthy
+    evidence for the reading. Two independent gates, because they fail
+    differently:
+      * `routing_eligible` — the account may be recommended at all. An
+        endpoint error, a locked usage window or a refused credential means
+        the meter beside it cannot be trusted, even though its percentage
+        looks like every other percentage (cross-family review, 18/09/2026:
+        a `credential rejected (401)` account was offered as the way out on
+        the strength of a 12% number).
+      * a real meter reading — an "unseen" account has no evidence of
+        usability, and ranking missing meters as 0% manufactured a routing
+        recommendation out of no data (review B2 / finding 8: "takes traffic
+        next" must be earned).
+    """
     siblings = [
         row
         for row in subscriptions
@@ -898,12 +962,7 @@ def _attach_binding(status: dict, subscriptions: list[dict]) -> None:
     candidates = [
         row for row in siblings if row.get("routing_eligible") and row.get("status") == "ok"
     ]
-
-    def _fill(row: dict) -> float | None:
-        readings = [m["pct"] for m in row.get("meters") or [] if m.get("pct") is not None]
-        return max(readings) if readings else None
-
-    measured = [(row, pct) for row in candidates if (pct := _fill(row)) is not None]
+    measured = [(row, pct) for row in candidates if (pct := _measured_headroom(row)) is not None]
     measured.sort(key=lambda item: item[1])
     if measured:
         bound["next_usable"] = measured[0][0]["id"]
