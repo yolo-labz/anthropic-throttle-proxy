@@ -47,6 +47,7 @@ import re
 import socket
 import time
 import zlib
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -1324,108 +1325,223 @@ def _account_routing_candidate_score(
     hard gates (retry-after, rejected, util≥1.0, endpoint 429, warning-pressure
     without ``allow_pressure``) and the queue/inflight prefix are identical in
     both modes — only the sub-gate tie-breaker term differs.
+
+    This function owns the ORDER the gates run in and nothing else: the unified
+    and endpoint gates live in ``_unified_window_pressure`` /
+    ``_endpoint_window_pressure`` (each returning ``None`` for hard-unusable), and
+    the two ranking tails live in ``_routing_pressure_score``.
     """
     now = time.time() if now is None else now
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
+    retry_after_remaining = _bearer_routing_retry_after(bid, allow_retry_probe=allow_retry_probe)
+    if retry_after_remaining is None:
+        return math.inf
+    load = _bearer_local_load_score(bid)
+    # (util, reset-epoch|None, window-length) per observed budget window. Fed to
+    # the budget_paced ranker below; least_loaded ignores it (uses max util only).
+    # Both gate passes append to it, so a gate that hard-blocks must not have
+    # already priced a window it rejected on.
+    windows: list[tuple[float, float | None, float]] = []
+    under_pressure = False
+    util = 0.0
+    bstate = config.bearer_state.get(bid, {})
+    unified = bstate.get("unified") if isinstance(bstate, dict) else None
+    if isinstance(unified, dict):
+        unified_gate = _unified_window_pressure(unified, now, windows, allow_pressure)
+        if unified_gate is None:
+            return math.inf
+        util, under_pressure = unified_gate
+    endpoint = acct.get("endpoint")
+    if isinstance(endpoint, dict):
+        endpoint_gate = _endpoint_window_pressure(
+            endpoint, model, util, under_pressure, windows, allow_pressure
+        )
+        if endpoint_gate is None:
+            return math.inf
+        util, under_pressure = endpoint_gate
+    # Queue dominates; utilization/pacing is a soft tie-breaker below the warn line.
+    # Stickiness is dropped while the incoming bearer is inside a Retry-After
+    # window: otherwise the -0.01 bonus lets a windowed incoming (even a
+    # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
+    stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
+    return _routing_pressure_score(
+        load=load,
+        util=util,
+        under_pressure=under_pressure,
+        stickiness=stickiness,
+        retry_after_remaining=retry_after_remaining,
+        windows=windows,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_target_spillover=allow_target_spillover,
+    )
+
+
+def _bearer_routing_retry_after(bid: str, *, allow_retry_probe: bool) -> float | None:
+    """The eligibility gates that need no per-request reading; ``None`` = not routable.
+
+    Returns the remaining Retry-After rather than a bare boolean so the caller
+    prices exactly the reading this gate judged — two separate clock reads could
+    disagree between the gate and the surcharge.
+    """
     # A refused credential is neither pressure nor a window: it carries no
     # Retry-After and no unified gauges, so every gate below reads it as an idle,
     # zero-utilization account — the CHEAPEST candidate in the fleet. Gate it
     # first, ABOVE the retry-probe branch, so ``allow_retry_probe`` can never
     # elect a dead account. That election is what spent 40 client turns on 403s.
     if _bearer_credential_dead(bid):
-        return math.inf
+        return None
     retry_after_remaining = _bearer_retry_after_remaining(bid)
     if _limiter.retry_probe_required(bid) and (
         _limiter.retry_probe_inflight(bid)
         or not allow_retry_probe
         or (retry_after_remaining > 0 and _limiter.retry_probe_blocks_routing(bid))
     ):
-        return math.inf
+        return None
     if retry_after_remaining > config.MAX_HOLD_RETRY_AFTER_S:
-        return math.inf
-    load = _bearer_local_load_score(bid)
-    # (util, reset-epoch|None, window-length) per observed budget window. Fed to
-    # the budget_paced ranker below; least_loaded ignores it (uses max util only).
-    windows: list[tuple[float, float | None, float]] = []
-    under_pressure = False
-    bstate = config.bearer_state.get(bid, {})
-    unified = bstate.get("unified") if isinstance(bstate, dict) else None
-    if isinstance(unified, dict):
-        # Drop windows whose own reset epoch has passed BEFORE they gate anything:
-        # this snapshot only refreshes from the bearer's own response headers, so
-        # a gated-off bearer can never clear its own gate. See unified_live_view.
-        unified = _unified_live_view(unified, now)
-        statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
-        if "rejected" in statuses:
-            return math.inf
-        under_pressure = any(status == "allowed_warning" for status in statuses)
-        util = max(
-            float(v)
-            for v in (unified.get("util_5h"), unified.get("util_7d"), 0.0)
-            if isinstance(v, (int, float))
-        )
-        _append_window(windows, unified.get("util_5h"), unified.get("reset_5h"), _WINDOW_5H_S)
-        _append_window(windows, unified.get("util_7d"), unified.get("reset_7d"), _WINDOW_7D_S)
-        # A fully-exhausted unified window is HARD-unusable regardless of the
-        # (sometimes lagging/inconsistent) status field — mirror the endpoint
-        # and scoped branches, which already gate util>=1.0 to inf. Without
-        # this an `allowed`+util=1.0 sample slips past the pressure gate under
-        # allow_pressure (e.g. the spillover pass) and draws a real 429
-        # (Codex round-2 MAJOR).
-        if util >= 1.0:
-            return math.inf
-        under_pressure = under_pressure or (UTILIZATION_WARN > 0 and util >= UTILIZATION_WARN)
-        if under_pressure and not allow_pressure:
-            return math.inf
-    else:
-        util = 0.0
-    endpoint = acct.get("endpoint")
-    if isinstance(endpoint, dict):
-        usage = endpoint.get("usage")
-        if "(429)" in str(endpoint.get("err") or "") and not isinstance(usage, dict):
-            return math.inf
-        if isinstance(usage, dict):
-            endpoint_util = max(
-                float(v)
-                for v in (usage.get("util_5h"), usage.get("util_7d"), 0.0)
-                if isinstance(v, (int, float))
-            )
-            if endpoint_util >= 1.0:
-                return math.inf
-            util = max(util, endpoint_util)
-            _append_window(windows, usage.get("util_5h"), usage.get("reset_5h"), _WINDOW_5H_S)
-            _append_window(windows, usage.get("util_7d"), usage.get("reset_7d"), _WINDOW_7D_S)
-            if UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN and not allow_pressure:
-                return math.inf
-            under_pressure = under_pressure or (
-                UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN
-            )
-            # spec 3: model-aware — if this request's tier matches the account's
-            # scoped weekly meter, fold that meter's utilization in (it is the
-            # binding budget for THIS request even when all-models has room).
-            scoped = usage.get("scoped")
-            if model and isinstance(scoped, dict):
-                s_util = scoped.get("util")
-                if isinstance(s_util, (int, float)) and _model_tier(model) == _model_tier(
-                    str(scoped.get("model") or "")
-                ):
-                    if s_util >= 1.0:
-                        return math.inf
-                    util = max(util, float(s_util))
-                    # scoped is a per-model 7d budget; its reset (when present) prices it.
-                    _append_window(windows, s_util, scoped.get("reset"), _WINDOW_7D_S)
-                    if UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN and not allow_pressure:
-                        return math.inf
-                    under_pressure = under_pressure or (
-                        UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN
-                    )
-    # Queue dominates; utilization/pacing is a soft tie-breaker below the warn line.
-    # Stickiness is dropped while the incoming bearer is inside a Retry-After
-    # window: otherwise the -0.01 bonus lets a windowed incoming (even a
-    # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
-    stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
+        return None
+    return retry_after_remaining
+
+
+def _unified_window_pressure(
+    unified: dict,
+    now: float,
+    windows: list[tuple[float, float | None, float]],
+    allow_pressure: bool,
+) -> tuple[float, bool] | None:
+    """Gate on the bearer's unified gauges; ``(util, under_pressure)`` or None.
+
+    ``None`` is the fail-closed verdict: this account is HARD-unusable for this
+    request and the caller must return ``math.inf``. Drained windows are appended
+    to ``windows`` as they are read, because the budget_paced ranker prices them.
+
+    The order of the three gates is load-bearing. A ``rejected`` status gates
+    above the utilization read (the credential is refusing, not merely loaded),
+    and a fully-exhausted window gates above the ``allow_pressure`` branch.
+    """
+    # Drop windows whose own reset epoch has passed BEFORE they gate anything:
+    # this snapshot only refreshes from the bearer's own response headers, so
+    # a gated-off bearer can never clear its own gate. See unified_live_view.
+    unified = _unified_live_view(unified, now)
+    statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
+    if "rejected" in statuses:
+        return None
+    under_pressure = any(status == "allowed_warning" for status in statuses)
+    util = max(
+        float(v)
+        for v in (unified.get("util_5h"), unified.get("util_7d"), 0.0)
+        if isinstance(v, (int, float))
+    )
+    _append_window(windows, unified.get("util_5h"), unified.get("reset_5h"), _WINDOW_5H_S)
+    _append_window(windows, unified.get("util_7d"), unified.get("reset_7d"), _WINDOW_7D_S)
+    # A fully-exhausted unified window is HARD-unusable regardless of the
+    # (sometimes lagging/inconsistent) status field — mirror the endpoint
+    # and scoped branches, which already gate util>=1.0 to inf. Without
+    # this an `allowed`+util=1.0 sample slips past the pressure gate under
+    # allow_pressure (e.g. the spillover pass) and draws a real 429
+    # (Codex round-2 MAJOR).
+    if util >= 1.0:
+        return None
+    under_pressure = under_pressure or (UTILIZATION_WARN > 0 and util >= UTILIZATION_WARN)
+    if under_pressure and not allow_pressure:
+        return None
+    return util, under_pressure
+
+
+def _endpoint_window_pressure(
+    endpoint: dict,
+    model: str,
+    util: float,
+    under_pressure: bool,
+    windows: list[tuple[float, float | None, float]],
+    allow_pressure: bool,
+) -> tuple[float, bool] | None:
+    """Gate on the account's endpoint usage headers; ``(util, under_pressure)``.
+
+    Takes the running values from the unified gate and returns them updated, so
+    utilization is the max across both sources and pressure is sticky across
+    them. ``None`` is the fail-closed verdict (caller returns ``math.inf``).
+    """
+    usage = endpoint.get("usage")
+    if "(429)" in str(endpoint.get("err") or "") and not isinstance(usage, dict):
+        return None
+    if not isinstance(usage, dict):
+        return util, under_pressure
+    endpoint_util = max(
+        float(v)
+        for v in (usage.get("util_5h"), usage.get("util_7d"), 0.0)
+        if isinstance(v, (int, float))
+    )
+    if endpoint_util >= 1.0:
+        return None
+    util = max(util, endpoint_util)
+    _append_window(windows, usage.get("util_5h"), usage.get("reset_5h"), _WINDOW_5H_S)
+    _append_window(windows, usage.get("util_7d"), usage.get("reset_7d"), _WINDOW_7D_S)
+    if UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN and not allow_pressure:
+        return None
+    under_pressure = under_pressure or (UTILIZATION_WARN > 0 and endpoint_util >= UTILIZATION_WARN)
+    return _scoped_window_pressure(
+        usage.get("scoped"), model, util, under_pressure, windows, allow_pressure
+    )
+
+
+def _scoped_window_pressure(
+    scoped: object,
+    model: str,
+    util: float,
+    under_pressure: bool,
+    windows: list[tuple[float, float | None, float]],
+    allow_pressure: bool,
+) -> tuple[float, bool] | None:
+    """Model-aware gate on the account's scoped (per-model) weekly meter.
+
+    Applies only when the request's tier matches the scoped meter's model; with
+    no scoped reading — or a different tier — the incoming values pass through
+    unchanged. ``None`` is the fail-closed verdict (caller returns ``math.inf``).
+    """
+    # spec 3: model-aware — if this request's tier matches the account's
+    # scoped weekly meter, fold that meter's utilization in (it is the
+    # binding budget for THIS request even when all-models has room).
+    if not (model and isinstance(scoped, dict)):
+        return util, under_pressure
+    s_util = scoped.get("util")
+    if not isinstance(s_util, (int, float)) or _model_tier(model) != _model_tier(
+        str(scoped.get("model") or "")
+    ):
+        return util, under_pressure
+    if s_util >= 1.0:
+        return None
+    util = max(util, float(s_util))
+    # scoped is a per-model 7d budget; its reset (when present) prices it.
+    _append_window(windows, s_util, scoped.get("reset"), _WINDOW_7D_S)
+    if UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN and not allow_pressure:
+        return None
+    under_pressure = under_pressure or (UTILIZATION_WARN > 0 and s_util >= UTILIZATION_WARN)
+    return util, under_pressure
+
+
+def _routing_pressure_score(
+    *,
+    load: float,
+    util: float,
+    under_pressure: bool,
+    stickiness: float,
+    retry_after_remaining: float,
+    windows: list[tuple[float, float | None, float]],
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_target_spillover: bool,
+) -> float:
+    """Combine the surviving gate readings into the ranking score.
+
+    This is the only mode-dependent part of the score: ``budget_paced`` adds
+    deadline-aware pacing (and hard-gates on a crossed target), ``least_loaded``
+    returns the raw max-utilization form. Every hard gate has already run.
+    """
     warning_surcharge = _WARNING_BACKPRESSURE_SURCHARGE if under_pressure else 0.0
     retry_after_surcharge = retry_after_remaining * _RETRY_AFTER_SURCHARGE_PER_S
     if config.ACCOUNT_ROUTING_MODE == "budget_paced":
@@ -2641,6 +2757,13 @@ async def _keepalive_hold_and_retry(
     path — they would try to prepare a second response on the same request and
     raise. ``_forward_once_into_sse`` pipes chunks directly into ``sse_resp``
     bypassing the prepare step.
+
+    The retry loop is a controller only. One iteration is
+    ``_keepalive_one_attempt`` (stamp headers, forward, interpret); each way the
+    hold can end is its own named terminal — ``_keepalive_exhausted_terminal``,
+    ``_keepalive_reclassified_terminal``, ``_keepalive_internal_error_terminal``
+    — because every one of them must emit a well-formed SSE close rather than
+    let the socket drop.
     """
     sse_resp = web.StreamResponse(
         status=200,
@@ -2657,27 +2780,8 @@ async def _keepalive_hold_and_retry(
     keepalive_task = asyncio.create_task(_emit_keepalive_frames(sse_resp, interval_ms))
     _background_tasks.add(keepalive_task)
     keepalive_task.add_done_callback(_background_tasks.discard)
-
-    async def _await_keepalive_cancel() -> None:
-        keepalive_task.cancel()
-        try:
-            await keepalive_task
-        except asyncio.CancelledError:
-            # OUR cancel() above — expected, and deliberately swallowed: this
-            # runs first in the cleanup path, so re-raising would skip the
-            # terminal-SSE emit and leave the client a truncated 200.
-            # An OUTER cancellation (client gone, server shutting down) is a
-            # different event and must still unwind; the task is only
-            # cancelled() once the cancellation we requested has landed.
-            if not keepalive_task.cancelled():
-                raise
-        except Exception as ka_err:
-            # The emitter died with a real error, not just our cancel. Record it,
-            # but NEVER let it propagate out of cleanup: this runs first in the
-            # broad exception handler below, so a re-raise here would skip the
-            # terminal-SSE emit and leave the client a truncated 200 (Codex
-            # round-3 MAJOR — the same post-prepare footgun, one level down).
-            log(f"keepalive-emitter-error bid={bid}: {ka_err!r}")
+    # Bound once, so every exit path cancels this exact emitter task.
+    await_keepalive_cancel = partial(_keepalive_cancel_emitter, keepalive_task, bid)
 
     # Counted from HERE, not from function entry: everything above (prepare,
     # emitter spawn) can still raise, and a raise before the try never reaches
@@ -2686,191 +2790,380 @@ async def _keepalive_hold_and_retry(
     # from the terminal-only holds_total counter (spec 092 T003).
     state["keepalive_holds_active"] = int(state["keepalive_holds_active"]) + 1
     try:
-        # The throttle that triggered the hold is a real throttle event: apply
-        # its AIMD once (canonical _aimd_feedback — 529 + a marked queue-timeout
-        # never shrink; a budget/Retry-After 429 shrinks, a concurrency 429 only
-        # paces via CONCURRENCY_COOLDOWN_S), then take ownership so
-        # _finalize skips its own _aimd_feedback (no double-apply on the
-        # terminal). Guarded so a metrics error cannot kill the hold, and kept
-        # INSIDE the outer try so ANY raise still hits the terminal-SSE +
-        # task-cancel safety below — never a leaked emitter or truncated 200
-        # (Codex round-2 MAJOR).
-        attempt.aimd_owned = True
-        try:
-            await _aimd_feedback(bid, limiter, attempt)
-        except Exception as origin_aimd_err:
-            log(f"keepalive-hold origin-aimd-error bid={bid}: {origin_aimd_err!r}")
+        await _keepalive_apply_origin_aimd(bid, limiter, attempt)
         while True:
-            now = time.time()
-            if wait_deadline is not None and now >= wait_deadline:
-                # Budget exhausted — spec 092 invariant 4: emit error SSE, not
-                # a bare socket close. The 07/07 falsification test checks this.
-                await _await_keepalive_cancel()
-                M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
-                log(f"keepalive-hold-exhausted bid={bid} path=/{path}")
-                await _emit_sse_error_terminal(
-                    sse_resp,
-                    "proxy keepalive hold exhausted; upstream capacity unavailable within budget",
+            if wait_deadline is not None and time.time() >= wait_deadline:
+                return await _keepalive_exhausted_terminal(
+                    sse_resp=sse_resp,
+                    attempt=attempt,
+                    bid=bid,
+                    path=path,
+                    cancel_keepalive=await_keepalive_cancel,
                 )
-                attempt.final_status = 503
-                attempt.response = sse_resp
-                return sse_resp
 
-            # Honor any outstanding Retry-After, but NEVER sleep past the
-            # end-to-end deadline: the hold must not hold the fair slot past the
-            # client's wait-budget (invariant 6 — Codex + Opus panel MAJOR).
-            # Keepalives keep flowing during this sleep; the next loop iteration
-            # re-checks the deadline and exits with a clean SSE error if reached.
-            ra_remaining = limiter.retry_after_remaining()
-            if ra_remaining > 0:
-                budget_left = (
-                    (wait_deadline - time.time()) if wait_deadline is not None else ra_remaining
-                )
-                await asyncio.sleep(max(0.0, min(ra_remaining, budget_left)))
+            # Honor any outstanding Retry-After, but never past the deadline.
+            await _keepalive_wait_out_retry_after(limiter, wait_deadline)
 
-            # Stamp the remaining budget on central-bound requests.
-            send_headers: dict = dict(headers)
-            if via == "central" and wait_deadline is not None:
-                remaining_ms = max(0, int((wait_deadline - time.time()) * 1000))
-                send_headers[config.WAIT_BUDGET_HEADER] = str(remaining_ms)
-
-            try:
-                status, meta, captured, exc = await _forward_once_into_sse(
-                    request,
-                    send_headers,
-                    body,
-                    url,
-                    client_timeout,
-                    sse_resp,
-                    cancel_keepalive=_await_keepalive_cancel,
-                )
-            except _CLIENT_DISCONNECT_EXC:
-                # Client disconnected during our retry.
-                await _await_keepalive_cancel()
-                attempt.final_status = 499
-                attempt.response = sse_resp
-                return sse_resp
-
-            if exc is not None:
-                # Network-level error; retry after a brief pause.
-                log(f"keepalive-hold net-error bid={bid}: {exc!r}")
-                await asyncio.sleep(0.5)
-                continue
-
-            # Update attempt with the latest meta/captured.
-            if meta is not None:
-                attempt.meta = meta
-            if captured is not None:
-                attempt.captured = captured
-
-            if 200 <= status < 300:
-                # _forward_once_into_sse already piped the body and called
-                # write_eof. The hold succeeded.
-                await _await_keepalive_cancel()
-                M_KEEPALIVE_HOLDS.labels(outcome="streamed").inc()
-                log(f"keepalive-hold-streamed bid={bid} status={status}")
-                attempt.final_status = status
-                attempt.response = sse_resp
-                return sse_resp
-
-            # Build a minimal response object so _is_queue_timeout_response
-            # can inspect the headers from the new attempt.
-            retry_resp_headers = {}
-            for header in (
-                config.QUEUE_TIMEOUT_HEADER,
-                config.MARKER_HEADER,
-                config.ENTITLEMENT_REFUSAL_HEADER,
-            ):
-                # Copy the VALUE, not a normalized "1": the entitlement verdict is
-                # read as `== "1"`, so flattening some other value into "1" would
-                # turn a sibling's non-verdict into a positive one (Codex fourth
-                # pass).
-                if meta and header in meta:
-                    retry_resp_headers[header] = meta[header]
-            retry_fake = web.Response(status=status, headers=retry_resp_headers)
-            attempt.final_status = status
-            attempt.response = retry_fake
-
-            if _is_transient_throttle(status, meta, bid, retry_fake, attempt.captured):
-                # Still transient: the canonical _aimd_feedback already does the
-                # right thing per status (529 + a marked central queue-timeout
-                # never shrink — invariants 7, 9; a budget/Retry-After 429 shrinks,
-                # a concurrency 429 holds the cap + paces via CONCURRENCY_COOLDOWN_S).
-                # attempt already reflects this retry's status/meta/response, and
-                # retry_fake carries the anti-spoof-gated queue-timeout marker.
-                await _aimd_feedback(bid, limiter, attempt)
-            else:
-                # Reclassified mid-hold. Two causes, and the client must be able
-                # to tell them apart: the windows tightened into BUDGET, or the
-                # retry hit the OAuth entitlement gate. The response is already
-                # prepared, so `_stamp_entitlement_refusal` can no longer add a
-                # header (Codex second pass, finding 6) — the SSE error text is
-                # the only channel left, so it must name the real cause instead
-                # of blaming a budget that is not exhausted.
-                await _await_keepalive_cancel()
-                M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
-                if _entitlement_scoped(attempt, bid, attempt.captured):
-                    log(f"keepalive-hold-entitlement-refusal bid={bid} path=/{path}")
-                    await _emit_sse_error_terminal(
-                        sse_resp,
-                        "proxy keepalive hold stopped: upstream refused this request's "
-                        "shape (a subscription bearer requires the Claude Code system "
-                        "prompt as its first system block) — retrying will not help",
-                    )
-                    attempt.final_status = status
-                    attempt.response = sse_resp
-                    return sse_resp
-                # The hold OWNS AIMD (`aimd_owned`), so `_finalize` will skip its
-                # own call — and this terminal branch never made one, letting a
-                # genuine budget 429 that arrived mid-hold escape the shrink
-                # entirely (Codex fifth pass). `_aimd_feedback` still encodes
-                # every per-status invariant itself: a 529 counts overload without
-                # shrinking, and `retry_fake` carries the anti-spoof-gated
-                # queue-timeout marker so a relayed central timeout early-returns.
-                await _aimd_feedback(bid, limiter, attempt)
-                log(f"keepalive-hold-budget-reclassified bid={bid} path=/{path}")
-                await _emit_sse_error_terminal(
-                    sse_resp,
-                    "proxy keepalive hold stopped: upstream budget exhausted",
-                )
-                attempt.final_status = status
-                attempt.response = sse_resp
-                return sse_resp
+            terminal = await _keepalive_one_attempt(
+                request=request,
+                headers=headers,
+                body=body,
+                url=url,
+                client_timeout=client_timeout,
+                via=via,
+                wait_deadline=wait_deadline,
+                sse_resp=sse_resp,
+                attempt=attempt,
+                bid=bid,
+                path=path,
+                limiter=limiter,
+                cancel_keepalive=await_keepalive_cancel,
+            )
+            if terminal is not None:
+                return terminal
 
     except asyncio.CancelledError:
         # Client/loop cancellation — stop the emitter and propagate.
-        await _await_keepalive_cancel()
+        await await_keepalive_cancel()
         raise
     except Exception as hold_err:
-        # We already prepared a 200 SSE, so an HTTP error can no longer be
-        # returned. Stop the emitter FIRST (never race the terminal write),
-        # then emit a well-formed terminal SSE error + clean EOF so the client
-        # gets a clean close, never a truncated write / phantom 401 (07/07;
-        # Codex round-2 MAJOR).
-        await _await_keepalive_cancel()
-        log(f"keepalive-hold internal-error bid={bid}: {hold_err!r}")
-        try:
-            await _emit_sse_error_terminal(sse_resp, "proxy keepalive hold internal error")
-        except Exception as term_err:
-            # The client transport is already gone — the terminal write is best
-            # effort; record why it failed rather than swallow it silently.
-            log(f"keepalive-hold terminal-emit-failed bid={bid}: {term_err!r}")
-        M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
-        attempt.final_status = 503
+        return await _keepalive_internal_error_terminal(
+            sse_resp=sse_resp,
+            attempt=attempt,
+            bid=bid,
+            hold_err=hold_err,
+            cancel_keepalive=await_keepalive_cancel,
+        )
+    finally:
+        _keepalive_release_hold_slot(keepalive_task)
+
+
+async def _keepalive_cancel_emitter(keepalive_task: asyncio.Task, bid: str) -> None:
+    """Cancel the keepalive emitter and absorb our own cancellation.
+
+    Partial-applied to ``(keepalive_task, bid)`` so every exit path of a hold
+    cancels the exact emitter task it spawned.
+    """
+    keepalive_task.cancel()
+    try:
+        await keepalive_task
+    except asyncio.CancelledError:
+        # OUR cancel() above — expected, and deliberately swallowed: this
+        # runs first in the cleanup path, so re-raising would skip the
+        # terminal-SSE emit and leave the client a truncated 200.
+        # An OUTER cancellation (client gone, server shutting down) is a
+        # different event and must still unwind; the task is only
+        # cancelled() once the cancellation we requested has landed.
+        if not keepalive_task.cancelled():
+            raise
+    except Exception as ka_err:
+        # The emitter died with a real error, not just our cancel. Record it,
+        # but NEVER let it propagate out of cleanup: this runs first in the
+        # broad exception handler of the hold, so a re-raise here would skip the
+        # terminal-SSE emit and leave the client a truncated 200 (Codex
+        # round-3 MAJOR — the same post-prepare footgun, one level down).
+        log(f"keepalive-emitter-error bid={bid}: {ka_err!r}")
+
+
+async def _keepalive_apply_origin_aimd(
+    bid: str, limiter: FairBearerLimiter, attempt: _Attempt
+) -> None:
+    """Apply the triggering throttle's AIMD once, and take ownership of it.
+
+    The throttle that triggered the hold is a real throttle event: apply its AIMD
+    once (canonical _aimd_feedback — 529 + a marked queue-timeout never shrink; a
+    budget/Retry-After 429 shrinks, a concurrency 429 only paces via
+    CONCURRENCY_COOLDOWN_S), then take ownership so _finalize skips its own
+    _aimd_feedback (no double-apply on the terminal). Guarded so a metrics error
+    cannot kill the hold, and called INSIDE the caller's outer try so ANY raise
+    still hits the terminal-SSE + task-cancel safety there — never a leaked
+    emitter or truncated 200 (Codex round-2 MAJOR).
+    """
+    attempt.aimd_owned = True
+    try:
+        await _aimd_feedback(bid, limiter, attempt)
+    except Exception as origin_aimd_err:
+        log(f"keepalive-hold origin-aimd-error bid={bid}: {origin_aimd_err!r}")
+
+
+async def _keepalive_exhausted_terminal(
+    *,
+    sse_resp: web.StreamResponse,
+    attempt: _Attempt,
+    bid: str,
+    path: str,
+    cancel_keepalive: Callable[[], Awaitable[None]],
+) -> web.StreamResponse:
+    """The wait-budget ran out: emit the error SSE event, never a bare close.
+
+    Budget exhausted — spec 092 invariant 4: emit error SSE, not a bare socket
+    close. The 07/07 falsification test checks this.
+    """
+    await cancel_keepalive()
+    M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+    log(f"keepalive-hold-exhausted bid={bid} path=/{path}")
+    await _emit_sse_error_terminal(
+        sse_resp,
+        "proxy keepalive hold exhausted; upstream capacity unavailable within budget",
+    )
+    attempt.final_status = 503
+    attempt.response = sse_resp
+    return sse_resp
+
+
+async def _keepalive_internal_error_terminal(
+    *,
+    sse_resp: web.StreamResponse,
+    attempt: _Attempt,
+    bid: str,
+    hold_err: Exception,
+    cancel_keepalive: Callable[[], Awaitable[None]],
+) -> web.StreamResponse:
+    """Unexpected failure mid-hold: stop the emitter, then close the SSE cleanly.
+
+    We already prepared a 200 SSE, so an HTTP error can no longer be returned.
+    Stop the emitter FIRST (never race the terminal write), then emit a
+    well-formed terminal SSE error + clean EOF so the client gets a clean close,
+    never a truncated write / phantom 401 (07/07; Codex round-2 MAJOR).
+    """
+    await cancel_keepalive()
+    log(f"keepalive-hold internal-error bid={bid}: {hold_err!r}")
+    try:
+        await _emit_sse_error_terminal(sse_resp, "proxy keepalive hold internal error")
+    except Exception as term_err:
+        # The client transport is already gone — the terminal write is best
+        # effort; record why it failed rather than swallow it silently.
+        log(f"keepalive-hold terminal-emit-failed bid={bid}: {term_err!r}")
+    M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+    attempt.final_status = 503
+    attempt.response = sse_resp
+    return sse_resp
+
+
+def _keepalive_release_hold_slot(keepalive_task: asyncio.Task) -> None:
+    """Release the hold slot and guarantee the emitter cannot outlive the call.
+
+    The floor is not covering a double-decrement (increment and decrement pair
+    exactly, one statement each, neither behind an await). It covers the counter
+    being zeroed underneath an open hold — which no production path does, but the
+    per-test ``state.update({...})`` resetters do — where a bare decrement would
+    leave a negative that sticks forever. The cancel is belt-and-suspenders: the
+    emitter must NEVER outlive this call (leaked task / SSE dribble to a dead
+    client). Every normal exit already awaited its cancel; this covers any path
+    that did not.
+    """
+    state["keepalive_holds_active"] = max(0, int(state["keepalive_holds_active"]) - 1)
+    if not keepalive_task.done():
+        keepalive_task.cancel()
+
+
+async def _keepalive_one_attempt(
+    *,
+    request: web.Request,
+    headers: dict,
+    body: bytes | None,
+    url: str,
+    client_timeout: aiohttp.ClientTimeout,
+    via: str,
+    wait_deadline: float | None,
+    sse_resp: web.StreamResponse,
+    attempt: _Attempt,
+    bid: str,
+    path: str,
+    limiter: FairBearerLimiter,
+    cancel_keepalive: Callable[[], Awaitable[None]],
+) -> web.StreamResponse | None:
+    """One retry attempt inside the hold; ``None`` means loop for another one.
+
+    Stamps the central-bound wait budget, forwards, and hands the result to
+    ``_keepalive_attempt_verdict``. A client disconnect ends the hold with 499; a
+    network error is logged and retried after a brief pause.
+    """
+    # Stamp the remaining budget on central-bound requests.
+    send_headers: dict = dict(headers)
+    if via == "central" and wait_deadline is not None:
+        remaining_ms = max(0, int((wait_deadline - time.time()) * 1000))
+        send_headers[config.WAIT_BUDGET_HEADER] = str(remaining_ms)
+
+    try:
+        status, meta, captured, exc = await _forward_once_into_sse(
+            request,
+            send_headers,
+            body,
+            url,
+            client_timeout,
+            sse_resp,
+            cancel_keepalive=cancel_keepalive,
+        )
+    except _CLIENT_DISCONNECT_EXC:
+        # Client disconnected during our retry.
+        await cancel_keepalive()
+        attempt.final_status = 499
         attempt.response = sse_resp
         return sse_resp
-    finally:
-        # The floor is not covering a double-decrement (increment and decrement
-        # pair exactly, one statement each, neither behind an await). It covers
-        # the counter being zeroed underneath an open hold — which no production
-        # path does, but the per-test `state.update({...})` resetters do — where
-        # a bare decrement would leave a negative that sticks forever.
-        state["keepalive_holds_active"] = max(0, int(state["keepalive_holds_active"]) - 1)
-        # Belt-and-suspenders: the emitter must NEVER outlive this call (leaked
-        # task / SSE dribble to a dead client). Every normal exit already awaited
-        # its cancel; this covers any path that did not.
-        if not keepalive_task.done():
-            keepalive_task.cancel()
+
+    if exc is not None:
+        # Network-level error; retry after a brief pause.
+        log(f"keepalive-hold net-error bid={bid}: {exc!r}")
+        await asyncio.sleep(0.5)
+        return None
+
+    return await _keepalive_attempt_verdict(
+        sse_resp=sse_resp,
+        attempt=attempt,
+        bid=bid,
+        path=path,
+        status=status,
+        meta=meta,
+        captured=captured,
+        limiter=limiter,
+        cancel_keepalive=cancel_keepalive,
+    )
+
+
+async def _keepalive_wait_out_retry_after(
+    limiter: FairBearerLimiter, wait_deadline: float | None
+) -> None:
+    """Sleep out an outstanding Retry-After, never past the client's wait budget.
+
+    Honor any outstanding Retry-After, but NEVER sleep past the end-to-end
+    deadline: the hold must not hold the fair slot past the client's wait-budget
+    (invariant 6 — Codex + Opus panel MAJOR). Keepalives keep flowing during this
+    sleep; the caller re-checks the deadline on the next loop iteration and exits
+    with a clean SSE error if it is reached.
+    """
+    ra_remaining = limiter.retry_after_remaining()
+    if ra_remaining > 0:
+        budget_left = (wait_deadline - time.time()) if wait_deadline is not None else ra_remaining
+        await asyncio.sleep(max(0.0, min(ra_remaining, budget_left)))
+
+
+def _keepalive_retry_headers(meta: dict[str, str] | None) -> dict:
+    """The upstream headers the transient re-check reads from one attempt.
+
+    Copy the VALUE, not a normalized "1": the entitlement verdict is read as
+    ``== "1"``, so flattening some other value into "1" would turn a sibling's
+    non-verdict into a positive one (Codex fourth pass).
+    """
+    retry_resp_headers: dict = {}
+    for header in (
+        config.QUEUE_TIMEOUT_HEADER,
+        config.MARKER_HEADER,
+        config.ENTITLEMENT_REFUSAL_HEADER,
+    ):
+        if meta and header in meta:
+            retry_resp_headers[header] = meta[header]
+    return retry_resp_headers
+
+
+async def _keepalive_reclassified_terminal(
+    *,
+    sse_resp: web.StreamResponse,
+    attempt: _Attempt,
+    bid: str,
+    path: str,
+    status: int,
+    limiter: FairBearerLimiter,
+    cancel_keepalive: Callable[[], Awaitable[None]],
+) -> web.StreamResponse:
+    """Terminal SSE for a retry that is no longer a transient throttle.
+
+    Reclassified mid-hold. Two causes, and the client must be able to tell them
+    apart: the windows tightened into BUDGET, or the retry hit the OAuth
+    entitlement gate. The response is already prepared, so
+    ``_stamp_entitlement_refusal`` can no longer add a header (Codex second pass,
+    finding 6) — the SSE error text is the only channel left, so it must name the
+    real cause instead of blaming a budget that is not exhausted.
+    """
+    await cancel_keepalive()
+    M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+    if _entitlement_scoped(attempt, bid, attempt.captured):
+        log(f"keepalive-hold-entitlement-refusal bid={bid} path=/{path}")
+        await _emit_sse_error_terminal(
+            sse_resp,
+            "proxy keepalive hold stopped: upstream refused this request's "
+            "shape (a subscription bearer requires the Claude Code system "
+            "prompt as its first system block) — retrying will not help",
+        )
+        attempt.final_status = status
+        attempt.response = sse_resp
+        return sse_resp
+    # The hold OWNS AIMD (`aimd_owned`), so `_finalize` will skip its
+    # own call — and this terminal branch never made one, letting a
+    # genuine budget 429 that arrived mid-hold escape the shrink
+    # entirely (Codex fifth pass). `_aimd_feedback` still encodes
+    # every per-status invariant itself: a 529 counts overload without
+    # shrinking, and `retry_fake` carries the anti-spoof-gated
+    # queue-timeout marker so a relayed central timeout early-returns.
+    await _aimd_feedback(bid, limiter, attempt)
+    log(f"keepalive-hold-budget-reclassified bid={bid} path=/{path}")
+    await _emit_sse_error_terminal(
+        sse_resp,
+        "proxy keepalive hold stopped: upstream budget exhausted",
+    )
+    attempt.final_status = status
+    attempt.response = sse_resp
+    return sse_resp
+
+
+async def _keepalive_attempt_verdict(
+    *,
+    sse_resp: web.StreamResponse,
+    attempt: _Attempt,
+    bid: str,
+    path: str,
+    status: int,
+    meta: dict[str, str] | None,
+    captured: bytearray | None,
+    limiter: FairBearerLimiter,
+    cancel_keepalive: Callable[[], Awaitable[None]],
+) -> web.StreamResponse | None:
+    """Read one forwarded attempt inside the hold; ``None`` means retry again.
+
+    Returns the response the hold must return when the attempt ends it — the
+    success path, or the reclassified terminal — and ``None`` when the only
+    remaining move is another attempt.
+    """
+    # Update attempt with the latest meta/captured.
+    if meta is not None:
+        attempt.meta = meta
+    if captured is not None:
+        attempt.captured = captured
+
+    if 200 <= status < 300:
+        # _forward_once_into_sse already piped the body and called
+        # write_eof. The hold succeeded.
+        await cancel_keepalive()
+        M_KEEPALIVE_HOLDS.labels(outcome="streamed").inc()
+        log(f"keepalive-hold-streamed bid={bid} status={status}")
+        attempt.final_status = status
+        attempt.response = sse_resp
+        return sse_resp
+
+    # Build a minimal response object so _is_queue_timeout_response
+    # can inspect the headers from the new attempt.
+    retry_fake = web.Response(status=status, headers=_keepalive_retry_headers(meta))
+    attempt.final_status = status
+    attempt.response = retry_fake
+
+    if _is_transient_throttle(status, meta, bid, retry_fake, attempt.captured):
+        # Still transient: the canonical _aimd_feedback already does the
+        # right thing per status (529 + a marked central queue-timeout
+        # never shrink — invariants 7, 9; a budget/Retry-After 429 shrinks,
+        # a concurrency 429 holds the cap + paces via CONCURRENCY_COOLDOWN_S).
+        # attempt already reflects this retry's status/meta/response, and
+        # retry_fake carries the anti-spoof-gated queue-timeout marker.
+        await _aimd_feedback(bid, limiter, attempt)
+        return None
+    return await _keepalive_reclassified_terminal(
+        sse_resp=sse_resp,
+        attempt=attempt,
+        bid=bid,
+        path=path,
+        status=status,
+        limiter=limiter,
+        cancel_keepalive=cancel_keepalive,
+    )
 
 
 class _RetryAfterArmed(Exception):
