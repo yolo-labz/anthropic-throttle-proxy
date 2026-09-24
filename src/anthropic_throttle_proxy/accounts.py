@@ -905,6 +905,39 @@ async def _get_json(url: str, token: str) -> JsonResult:
         return 0, None
 
 
+def _email_cached_for(path: str, mtime: int) -> bool:
+    """True when the cached label already belongs to this credential state."""
+    cached = _email_cache.get(path)
+    return cached is not None and cached[0] == mtime
+
+
+def _apply_email_probe(path: str, mtime: int, result: tuple, now: float) -> None:
+    """Record a profile probe: certify the email, or arm the profile backoff.
+
+    The credential is re-checked AFTER the network round-trip, so a rotation
+    landing mid-probe can never certify the OLD token's email against the NEW
+    file (Codex MAJOR: the guard would mark a wrong identity as verified). A
+    probe that fails still records its failure, so the window is armed either
+    way — except for the rotation case, which returns cleanly.
+    """
+    status, body, retry_after, _budget_lock_retry_after_s = result
+    if status == 200 and body:
+        email = (body.get("account") or {}).get("email")
+        if isinstance(email, str) and email:
+            try:
+                if os.stat(path).st_mtime_ns != mtime:
+                    return  # rotated mid-probe — this email belongs to the OLD token
+            except OSError:
+                return
+            _email_cache[path] = (mtime, email)
+            _email_backoff.pop(path, None)
+            _email_failures.pop(path, None)
+            return
+    _email_backoff[path] = _failed_poll_backoff_until(
+        now, retry_after, failures=_note_email_failure(path)
+    )
+
+
 async def _refresh_email(
     path: str, token: str, expect_mtime: int | None = None, *, force: bool = False
 ) -> None:
@@ -938,37 +971,92 @@ async def _refresh_email(
         return
     if expect_mtime is not None and mtime != expect_mtime:
         return  # credential rewritten since the token was read — don't certify
-    cached = _email_cache.get(path)
-    if cached is not None and cached[0] == mtime:
+    if _email_cached_for(path, mtime):
         return
     lock = _email_locks.setdefault(path, asyncio.Lock())
     async with lock:
         # Re-check under the lock: a concurrent refresh that just succeeded (or
         # just backed off) must not be duplicated by this one.
-        cached = _email_cache.get(path)
-        if cached is not None and cached[0] == mtime:
+        if _email_cached_for(path, mtime):
             return
         now = time.time()
         if not force and now < _email_backoff.get(path, 0.0):
             return  # inside the profile endpoint's own window — keep the label
-        status, body, retry_after, _budget_lock_retry_after_s = _json_result_parts(
-            await _get_json(_oauth_base() + _PROFILE_PATH, token)
+        _apply_email_probe(
+            path,
+            mtime,
+            _json_result_parts(await _get_json(_oauth_base() + _PROFILE_PATH, token)),
+            now,
         )
-        if status == 200 and body:
-            email = (body.get("account") or {}).get("email")
-            if isinstance(email, str) and email:
-                try:
-                    if os.stat(path).st_mtime_ns != mtime:
-                        return  # rotated mid-probe — this email belongs to the OLD token
-                except OSError:
-                    return
-                _email_cache[path] = (mtime, email)
-                _email_backoff.pop(path, None)
-                _email_failures.pop(path, None)
-                return
-        _email_backoff[path] = _failed_poll_backoff_until(
-            now, retry_after, failures=_note_email_failure(path)
+
+
+def _endpoint_entry_fresh(entry: dict | None, now: float) -> bool:
+    """True while the cached endpoint reading is still inside its TTL."""
+    return entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S
+
+
+def _endpoint_backoff_active(path: str, now: float) -> bool:
+    """True while this account is backing off after a recent poll failure."""
+    return now < _endpoint_backoff.get(path, 0.0)
+
+
+def _apply_usage_success(path: str, now: float, body: dict, retry_after_remaining: float) -> dict:
+    """Record a healthy usage reading and set the cadence for the next poll.
+
+    Returns the parsed usage so the caller can keep both the credential and the
+    stale-window decision to itself; this helper never sees the token.
+    """
+    usage = _parse_usage(body)
+    _endpoint_cache[path] = {"fetched": now, "usage": usage, "err": None}
+    _persist_endpoint_cache()  # aged fallback survives a restart (#128)
+    if retry_after_remaining > 0:
+        # Messages window active on this bearer: poll anyway (separate
+        # rate-limit domain, and the only evidence that can contradict
+        # a stale window) but at a relaxed cadence so a long window is
+        # never hammered by UI auto-refresh.
+        _endpoint_backoff.pop(path, None)
+        _endpoint_failures.pop(path, None)
+        _endpoint_backoff[path] = now + min(
+            max(ENDPOINT_TTL_S, retry_after_remaining), _RETRY_AFTER_GATE_CAP_S
         )
+    else:
+        _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
+    _endpoint_failures.pop(path, None)  # ...and forget the failure streak
+    return usage
+
+
+def _apply_usage_failure(
+    path: str, now: float, status: int, retry_after: float | None, entry: dict | None
+) -> None:
+    """Record a failed usage poll: tombstone a dead credential, else keep the entry."""
+    if status == 401:
+        # Credential invalid server-side — surface it and DROP the stale
+        # numbers (a dead account's old readings must not style the panel
+        # as healthy). The bearer-view fallback still renders.
+        _endpoint_cache[path] = {
+            "fetched": now,
+            "usage": None,
+            "err": "credential rejected (401) — refresh pipeline?",
+        }
+        _persist_endpoint_cache()  # tombstone: a dead cred cannot re-seed
+        # aged numbers after a restart (persist drops the usage-less entry)
+    elif entry is not None:
+        # 429/5xx/timeout: keep serving the stale entry (the panel ages
+        # it out at the stale ceiling) but mark the failure and back off so
+        # the dashboard's auto-refresh cannot re-poll a throttled account
+        # every render. Honor a proxy/upstream Retry-After when present;
+        # otherwise a 90 s retry cadence rediscovers long OAuth windows and
+        # creates the same 429 noise every UI refresh cycle.
+        entry["err"] = f"usage endpoint unavailable ({status or 'timeout'})"
+    else:
+        _endpoint_cache[path] = {
+            "fetched": 0.0,
+            "usage": None,
+            "err": f"usage endpoint unavailable ({status or 'timeout'})",
+        }
+    _endpoint_backoff[path] = _failed_poll_backoff_until(
+        now, retry_after, failures=_note_poll_failure(path)
+    )
 
 
 async def _refresh_one(path: str, now: float) -> None:
@@ -976,16 +1064,16 @@ async def _refresh_one(path: str, now: float) -> None:
     if not _endpoint_cache_loaded:
         _load_endpoint_cache()  # seed aged readings before the first cold poll
     entry = _endpoint_cache.get(path)
-    if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
+    if _endpoint_entry_fresh(entry, now):
         return
-    if now < _endpoint_backoff.get(path, 0.0):
+    if _endpoint_backoff_active(path, now):
         return  # backing off after a recent poll failure — serve the cached entry
     lock = _endpoint_locks.setdefault(path, asyncio.Lock())
     async with lock:
         entry = _endpoint_cache.get(path)
-        if entry is not None and now - entry["fetched"] < ENDPOINT_TTL_S:
+        if _endpoint_entry_fresh(entry, now):
             return
-        if now < _endpoint_backoff.get(path, 0.0):
+        if _endpoint_backoff_active(path, now):
             return
         try:
             token_mtime = os.stat(path).st_mtime_ns
@@ -999,58 +1087,11 @@ async def _refresh_one(path: str, now: float) -> None:
             await _get_json(_oauth_base() + _USAGE_PATH, token)
         )
         if status == 200 and body is not None:
-            usage = _parse_usage(body)
-            _endpoint_cache[path] = {"fetched": now, "usage": usage, "err": None}
-            _persist_endpoint_cache()  # aged fallback survives a restart (#128)
-            if retry_after_remaining > 0:
-                # Messages window active on this bearer: poll anyway (separate
-                # rate-limit domain, and the only evidence that can contradict
-                # a stale window) but at a relaxed cadence so a long window is
-                # never hammered by UI auto-refresh.
-                _endpoint_backoff.pop(path, None)
-                _endpoint_failures.pop(path, None)
-                _endpoint_backoff[path] = now + min(
-                    max(ENDPOINT_TTL_S, retry_after_remaining), _RETRY_AFTER_GATE_CAP_S
-                )
-            else:
-                _endpoint_backoff.pop(path, None)  # recovered — resume normal TTL cadence
-            _endpoint_failures.pop(path, None)  # ...and forget the failure streak
+            usage = _apply_usage_success(path, now, body, retry_after_remaining)
             _maybe_clear_stale_retry_after(token, usage, now)
             await _refresh_email(path, token, expect_mtime=token_mtime)
-        elif status == 401:
-            # Credential invalid server-side — surface it and DROP the stale
-            # numbers (a dead account's old readings must not style the panel
-            # as healthy). The bearer-view fallback still renders.
-            _endpoint_cache[path] = {
-                "fetched": now,
-                "usage": None,
-                "err": "credential rejected (401) — refresh pipeline?",
-            }
-            _persist_endpoint_cache()  # tombstone: a dead cred cannot re-seed
-            # aged numbers after a restart (persist drops the usage-less entry)
-            _endpoint_backoff[path] = _failed_poll_backoff_until(
-                now, retry_after, failures=_note_poll_failure(path)
-            )
-        elif entry is not None:
-            # 429/5xx/timeout: keep serving the stale entry (the panel ages
-            # it out at the stale ceiling) but mark the failure and back off so
-            # the dashboard's auto-refresh cannot re-poll a throttled account
-            # every render. Honor a proxy/upstream Retry-After when present;
-            # otherwise a 90 s retry cadence rediscovers long OAuth windows and
-            # creates the same 429 noise every UI refresh cycle.
-            entry["err"] = f"usage endpoint unavailable ({status or 'timeout'})"
-            _endpoint_backoff[path] = _failed_poll_backoff_until(
-                now, retry_after, failures=_note_poll_failure(path)
-            )
         else:
-            _endpoint_cache[path] = {
-                "fetched": 0.0,
-                "usage": None,
-                "err": f"usage endpoint unavailable ({status or 'timeout'})",
-            }
-            _endpoint_backoff[path] = _failed_poll_backoff_until(
-                now, retry_after, failures=_note_poll_failure(path)
-            )
+            _apply_usage_failure(path, now, status, retry_after, entry)
         if status not in (200, 401) and budget_lock_retry_after:
             # Display-only evidence. Do NOT call limiter.note_retry_after or
             # write bearer_state: telemetry remains isolated from message AIMD.
