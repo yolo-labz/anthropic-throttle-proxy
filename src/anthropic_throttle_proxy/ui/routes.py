@@ -226,6 +226,107 @@ def _capability_splits(
     return refused, unevidenced
 
 
+def _idle_status(now: float) -> dict[str, object]:
+    """The no-bearers verdict: IDLE with the reason a client has not arrived."""
+    return {
+        "level": "idle",
+        "verdict": "IDLE",
+        "detail": "no bearers yet — point a client at this proxy to start.",
+        "since": _fmt_since(_history.level_since("idle", now)),
+    }
+
+
+def _bucket_bearers(
+    bearers: list[dict], now: float
+) -> tuple[list[str], list[str], tuple[float, str, str, object, str] | None]:
+    """Bucket bearers by pacing state and pick the binding candidate.
+
+    Returns ``(throttled, pacing, binding)`` where ``binding`` is the strongest
+    measured claim — ``(util, label, bearer_id, retry_after, evidence)``.
+
+    Review B2: a binding claim is a measured statement — the same evidence the
+    strip already trusts (throttled/pacing: upstream rejection, Retry-After,
+    AIMD shrink, warn-line utilization or queued work). The highest
+    utilization NUMBER alone is none of those: labelling a 30%
+    allowed_warning meter "blocked" was the exact lie finding 8 banned.
+    """
+    throttled: list[str] = []
+    pacing: list[str] = []
+    # (util, label, bearer_id, retry_after, evidence)
+    binding: tuple[float, str, str, object, str] | None = None
+    for b in bearers:
+        state, _util_5h, retry_after = _bearer_pacing_state(b)
+        if state == "throttled":
+            throttled.append(b["bearer_id"])
+        elif state == "pacing":
+            pacing.append(b["bearer_id"])
+        live = _live_unified(b.get("unified"), now)
+        util = _proxy._binding_utilization(live)
+        label = _proxy._binding_window(live)
+        if (
+            state is not None
+            and util is not None
+            and label is not None
+            and (binding is None or util > binding[0])
+        ):
+            binding = (util, label, b["bearer_id"], retry_after, state)
+    return throttled, pacing, binding
+
+
+def _refusal_detail(
+    bearers: list[dict], refused: list[str], throttled: list[str], pacing: list[str]
+) -> tuple[str, str, str]:
+    """Finding 1: a refusal (or a supplied disabled admission) is a
+    capability failure, not a pacing state — it must never degrade into
+    HEALTHY. Worst-wins: crit > throttled > pacing, with the remaining
+    limit signals still named so the headline does not hide them."""
+    plural = "s" if len(bearers) != 1 else ""
+    detail = (
+        f"{len(refused)} of {len(bearers)} bearer{plural} refused/disabled"
+        " — inference unavailable on those lanes"
+    )
+    if throttled:
+        detail += f"; {len(throttled)} throttled"
+    if pacing:
+        detail += f"; {len(pacing)} pacing"
+    return "crit", "CRIT", detail
+
+
+def _unknown_capacity_detail(bearers: list[dict], unevidenced: list[str]) -> tuple[str, str, str]:
+    """Finding 11: missing credential/admission evidence is not health.
+
+    The proxy cannot verify capacity it never saw — report unknown (idle),
+    never "clear", and never invent a cancellation either.
+    """
+    plural = "s" if len(unevidenced) != 1 else ""
+    detail = (
+        "capacity unknown — no auth/permission evidence for "
+        f"{len(unevidenced)} of {len(bearers)} bearer{plural}"
+    )
+    return "idle", "UNKNOWN", detail
+
+
+def _binding_block(binding: tuple[float, str, str, object, str]) -> dict[str, object]:
+    """The binding strip's data object for a measured binding candidate.
+
+    The binding block below the strip renders the same fact with a name, a
+    countdown and a way out. Repeating it here as prose gave the operator two
+    renderings of one condition that can drift apart (cross-family review,
+    round 2). The object is the single source. A prose fragment cannot be
+    ranked, linked to its row, or read first, and "which subscription is
+    blocked, until when, and what takes traffic next" is the question this page
+    exists to answer mid-incident.
+    """
+    return {
+        "bearer_id": binding[2],
+        "window": binding[1],
+        "pct": round(binding[0] * 100),
+        "retry_after": binding[3],
+        # Measured reason this is binding — never a bare utilization rank.
+        "evidence": binding[4],
+    }
+
+
 def _compute_status(
     bearers: list[dict],
     queue_mode: str,
@@ -255,84 +356,16 @@ def _compute_status(
     if now is None:
         now = time.time()
     if not bearers:
-        return {
-            "level": "idle",
-            "verdict": "IDLE",
-            "detail": "no bearers yet — point a client at this proxy to start.",
-            "since": _fmt_since(_history.level_since("idle", now)),
-        }
+        return _idle_status(now)
 
-    throttled: list[str] = []
-    pacing: list[str] = []
-    # (util, label, bearer_id, retry_after, evidence)
-    binding: tuple[float, str, str, object, str] | None = None
-    for b in bearers:
-        state, _util_5h, retry_after = _bearer_pacing_state(b)
-        if state == "throttled":
-            throttled.append(b["bearer_id"])
-        elif state == "pacing":
-            pacing.append(b["bearer_id"])
-        live = _live_unified(b.get("unified"), now)
-        util = _proxy._binding_utilization(live)
-        label = _proxy._binding_window(live)
-        # Review B2: a binding claim is a measured statement — the same
-        # evidence the strip already trusts (throttled/pacing: upstream
-        # rejection, Retry-After, AIMD shrink, warn-line utilization or
-        # queued work). The highest utilization NUMBER alone is none of
-        # those: labelling a 30% allowed_warning meter "blocked" was the
-        # exact lie finding 8 banned.
-        if (
-            state is not None
-            and util is not None
-            and label is not None
-            and (binding is None or util > binding[0])
-        ):
-            binding = (util, label, b["bearer_id"], retry_after, state)
-
+    throttled, pacing, binding = _bucket_bearers(bearers, now)
     refused, unevidenced = _capability_splits(bearers, credential_verdicts, admission)
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
     if refused:
-        # Finding 1: a refusal (or a supplied disabled admission) is a
-        # capability failure, not a pacing state — it must never degrade into
-        # HEALTHY. Worst-wins: crit > throttled > pacing, with the remaining
-        # limit signals still named so the headline does not hide them.
-        plural = "s" if len(bearers) != 1 else ""
-        level, verdict = "crit", "CRIT"
-        detail = (
-            f"{len(refused)} of {len(bearers)} bearer{plural} refused/disabled"
-            " — inference unavailable on those lanes"
-        )
-        if throttled:
-            detail += f"; {len(throttled)} throttled"
-        if pacing:
-            detail += f"; {len(pacing)} pacing"
+        level, verdict, detail = _refusal_detail(bearers, refused, throttled, pacing)
     elif level == "healthy" and unevidenced:
-        # Finding 11: missing credential/admission evidence is not health.
-        # The proxy cannot verify capacity it never saw — report unknown
-        # (idle), never "clear", and never invent a cancellation either.
-        plural = "s" if len(unevidenced) != 1 else ""
-        level, verdict = "idle", "UNKNOWN"
-        detail = (
-            "capacity unknown — no auth/permission evidence for "
-            f"{len(unevidenced)} of {len(bearers)} bearer{plural}"
-        )
-    bound: dict[str, object] | None = None
-    if binding is not None:
-        # The binding block below the strip renders the same fact with a name,
-        # a countdown and a way out. Repeating it here as prose gave the
-        # operator two renderings of one condition that can drift apart
-        # (cross-family review, round 2). The object is the single source.
-        # A prose fragment cannot be ranked, linked to its row, or read first,
-        # and "which subscription is blocked, until when, and what takes traffic
-        # next" is the question this page exists to answer mid-incident.
-        bound = {
-            "bearer_id": binding[2],
-            "window": binding[1],
-            "pct": round(binding[0] * 100),
-            "retry_after": binding[3],
-            # Measured reason this is binding — never a bare utilization rank.
-            "evidence": binding[4],
-        }
+        level, verdict, detail = _unknown_capacity_detail(bearers, unevidenced)
+    bound = _binding_block(binding) if binding is not None else None
     if queue_mode == "off":
         detail += " · queue off (passthrough)"
     # Findings 7/8 (status half): this verdict is a LOCAL proxy observation
@@ -496,6 +529,48 @@ def _provider_label(upstream: str) -> str:
     return host
 
 
+def _sibling_provider_row(f: dict) -> dict:
+    """One provider row for a configured sibling proxy's health probe."""
+    ok = bool(f.get("ok"))
+    # A sibling can be reachable, resolve DNS, and still be unable to serve
+    # one request because its own key is dead — the Kimi lane rendered
+    # "HEALTHY egress ok" for weeks that way (04/08/2026). Auth is the
+    # verdict that decides whether traffic can land, so it wins.
+    auth_dead = f.get("upstream_auth_ok") is False
+    # Finding 2: keep the probe in DNS/reachability terms. Only an actual
+    # bool is preserved; a truthy STRING ("up", "1", "yes") is not a probe
+    # result and must stay unknown (None) — bool("up") manufactured a True
+    # claim out of an unverifiable value.
+    sibling_dns = f.get("upstream_egress_ok")
+    sibling_dns = sibling_dns if isinstance(sibling_dns, bool) else None
+    sibling_name = str(f.get("name") or "?")
+    # A sibling probe is BINARY reachability, not the primary's 4-state
+    # pacing. Map a failed probe to the neutral "idle" (grey dot) so a dead
+    # lane is never pixel-identical to a rate-limited-but-serving primary
+    # ("throttled", red dot).
+    level = "idle"
+    if ok:
+        level = "crit" if auth_dead else "healthy"
+    return {
+        "name": sibling_name,
+        "icon": _provider_icon(sibling_name),
+        "kind": "sibling",
+        "upstream": str(f.get("upstream") or ""),
+        "ok": ok,
+        "dns_ok": sibling_dns,
+        "dns_note": "sibling probe — reachability, not auth/inference",
+        "egress_ok": sibling_dns,  # compat alias; DNS/reachability semantics
+        "inflight": int(f.get("inflight") or 0),
+        "queued": int(f.get("queued") or 0),
+        "served": int(f.get("served") or 0),
+        "max_concurrent": int(f.get("max_concurrent") or 0),
+        "level": level,
+        "auth_dead": auth_dead,
+        "err": str(f.get("err") or "")
+        or (str(f.get("upstream_auth_error") or "") if auth_dead else ""),
+    }
+
+
 def _build_providers(
     *,
     upstream: str,
@@ -560,46 +635,7 @@ def _build_providers(
         }
     ]
     for f in fleet:
-        ok = bool(f.get("ok"))
-        # A sibling can be reachable, resolve DNS, and still be unable to serve
-        # one request because its own key is dead — the Kimi lane rendered
-        # "HEALTHY egress ok" for weeks that way (04/08/2026). Auth is the
-        # verdict that decides whether traffic can land, so it wins.
-        auth_dead = f.get("upstream_auth_ok") is False
-        # Finding 2: keep the probe in DNS/reachability terms. Only an actual
-        # bool is preserved; a truthy STRING ("up", "1", "yes") is not a probe
-        # result and must stay unknown (None) — bool("up") manufactured a True
-        # claim out of an unverifiable value.
-        sibling_dns = f.get("upstream_egress_ok")
-        sibling_dns = sibling_dns if isinstance(sibling_dns, bool) else None
-        sibling_name = str(f.get("name") or "?")
-        # A sibling probe is BINARY reachability, not the primary's 4-state
-        # pacing. Map a failed probe to the neutral "idle" (grey dot) so a dead
-        # lane is never pixel-identical to a rate-limited-but-serving primary
-        # ("throttled", red dot).
-        level = "idle"
-        if ok:
-            level = "crit" if auth_dead else "healthy"
-        providers.append(
-            {
-                "name": sibling_name,
-                "icon": _provider_icon(sibling_name),
-                "kind": "sibling",
-                "upstream": str(f.get("upstream") or ""),
-                "ok": ok,
-                "dns_ok": sibling_dns,
-                "dns_note": "sibling probe — reachability, not auth/inference",
-                "egress_ok": sibling_dns,  # compat alias; DNS/reachability semantics
-                "inflight": int(f.get("inflight") or 0),
-                "queued": int(f.get("queued") or 0),
-                "served": int(f.get("served") or 0),
-                "max_concurrent": int(f.get("max_concurrent") or 0),
-                "level": level,
-                "auth_dead": auth_dead,
-                "err": str(f.get("err") or "")
-                or (str(f.get("upstream_auth_error") or "") if auth_dead else ""),
-            }
-        )
+        providers.append(_sibling_provider_row(f))
     return providers
 
 
