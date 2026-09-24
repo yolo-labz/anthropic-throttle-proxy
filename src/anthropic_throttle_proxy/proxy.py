@@ -2305,6 +2305,27 @@ def _truthy_env(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _block_text_len(content: object) -> int | None:
+    """Chars in one message ``content`` (string or text-block list), else ``None``.
+
+    ``None`` is the caller's signal to reject the whole shape: a probe whose
+    content is not plain text is not the narrow shape this gate answers.
+    """
+    if isinstance(content, str):
+        return len(content)
+    if not isinstance(content, list):
+        return None
+    total = 0
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "text":
+            return None
+        text = block.get("text")
+        if not isinstance(text, str):
+            return None
+        total += len(text)
+    return total
+
+
 def _message_text_len(messages: object) -> int | None:
     """Total text chars for narrow Claude CLI probe shapes, else ``None``."""
     if not isinstance(messages, list):
@@ -2313,19 +2334,10 @@ def _message_text_len(messages: object) -> int | None:
     for message in messages:
         if not isinstance(message, dict):
             return None
-        content = message.get("content")
-        if isinstance(content, str):
-            total += len(content)
-            continue
-        if not isinstance(content, list):
+        part = _block_text_len(message.get("content"))
+        if part is None:
             return None
-        for block in content:
-            if not isinstance(block, dict) or block.get("type") != "text":
-                return None
-            text = block.get("text")
-            if not isinstance(text, str):
-                return None
-            total += len(text)
+        total += part
     return total
 
 
@@ -2349,6 +2361,29 @@ def _is_empty_probe_messages(messages: object) -> bool:
 
 
 _SYNTHETIC_PROBE_PAYLOAD_KEYS = frozenset({"model", "max_tokens", "messages", "stream"})
+
+
+def _synthetic_probe_shape(payload: object) -> tuple[int, int] | None:
+    """``(text_len, message_count)`` when the payload is the exact probe shape.
+
+    Shape checks are only a secondary filter behind the caller's positive
+    Claude CLI signal, so SDK/opencode/codex requests that happen to be tiny
+    ``max_tokens=1`` calls fail here and are forwarded unchanged. ``None``
+    means "not this shape", never "reject the request".
+    """
+    if not isinstance(payload, dict) or payload.get("stream") is True:
+        return None
+    if any(key not in _SYNTHETIC_PROBE_PAYLOAD_KEYS for key in payload):
+        return None
+    if payload.get("tools") or payload.get("tool_choice"):
+        return None
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or len(messages) > 2:
+        return None
+    text_len = _message_text_len(messages)
+    if text_len is None or text_len > 16 or not _is_empty_probe_messages(messages):
+        return None
+    return text_len, len(messages)
 
 
 def _synthetic_one_token_probe_response(
@@ -2377,23 +2412,15 @@ def _synthetic_one_token_probe_response(
         payload = json.loads(body)
     except (TypeError, ValueError):
         return None
-    if not isinstance(payload, dict) or payload.get("stream") is True:
+    shape = _synthetic_probe_shape(payload)
+    if shape is None:
         return None
-    if any(key not in _SYNTHETIC_PROBE_PAYLOAD_KEYS for key in payload):
-        return None
-    if payload.get("tools") or payload.get("tool_choice"):
-        return None
-    messages = payload.get("messages")
-    if not isinstance(messages, list) or len(messages) > 2:
-        return None
-    text_len = _message_text_len(messages)
-    if text_len is None or text_len > 16 or not _is_empty_probe_messages(messages):
-        return None
+    text_len, message_count = shape
 
     now_ms = int(time.time() * 1000)
     log(
         f"synthetic-one-token-probe path=/{path} model={model_label} "
-        f"bytes={len(body)} messages={len(messages)} text_len={text_len}"
+        f"bytes={len(body)} messages={message_count} text_len={text_len}"
     )
     return web.json_response(
         {
@@ -4695,6 +4722,46 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
     }
 
 
+def _admission_bearers() -> dict[str, dict]:
+    """Live per-bearer views for admission, excluding the non-answerable slots."""
+    bearers: dict[str, dict] = {}
+    for bid, bstate in bearer_state.items():
+        # `_anon` is the shared bypass slot for unauthenticated traffic
+        # (health/metrics) and `api-key` is pay-go, not a subscription bearer.
+        # Neither can answer the question this endpoint is asked.
+        if bid in ("_anon", API_KEY_BEARER_ID):
+            continue
+        view = dict(bstate)
+        lim = bearer_limiters.get(bid)
+        if lim is not None:
+            view["limiter"] = lim.snapshot()
+        bearers[bid] = view
+    return bearers
+
+
+def _admission_verdict(
+    allow: bool,
+    bearers: dict[str, dict],
+    serving: list[str],
+    lane_open: bool,
+    lane_detail: str,
+) -> tuple[str, str]:
+    """``(state, reason)`` for admission. ``capped`` only when nothing can serve.
+
+    `capped` means no bearer can serve the next token — the only conclusive
+    stop. A consumer may still queue behind it, but it must not pretend the
+    lane is open. Anything else is `open`: a warning, a high-but-serving
+    window and a paced bearer are all still serving.
+    """
+    if allow:
+        return "open", f"{len(serving)}/{len(bearers)} bearers serving"
+    if not bearers:
+        return "capped", "no bearers observed yet"
+    if not lane_open:
+        return "capped", f"lane closed: {lane_detail}"
+    return "capped", f"0/{len(bearers)} bearers serving"
+
+
 async def admission(_request: web.Request) -> web.Response:
     """GET /__throttle/admission — the authoritative "may a request be served now?".
 
@@ -4730,18 +4797,7 @@ async def admission(_request: web.Request) -> web.Response:
     I/O.
     """
     now = time.time()
-    bearers: dict[str, dict] = {}
-    for bid, bstate in bearer_state.items():
-        # `_anon` is the shared bypass slot for unauthenticated traffic
-        # (health/metrics) and `api-key` is pay-go, not a subscription bearer.
-        # Neither can answer the question this endpoint is asked.
-        if bid in ("_anon", API_KEY_BEARER_ID):
-            continue
-        view = dict(bstate)
-        lim = bearer_limiters.get(bid)
-        if lim is not None:
-            view["limiter"] = lim.snapshot()
-        bearers[bid] = view
+    bearers = _admission_bearers()
 
     # Window/Retry-After capacity is insufficient when the credential itself
     # is quarantined. Use the same live+restored accessor as account routing;
@@ -4761,18 +4817,9 @@ async def admission(_request: web.Request) -> web.Response:
     )
 
     # `capped` means no bearer can serve the next token — the only conclusive
-    # stop. A consumer may still queue behind it, but it must not pretend the
-    # lane is open. Anything else is `open`: a warning, a high-but-serving
-    # window and a paced bearer are all still serving.
+    # stop. The verdict itself lives in `_admission_verdict`.
     allow = bool(lane_open and serving)
-    if allow:
-        state_name, reason = "open", f"{len(serving)}/{len(bearers)} bearers serving"
-    elif not bearers:
-        state_name, reason = "capped", "no bearers observed yet"
-    elif not lane_open:
-        state_name, reason = "capped", f"lane closed: {lane_detail}"
-    else:
-        state_name, reason = "capped", f"0/{len(bearers)} bearers serving"
+    state_name, reason = _admission_verdict(allow, bearers, serving, lane_open, lane_detail)
 
     # When nothing can serve, say WHEN — the soonest a paused bearer is due
     # back. A consumer that knows this can wait instead of refusing outright,
