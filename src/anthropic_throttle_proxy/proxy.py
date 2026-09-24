@@ -3266,82 +3266,36 @@ async def _forward_with_retry(
     direct; a direct failure retries direct once; client disconnects yield 499.
 
     ``wait_deadline`` (epoch seconds) is the end of this request's queue-wait
-    budget. Every CENTRAL attempt is stamped with the budget REMAINING at send
-    time — stamping once before the loop let a pushback-retry sleep here and
-    then re-grant central the original full window, reopening the >60 s
-    silence (Codex round-2 BLOCKER on PR #83). Direct sends to the raw
-    upstream never carry the proxy-private header.
+    budget, stamped per central attempt by ``_central_attempt_headers``.
+
+    The two decisions that used to be inline predicates are named for what they
+    answer: ``_keepalive_hold_engages`` (does this throttle earn the SSE hold?)
+    and the pushback pair ``_should_retry_pushback`` /
+    ``_pushback_retry_step`` (is this pushback retryable, and what does the retry
+    do when it is?).
     """
     if on_success_headers is not None:
         set_success_headers_callback(request, on_success_headers)
     pushback_retries = 0
     while True:
-        send_headers = headers
-        if via == "central" and wait_deadline is not None:
-            send_headers = dict(headers)
-            send_headers[config.WAIT_BUDGET_HEADER] = str(
-                max(0, int((wait_deadline - time.time()) * 1000))
-            )
-        try:
-            response, exc = await _try_forward(
-                request,
-                send_headers,
-                body,
-                url,
-                client_timeout,
-                attempt,
-                retryable_statuses={500, 502, 504} if via == "central" else None,
-            )
-        except _CLIENT_DISCONNECT_EXC as cexc:
-            return _record_disconnect(path, "first", cexc, attempt)
-        if exc is not None:
-            # #130 deferred follow-up (a): the upstream stalled/errored AFTER the
-            # 200 + body were already streamed to this client. The response is
-            # committed + write_eof'd — return it as-is; retrying would
-            # re-prepare a second response on the committed connection → the
-            # client sees InvalidHTTPResponse (the recurring :8766 z.ai failure).
-            if isinstance(exc, StreamCommittedError) and response is not None:
-                log(
-                    f"upstream-mid-stream path=/{path}: {exc.__cause__!r}"
-                    " → response committed, no retry"
-                )
-                return response
-            # #130 deferred follow-up (b): client already gave up before the
-            # retry (long stall → SocketTimeoutError → disconnect). Don't write
-            # into the closing transport — account + stop; the client retries.
-            if _request_disconnected(request):
-                return _record_disconnect(path, "before-upstream-retry", exc, attempt)
-            return await _retry_direct_once(
-                request, headers, body, path, via, url, client_timeout, exc, attempt, bid
-            )
-        # Spec 092 keepalive-hold FIRST — BEFORE the legacy pushback-retry. With
-        # the default RATE_PUSHBACK_RETRIES=1 the pushback branch's silent
-        # `wait_retry_after` would otherwise run on the FIRST transient throttle,
-        # leaving the client in silence with no SSE committed and no keepalive —
-        # the exact 07/07 truncated-write class this feature exists to prevent
-        # (Codex panel BLOCKER). For an eligible streaming + transient throttle,
-        # engage the hold now; it owns its own retries WITH keepalives and its
-        # own AIMD. Non-streaming / budget / no-wait-budget throttles fall
-        # through to the unchanged pushback path below.
-        #   1. KEEPALIVE_HOLD enabled
-        #   2. response is an unprepared throttle (can still upgrade to 200 SSE)
-        #   3. streaming POST /v1/messages (stream:true)
-        #   4. a wait-budget exists and is not yet spent
-        #   5. the throttle is TRANSIENT not budget (checked LAST — most costly)
-        if (
-            config.KEEPALIVE_HOLD
-            and response is not None
-            and not response.prepared
-            and attempt.final_status in THROTTLE_STATUSES
-            and request.method == "POST"
-            and path == MESSAGES_SUBPATH
-            and _is_streaming_body(body)
-            and wait_deadline is not None
-            and time.time() < wait_deadline
-            and _is_transient_throttle(
-                attempt.final_status, attempt.meta, bid, response, attempt.captured
-            )
-        ):
+        send_headers = _central_attempt_headers(headers, via, wait_deadline)
+        response, retryable = await _forward_or_recover(
+            request=request,
+            send_headers=send_headers,
+            body=body,
+            url=url,
+            client_timeout=client_timeout,
+            attempt=attempt,
+            via=via,
+            path=path,
+            headers=headers,
+            bid=bid,
+        )
+        if not retryable:
+            return response
+        # Spec 092 keepalive-hold FIRST — BEFORE the legacy pushback-retry. See
+        # `_keepalive_hold_engages` for why the order is load-bearing.
+        if _keepalive_hold_engages(request, body, path, response, attempt, bid, wait_deadline):
             _schedule_advisor(bid, attempt.final_status, path)
             return await _keepalive_hold_and_retry(
                 request,
@@ -3357,43 +3311,218 @@ async def _forward_with_retry(
                 wait_deadline,
                 attempt.final_status,
             )
-        # OAuth telemetry 429s (usage/profile) are the endpoint's own rate
-        # limit, not message-quota pushback — relaying them through shrink /
-        # fast-fail / retry_after collapsed a healthy message bearer on every
-        # dashboard poll (13/07 incident: hourly aimd-shrink path=/api/oauth/usage
-        # parked the workhorse ~58 min). The poller backs off its own
-        # Retry-After (PR #101), so just relay the upstream 429 unchanged.
-        if _should_retry_pushback(
-            response, attempt, pushback_retries, bid
-        ) and not _is_oauth_telemetry_path(path):
+        if _pushback_retry_engages(response, attempt, pushback_retries, bid, path):
             pushback_retries += 1
-            retry_after = _parse_retry_after(attempt.meta)
-            pause, synthetic_pause = _pushback_pause(attempt.meta, bid)
-            log(
-                f"rate-pushback-retry bid={bid} status={attempt.final_status} "
-                f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
-                f"pause={pause} retry_after={retry_after} synthetic_pause={synthetic_pause}"
-            )
-            if (
-                fast_fail := _retry_after_fast_fail_response(bid, path, pause, source="pushback")
-            ) is not None:
-                if not _account_routing_enabled():
-                    # Single-active-account mode: there is no sibling bearer to
-                    # reroute onto, and the 401 credential nudge is itself the
-                    # answer (it makes the tab adopt the swapped credential).
-                    return fast_fail
-                # Latch the window BEFORE handing the request back to the routing
-                # gate: `_pushback_pause` is pure, and without this the retry would
-                # see remaining<=0 and re-probe this same bearer forever. Recording
-                # it also arms `require_retry_probe(block_while_retry=True)`, which
-                # is what makes the pre-dispatch reroute branch fire on re-entry.
-                limiter.note_retry_after(pause)
-                raise _RetryAfterArmed(pause)
-            await _aimd_feedback(bid, limiter, attempt)
-            _schedule_advisor(bid, attempt.final_status, path)
-            await limiter.wait_retry_after()
+            fast_fail = await _pushback_retry_step(bid, limiter, path, attempt, pushback_retries)
+            if fast_fail is not None:
+                return fast_fail
             continue
         return response
+
+
+async def _forward_or_recover(
+    *,
+    request: web.Request,
+    send_headers: Mapping[str, str],
+    body: bytes | None,
+    url: str,
+    client_timeout: aiohttp.ClientTimeout,
+    attempt: _Attempt,
+    via: str,
+    path: str,
+    headers: Mapping[str, str],
+    bid: str,
+) -> tuple[web.StreamResponse | web.Response | None, bool]:
+    """Run one ``_try_forward``; ``(response, retryable)``.
+
+    ``retryable`` False means this attempt already decided the request — a client
+    disconnect (499), a mid-stream failure whose response is committed, a client
+    that gave up, or a completed direct retry — so the caller returns
+    ``response`` verbatim. True means the throttle still has to be classified:
+    keepalive hold, pushback retry, or plain relay.
+    """
+    try:
+        response, exc = await _try_forward(
+            request,
+            send_headers,
+            body,
+            url,
+            client_timeout,
+            attempt,
+            retryable_statuses={500, 502, 504} if via == "central" else None,
+        )
+    except _CLIENT_DISCONNECT_EXC as cexc:
+        return _record_disconnect(path, "first", cexc, attempt), False
+    if exc is None:
+        return response, True
+    return (
+        await _forward_recover_from_error(
+            request, headers, body, path, via, url, client_timeout, response, exc, attempt, bid
+        ),
+        False,
+    )
+
+
+def _pushback_retry_engages(
+    response: web.StreamResponse | web.Response | None,
+    attempt: _Attempt,
+    pushback_retries: int,
+    bid: str,
+    path: str,
+) -> bool:
+    """Is this throttle a retryable pushback on a path that wants the retry?
+
+    OAuth telemetry 429s (usage/profile) are the endpoint's own rate limit, not
+    message-quota pushback — relaying them through shrink / fast-fail / retry_after
+    collapsed a healthy message bearer on every dashboard poll (13/07 incident:
+    hourly aimd-shrink path=/api/oauth/usage parked the workhorse ~58 min). The
+    poller backs off its own Retry-After (PR #101), so just relay the upstream 429
+    unchanged.
+    """
+    return _should_retry_pushback(response, attempt, pushback_retries, bid) and not (
+        _is_oauth_telemetry_path(path)
+    )
+
+
+def _central_attempt_headers(
+    headers: Mapping[str, str], via: str, wait_deadline: float | None
+) -> Mapping[str, str]:
+    """Stamp the queue-wait budget REMAINING at send time onto central attempts.
+
+    Stamped per attempt, not once before the loop: stamping once let a
+    pushback-retry sleep here and then re-grant central the original full window,
+    reopening the >60 s silence (Codex round-2 BLOCKER on PR #83). Direct sends
+    to the raw upstream never carry the proxy-private header — the unstamped
+    ``headers`` mapping is returned as-is, not copied.
+    """
+    if via != "central" or wait_deadline is None:
+        return headers
+    send_headers = dict(headers)
+    send_headers[config.WAIT_BUDGET_HEADER] = str(max(0, int((wait_deadline - time.time()) * 1000)))
+    return send_headers
+
+
+async def _forward_recover_from_error(
+    request: web.Request,
+    headers: Mapping[str, str],
+    body: bytes | None,
+    path: str,
+    via: str,
+    url: str,
+    client_timeout: aiohttp.ClientTimeout,
+    response: web.StreamResponse | web.Response | None,
+    exc: Exception,
+    attempt: _Attempt,
+    bid: str,
+) -> web.StreamResponse | web.Response:
+    """Decide what an upstream error means: committed response, gone client, retry.
+
+    Three outcomes, in this order, because the first two cannot be retried:
+
+    - #130 deferred follow-up (a): the upstream stalled/errored AFTER the 200 +
+      body were already streamed to this client. The response is committed +
+      write_eof'd — return it as-is; retrying would re-prepare a second response
+      on the committed connection → the client sees InvalidHTTPResponse (the
+      recurring :8766 z.ai failure).
+    - #130 deferred follow-up (b): client already gave up before the retry (long
+      stall → SocketTimeoutError → disconnect). Don't write into the closing
+      transport — account + stop; the client retries.
+    - otherwise: hand the request to ``_retry_direct_once``.
+    """
+    if isinstance(exc, StreamCommittedError) and response is not None:
+        log(f"upstream-mid-stream path=/{path}: {exc.__cause__!r} → response committed, no retry")
+        return response
+    if _request_disconnected(request):
+        return _record_disconnect(path, "before-upstream-retry", exc, attempt)
+    return await _retry_direct_once(
+        request, headers, body, path, via, url, client_timeout, exc, attempt, bid
+    )
+
+
+def _keepalive_hold_engages(
+    request: web.Request,
+    body: bytes | None,
+    path: str,
+    response: web.StreamResponse | web.Response | None,
+    attempt: _Attempt,
+    bid: str,
+    wait_deadline: float | None,
+) -> bool:
+    """Should this throttle engage the keepalive hold instead of the pushback path?
+
+    Spec 092 keepalive-hold runs FIRST — BEFORE the legacy pushback-retry. With
+    the default RATE_PUSHBACK_RETRIES=1 the pushback branch's silent
+    `wait_retry_after` would otherwise run on the FIRST transient throttle,
+    leaving the client in silence with no SSE committed and no keepalive — the
+    exact 07/07 truncated-write class this feature exists to prevent (Codex panel
+    BLOCKER). For an eligible streaming + transient throttle, engage the hold
+    now; it owns its own retries WITH keepalives and its own AIMD. Non-streaming
+    / budget / no-wait-budget throttles fall through to the unchanged pushback
+    path.
+
+    The five conditions, in the order they are cheapest to falsify:
+      1. KEEPALIVE_HOLD enabled
+      2. response is an unprepared throttle (can still upgrade to 200 SSE)
+      3. streaming POST /v1/messages (stream:true)
+      4. a wait-budget exists and is not yet spent
+      5. the throttle is TRANSIENT not budget (checked LAST — most costly)
+    """
+    return (
+        config.KEEPALIVE_HOLD
+        and response is not None
+        and not response.prepared
+        and attempt.final_status in THROTTLE_STATUSES
+        and request.method == "POST"
+        and path == MESSAGES_SUBPATH
+        and _is_streaming_body(body)
+        and wait_deadline is not None
+        and time.time() < wait_deadline
+        and _is_transient_throttle(
+            attempt.final_status, attempt.meta, bid, response, attempt.captured
+        )
+    )
+
+
+async def _pushback_retry_step(
+    bid: str,
+    limiter: FairBearerLimiter,
+    path: str,
+    attempt: _Attempt,
+    pushback_retries: int,
+) -> web.Response | None:
+    """One retryable-pushback step; the fast-fail response, or None to re-enter.
+
+    Logs the retry, and either returns the armed-Retry-After fast fail for the
+    caller to relay, latches the window and raises ``_RetryAfterArmed`` to hand
+    the request back to the routing gate, or applies AIMD + waits out the pause —
+    none of which the caller can decide for it.
+    """
+    retry_after = _parse_retry_after(attempt.meta)
+    pause, synthetic_pause = _pushback_pause(attempt.meta, bid)
+    log(
+        f"rate-pushback-retry bid={bid} status={attempt.final_status} "
+        f"retry={pushback_retries}/{config.RATE_PUSHBACK_RETRIES} "
+        f"pause={pause} retry_after={retry_after} synthetic_pause={synthetic_pause}"
+    )
+    if (
+        fast_fail := _retry_after_fast_fail_response(bid, path, pause, source="pushback")
+    ) is not None:
+        if not _account_routing_enabled():
+            # Single-active-account mode: there is no sibling bearer to
+            # reroute onto, and the 401 credential nudge is itself the
+            # answer (it makes the tab adopt the swapped credential).
+            return fast_fail
+        # Latch the window BEFORE handing the request back to the routing
+        # gate: `_pushback_pause` is pure, and without this the retry would
+        # see remaining<=0 and re-probe this same bearer forever. Recording
+        # it also arms `require_retry_probe(block_while_retry=True)`, which
+        # is what makes the pre-dispatch reroute branch fire on re-entry.
+        limiter.note_retry_after(pause)
+        raise _RetryAfterArmed(pause)
+    await _aimd_feedback(bid, limiter, attempt)
+    _schedule_advisor(bid, attempt.final_status, path)
+    await limiter.wait_retry_after()
+    return None
 
 
 def _plan_lane_has_headroom(now: float | None = None) -> bool:
@@ -3621,26 +3750,56 @@ def _retry_after_fast_fail_response(
 
 
 async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt) -> None:
-    """Apply AIMD shrink/overload/grow + Retry-After feedback for one request."""
+    """Apply AIMD shrink/overload/grow + Retry-After feedback for one request.
+
+    A dispatcher over the per-status rules. Each rule is a named helper because
+    the thing being encoded is *which* feedback is honest for *which* upstream
+    signal — five of them look like "the upstream said no" and only two of them
+    are evidence about this bearer's ceiling.
+    """
     final_status = attempt.final_status
     retry_after = _parse_retry_after(attempt.meta)
-    if final_status in AIMD_STATUSES and _is_queue_timeout_response(attempt.response):
-        # A relayed queue-wait-timeout 503 is central admission backpressure,
-        # not upstream pushback on this bearer: shrinking here would
-        # misattribute central's queue depth to the bearer's own upstream
-        # behavior and collapse a healthy local cap.
-        log(f"queue-timeout-relay bid={bid} status={final_status} (no aimd shrink)")
+    if _aimd_skip_queue_timeout(bid, attempt, final_status):
         return
+    if _aimd_skip_entitlement_refusal(bid, attempt, final_status):
+        return
+    if _aimd_skip_zai_quota_gate(bid, limiter, attempt, final_status, retry_after):
+        return
+    if final_status in AIMD_STATUSES:
+        await _aimd_apply_pushback(bid, limiter, attempt, final_status, retry_after)
+    elif final_status in OVERLOAD_STATUSES:
+        await _aimd_note_overload(bid, limiter, attempt, final_status, retry_after)
+    elif final_status and 200 <= final_status < 400:
+        await _aimd_grow(bid, limiter)
+
+
+def _aimd_skip_queue_timeout(bid: str, attempt: _Attempt, final_status: int | None) -> bool:
+    """True (and logged) when this 429/503 is central's relayed queue timeout.
+
+    A relayed queue-wait-timeout 503 is central admission backpressure, not
+    upstream pushback on this bearer: shrinking here would misattribute central's
+    queue depth to the bearer's own upstream behavior and collapse a healthy
+    local cap.
+    """
+    if final_status in AIMD_STATUSES and _is_queue_timeout_response(attempt.response):
+        log(f"queue-timeout-relay bid={bid} status={final_status} (no aimd shrink)")
+        return True
+    return False
+
+
+def _aimd_skip_entitlement_refusal(bid: str, attempt: _Attempt, final_status: int | None) -> bool:
+    """True (and counted) when the 429 is the OAuth entitlement gate, not pushback.
+
+    Anthropic's OAuth entitlement gate, masked as a 429 (see
+    `_is_oauth_entitlement_refusal`). The bearer is healthy — it answers 200 for
+    the same model on the very next correctly-shaped request — so this says
+    nothing about the right concurrency ceiling. Shrinking here is what turned
+    three `max_tokens=1` diagnostic probes into a fleet-wide stall on 17/08/2026:
+    cap 5 -> 1 on two `allowed_warning` bearers that were still serving. No
+    shrink, and NO retry_after latch: a synthetic pause would park the next real
+    turn behind a window the upstream never asked for.
+    """
     if final_status in AIMD_STATUSES and _is_entitlement_refusal_attempt(attempt, bid):
-        # Anthropic's OAuth entitlement gate, masked as a 429 (see
-        # `_is_oauth_entitlement_refusal`). The bearer is healthy — it answers
-        # 200 for the same model on the very next correctly-shaped request — so
-        # this says nothing about the right concurrency ceiling. Shrinking here
-        # is what turned three `max_tokens=1` diagnostic probes into a
-        # fleet-wide stall on 17/08/2026: cap 5 -> 1 on two `allowed_warning`
-        # bearers that were still serving. No shrink, and NO retry_after latch:
-        # a synthetic pause would park the next real turn behind a window the
-        # upstream never asked for.
         model = attempt.context.get("model") or "unknown"
         M_OAUTH_ENTITLEMENT_REFUSALS.labels(bearer=bid, model=model).inc()
         log(
@@ -3648,11 +3807,24 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
             "(no aimd shrink, no pause) — request's first system block is not the "
             "Claude Code identity; a subscription bearer cannot serve this shape"
         )
-        return
+        return True
+    return False
+
+
+def _aimd_skip_zai_quota_gate(
+    bid: str,
+    limiter: FairBearerLimiter,
+    attempt: _Attempt,
+    final_status: int | None,
+    retry_after: float,
+) -> bool:
+    """True (and logged) when the refusal is a plan-window quota gate.
+
+    Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a quota gate,
+    not evidence that the current concurrency ceiling is too high, so hold
+    admission until the body reset instead of AIMD shrinking.
+    """
     if final_status in AIMD_STATUSES and _is_zai_quota_gate(attempt.meta):
-        # Z.ai 1316/1317/1308 mean the plan window is exhausted. That is a
-        # quota gate, not evidence that the current concurrency ceiling is too
-        # high, so hold admission until the body reset instead of AIMD shrinking.
         pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
         code = (attempt.meta or {}).get("zai-error-code", "unknown")
         reset = (attempt.meta or {}).get("zai-reset-epoch", "unknown")
@@ -3661,52 +3833,77 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
             f"retry_after={retry_after} pause={pause} reset_epoch={reset} "
             f"synthetic_pause={synthetic_pause} (no aimd shrink)"
         )
-        return
-    if final_status in AIMD_STATUSES:
-        # Rate pushback (429/503). A headerless 429 with the unified windows
-        # still ``allowed`` and low utilization is a transient CONCURRENCY /
-        # per-rate cap, not budget exhaustion: it clears once in-flight drains,
-        # so the short ``CONCURRENCY_COOLDOWN_S`` pause (set below) is enough.
-        # Multiplicatively decreasing the cap there collapses throughput under
-        # fleet bursts — 17/07 19:03: three headerless 429s on b144f62f (2 %
-        # util, windows allowed) shrank it 8→4→2→1 → queue flood → 503 storm →
-        # 3 dead sessions (prompts-tab fleet brief 19:15). Reserve the shrink
-        # for real pushback: a ``Retry-After`` header (hard limit) or a
-        # headerless 429 the unified windows flag as budget
-        # (``allowed_warning``/``rejected``/binding util ≥ warn). Sustained
-        # overload climbs util, which flips this gate True and re-arms shrink.
-        is_concurrency_429 = retry_after <= 0 and not _budget_under_pressure(attempt.meta, bid)
-        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
-        new_max: int | None = None
-        if is_concurrency_429:
-            label, reason = "concurrency-429", "no shrink — windows allowed"
-        else:
-            new_max = await limiter.shrink()
-            M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
-            if new_max is not None:
-                M_AIMD_MAX.labels(bearer=bid).set(new_max)
-            label, reason = "aimd-shrink", "budget/real-retry-after pushback"
-        log(
-            f"{label} bid={bid} status={final_status} "
-            f"max_concurrent={new_max if new_max is not None else limiter.max_concurrent} "
-            f"retry_after={retry_after} pause={pause} "
-            f"synthetic_pause={synthetic_pause} ({reason})"
-        )
-    elif final_status in OVERLOAD_STATUSES:
-        # 529 = upstream overloaded (not our usage): honor any retry-after but
-        # do NOT shrink the ceiling.
-        M_AIMD_OVERLOAD.labels(bearer=bid).inc()
-        pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
-        log(
-            f"overload bid={bid} status={final_status} retry_after={retry_after} "
-            f"pause={pause} synthetic_pause={synthetic_pause} (no shrink)"
-        )
-    elif final_status and 200 <= final_status < 400:
-        new_max = await limiter.grow()
+        return True
+    return False
+
+
+async def _aimd_apply_pushback(
+    bid: str,
+    limiter: FairBearerLimiter,
+    attempt: _Attempt,
+    final_status: int | None,
+    retry_after: float,
+) -> None:
+    """Shrink or pace on real pushback (429/503).
+
+    Rate pushback (429/503). A headerless 429 with the unified windows still
+    ``allowed`` and low utilization is a transient CONCURRENCY / per-rate cap,
+    not budget exhaustion: it clears once in-flight drains, so the short
+    ``CONCURRENCY_COOLDOWN_S`` pause (set below) is enough. Multiplicatively
+    decreasing the cap there collapses throughput under fleet bursts — 17/07
+    19:03: three headerless 429s on b144f62f (2 % util, windows allowed) shrank
+    it 8→4→2→1 → queue flood → 503 storm → 3 dead sessions (prompts-tab fleet
+    brief 19:15). Reserve the shrink for real pushback: a ``Retry-After`` header
+    (hard limit) or a headerless 429 the unified windows flag as budget
+    (``allowed_warning``/``rejected``/binding util ≥ warn). Sustained overload
+    climbs util, which flips this gate True and re-arms shrink.
+    """
+    is_concurrency_429 = retry_after <= 0 and not _budget_under_pressure(attempt.meta, bid)
+    pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
+    new_max: int | None = None
+    if is_concurrency_429:
+        label, reason = "concurrency-429", "no shrink — windows allowed"
+    else:
+        new_max = await limiter.shrink()
+        M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
         if new_max is not None:
-            M_AIMD_GROWS.labels(bearer=bid).inc()
             M_AIMD_MAX.labels(bearer=bid).set(new_max)
-            log(f"aimd-grow bid={bid} max_concurrent={new_max}")
+        label, reason = "aimd-shrink", "budget/real-retry-after pushback"
+    log(
+        f"{label} bid={bid} status={final_status} "
+        f"max_concurrent={new_max if new_max is not None else limiter.max_concurrent} "
+        f"retry_after={retry_after} pause={pause} "
+        f"synthetic_pause={synthetic_pause} ({reason})"
+    )
+
+
+async def _aimd_note_overload(
+    bid: str,
+    limiter: FairBearerLimiter,
+    attempt: _Attempt,
+    final_status: int | None,
+    retry_after: float,
+) -> None:
+    """Count a 529 and honor any retry-after — without shrinking the ceiling.
+
+    529 = upstream overloaded (not our usage): honor any retry-after but do NOT
+    shrink the ceiling.
+    """
+    M_AIMD_OVERLOAD.labels(bearer=bid).inc()
+    pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
+    log(
+        f"overload bid={bid} status={final_status} retry_after={retry_after} "
+        f"pause={pause} synthetic_pause={synthetic_pause} (no shrink)"
+    )
+
+
+async def _aimd_grow(bid: str, limiter: FairBearerLimiter) -> None:
+    """A served request is the only evidence that earns the ceiling back."""
+    new_max = await limiter.grow()
+    if new_max is not None:
+        M_AIMD_GROWS.labels(bearer=bid).inc()
+        M_AIMD_MAX.labels(bearer=bid).set(new_max)
+        log(f"aimd-grow bid={bid} max_concurrent={new_max}")
 
 
 def _record_usage(model: str, model_label: str, captured: bytearray, path: str) -> None:
