@@ -394,6 +394,71 @@ EMPTY: dict[str, Any] = {
 }
 
 
+def _sample_clock(raw: dict[str, Any], now: float) -> tuple[float | None, float | None, str]:
+    """The report's own cadence and age, plus why either is uncertified.
+
+    Review B4: a MISSING cadence is not a 900-second cadence. Guessing one let
+    the page certify staleness and project a next-sample time from an invented
+    number; both stay uncertified until the report declares its own interval.
+
+    A negative or non-finite age is the same class of lie in the other
+    direction (a clock we cannot reason about), so it degrades to ``None`` with
+    a reason attached rather than being rendered as fresh.
+    """
+    raw_interval = raw.get("intervalSeconds")
+    interval = _pct(raw_interval)
+    if interval is not None and interval <= 0:
+        interval = None
+    age = _age_s(raw.get("generatedAt"), now)
+    error = ""
+    if age is None or age < 0 or not math.isfinite(age):
+        age = None
+        error = "observation timestamp missing, invalid or in the future"
+    if interval is None:
+        detail = (
+            "sampling interval missing" if raw_interval is None else "sampling interval invalid"
+        )
+        error = " · ".join(filter(None, [error, detail]))
+    return interval, age, error
+
+
+def _lane_rows(raw: dict[str, Any], *, stale: bool, error: str, now: float) -> list[dict[str, Any]]:
+    """Normalize every lane in the report, degrading to ``unknown`` on error.
+
+    UNKNOWN IS NOT HEALTHY: a lane the probe reported as ``ok`` cannot stay
+    ``ok`` once the report's own clock is uncertified — it is re-labelled
+    ``unknown`` and inherits the reason, so no consumer can read a stale reading
+    as a live one.
+    """
+    lanes = []
+    for source in raw["lanes"]:
+        if not isinstance(source, dict):
+            continue
+        lane = _normalize(source, stale or bool(error), now)
+        if error and source.get("status") == "ok":
+            lane["status"] = "unknown"
+            lane["reason"] = " · ".join(filter(None, [lane.get("reason"), error]))
+        lanes.append(lane)
+    # Family first so the review-family grouping the dashboard relies on is a
+    # property of the payload, not of the renderer.
+    lanes.sort(key=lambda lane: (lane["family"], lane["id"]))
+    return lanes
+
+
+def _registry_rows(raw: dict[str, Any]) -> list[dict[str, str]]:
+    """Provider rows for the fleet strip, straight from the report's id list."""
+    providers = raw.get("registryProviders")
+    if not isinstance(providers, list):
+        return []
+    rows = []
+    for provider_id in providers:
+        if not isinstance(provider_id, str):
+            continue
+        icon, provider = _PROVIDER.get(provider_id, ("\U0001f916", provider_id))
+        rows.append({"id": provider_id, "icon": icon, "provider": provider})
+    return rows
+
+
 def _read(now: float, path: str | None = None) -> dict[str, Any]:
     path = report_path() if path is None else path
     if not path:
@@ -406,44 +471,12 @@ def _read(now: float, path: str | None = None) -> dict[str, Any]:
         return EMPTY
     if not isinstance(raw, dict) or not isinstance(raw.get("lanes"), list):
         return EMPTY
-    raw_interval = raw.get("intervalSeconds")
-    interval = _pct(raw_interval)
-    if interval is not None and interval <= 0:
-        interval = None
-    age = _age_s(raw.get("generatedAt"), now)
-    error = ""
-    if age is None or age < 0 or not math.isfinite(age):
-        age = None
-        error = "observation timestamp missing, invalid or in the future"
-    if interval is None:
-        # Review B4: a MISSING cadence is not a 900-second cadence. Guessing
-        # one let the page certify staleness and project a next-sample time
-        # from an invented number; both stay uncertified until the report
-        # declares its own interval.
-        missing = raw_interval is None
-        detail = "sampling interval missing" if missing else "sampling interval invalid"
-        error = " · ".join(filter(None, [error, detail]))
+    interval, age, error = _sample_clock(raw, now)
     stale = age is not None and interval is not None and age > interval * _STALE_INTERVALS
-    lanes = []
-    for source in raw["lanes"]:
-        if not isinstance(source, dict):
-            continue
-        lane = _normalize(source, stale or bool(error), now)
-        if error and source.get("status") == "ok":
-            lane["status"] = "unknown"
-            lane["reason"] = " · ".join(filter(None, [lane.get("reason"), error]))
-        lanes.append(lane)
-    lanes.sort(key=lambda lane: (lane["family"], lane["id"]))
-    registry = []
-    registry_providers = raw.get("registryProviders")
-    for provider_id in registry_providers if isinstance(registry_providers, list) else []:
-        if not isinstance(provider_id, str):
-            continue
-        icon, provider = _PROVIDER.get(provider_id, ("🤖", provider_id))
-        registry.append({"id": provider_id, "icon": icon, "provider": provider})
+    lanes = _lane_rows(raw, stale=stale, error=error, now=now)
     return {
         "lanes": lanes,
-        "registry": registry,
+        "registry": _registry_rows(raw),
         "age_s": age,
         "stale": stale,
         "interval_s": interval,
