@@ -47,6 +47,7 @@ import re
 import socket
 import time
 import zlib
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -4674,22 +4675,41 @@ def _slot_remaining_wait(wait_deadline: float | None) -> float | None:
     return wait_deadline - time.time()
 
 
+@dataclass(slots=True)
+class _SlotContext:
+    """The request-scoped inputs one slot attempt needs, carried as one value.
+
+    Every field is read-only for the helpers that receive it. ``bid`` and
+    ``headers`` are here as *inputs* on purpose: the post-slot re-check re-binds
+    its own locals for them (a reroute returns a different route), and the
+    caller still receives the final pair in the returned tuple, so this carrier
+    is never written back to.
+    """
+
+    request: web.Request
+    path: str
+    cid: str
+    bid: str
+    headers: dict[str, str]
+    body: bytes | None
+    url: str
+    client_timeout: aiohttp.ClientTimeout
+    via: str
+    model: str
+    model_label: str
+    req_max_tokens: int | None
+    is_priority: bool
+    limiter: FairBearerLimiter
+    probe_lease: dict[str, str]
+    try_reroute: _TryReroute
+
+
 async def _post_slot_recheck(
     *,
-    request: web.Request,
-    path: str,
-    cid: str,
-    bid: str,
-    headers: dict[str, str],
+    ctx: _SlotContext,
     attempt: _Attempt,
     held: _FairSlotContext,
-    model_label: str,
-    req_max_tokens: int | None,
-    via: str,
-    limiter: FairBearerLimiter,
     counters: _Counters,
-    probe_lease: dict[str, str],
-    try_reroute: _TryReroute,
 ) -> tuple[str, dict[str, str], web.Response | None, bool]:
     """Re-check routing and probe state with the slot held.
 
@@ -4697,6 +4717,12 @@ async def _post_slot_recheck(
     the slot back and re-enter the pre-dispatch gate — this request must never
     wait on, or dispatch to, a half-open bearer from inside a slot.
     """
+    # Local names for the context: the body below re-binds ``bid``/``headers``
+    # from its own result, exactly as it did when they arrived as parameters.
+    request, path, cid, bid = ctx.request, ctx.path, ctx.cid, ctx.bid
+    headers, model_label, req_max_tokens = ctx.headers, ctx.model_label, ctx.req_max_tokens
+    via, limiter, probe_lease = ctx.via, ctx.limiter, ctx.probe_lease
+    try_reroute = ctx.try_reroute
     if _request_disconnected(request):
         return bid, headers, _record_closed_before_dispatch(path, "post-queue", attempt), False
     # held.priority is the EFFECTIVE lane (reserve 0 or a mid-wait
@@ -4745,24 +4771,9 @@ async def _post_slot_recheck(
 
 async def _run_slot(
     *,
-    request: web.Request,
-    path: str,
-    cid: str,
-    bid: str,
-    headers: dict[str, str],
-    body: bytes | None,
-    url: str,
-    client_timeout: aiohttp.ClientTimeout,
-    via: str,
-    model: str,
-    model_label: str,
-    req_max_tokens: int | None,
-    is_priority: bool,
-    limiter: FairBearerLimiter,
-    probe_lease: dict[str, str],
+    ctx: _SlotContext,
     wait_deadline: float | None,
     finish_probe: _FinishProbe,
-    try_reroute: _TryReroute,
 ) -> tuple[str, dict[str, str], web.Response | None, bool]:
     """Acquire the fair-queue slot and run one dispatch attempt end to end.
 
@@ -4773,6 +4784,14 @@ async def _run_slot(
     rollback, client-hold release and terminal probe release run here, once per
     slot attempt.
     """
+    # Local names for the context; ``bid``/``headers`` are re-bound below from
+    # the post-slot re-check's result, which is why this carrier stays read-only.
+    request, path, cid = ctx.request, ctx.path, ctx.cid
+    bid, headers = ctx.bid, ctx.headers
+    body, url, client_timeout = ctx.body, ctx.url, ctx.client_timeout
+    via, model, model_label = ctx.via, ctx.model, ctx.model_label
+    is_priority, limiter = ctx.is_priority, ctx.limiter
+    probe_lease = ctx.probe_lease
     bstate = bearer_state[bid]
     slot_max_wait = _slot_remaining_wait(wait_deadline)
     if slot_max_wait is not None and slot_max_wait <= 0.0:
@@ -4802,20 +4821,10 @@ async def _run_slot(
             attempt.started_at = t0
             try:
                 bid, headers, response, give_back = await _post_slot_recheck(
+                    ctx=ctx,
                     attempt=attempt,
                     held=held,
-                    request=request,
-                    path=path,
-                    cid=cid,
-                    bid=bid,
-                    headers=headers,
-                    model_label=model_label,
-                    req_max_tokens=req_max_tokens,
-                    via=via,
-                    limiter=limiter,
                     counters=counters,
-                    probe_lease=probe_lease,
-                    try_reroute=try_reroute,
                 )
                 if give_back:
                     rerouted = True
@@ -5034,24 +5043,26 @@ async def handler(request: web.Request) -> web.StreamResponse:
             continue
         assert limiter is not None
         bid, headers, response, reroute = await _run_slot(
-            request=request,
-            path=path,
-            cid=cid,
-            bid=bid,
-            headers=headers,
-            body=body,
-            url=url,
-            client_timeout=client_timeout,
-            via=via,
-            model=model,
-            model_label=model_label,
-            req_max_tokens=req_max_tokens,
-            is_priority=is_priority,
-            limiter=limiter,
-            probe_lease=probe_lease,
+            ctx=_SlotContext(
+                request=request,
+                path=path,
+                cid=cid,
+                bid=bid,
+                headers=headers,
+                body=body,
+                url=url,
+                client_timeout=client_timeout,
+                via=via,
+                model=model,
+                model_label=model_label,
+                req_max_tokens=req_max_tokens,
+                is_priority=is_priority,
+                limiter=limiter,
+                probe_lease=probe_lease,
+                try_reroute=try_retry_after_reroute,
+            ),
             wait_deadline=wait_deadline,
             finish_probe=finish_probe,
-            try_reroute=try_retry_after_reroute,
         )
         if reroute:
             continue
