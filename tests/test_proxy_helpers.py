@@ -2392,13 +2392,14 @@ def _route_for_accounts(
     model="claude-sonnet-4-6",
     mode="least_loaded",
     max_tokens=None,
+    path="/v1/messages",
 ):
     monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", mode)
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", paths)
     monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: snapshot)
     headers = {"Authorization": "Bearer inc"}
     bid, label = proxy._route_account_if_enabled(
-        headers, "inc", method="POST", path="/v1/messages", model=model, max_tokens=max_tokens
+        headers, "inc", method="POST", path=path, model=model, max_tokens=max_tokens
     )
     return bid, label, headers
 
@@ -2817,6 +2818,40 @@ def test_account_route_malformed_scoped_no_crash(monkeypatch) -> None:
         monkeypatch, [_acct("aaa", "TOKA", "A", "Sonnet", None)]
     )
     assert (bid, label) == ("aaa", "A")  # scoped util=None → not folded, no crash
+
+
+def test_account_route_rewrites_on_chat_completions(monkeypatch) -> None:
+    """OpenAI-compatible posts route too — the MiMo `tp-…` pool lives here."""
+    bid, label, headers = _route_for_accounts(
+        monkeypatch,
+        [_acct("aaa", "TOKA", "A", "", None)],
+        model="",
+        path="/v1/chat/completions",
+    )
+    assert (bid, label) == ("aaa", "A")
+    assert headers["Authorization"] == "Bearer TOKA"
+
+
+def test_account_route_still_skips_unrelated_paths(monkeypatch) -> None:
+    """Telemetry/health paths must never have their bearer rewritten."""
+    for path in ("/api/oauth/usage", "/__throttle/health", "/v1/models"):
+        bid, label, headers = _route_for_accounts(
+            monkeypatch, [_acct("aaa", "TOKA", "A", "", None)], model="", path=path
+        )
+        assert (bid, label) == ("inc", None), path
+        assert headers["Authorization"] == "Bearer inc", path
+
+
+def test_account_route_chat_completions_still_requires_post(monkeypatch) -> None:
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "A:/x")
+    monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: [])
+    headers = {"Authorization": "Bearer inc"}
+    bid, label = proxy._route_account_if_enabled(
+        headers, "inc", method="GET", path="/v1/chat/completions"
+    )
+    assert (bid, label) == ("inc", None)
+    assert headers["Authorization"] == "Bearer inc"
 
 
 # ── auth probe backoff (19/09/2026) ─────────────────────────────────────────

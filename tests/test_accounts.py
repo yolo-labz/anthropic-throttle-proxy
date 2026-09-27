@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 import os
 import time
 from datetime import UTC
@@ -172,6 +173,52 @@ def test_snapshot_missing_file_and_bad_json(tmp_path, monkeypatch):
     assert gone["bearer_id"] is None and gone["error"] == "credentials file missing"
     assert badv["bearer_id"] is None and badv["error"] == "credentials file malformed"
     assert empty["bearer_id"] is None and empty["error"] == "no access token in credentials"
+
+
+def test_snapshot_static_key_plain_text_file(tmp_path, monkeypatch):
+    """A bare `tp-…` key line is a valid credential (no expiry)."""
+    token = "tp-" + uuid.uuid4().hex  # dynamic: never a credential-shaped literal
+    cred = tmp_path / "key.txt"
+    cred.write_text(token + "\n")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"MIMO:{cred}")
+
+    (snap,) = accounts.account_snapshot()
+    assert snap["label"] == "MIMO"
+    assert snap["error"] is None
+    assert snap["bearer_id"] == _expected_bid(token)
+    assert snap["bearer_id"] == _bearer_id({"Authorization": f"Bearer {token}"})
+    # Static keys never expire: the freshness column renders as "—".
+    assert accounts._token_view(snap.get("expires_at_ms"), NOW) is None
+
+
+def test_snapshot_static_key_json_api_key_file(tmp_path, monkeypatch):
+    """JSON `{"apiKey": …}` shape works alongside the OAuth shape."""
+    token = "tp-" + uuid.uuid4().hex  # dynamic: never a credential-shaped literal
+    cred = tmp_path / "key.json"
+    cred.write_text(json.dumps({"apiKey": token}))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"MIMO:{cred}")
+
+    (snap,) = accounts.account_snapshot()
+    assert snap["error"] is None
+    assert snap["bearer_id"] == _expected_bid(token)
+
+
+def test_snapshot_pool_mixes_oauth_and_static_keys(tmp_path, monkeypatch):
+    """One request pool can span Claude OAuth accounts and MiMo `tp-…` keys."""
+    oauth_token = "sk-ant-oat01-" + uuid.uuid4().hex  # dynamic fixture
+    static_token = "tp-" + uuid.uuid4().hex  # dynamic: never a credential-shaped literal
+    oauth = tmp_path / "o.json"
+    _write_cred(oauth, oauth_token, expires_at_ms=int((NOW + 3600) * 1000))
+    static = tmp_path / "k.txt"
+    static.write_text(static_token)
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"O:{oauth},M:{static}")
+
+    a, b = accounts.account_snapshot()
+    assert (a["label"], a["error"]) == ("O", None)
+    assert (b["label"], b["error"]) == ("M", None)
+    assert a["bearer_id"] == _expected_bid(oauth_token)
+    assert b["bearer_id"] == _expected_bid(static_token)
+    assert a["bearer_id"] != b["bearer_id"]
 
 
 def test_snapshot_mtime_cache_refreshes_on_rotation(tmp_path, monkeypatch):
