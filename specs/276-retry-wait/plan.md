@@ -40,6 +40,15 @@ unchanged. No live restart or provider traffic is required for acceptance.
 - [ ] Land by normal PR subject to actual repository gates.
 - [ ] Verify activated runtime separately; never claim source tests fix the live incident.
 
+## Required-gate follow-up
+
+The first CI run passed lint/tests and code-slop but Sonar refused the inherited
+`accounts._digest_cred` from the account-pool landing: cognitive complexity 30
+(limit 15), the only new-code violation; coverage 92.2%, duplication 0%.
+Extract JSON token/expiry selection without changing OAuth/static precedence.
+Twelve parameterized on-disk cases cover valid/empty/scalar/bad-token OAuth
+shapes and all three static aliases. No gate suppression or baseline change.
+
 ## Separate findings, not silently included
 
 MiMo's service config names `THROTTLE_PLAN_METER_LANE=mimo:plan` but does not
