@@ -56,7 +56,7 @@ def _hide_primary(result: dict) -> None:
     """Drop the primary lane's evidence when the operator hides the local board."""
     result["providers"] = [p for p in result.get("providers", []) if p.get("kind") == "sibling"]
     result["bearers"], result["signals"] = [], []
-    result["identity"], result["last_advisor"] = {}, None
+    result["identity"] = {}
     result["status"] = _subscriptions_only_status()
 
 

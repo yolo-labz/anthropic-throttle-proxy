@@ -417,15 +417,6 @@
 </aside>
 {% endif %}
 
-{# ── ADVISOR — an inline strip, where the operator is already looking ──────── #}
-{% if last_advisor %}
-<div class="advisor-auto">
-  <span class="aa-tag">auto-diagnosis</span>
-  <span class="advisor-trigger">{{ last_advisor.trigger }}</span>
-  <div class="markdown clamp" title="{{ last_advisor.text }}">{{ last_advisor.text }}</div>
-</div>
-{% endif %}
-
 {% if fleet_ui_config_error %}
 <div class="status crit" role="alert">
   <span class="verdict">⚠️ Fleet UI configuration error</span>

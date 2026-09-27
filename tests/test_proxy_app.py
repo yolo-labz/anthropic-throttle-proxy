@@ -345,7 +345,6 @@ def _reset_proxy_state() -> None:
             "upstream_egress_ok": True,
             "upstream_egress_error": "",
             "upstream_egress_last_check": 0,
-            "last_advisor": None,
         }
     )
 
@@ -1258,13 +1257,6 @@ async def test_oauth_usage_429_does_not_poison_message_limiter(
     monkeypatch.setattr(config, "MAX_CONCURRENT", 3)
     monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 3)
     monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 1.0)
-    advisor_calls: list[tuple[str, int]] = []
-
-    async def fake_advise(trigger_bid: str, trigger_status: int) -> None:
-        advisor_calls.append((trigger_bid, trigger_status))
-
-    monkeypatch.setattr(proxy, "ADVISOR_ENABLED", True)
-    monkeypatch.setattr(proxy, "_maybe_advise", fake_advise)
     bid = proxy._bearer_id({"authorization": "Bearer usage-poll"})
 
     resp = await client.get(
@@ -1284,7 +1276,6 @@ async def test_oauth_usage_429_does_not_poison_message_limiter(
     # real /v1/messages traffic.
     assert lim.max_concurrent == 3
     assert lim.retry_after_remaining() == 0.0
-    assert advisor_calls == []
     assert config.bearer_state[bid]["last_ratelimit"] is None
 
 
@@ -2192,19 +2183,6 @@ async def test_ui_stats_shows_open_keepalive_holds(client: TestClient) -> None:
 
     after = await (await client.get("/ui/stats")).text()
     assert "</b> held" not in after
-
-
-async def test_ui_advisor_disabled_renders_inline_error(client: TestClient, monkeypatch) -> None:
-    """Disabled advisor returns 200 with an HTML error partial so HTMX swaps
-    it into #advisor-out instead of silently dropping the response on
-    non-2xx. Pedro reported 27/05/2026 the integration looked broken; the
-    cause was the prior 503 never surfacing in the dashboard."""
-    monkeypatch.delenv("ADVISOR_ENABLED", raising=False)
-    resp = await client.post("/ui/advisor")
-    assert resp.status == 200
-    body = await resp.text()
-    assert "advisor-output err" in body
-    assert "ADVISOR_ENABLED" in body
 
 
 async def test_get_passthrough_non_messages_path(client: TestClient) -> None:

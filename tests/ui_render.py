@@ -37,7 +37,6 @@ _EMPTY_CONTEXT: dict[str, object] = {
     "status": None,
     "lanes": None,
     "identity": None,
-    "last_advisor": None,
     "fleet_ui_config_error": None,
     "copilot": [],
     "served": 0,

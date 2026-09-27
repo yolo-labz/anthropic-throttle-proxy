@@ -30,7 +30,7 @@ most recent central-check status (`up`/`down`/`unknown`).
 Module layout (PR: SonarQube clean-up). The hot-path helpers are split across
 focused sibling modules — :mod:`config`, :mod:`metrics`, :mod:`pricing`,
 :mod:`pacing`, :mod:`limiter`, :mod:`ratelimit`, :mod:`forwarding`. This module
-keeps the request ``handler`` + control endpoints, the GROQ advisor wiring,
+keeps the request ``handler`` + control endpoints,
 and re-exports the public names so ``from .. import proxy`` (ui.routes) and the
 test-suite keep working unchanged.
 """
@@ -67,7 +67,7 @@ from .body_shrink import shrink_body
 # Re-exported config (env scalars + shared mutable state + log + HOP_HEADERS).
 # These are the proxy module's stable public surface; ``ui.routes`` does
 # ``from .. import proxy`` and reads ``proxy.MAX_CONCURRENT`` etc., and the
-# test-suite imports the AIMD/advisor names from here. ``__all__`` (below)
+# test-suite imports the AIMD names from here. ``__all__`` (below)
 # declares them as exports so they are not flagged as unused.
 from .config import (
     AIMD_BACKOFF_S,
@@ -269,11 +269,7 @@ __all__ = [
     # defined in this module
     "UTILIZATION_TARGET",
     "UTILIZATION_WARN",
-    "ADVISOR_ENABLED",
-    "ADVISOR_DEBOUNCE_S",
     "_apply_unified",
-    "_advisor_snapshot",
-    "_maybe_advise",
     "handler",
     "health",
     "metrics",
@@ -349,13 +345,6 @@ _WARNING_BACKPRESSURE_SURCHARGE = 80.0
 # fast-failed instead of holding 2 s.
 _RETRY_AFTER_SURCHARGE_PER_S = 10.0
 
-# GROQ auto-advisor: on a throttle event, fire an out-of-band, debounced
-# diagnosis to GROQ (an Anthropic-INDEPENDENT provider). Off by default; needs
-# ADVISOR_ENABLED=true + GROQ_API_KEY. Never on the hot path: scheduled as a
-# fire-and-forget task whose failures are swallowed. Defined here for the same
-# monkeypatch reason as UTILIZATION_TARGET.
-ADVISOR_ENABLED = os.environ.get("ADVISOR_ENABLED", "false").strip().lower() == "true"
-ADVISOR_DEBOUNCE_S = float(os.environ.get("ADVISOR_DEBOUNCE_S", "120"))
 
 # Strong refs to fire-and-forget tasks. asyncio only keeps a weak reference to
 # a task, so a bare `create_task(...)` whose result is never awaited can be
@@ -392,7 +381,6 @@ def _maybe_warn_storm(retries: int) -> None:
         _storm_warned = False
 
 
-_last_advice_ts: float = 0.0
 _direct_fallback_lock: asyncio.Lock | None = None
 _api_key_cache: tuple[int, int, str, str] | None = None
 
@@ -624,93 +612,6 @@ async def _apply_unified(
     await _maybe_glide(bid, bstate, limiter, unified)
 
 
-def _advisor_snapshot(
-    trigger_bid: str | None = None,
-    trigger_status: int | None = None,
-) -> dict[str, object]:
-    """Assemble a JSON-safe view of proxy state for the advisor.
-
-    Mirrors the dashboard's ``ui.routes._collect_view`` but adds the throttle
-    trigger and avoids importing ui.routes, so it stays callable from the
-    hot-path finally block without a circular import.
-    """
-    bearers = []
-    for b, bs in bearer_state.items():
-        lim = bearer_limiters.get(b)
-        bearers.append(
-            {
-                "bearer_id": b,
-                "inflight": bs.get("inflight", 0),
-                "queued": bs.get("queued", 0),
-                "served": bs.get("served", 0),
-                "last_ratelimit": bs.get("last_ratelimit"),
-                "unified": bs.get("unified"),
-                "limiter": lim.snapshot() if lim is not None else None,
-            }
-        )
-    return {
-        "inflight": state["inflight"],
-        "queued": state["queued"],
-        "served": state["served"],
-        "disconnects": state["client_disconnects"],
-        "retries": state["upstream_retries"],
-        "max_concurrent": config.MAX_CONCURRENT,
-        "queue_mode": config.QUEUE_MODE,
-        "min_dispatch_gap_ms": int(config.MIN_DISPATCH_GAP_S * 1000),
-        "upstream": config.UPSTREAM,
-        "central_url": config.CENTRAL_URL or "(direct)",
-        "central_status": state["central_status"],
-        "trigger": (
-            {"bearer": trigger_bid, "status": trigger_status}
-            if trigger_status is not None
-            else None
-        ),
-        "bearers": bearers,
-    }
-
-
-async def _maybe_advise(trigger_bid: str, trigger_status: int) -> None:
-    """Fire-and-forget GROQ diagnosis on a throttle event.
-
-    Debounced to at most once per ``ADVISOR_DEBOUNCE_S`` so a 429 storm can't
-    turn into a GROQ storm (GROQ's own free tier is ~30 RPM). Never raises —
-    any failure is stored as the diagnosis text and logged. Runs in its own
-    task, so the proxy hot path is unaffected regardless of outcome.
-    """
-    global _last_advice_ts
-    if not ADVISOR_ENABLED or not os.environ.get("GROQ_API_KEY"):
-        return
-    now = time.time()
-    if now - _last_advice_ts < ADVISOR_DEBOUNCE_S:
-        return
-    # Claim the debounce window before awaiting (cheap de-dupe).
-    _last_advice_ts = now
-    trigger = f"status={trigger_status} bid={trigger_bid}"
-    try:
-        from .ui.advisor_impl import recommend
-
-        text = await recommend(_advisor_snapshot(trigger_bid, trigger_status))
-        state["last_advisor"] = {"text": text, "ts": now, "trigger": trigger}
-        log(f"advisor {trigger}: {text[:160]!r}")
-    except Exception as exc:
-        state["last_advisor"] = {
-            "text": f"(advisor error: {exc!s})",
-            "ts": now,
-            "trigger": trigger,
-        }
-        log(f"advisor-error {trigger}: {exc!r}")
-
-
-# --- request handler, split into helpers to keep cognitive complexity low ----
-
-# Client-side disconnects we must NOT retry upstream (the client gave up).
-_CLIENT_DISCONNECT_EXC = (
-    ConnectionResetError,
-    aiohttp.ClientConnectionResetError,
-    asyncio.CancelledError,
-)
-
-
 class _Counters:
     """Bundle of the three nested counter scopes touched per request.
 
@@ -816,6 +717,14 @@ class _Attempt:
         # exhausted 529/queue-timeout hold (terminal synthetic 503) does not
         # AIMD-shrink the bearer (invariants 7 + 9; Codex panel BLOCKER).
         self.aimd_owned = False
+
+
+# Client-side disconnects we must NOT retry upstream (the client gave up).
+_CLIENT_DISCONNECT_EXC = (
+    ConnectionResetError,
+    aiohttp.ClientConnectionResetError,
+    asyncio.CancelledError,
+)
 
 
 def _record_disconnect(
@@ -3307,7 +3216,6 @@ async def _forward_with_retry(
         # Spec 092 keepalive-hold FIRST — BEFORE the legacy pushback-retry. See
         # `_keepalive_hold_engages` for why the order is load-bearing.
         if _keepalive_hold_engages(request, body, path, response, attempt, bid, wait_deadline):
-            _schedule_advisor(bid, attempt.final_status, path)
             return await _keepalive_hold_and_retry(
                 request,
                 dict(headers),
@@ -3531,7 +3439,6 @@ async def _pushback_retry_step(
         limiter.note_retry_after(pause)
         raise _RetryAfterArmed(pause)
     await _aimd_feedback(bid, limiter, attempt)
-    _schedule_advisor(bid, attempt.final_status, path)
     await limiter.wait_retry_after()
     return None
 
@@ -4063,14 +3970,6 @@ def _log_400_reason(path: str, attempt: _Attempt) -> None:
     log(" ".join(parts))
 
 
-def _schedule_advisor(bid: str, final_status: int, path: str) -> None:
-    """Fire the out-of-band GROQ advisor (debounced) on a throttle status."""
-    if ADVISOR_ENABLED and final_status in THROTTLE_STATUSES and not _is_oauth_telemetry_path(path):
-        advisor_task = asyncio.create_task(_maybe_advise(bid, final_status))
-        _background_tasks.add(advisor_task)
-        advisor_task.add_done_callback(_background_tasks.discard)
-
-
 async def _finalize_ratelimit_feedback(
     bid: str,
     bstate: dict[str, object],
@@ -4166,7 +4065,7 @@ async def _finalize(
     path: str,
 ) -> None:
     """Run the per-request ``finally`` bookkeeping: counters, gauges, AIMD,
-    advisor, and usage parsing. Exactly mirrors the original inline block.
+    and usage parsing. Exactly mirrors the original inline block.
     """
     final_status = attempt.final_status
     telemetry_path = _is_oauth_telemetry_path(path)
@@ -4193,8 +4092,6 @@ async def _finalize(
     _stamp_entitlement_refusal(attempt, bid)
 
     await _finalize_credential_note(bid, bstate, final_status, attempt, telemetry_path)
-
-    _schedule_advisor(bid, final_status, path)
 
     if attempt.captured and request.method == "POST" and MESSAGES_SUBPATH in path:
         _record_usage(model, model_label, attempt.captured, path)
@@ -4916,7 +4813,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
 
     Acquires a per-bearer fair slot, picks central-or-direct upstream, forwards
     the request, streams the response, and on the way out applies AIMD feedback,
-    publishes metrics, fires the optional advisor, and parses SSE usage.
+    publishes metrics and parses SSE usage.
 
     The phases are named helpers: ``_forward_headers`` / ``_read_forward_body`` /
     ``_model_and_priority`` (preflight), ``_claim_route`` (route + probe claim),
@@ -5957,7 +5854,6 @@ async def health(_request: web.Request) -> web.Response:
             "max_concurrent": config.API_KEY_MAX_CONCURRENT,
         },
         "central_last_check": state["central_last_check"],
-        "last_advisor": state["last_advisor"],
         # PR #562/#573: per-bearer + per-client view so /__throttle/health
         # shows fleet parallelism + fair-RR queue depths in one glance.
         "bearers": bearers_view,

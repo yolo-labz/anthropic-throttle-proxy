@@ -501,7 +501,6 @@ def test_pacing_is_not_rendered_as_a_blocked_subscription():
             providers=[],
             signals=[],
             lanes=None,
-            last_advisor=None,
             served=0,
             inflight=0,
             queued=0,
@@ -640,66 +639,3 @@ def test_a_tab_rendered_by_an_older_build_is_told_to_reload(monkeypatch):
             assert "HX-Refresh" not in agreed.headers
 
     asyncio.run(run())
-
-
-def test_the_advisor_reads_the_unfiltered_snapshot(monkeypatch):
-    """MINOR 5. `_collect_view` applied the display projection, so with
-    `show_primary: false` the advisor received an empty bearer list and a
-    placeholder verdict — and diagnosed a page that does not exist. Hiding the
-    button never disabled the endpoint.
-    """
-    import asyncio
-    from unittest.mock import AsyncMock, patch
-
-    from anthropic_throttle_proxy import (
-        accounts,
-        config,
-        copilot,
-        fleet,
-        fleet_ui_config,
-        lanes,
-    )
-
-    seen = []
-
-    async def fake_recommend(snapshot):
-        seen.append(snapshot)
-        return {"text": "ok", "error": None, "trigger": "test"}
-
-    monkeypatch.setenv("ADVISOR_ENABLED", "true")
-    monkeypatch.setattr(
-        fleet_ui_config, "load", lambda *a, **k: {"defaults": {"show_primary": False}}
-    )
-
-    synthetic = {
-        "bearer_id": "sample01",
-        "inflight": 0,
-        "queued": 0,
-        "served": 1,
-        "credential": {"ok": False, "reason": "refused"},
-    }
-
-    async def run() -> None:
-        async with _ui_client() as client:
-            with (
-                patch.dict(config.bearer_state, {"sample01": synthetic}, clear=True),
-                patch.object(accounts, "bearer_labels", return_value={}),
-                patch.object(accounts, "refresh_endpoint", new=AsyncMock(return_value={})),
-                patch.object(accounts, "account_view", return_value=[]),
-                patch.object(accounts, "identity_state", return_value={}),
-                patch.object(fleet, "refresh", new=AsyncMock(return_value=[])),
-                patch.object(copilot, "refresh", new=AsyncMock(return_value=[])),
-                patch.object(lanes, "view", return_value=dict(lanes.EMPTY)),
-                patch.object(routes, "_publish_account_gauges"),
-                patch.object(routes, "_publish_lane_gauges"),
-                patch("anthropic_throttle_proxy.ui.advisor_impl.recommend", fake_recommend),
-            ):
-                await client.post("/ui/advisor")
-
-    asyncio.run(run())
-    assert seen, "the advisor never ran"
-    snapshot = seen[0]
-    assert snapshot["status"]["verdict"] != "SUBSCRIPTIONS", (
-        "the advisor was handed the display placeholder instead of the real verdict"
-    )
-    assert snapshot["bearers"], "the advisor was handed a view with the bearers hidden"

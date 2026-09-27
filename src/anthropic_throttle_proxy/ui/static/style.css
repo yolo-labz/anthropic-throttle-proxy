@@ -94,7 +94,7 @@
   --radius-sm: 4px;
   --panel: var(--ctp-mantle);
   /* Reading measure for the one place this page has real sentences: the hero
-     detail and the advisor output. Tables are scanned, not read. */
+     detail and the raw output. Tables are scanned, not read. */
   --measure: 92ch;
 }
 
@@ -198,7 +198,6 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
    only the two boards divide it. */
 .shell > .hero,
 .shell > .gauges,
-.shell > .advisor-auto,
 .shell > .status,
 .shell > .rail-panel { grid-column: 1 / -1; }
 
@@ -848,7 +847,7 @@ table.bearers.tokens td:nth-child(2) { overflow-wrap: anywhere; }
 .status.crit .dot, .status.identity-banner .dot { background: var(--crit); }
 .status.crit .verdict, .status.identity-banner .verdict { color: var(--crit); }
 
-/* ── advisor ──────────────────────────────────────────────────────────── */
+/* ── buttons + htmx indicators ─────────────────────────────── */
 button {
   background: var(--ctp-surface0);
   color: var(--ctp-text);
@@ -876,42 +875,8 @@ button.ghost {
 }
 button.ghost.primary { border-color: color-mix(in srgb, var(--info) 45%, var(--ctp-surface1)); color: var(--info); }
 button.ghost:hover:not(:disabled) { color: var(--info); border-color: var(--info); background: color-mix(in srgb, var(--info) 10%, var(--ctp-surface0)); }
-#advisor-out:empty { display: none; }
 .htmx-indicator { display: none; margin-left: 0.5rem; color: var(--warn); font-family: var(--mono); font-size: var(--fs-meta); }
 .htmx-request .htmx-indicator { display: inline; }
-.advisor-output {
-  max-width: var(--measure);
-  margin-top: 0.7rem;
-  padding: 0.8rem 1rem;
-  background: var(--panel);
-  border: var(--hairline);
-  border-left: 3px solid var(--info);
-  border-radius: var(--radius);
-}
-.advisor-output h3 { margin: 0 0 0.35rem; color: var(--info); font-size: var(--fs-title); }
-.advisor-output.err { border-left-color: var(--crit); }
-.advisor-output.err h3 { color: var(--crit); }
-.advisor-empty { margin-top: 0.7rem; padding: 0.6rem 0.9rem; background: var(--panel); border: 1px dashed var(--ctp-surface1); border-radius: var(--radius-sm); font-size: var(--fs-body); }
-.advisor-empty code { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ctp-peach); background: var(--ctp-crust); padding: 0.05rem 0.3rem; border-radius: var(--radius-sm); }
-.advisor-output pre { background: var(--ctp-crust); padding: 0.55rem; border-radius: var(--radius-sm); overflow: auto; font-size: var(--fs-meta); color: var(--ctp-subtext1); }
-.advisor-auto {
-  padding: 0.6rem 0.95rem;
-  background: var(--panel);
-  border: var(--hairline);
-  border-left: 3px solid var(--warn);
-  border-radius: var(--radius);
-}
-.advisor-auto .aa-tag { font-family: var(--mono); font-size: var(--fs-tag); text-transform: uppercase; letter-spacing: 0.08em; color: var(--warn); margin-right: 0.5rem; }
-.advisor-auto .advisor-trigger { color: var(--muted); font-family: var(--mono); font-size: var(--fs-meta); }
-.advisor-auto .markdown.clamp {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-top: 0.3rem;
-}
-.advisor-auto .markdown, .advisor-output .markdown { white-space: pre-wrap; color: var(--ctp-subtext1); font-size: var(--fs-body); max-width: var(--measure); }
-.advisor-output .markdown b, .advisor-auto .markdown b { color: var(--ctp-text); }
 
 /* ── focus + motion ───────────────────────────────────────────────────── */
 /* One ring, every keyboard-reachable control, drawn OUTSIDE the element so it

@@ -57,7 +57,6 @@ def _reset_state() -> None:
             "central_last_check": 0,
             "central_consecutive_ok": 0,
             "central_consecutive_fail": 0,
-            "last_advisor": None,
         }
     )
 

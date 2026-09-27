@@ -890,7 +890,7 @@ async def test_refresh_endpoint_honors_failed_poll_retry_after(monkeypatch, tmp_
 
     Live 13/07 failure class: A/B returned ``429 Retry-After: 2397`` on
     ``/api/oauth/usage``, but the dashboard refresher retried after its fixed
-    90 s TTL and re-created the same proxy 429/AIMD/advisor noise every cycle.
+    90 s TTL and re-created the same proxy 429/AIMD noise every cycle.
     """
     cred = tmp_path / "c.json"
     _write_cred(cred, "tok-x", expires_at_ms=int((NOW + 3600) * 1000))

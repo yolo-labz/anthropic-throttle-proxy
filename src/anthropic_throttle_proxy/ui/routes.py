@@ -7,7 +7,6 @@ Routes:
     POST /ui/config       — set one knob's runtime override (validates + persists).
     POST /ui/config/reset — drop one knob's runtime override, restore env default.
     GET  /ui/static/...   — CSS + favicon.
-    POST /ui/advisor      — optional GROQ call (gated by ADVISOR_ENABLED).
 
 The hot path proxy is NOT routed through this module. Failure to render the
 UI must not break /v1/messages.
@@ -20,7 +19,6 @@ import contextlib
 import hashlib
 import ipaddress
 import logging
-import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -88,7 +86,6 @@ _PACING_UTIL = 0.80
 # Partial-template paths, named once so SonarQube python:S1192 (duplicated
 # literal) stays clean. f-strings keep the full literal out of the source.
 _PARTIALS = "partials"
-_TPL_ADVISOR = f"{_PARTIALS}/advisor.html"
 _TPL_CONFIG = f"{_PARTIALS}/config.html"
 
 
@@ -1017,7 +1014,7 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
 
     ``project=False`` returns the UNFILTERED view, before
     ``presentation.apply_display`` hides configured families/rows. Rendering
-    handlers want the projection; the advisor does not — it reads the snapshot
+    handlers want the projection; the raw readers do not — they read the snapshot
     to reason about the fleet, and handing it a view whose bearer list had been
     emptied and whose verdict had been replaced by a display placeholder meant
     it diagnosed a page that does not exist (cross-family review, 18/09/2026:
@@ -1151,12 +1148,9 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
         "central_url": central_url,
         "central_status": cs,
         "bearers": bearers,
-        "advisor_enabled": os.environ.get("ADVISOR_ENABLED", "false").lower() == "true",
-        "last_advisor": _proxy.state.get("last_advisor"),
     }
     # Display projection is a RENDERING concern: metrics and gauges were already
-    # published above from the unfiltered snapshot, and the advisor reads the
-    # unfiltered one too.
+    # published above from the unfiltered snapshot.
     return apply_display(view, ui_cfg) if project else view
 
 
@@ -1201,57 +1195,6 @@ async def stats_partial(
     ):
         response.headers["HX-Refresh"] = "true"
     return response
-
-
-async def advisor(request: web.Request) -> web.Response:
-    """POST /ui/advisor — ask GROQ to recommend knob tweaks.
-
-    Always returns 200 with a rendered HTML partial so HTMX swaps the
-    response into ``#advisor-out`` regardless of error state. Returning
-    non-2xx would leave the dashboard's response area silently empty,
-    which Pedro reported on 27/05/2026 ("groq integration that does not
-    work" — the integration *did* work, but errors landed off-screen).
-    """
-    if os.environ.get("ADVISOR_ENABLED", "false").lower() != "true":
-        return aiohttp_jinja2.render_template(
-            _TPL_ADVISOR,
-            request,
-            {
-                "recommendation": None,
-                "snapshot": None,
-                "error": (
-                    "Advisor is disabled. Set `ADVISOR_ENABLED=true` and "
-                    "`GROQ_API_KEY` (proxy reads them from the EnvironmentFile "
-                    "at ~/.local/state/anthropic-throttle-proxy/groq.env), "
-                    "then restart the service."
-                ),
-            },
-        )
-    # Lazy import — keeps the advisor (and its HTTP client) off the hot path.
-    from .advisor_impl import recommend
-
-    # The advisor reasons about the FLEET, not about this page's layout, so it
-    # gets the unfiltered snapshot: a display projection that had emptied the
-    # bearer list and replaced the verdict with a placeholder made it diagnose
-    # a page that does not exist.
-    snapshot = await _collect_view(project=False)
-    try:
-        recommendation = await recommend(snapshot)
-    except Exception as exc:
-        return aiohttp_jinja2.render_template(
-            _TPL_ADVISOR,
-            request,
-            {
-                "recommendation": None,
-                "snapshot": snapshot,
-                "error": f"Advisor call failed: {exc!s}",
-            },
-        )
-    return aiohttp_jinja2.render_template(
-        _TPL_ADVISOR,
-        request,
-        {"recommendation": recommendation, "snapshot": snapshot, "error": None},
-    )
 
 
 async def config_form(
@@ -1369,7 +1312,7 @@ def _live_cap() -> int:
 
 def _counter(key: str) -> int:
     """Read one of ``proxy.state``'s integer counters. ``state`` is typed
-    ``dict[str, object]`` because it also holds strings and the advisor dict."""
+    ``dict[str, object]`` because it also holds strings."""
     return cast(int, _proxy.state[key])
 
 
@@ -1407,7 +1350,6 @@ def attach_ui(app: web.Application) -> None:
     app.router.add_get("/ui/config", config_form)
     app.router.add_post("/ui/config", config_set)
     app.router.add_post("/ui/config/reset", config_reset)
-    app.router.add_post("/ui/advisor", advisor)
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
     app.on_startup.append(_start_account_refresher)
     app.on_cleanup.append(_stop_account_refresher)

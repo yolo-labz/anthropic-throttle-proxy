@@ -5,8 +5,8 @@ shared ``state`` dict and the per-bearer registries that the Prometheus
 collectors and the dashboard read. Importing this module has no side effects
 beyond reading ``os.environ`` once at import time.
 
-Tunables that are monkeypatched by the test-suite (``UTILIZATION_TARGET``,
-``ADVISOR_ENABLED``, ``ADVISOR_DEBOUNCE_S``) are intentionally NOT here — they
+Tunables that are monkeypatched by the test-suite (``UTILIZATION_TARGET``) are
+intentionally NOT here — they
 live in :mod:`anthropic_throttle_proxy.proxy` so a ``setattr(proxy, ...)`` is
 seen by the functions that read them. The AIMD tunables below are read as
 plain constants (never patched) and so are safe to centralize.
@@ -210,7 +210,7 @@ AIMD_STATUSES = {429, 503}
 # any retry-after and count it separately, but do NOT shrink the ceiling —
 # shrinking would throttle you for someone else's capacity problem.
 OVERLOAD_STATUSES = {529}
-# Any throttle-ish status worth an advisor diagnosis.
+# Any throttle-ish status (AIMD pushback or upstream overload).
 THROTTLE_STATUSES = AIMD_STATUSES | OVERLOAD_STATUSES
 # SSE keepalive-hold (spec 092): for a STREAMING POST /v1/messages that hits a
 # TRANSIENT throttle (529, central-queue-depth 503, or concurrency 429/503),
@@ -543,8 +543,6 @@ state: dict[str, object] = {
     "upstream_auth_ok": True,
     "upstream_auth_error": "",
     "upstream_auth_last_check": 0,
-    # last_advisor holds {"text", "ts", "trigger"} from the GROQ advisor.
-    "last_advisor": None,
 }
 # PR #562 + PR #573: bearer_id → FairBearerLimiter(MAX_CONCURRENT). Replaces
 # the plain asyncio.Semaphore so two distinct OAuth bearers still get
@@ -765,11 +763,6 @@ def _set_body_shrink_min_block_bytes(v: int) -> None:
 
 def _set_utilization_target(v: float) -> None:
     _set_module_attr(_MOD_PROXY, "UTILIZATION_TARGET", v)
-
-
-def _set_advisor_enabled(v: bool) -> None:
-    os.environ["ADVISOR_ENABLED"] = "true" if v else "false"
-    _set_module_attr(_MOD_PROXY, "ADVISOR_ENABLED", bool(v))
 
 
 def _set_keepalive_hold(v: bool) -> None:
@@ -1143,19 +1136,6 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "(spec 092). Must be well under the client idle-timeout (~60 s); "
             "default 10 s gives 6 heartbeats before the most aggressive abort. "
             "Minimum 500 ms enforced to prevent tight-loop writes."
-        ),
-    },
-    "advisor_enabled": {
-        "label": "GROQ advisor",
-        "type": "bool",
-        "getter": lambda: os.environ.get("ADVISOR_ENABLED", "false").strip().lower() == "true",
-        "setter": _set_advisor_enabled,
-        "help": (
-            "Auto-fire a GROQ diagnosis on 429/503/529 events (debounced) "
-            "and surface it under 'Latest auto-diagnosis'. Also enables "
-            "the on-demand 'Ask advisor' button. Requires GROQ_API_KEY in "
-            "the EnvironmentFile (~/.local/state/anthropic-throttle-proxy/"
-            "groq.env)."
         ),
     },
 }
