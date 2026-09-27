@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import uuid
 import os
 import time
+import uuid
 from datetime import UTC
 
 import pytest
@@ -201,6 +201,26 @@ def test_snapshot_static_key_json_api_key_file(tmp_path, monkeypatch):
     (snap,) = accounts.account_snapshot()
     assert snap["error"] is None
     assert snap["bearer_id"] == _expected_bid(token)
+
+
+@pytest.mark.parametrize("static_field", ["apiKey", "token", "accessToken"])
+@pytest.mark.parametrize("oauth_shape", ["valid", "empty", "scalar", "bad-token"])
+def test_json_credential_keeps_token_and_expiry_from_same_source(
+    tmp_path, static_field, oauth_shape
+):
+    oauth_token, static_token = uuid.uuid4().hex, uuid.uuid4().hex
+    oauth = {
+        "valid": {"accessToken": oauth_token, "expiresAt": 1234},
+        "empty": {},
+        "scalar": "not-an-object",
+        "bad-token": {"accessToken": 42, "expiresAt": 1234},
+    }[oauth_shape]
+    cred = tmp_path / "credential.json"
+    cred.write_text(
+        json.dumps({"claudeAiOauth": oauth, static_field: static_token, "expiresAt": 5678})
+    )
+    token, expiry = (oauth_token, 1234) if oauth_shape == "valid" else (static_token, 5678)
+    assert accounts._digest_cred(str(cred)) == (_expected_bid(token), expiry, None, token)
 
 
 def test_snapshot_pool_mixes_oauth_and_static_keys(tmp_path, monkeypatch):

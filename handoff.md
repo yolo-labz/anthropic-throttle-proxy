@@ -6,6 +6,26 @@ host activation. Latest incident first.
 
 ---
 
+## 27/09/2026 — Short cooldown queue-spin (276, not activated)
+
+MiMo `:8773` emitted 10,000 queue/start lines in 7.882921 s while waiting on a
+short cooldown. `_pre_dispatch_gate` waited only when a half-open probe was
+required; an already-serving bearer instead acquired a slot, returned it from
+`_post_slot_recheck`, and repeated. This also replaced real drain samples with
+near-zero holds. The fix parks outside slots through the existing bounded
+revalidation waiter, then rechecks the same route without losing a probe lease.
+
+`tests/test_retry_after_wait.py`: six cases fail before the fix (180–747 fake
+slot acquisitions) and pass after it; messages/chat-completions/responses,
+expiry and successful dispatch covered. Targeted suite: 162 passed; full suite:
+1,382 passed. Ruff lint/format pass (also repaired two pre-existing formatting
+violations from the account-pool landing). See `specs/276-retry-wait/plan.md`.
+
+Separate deployment finding: the lane sets `THROTTLE_PLAN_METER_LANE=mimo:plan`
+but lacks `THROTTLE_MIMO_REPORT`; only the dashboard receives that sidecar path.
+The missing evidence triggers conservative backoff. Nix wiring and activation
+remain separate; no runtime restart, upstream-limit or recovered-turn claim.
+
 ## 23/09/2026 — MiMo Pi queue wait (243, source-only)
 
 New bounded client slice, not a relaunch of the frozen 227 worker. Reuses main's

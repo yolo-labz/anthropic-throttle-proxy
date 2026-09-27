@@ -78,6 +78,21 @@ def parse_spec(raw: str) -> list[tuple[str, str]]:
     return out
 
 
+def _json_credential_fields(data: object) -> tuple[str | None, Any]:
+    """OAuth wins over static-key aliases; expiry follows the chosen source."""
+    if not isinstance(data, dict):
+        return None, None
+    oauth = data.get("claudeAiOauth") or {}
+    token = oauth.get("accessToken") if isinstance(oauth, dict) else None
+    if isinstance(token, str) and token:
+        return token, oauth.get("expiresAt")
+    for key in ("apiKey", "token", "accessToken"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value, data.get("expiresAt")
+    return None, data.get("expiresAt")
+
+
 def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | None]:
     """Read one credentials file → (bearer_id, expires_at_ms, error, token).
 
@@ -97,8 +112,6 @@ def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | N
             raw = fh.read()
     except OSError:
         return None, None, "credentials file unreadable", None
-    token: str | None = None
-    expires_ms: int | None = None
     try:
         data = json.loads(raw)
     except ValueError:
@@ -109,24 +122,9 @@ def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | N
         if candidate and _STATIC_TOKEN_RE.fullmatch(candidate):
             return _token_bearer_id(candidate), None, None, candidate
         return None, None, "credentials file malformed", None
-    if isinstance(data, dict):
-        oauth = data.get("claudeAiOauth") or {}
-        token = oauth.get("accessToken") if isinstance(oauth, dict) else None
-        if token and isinstance(token, str):
-            expires = oauth.get("expiresAt")
-            expires_ms = int(expires) if isinstance(expires, (int, float)) else None
-        else:
-            for key in ("apiKey", "token", "accessToken"):
-                value = data.get(key)
-                if isinstance(value, str) and value:
-                    token = value
-                    break
-            expires = data.get("expiresAt")
-            expires_ms = int(expires) if isinstance(expires, (int, float)) else None
-    else:
-        # Valid JSON but not an object (number, list, …) — not a credential.
-        token = None
-    if not token or not isinstance(token, str):
+    token, expires = _json_credential_fields(data)
+    expires_ms = int(expires) if isinstance(expires, (int, float)) else None
+    if not token:
         return None, None, "no access token in credentials", None
     bid = _token_bearer_id(token)
     return bid, expires_ms, None, token
