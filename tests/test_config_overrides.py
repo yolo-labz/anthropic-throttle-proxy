@@ -46,7 +46,6 @@ def test_capture_env_defaults_populates_every_knob():
     # The non-None spec'd knobs we know up front:
     assert isinstance(config.ENV_DEFAULTS["max_concurrent"], int)
     assert isinstance(config.ENV_DEFAULTS["min_dispatch_gap_ms"], int)
-    assert isinstance(config.ENV_DEFAULTS["advisor_enabled"], bool)
 
 
 def test_defaults_are_conservative_for_claude_code_bursts():
@@ -118,10 +117,11 @@ def test_set_override_unknown_key_raises():
 
 
 def test_set_override_bool_accepts_truthy_strings():
-    config.set_override("advisor_enabled", "true")
-    assert config.RUNTIME_OVERRIDES["advisor_enabled"] is True
-    config.set_override("advisor_enabled", "no")
-    assert config.RUNTIME_OVERRIDES["advisor_enabled"] is False
+    assert isinstance(config.ENV_DEFAULTS["keepalive_hold"], bool)
+    config.set_override("keepalive_hold", "true")
+    assert config.RUNTIME_OVERRIDES["keepalive_hold"] is True
+    config.set_override("keepalive_hold", "no")
+    assert config.RUNTIME_OVERRIDES["keepalive_hold"] is False
 
 
 def test_set_override_body_shrink_propagates_to_other_module():

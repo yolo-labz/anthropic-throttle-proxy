@@ -20,7 +20,6 @@ Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-
 - **OAuth utilization awareness** — Claude Code Max/Pro tokens are gated by 5h-rolling + 7d-weekly windows, reported as `anthropic-ratelimit-unified-*` *utilization* (not remaining counts). The proxy surfaces utilization, **auto-pauses a bearer until reset when a window is already `rejected`** (preempting the 429 + connection-reset storm), and — opt-in via `THROTTLE_UTILIZATION_TARGET` — proactively eases off as you approach the cap.
 - **Burst pacing** — optional minimum gap between dispatches to upstream so 15 simultaneous requests get spaced over the millisecond budget instead of hitting Anthropic at the same instant.
 - **HTMX live dashboard** — small dashboard at `/ui` showing in-flight/queued/served/AIMD state, refreshed by HTMX polling every 2s (server-rendered, no JS modules, no SSE).
-- **Cheap-AI advisor (GROQ)** — optional, Anthropic-independent. On a throttle event (429/503/529) it fires a debounced, out-of-band GROQ call that reads the live metrics and proposes knob tweaks (`MAX`, `QUEUE_MODE`, gap-ms) in natural language — surfaced to the log + dashboard. Independent provider on purpose: asking Anthropic for advice during an Anthropic 429 storm hits the same limit. Off by default; also available on demand via `/ui/advisor`.
 - **Prometheus `/metrics`** — bring your own Grafana.
 - **Dokku-deploy-ready** — Dockerfile + Procfile + app.json + healthcheck endpoints.
 
@@ -124,10 +123,6 @@ Then point your devices at `https://anthropic-throttle.your.host`.
 | `THROTTLE_API_KEY_ROUTING` | `off` | `off` / `overflow` / `prefer`. `prefer` sends `POST /v1/messages` to the API-key bearer first and keeps OAuth accounts as fallback; `overflow` uses the key only when the configured OAuth account router has no usable candidate. |
 | `THROTTLE_API_KEY_MAX_CONCURRENT` | `CLAUDE_API_THROTTLE_MAX` | Independent hard cap for the API-key bearer. This can be higher than OAuth caps because it is a separate metered pool. |
 | `THROTTLE_API_KEY_LABEL` | `API` | Label surfaced in route logs and `/__throttle/health.api_key`; the raw key is never exposed. |
-| `ADVISOR_ENABLED` | `false` | Enable the GROQ advisor (auto-fires on throttle + `/ui/advisor`). Requires `GROQ_API_KEY`. |
-| `GROQ_API_KEY` | *(unset)* | Used **only** by the advisor — never by the proxy path itself. |
-| `ADVISOR_MODEL` | `llama-3.1-8b-instant` | GROQ model for the advisor diagnosis. |
-| `ADVISOR_DEBOUNCE_S` | `120` | Minimum seconds between auto-advisor calls, so a 429 storm can't become a GROQ storm. |
 
 ## Architecture
 
@@ -152,7 +147,6 @@ Then point your devices at `https://anthropic-throttle.your.host`.
                  │
         ┌────────┴────────┐
         │ HTMX dashboard  │  /ui   ◄── you
-        │ GROQ advisor    │  /ui/advisor + auto-on-throttle (optional)
         │ Prometheus      │  /metrics
         └─────────────────┘
 ```

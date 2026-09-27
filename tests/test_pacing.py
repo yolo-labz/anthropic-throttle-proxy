@@ -230,7 +230,6 @@ def test_529_is_split_from_rate_statuses():
     assert 529 not in proxy.AIMD_STATUSES
     assert 529 in proxy.OVERLOAD_STATUSES
     assert 429 in proxy.AIMD_STATUSES
-    # Advisor still fires on all throttle signals.
     assert proxy.THROTTLE_STATUSES == {429, 503, 529}
 
 

@@ -1,5 +1,5 @@
 """Coverage for the harder forwarding branches: central failover, the central
-health loop, burst pacing, the 502 exhausted-retry path, and the advisor UI
+health loop, burst pacing, and the 502 exhausted-retry path
 route when enabled. These exercise code the happy-path suite doesn't reach,
 without changing any runtime behaviour.
 """
@@ -14,7 +14,6 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from anthropic_throttle_proxy import config, forwarding, limiter, metrics, pacing, proxy
-from anthropic_throttle_proxy.ui import advisor_impl
 from anthropic_throttle_proxy.ui.routes import attach_ui
 
 _SSE_BODY = (
@@ -38,7 +37,6 @@ def _reset() -> None:
             "central_last_check": 0,
             "central_consecutive_ok": 0,
             "central_consecutive_fail": 0,
-            "last_advisor": None,
         }
     )
 
@@ -627,33 +625,3 @@ async def test_central_single_probe_blip_does_not_flap(monkeypatch) -> None:
     forwarding._record_central_sample(True)
     assert config.state["central_status"] == "up"
     assert config.state["central_consecutive_fail"] == 0
-
-
-async def test_ui_advisor_enabled_returns_recommendation(env, monkeypatch) -> None:
-    tc, _ = env
-    monkeypatch.setenv("ADVISOR_ENABLED", "true")
-
-    async def fake_recommend(_snapshot):
-        return "raise THROTTLE_MIN_DISPATCH_GAP_MS to 50"
-
-    monkeypatch.setattr(advisor_impl, "recommend", fake_recommend)
-    resp = await tc.post("/ui/advisor")
-    assert resp.status == 200
-    assert "THROTTLE_MIN_DISPATCH_GAP_MS" in await resp.text()
-
-
-async def test_ui_advisor_enabled_surfaces_error(env, monkeypatch) -> None:
-    """Recommendation failure renders an HTML error partial at 200 so HTMX
-    swaps it into #advisor-out. See test_ui_advisor_disabled_renders_inline_error."""
-    tc, _ = env
-    monkeypatch.setenv("ADVISOR_ENABLED", "true")
-
-    async def boom(_snapshot):
-        raise RuntimeError("groq exploded")
-
-    monkeypatch.setattr(advisor_impl, "recommend", boom)
-    resp = await tc.post("/ui/advisor")
-    assert resp.status == 200
-    body = await resp.text()
-    assert "advisor-output err" in body
-    assert "groq exploded" in body

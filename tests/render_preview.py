@@ -345,13 +345,6 @@ def _context() -> dict:
         "upstream": "https://api.anthropic.com",
         "central_url": "(direct)",
         "central_status": "unknown",
-        "advisor_enabled": True,
-        "last_advisor": {
-            "trigger": "429 on b144f62f",
-            "text": "Account A's 7d window is the binding constraint at 94% with a 1.42x pace — "
-            "it exhausts before reset. Move bulk traffic to B (38%) rather than lowering "
-            "MAX, which would only lengthen the queue.",
-        },
     }
 
 

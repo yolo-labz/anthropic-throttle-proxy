@@ -29,19 +29,6 @@
         <span class="badge central-{{ central_status }}" title="Central tier health (polled).">● central {{ central_status }}</span>
       {% endif %}
       {% endif %}
-      {# The advisor is an action, not a section: a standing paragraph that
-         explains the feature costs a screen the operator came here to read. #}
-      {% if show_local | default(true) %}
-      <button class="ghost primary" {% if not advisor_enabled %}disabled aria-disabled="true"{% endif %}
-              hx-post="/ui/advisor"
-              hx-target="#advisor-out"
-              hx-swap="innerHTML"
-              hx-indicator="#advisor-spin"
-              title="Ask GROQ to read the live snapshot and propose knob tweaks. Also fires automatically on a throttle event.">
-        {% if advisor_enabled %}ask advisor{% else %}advisor off{% endif %}
-      </button>
-      <span id="advisor-spin" class="htmx-indicator">…thinking</span>
-      {% endif %}
     </div>
   </header>
 
@@ -58,8 +45,6 @@
              hx-vals='{"rev": "{{ asset_v }}", "local": "{{ 'true' if show_local | default(true) else 'false' }}"}'>
       {% include "partials/stats.html" %}
     </section>
-
-    <div id="advisor-out"></div>
 
     {% if show_local | default(true) %}
     {# A disclosure sized to its own label. It used to span 2500px — a summary

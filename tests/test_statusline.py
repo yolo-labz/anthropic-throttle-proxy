@@ -86,7 +86,6 @@ _HEALTH_TOP_LEVEL = frozenset(
         "brake",
         "api_key",
         "central_last_check",
-        "last_advisor",
         "bearers",
     }
 )

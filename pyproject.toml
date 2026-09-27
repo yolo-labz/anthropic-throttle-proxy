@@ -1,7 +1,7 @@
 [project]
 name = "anthropic-throttle-proxy"
 version = "0.1.0"
-description = "Self-hosted throttle proxy in front of api.anthropic.com — fleet-wide concurrent-stream guard for #53915, with HTMX dashboard + cheap-AI advisor."
+description = "Self-hosted throttle proxy in front of api.anthropic.com — fleet-wide concurrent-stream guard for #53915, with HTMX dashboard."
 authors = [{ name = "Pedro Balbino", email = "phsb5321@gmail.com" }]
 license = { text = "MIT" }
 readme = "README.md"
