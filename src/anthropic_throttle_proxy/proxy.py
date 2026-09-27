@@ -1732,7 +1732,9 @@ def _route_account_if_enabled(
     (spec 3) biases selection toward the account with headroom on that model's
     scoped weekly meter.
     """
-    if method != "POST" or MESSAGES_SUBPATH not in path:
+    if method != "POST" or (
+        MESSAGES_SUBPATH not in path and CHAT_COMPLETIONS_SUBPATH not in path
+    ):
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
@@ -1922,6 +1924,10 @@ def _try_retry_after_reroute(
 # cannot drift apart (Sonar python:S1192).
 MESSAGES_SUBPATH = "v1/messages"
 MESSAGES_PATH = f"/{MESSAGES_SUBPATH}"
+# OpenAI-compatible posts (the MiMo Token Plan clients, `mimo-desktop` seats)
+# participate in account routing too: same upstream-Authorization rewrite, so
+# one request pool can span several `tp-…` accounts (spec: account pool).
+CHAT_COMPLETIONS_SUBPATH = "v1/chat/completions"
 
 # Emitted on every JSON response or re-mapped request we synthesise locally.
 CONTENT_TYPE_JSON = "application/json"

@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -36,6 +37,10 @@ from . import limiter as _limiter
 from .ratelimit import _bearer_id
 
 WINDOW_7D_S = 7 * 86400
+
+# Static API-key files hold one bare token line (e.g. a MiMo `tp-…` key). Keep
+# the pattern tight so unparseable JSON cannot masquerade as a credential.
+_STATIC_TOKEN_RE = re.compile(r"[A-Za-z0-9._=-]{8,}")
 
 # Below this much elapsed 7d-cycle time, pace extrapolation is noise
 # (util/elapsed-fraction explodes right after a window reset).
@@ -79,20 +84,51 @@ def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | N
     The access token is hashed exactly as the proxy hashes the incoming
     ``Authorization`` header (``Bearer <token>``). The dashboard callers drop
     the token; the opt-in account router consumes it for upstream auth rewrite.
+
+    Two file shapes are accepted: a Claude OAuth credential JSON (``claudeAiOauth``
+    with ``accessToken``/``expiresAt``) and a STATIC API-key file — either plain
+    text holding the key, or JSON with an ``apiKey``/``token``/``accessToken``
+    string. Static keys have no expiry (``expires_at_ms is None``), which the
+    freshness column renders as "—". This is what lets a Token Plan ``tp-…``
+    key join ``THROTTLE_ACCOUNT_CRED_PATHS`` as one more account.
     """
     try:
         with open(path, encoding="utf-8") as fh:
-            oauth = json.load(fh).get("claudeAiOauth") or {}
+            raw = fh.read()
     except OSError:
         return None, None, "credentials file unreadable", None
-    except (ValueError, AttributeError):
+    token: str | None = None
+    expires_ms: int | None = None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        # Not JSON → only acceptable as one bare static-token line (e.g. a
+        # MiMo `tp-…` key). Anything else stays "malformed": a corrupt JSON
+        # file must never be mistaken for a credential.
+        candidate = raw.strip()
+        if candidate and _STATIC_TOKEN_RE.fullmatch(candidate):
+            return _token_bearer_id(candidate), None, None, candidate
         return None, None, "credentials file malformed", None
-    token = oauth.get("accessToken")
+    if isinstance(data, dict):
+        oauth = data.get("claudeAiOauth") or {}
+        token = oauth.get("accessToken") if isinstance(oauth, dict) else None
+        if token and isinstance(token, str):
+            expires = oauth.get("expiresAt")
+            expires_ms = int(expires) if isinstance(expires, (int, float)) else None
+        else:
+            for key in ("apiKey", "token", "accessToken"):
+                value = data.get(key)
+                if isinstance(value, str) and value:
+                    token = value
+                    break
+            expires = data.get("expiresAt")
+            expires_ms = int(expires) if isinstance(expires, (int, float)) else None
+    else:
+        # Valid JSON but not an object (number, list, …) — not a credential.
+        token = None
     if not token or not isinstance(token, str):
         return None, None, "no access token in credentials", None
     bid = _token_bearer_id(token)
-    expires = oauth.get("expiresAt")
-    expires_ms = int(expires) if isinstance(expires, (int, float)) else None
     return bid, expires_ms, None, token
 
 
