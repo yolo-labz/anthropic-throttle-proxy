@@ -1732,9 +1732,7 @@ def _route_account_if_enabled(
     (spec 3) biases selection toward the account with headroom on that model's
     scoped weekly meter.
     """
-    if method != "POST" or (
-        MESSAGES_SUBPATH not in path and CHAT_COMPLETIONS_SUBPATH not in path
-    ):
+    if method != "POST" or (MESSAGES_SUBPATH not in path and CHAT_COMPLETIONS_SUBPATH not in path):
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
@@ -4564,6 +4562,20 @@ async def _pre_dispatch_gate(
             return limiter, bid, headers, None, "reroute"
         if action == "answer":
             return limiter, bid, headers, response, "answer"
+        # A short pause need not arm the half-open probe gate. Park here too:
+        # falling through churns slots until _post_slot_recheck returns them.
+        if not await wait_reval(limiter.wait_retry_after):
+            finish_probe(success=False)
+            return (
+                limiter,
+                bid,
+                headers,
+                _queue_wait_timeout_response(bid, cid, path, limiter, 0.0),
+                "answer",
+            )
+        # Recheck the gate with the same route/lease. Routing afresh while we
+        # own a probe would overwrite its owner and wait on our own probe.
+        return limiter, bid, headers, None, "reroute"
     # Same escape as the probe gate above; unlike that branch this one is
     # reachable holding a lease on `bid`, which wait_for_alternate_probe refuses
     # to park on (see its docstring — that way lies a lease cycle).

@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from aiohttp import web
 
-from anthropic_throttle_proxy import config, fleet_ui_config, limiter, pacing
+from anthropic_throttle_proxy import config, fleet_ui_config, forwarding, limiter, pacing, proxy
 
 
 @pytest.fixture
@@ -21,6 +22,15 @@ def proxy_admission_state(monkeypatch):
     yield
     config.bearer_limiters.clear()
     config.bearer_state.clear()
+
+
+@pytest.fixture
+def proxy_admission_app(proxy_admission_state):
+    """Real admission handler, without background probes or dashboard tasks."""
+    app = web.Application()
+    app.on_response_prepare.append(forwarding.stamp_proxy_marker)
+    app.router.add_route("*", "/{path:.*}", proxy.handler)
+    return app
 
 
 @pytest.fixture(autouse=True)

@@ -6,7 +6,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from anthropic_throttle_proxy import config, forwarding, proxy
+from anthropic_throttle_proxy import config, proxy
 
 ERROR = {"code": "429", "message": "Too many requests", "type": "limitation"}
 SSE = b'data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
@@ -38,7 +38,7 @@ def test_shared_pause_covers_generation_not_telemetry(path, expected):
     [("off", False, False), ("fair", False, False), ("fair", True, False), ("fair", True, True)],
 )
 async def test_openai_burst_is_admitted_before_upstream_not_retried_as_a_herd(
-    monkeypatch, proxy_admission_state, mode, first_pushback, shared_backoff
+    monkeypatch, proxy_admission_app, mode, first_pushback, shared_backoff
 ):
     active = peak = refused = calls = 0
     sent_at = []
@@ -78,10 +78,7 @@ async def test_openai_burst_is_admitted_before_upstream_not_retried_as_a_herd(
         }.items():
             monkeypatch.setattr(config, key, value)
         monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
-        app = web.Application()
-        app.on_response_prepare.append(forwarding.stamp_proxy_marker)
-        app.router.add_route("*", "/{path:.*}", proxy.handler)
-        async with TestClient(TestServer(app)) as client:
+        async with TestClient(TestServer(proxy_admission_app)) as client:
 
             async def call():
                 async with client.post(
