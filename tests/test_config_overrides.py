@@ -117,6 +117,7 @@ def test_set_override_unknown_key_raises():
 
 
 def test_set_override_bool_accepts_truthy_strings():
+    assert isinstance(config.ENV_DEFAULTS["keepalive_hold"], bool)
     config.set_override("keepalive_hold", "true")
     assert config.RUNTIME_OVERRIDES["keepalive_hold"] is True
     config.set_override("keepalive_hold", "no")
