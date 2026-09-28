@@ -248,11 +248,17 @@ def _merge_entry(match: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     # configured plan is an annotation beside it. Overwriting the reading
     # with the YAML once rendered a probe-reported plan the row never
     # actually had — the one thing a dashboard must not do.
+    #
+    # Conflict means the caption CONTRADICTS the measurement. A caption that
+    # merely extends it — the observed tier plus the model or price beside it —
+    # is an annotation, not a disagreement: warning on `prolite · gpt-6-astra`
+    # against an observed `prolite` made the board cry wolf every render, and
+    # the "fix" was hand-editing YAML that was never wrong (28/09/2026).
     configured_plan = entry.get("plan") or ""
     observed_plan = str(match.get("plan") or "")
     match["plan_caption"] = configured_plan
     match["plan_conflict"] = bool(
-        configured_plan and observed_plan and configured_plan != observed_plan
+        configured_plan and observed_plan and observed_plan not in configured_plan
     )
     match["configured"] = True
     return match
@@ -285,8 +291,9 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
     pace) still feeds the row. The config's plan NEVER overwrites an observed
     one: the meter reading is the measurement, the YAML is at best an
     annotation, so the configured plan lands in ``plan_caption`` and
-    ``plan_conflict`` flags a configured plan that disagrees with the
-    observed one. Configured rows with no live match append with an honest
+    ``plan_conflict`` flags a configured plan that *contradicts* the observed
+    one (a caption that extends it — tier plus model/price — is annotation,
+    not conflict). Configured rows with no live match append with an honest
     "no reading" state and an EMPTY ``plan`` (nothing was observed — the
     YAML string is the caption, not a reading); live rows absent from the
     config keep their default emoji and sort after the configured ones.
