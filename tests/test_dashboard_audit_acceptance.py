@@ -22,6 +22,36 @@ def test_audit_configuration_cannot_rewrite_observed_plan():
     assert source["plan"] == "observed-tier"
 
 
+def test_audit_caption_extending_the_observed_plan_is_not_a_conflict():
+    # `prolite · gpt-6-astra` is the observed tier plus the model beside it;
+    # warning on it made the board cry wolf and invited hand "fixes" to YAML
+    # that was never wrong (28/09/2026).
+    source = {"id": "codex:c", "plan": "prolite", "status": "ok"}
+    cfg = {
+        "subscriptions": [
+            {"id": "codex:c", "label": "Account C", "plan": "prolite · gpt-6-astra"}
+        ]
+    }
+    row = fleet_ui_config.decorate([source], cfg)["rows"][0]
+    assert row["plan_conflict"] is False
+
+
+def test_audit_stale_plan_caption_still_conflicts():
+    source = {"id": "zai:plan", "plan": "no active plan", "status": "refused"}
+    cfg = {
+        "subscriptions": [
+            {
+                "id": "zai:plan",
+                "label": "Z.AI",
+                "plan": "Pro V3 · $80/mo (lapsed — recharge required)",
+            }
+        ]
+    }
+    row = fleet_ui_config.decorate([source], cfg)["rows"][0]
+    assert row["plan"] == "no active plan"
+    assert row["plan_conflict"] is True
+
+
 def test_audit_configuration_without_observation_is_not_an_observed_plan():
     cfg = {"subscriptions": [{"id": "codex:c", "label": "Account C", "plan": "caption"}]}
     row = fleet_ui_config.decorate([], cfg)["rows"][0]
