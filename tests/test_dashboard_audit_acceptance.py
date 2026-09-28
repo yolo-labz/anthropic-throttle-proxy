@@ -28,9 +28,7 @@ def test_audit_caption_extending_the_observed_plan_is_not_a_conflict():
     # that was never wrong (28/09/2026).
     source = {"id": "codex:c", "plan": "prolite", "status": "ok"}
     cfg = {
-        "subscriptions": [
-            {"id": "codex:c", "label": "Account C", "plan": "prolite · gpt-6-astra"}
-        ]
+        "subscriptions": [{"id": "codex:c", "label": "Account C", "plan": "prolite · gpt-6-astra"}]
     }
     row = fleet_ui_config.decorate([source], cfg)["rows"][0]
     assert row["plan_conflict"] is False
