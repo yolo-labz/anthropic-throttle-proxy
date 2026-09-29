@@ -1124,6 +1124,7 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
         "config_count": len(knobs),
         "override_count": sum(k.get("override") is True for k in knobs),
         "signals": _signals.collect(),
+        "tps": _signals.tps_gauge(),
         "subscriptions": subscriptions,
         "fleet_ui_config_error": ui_cfg.get("config_error"),
         "identity": identity,

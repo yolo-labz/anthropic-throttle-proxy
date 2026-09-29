@@ -456,7 +456,14 @@ def _short_request_hint(body: bytes | None) -> tuple[int | None, bool]:
 
 # Match a 'data: {...}' SSE line carrying a `usage` block. Streamed responses
 # emit message_start (with input usage) and message_delta (with output usage).
-_USAGE_RE = re.compile(rb'"usage"\s*:\s*\{[^}]+\}')
+# One nesting level is allowed because OpenAI-compatible endpoints (the z.ai
+# GLM and MiMo lanes) put token detail objects inside usage, e.g.
+#   "usage":{"prompt_tokens":14,"prompt_tokens_details":{"cached_tokens":0}}
+# A flat `[^}]+` stops at the FIRST '}' — the nested-details form would match
+# as an unbalanced fragment, fail JSON decode and silently count zero tokens
+# on every OpenAI-compat lane (measured: :8766 had no anthropic_tokens_total
+# rows at all before this).
+_USAGE_RE = re.compile(rb'"usage"\s*:\s*\{(?:[^{}]|\{[^{}]*\})*\}')
 
 
 def _safe_load_usage(raw: bytes) -> dict | None:
@@ -489,4 +496,11 @@ def _parse_sse_usage(buf: bytes) -> dict[str, int]:
         totals["output"] += int(usage_obj.get("output_tokens") or 0)
         totals["cache_read"] += int(usage_obj.get("cache_read_input_tokens") or 0)
         totals["cache_creation"] += int(usage_obj.get("cache_creation_input_tokens") or 0)
+        # OpenAI-compatible field names (z.ai GLM Coding Plan, MiMo Token
+        # Plan). reasoning_tokens live inside completion_tokens already.
+        totals["input"] += int(usage_obj.get("prompt_tokens") or 0)
+        totals["output"] += int(usage_obj.get("completion_tokens") or 0)
+        details = usage_obj.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            totals["cache_read"] += int(details.get("cached_tokens") or 0)
     return totals

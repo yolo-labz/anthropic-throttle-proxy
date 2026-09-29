@@ -25,6 +25,7 @@ from __future__ import annotations
 import jinja2
 
 from anthropic_throttle_proxy.ui import routes
+from anthropic_throttle_proxy.ui import signals as _signals
 
 # Page-level keys the panel reads. `identity` is grouped here rather than
 # defaulted in the template because `_collect_view` always supplies it and the
@@ -34,6 +35,10 @@ _EMPTY_CONTEXT: dict[str, object] = {
     "bearers": [],
     "providers": [],
     "signals": [],
+    # The tokens/s gauge panel renders whenever the context carries it; the
+    # live route always does, so the empty render must too or every
+    # StrictUndefined assertion below trips on the new section.
+    "tps": _signals.tps_gauge(),
     "status": None,
     "lanes": None,
     "identity": None,

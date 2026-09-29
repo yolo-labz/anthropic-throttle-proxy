@@ -1023,6 +1023,71 @@ footer a:hover { color: var(--info); text-decoration: underline; }
   .hero .verdict { font-size: var(--fs-value); }
 }
 
+/* ── Tokens/s arc gauge ────────────────────────────────────────────
+   A speedometer for output throughput. All colour through Catppuccin
+   tokens (invariant: no raw hex outside :root). The gradient stops are
+   styled here because SVG `stop-color` is a presentation attribute — CSS
+   can hold it, which keeps even gradient colours in the token file. */
+.tps-panel {
+  display: grid;
+  grid-template-columns: 15rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0 1.2rem;
+  background: var(--panel);
+  border: var(--hairline);
+  border-radius: var(--radius);
+  padding: 0.7rem 1rem;
+  margin-bottom: 0.8rem;
+}
+.tps-dial { position: relative; }
+.tps-arc { display: block; width: 100%; height: auto; }
+.tps-track { fill: none; stroke: var(--ctp-surface0); stroke-width: 10; stroke-linecap: round; }
+.tps-value {
+  fill: none;
+  stroke: url(#tps-fill);
+  stroke-width: 10;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.6s ease-out;
+}
+.tps-stop-a { stop-color: var(--ctp-teal); }
+.tps-stop-b { stop-color: var(--ctp-green); }
+.tps-tick { stroke: var(--ctp-surface2); stroke-width: 1.5; }
+.tps-peak { stroke: var(--ctp-mauve); stroke-width: 2.5; stroke-linecap: round; }
+.tps-readout {
+  position: absolute;
+  left: 0; right: 0; bottom: 0.1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.tps-num {
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ctp-text);
+}
+.tps-unit {
+  font-size: var(--fs-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ctp-overlay1);
+  margin-top: 0.15rem;
+}
+/* A dial that has never accounted a token must not read as a live 0 tok/s
+   stream — dim it until the ring has seen traffic. */
+.tps-dial[data-seen="false"] .tps-num { color: var(--ctp-overlay0); }
+.tps-dial[data-seen="false"] svg .tps-value { opacity: 0.45; }
+.tps-side { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.tps-detail { font-size: var(--fs-meta); color: var(--ctp-subtext0); font-variant-numeric: tabular-nums; }
+.tps-detail b { color: var(--ctp-mauve); font-weight: 600; }
+.tps-foot { font-size: var(--fs-meta); color: var(--ctp-overlay0); }
+@media (max-width: 900px) {
+  .tps-panel { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Tokens/s arc gauge end ─────────────────────────────────── */
+
 @media (max-width: 900px) {
   .hero { grid-template-columns: minmax(0, 1fr); }
   .hero-verdict, .hero-detail { grid-column: 1; }

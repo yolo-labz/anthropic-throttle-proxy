@@ -1921,6 +1921,7 @@ def _try_retry_after_reroute(
 # upstream URL and the retry-after path test. Named so the six call sites
 # cannot drift apart (Sonar python:S1192).
 MESSAGES_SUBPATH = "v1/messages"
+COMPLETIONS_SUBPATH = "chat/completions"
 MESSAGES_PATH = f"/{MESSAGES_SUBPATH}"
 # OpenAI-compatible posts (the MiMo Token Plan clients, `mimo-desktop` seats)
 # participate in account routing too: same upstream-Authorization rewrite, so
@@ -3829,7 +3830,14 @@ async def _aimd_grow(bid: str, limiter: FairBearerLimiter) -> None:
 
 
 def _record_usage(model: str, model_label: str, captured: bytearray, path: str) -> None:
-    """Parse the SSE usage block and bump token/cost metrics (POST /v1/messages)."""
+    """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
+
+    Both vocabularies land here: Anthropic `/v1/messages` streams
+    (input/output/cache fields) and OpenAI-compatible `chat/completions`
+    (prompt/completion/cached details) — the z.ai and MiMo lanes only ever
+    speak the second, which is why the dashboard's tokens/s gauge reads the
+    history ring this feeds rather than a per-request counter.
+    """
     try:
         usage = _parse_sse_usage(bytes(captured))
         rates = _pricing_for(model)
@@ -3839,6 +3847,10 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
             M_TOKENS.labels(model=model_label, kind=kind).inc(count)
             cost = (count / 1_000_000.0) * rates[kind]
             M_COST.labels(model=model_label, kind=kind).inc(cost)
+        _history.observe_tokens(
+            out=usage["output"],
+            in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
+        )
     except Exception as ue:
         log(f"usage-parse-error path=/{path}: {ue!r}")
 
@@ -4097,7 +4109,11 @@ async def _finalize(
 
     await _finalize_credential_note(bid, bstate, final_status, attempt, telemetry_path)
 
-    if attempt.captured and request.method == "POST" and MESSAGES_SUBPATH in path:
+    if (
+        attempt.captured
+        and request.method == "POST"
+        and (MESSAGES_SUBPATH in path or COMPLETIONS_SUBPATH in path)
+    ):
         _record_usage(model, model_label, attempt.captured, path)
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
