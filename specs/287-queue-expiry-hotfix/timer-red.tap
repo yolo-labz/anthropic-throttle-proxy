@@ -1,0 +1,62 @@
+TAP version 13
+# Subtest: unit: persistent wait rejects numeric Retry-After overflow
+not ok 1 - unit: persistent wait rejects numeric Retry-After overflow
+  ---
+  duration_ms: 6.373139
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-287-queue-expiry-hotfix/clients/pi-queue-wait/queue-wait.test.mjs:362:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    Infinity !== null
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: ~
+  actual: Infinity
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-287-queue-expiry-hotfix/clients/pi-queue-wait/queue-wait.test.mjs:363:10)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.start (node:internal/test_runner/test:944:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:296:17)
+  ...
+# Subtest: unit: persistent wait chunks long advice without timer overflow
+not ok 2 - unit: persistent wait chunks long advice without timer overflow
+  ---
+  duration_ms: 13.299741
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-287-queue-expiry-hotfix/clients/pi-queue-wait/queue-wait.test.mjs:366:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    +   2147485001
+    -   2147483647
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 2147483647
+  actual:
+    0: 2147485001
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-287-queue-expiry-hotfix/clients/pi-queue-wait/queue-wait.test.mjs:391:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 0
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 190.30611

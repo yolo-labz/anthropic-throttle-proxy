@@ -105,20 +105,30 @@ configuration after session start requires a separately authorized extension rel
 
 ## Knobs
 
-All ceilings live in `QUEUE_WAIT_DEFAULTS` (`queue-wait.mjs`) and can be
-overridden through `createQueueWaitStream(deps)` (dependency injection only —
+Default admission waiting is **pending until admitted or cancelled**, not a
+30-minute/32-retry deadline (spec 287 supersedes those original defaults).
+This covers only the proven pre-stream queue rejection above, never quota/auth
+errors or partial streams. It preserves a live request, not a durable job across
+process restarts. Retry-After pacing and the wait status remain visible.
+
+Optional finite ceilings live in `QUEUE_WAIT_DEFAULTS` (`queue-wait.mjs`) and can
+be selected through `createQueueWaitStream(deps)` (dependency injection only —
 there is no config/env surface in v1):
 
 | Dep | Default | Meaning |
 |---|---|---|
-| `maxWaitMs` | `1_800_000` | Total admission-wait budget in ms. Bounds sleeps only — never an already-started successful stream. Exceeding it ends the request with a synthetic error. |
-| `maxRejections` | `32` | Number of queue rejections that are each followed by exactly one re-dispatch. The `(maxRejections + 1)`-th rejection ends the request with the synthetic give-up error — never the original stamped 503. |
+| `maxWaitMs` | `Infinity` | No default cumulative sleep limit. An explicit positive finite value bounds sleeps only, never a started stream; exceeding it emits a synthetic error. |
+| `maxRejections` | `Infinity` | No default retry-count limit. With an explicit positive finite value, the `(maxRejections + 1)`-th queue rejection emits the synthetic give-up error. |
 | `fallbackRetryAfterMs` | `15_000` | Wait used when `Retry-After` is missing, unparsable, or ≤ 0 (conservative, non-hot). |
 | `jitterMaxMs` | `1_000` | Strictly positive jitter bound added to every wait. |
 | `allowedBaseUrls` | *(unset)* | **DI-only test seam.** Exact `http://` loopback base URLs whose origin is additionally eligible. Never set it in production wiring; omission keeps each provider's strict port/path. |
 | `onWait(info \| null)` | no-op | Counters-only wait signal: `{ attempt, delayMs, retryAfterMs, fallback, waitedMs }`, `null` clears. |
 
-Exhaustion/abort surface as ordinary assistant errors whose text is explicit
+Non-finite numeric Retry-After values use the conservative fallback. Finite
+advice above Node's timer ceiling is slept in cancellable chunks rather than
+overflowing into a 1 ms hot retry loop.
+
+Explicit finite-ceiling exhaustion/abort surface as ordinary assistant errors whose text is explicit
 and contains no generic retry triggers (`503`, `rate limit`), so nothing above
 the model layer re-enters a hot loop:
 

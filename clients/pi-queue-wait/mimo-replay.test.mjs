@@ -63,6 +63,41 @@ test("mimo native: adapter version is exactly 0.85.1", () => {
   assert.equal(JSON.parse(readFileSync(path.join(PI_CODING_AGENT_ROOT, "package.json"))).version, "0.85.1");
 });
 
+for (const provider of ["mimo-desktop", "zai"]) {
+  const queuedModel = () => model(provider === "zai" ? {
+    provider, id: "glm-5.3", baseUrl: "http://127.0.0.1:8766/api/coding/paas/v4",
+  } : {});
+  for (const [label, count, retryAfter] of [["30 minutes", 8, 241], ["32 rejections", 40, 1]]) {
+    test(`persistent native: ${provider} survives ${label} then streams`, { timeout: 5000 }, async () => {
+      const f = await fixture([...Array.from({ length: count }, () => eligible503({ retryAfter })), sse200()]);
+      try {
+        const events = await drain(f.stream()(queuedModel(), context(), f.options({ maxRetries: 3, maxRetryDelayMs: 1 })));
+        assert.equal(events.at(-1).type, "done", events.at(-1).error?.errorMessage);
+        assert.equal(events.filter(e => e.type === "error").length, 0);
+        assert.equal(f.proxy.requests.length, count + 1);
+        assert.deepEqual(f.delays, Array(count).fill(retryAfter * 1000 + 1));
+        for (const req of f.proxy.requests) assert.equal(req.body, f.proxy.requests[0].body);
+        assert.equal(f.waits.at(-1), null);
+      } finally { await f.proxy.close(); }
+    });
+  }
+  test(`persistent native: ${provider} cancels after the former wait ceiling`, { timeout: 5000 }, async () => {
+    const f = await fixture([eligible503({ retryAfter: 241 })]);
+    const controller = new AbortController();
+    let sleeps = 0;
+    try {
+      const events = await drain(f.stream({ sleep: async () => {
+        if (++sleeps === 9) controller.abort();
+      } })(queuedModel(), context(), f.options({ signal: controller.signal })));
+      assert.equal(sleeps, 9);
+      assert.equal(f.proxy.requests.length, 9);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].reason, "aborted");
+      assert.equal(f.waits.at(-1), null);
+    } finally { await f.proxy.close(); }
+  });
+}
+
 for (const id of ["mimo-v2.6", "mimo-v2.6-pro", "mimo-v2.6-flash"]) {
   for (const maxRetries of [0, 2]) {
     test(`mimo native: ${id} waits 210/241s with maxRetries=${maxRetries}`, { timeout: 3000 }, async () => {

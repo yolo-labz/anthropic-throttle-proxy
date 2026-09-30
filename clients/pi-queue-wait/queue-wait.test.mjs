@@ -12,7 +12,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createQueueWaitStream } from "./queue-wait.mjs";
+import { createQueueWaitStream, parseRetryAfterMs } from "./queue-wait.mjs";
 import {
   MARKER_HEADER,
   MARKER_VALUE,
@@ -358,6 +358,48 @@ function assertSingleNativeError(events, reason, message) {
 // ---------------------------------------------------------------------------
 // Native replay suite (real adapter / real loader / real ModelRuntime).
 // ---------------------------------------------------------------------------
+
+test("unit: persistent wait rejects numeric Retry-After overflow", () => {
+  assert.equal(parseRetryAfterMs("9".repeat(400), 0), null);
+});
+
+test("unit: persistent wait chunks long advice without timer overflow", { timeout: 2000 }, async (t) => {
+  const timers = [];
+  t.mock.method(globalThis, "setTimeout", (callback, ms) => {
+    timers.push({ callback, ms });
+    return timers.length;
+  });
+  t.mock.method(globalThis, "clearTimeout", () => {});
+  const entered = deferred();
+  const controller = new AbortController();
+  const f = fakeFetch([eligible503({ retryAfter: 2147485 }), { status: 200 }]);
+  const { deps } = baseDeps({
+    streamSimple: fakeStreamSimple([]), sleep: undefined,
+    maxWaitMs: undefined, maxRejections: undefined,
+    onWait: info => { if (info) entered.resolve(); },
+  });
+  const stream = createQueueWaitStream(deps)(makeModel(), makeContext(), {
+    fetch: f.fetch, signal: controller.signal,
+  });
+  const pending = (async () => {
+    const events = [];
+    for await (const event of stream) events.push(event);
+    return events;
+  })();
+  try {
+    await entered.promise;
+    assert.deepEqual(timers.map(t => t.ms), [2147483647]);
+    timers[0].callback();
+    assert.deepEqual(timers.map(t => t.ms), [2147483647, 1354]);
+    assert.equal(f.calls.length, 1, "no early retry before the remaining advice");
+    timers[1].callback();
+    assert.equal((await pending).at(-1).type, "done");
+    assert.equal(f.calls.length, 2);
+  } finally {
+    controller.abort();
+    await pending;
+  }
+});
 
 await runNativeReplayTests();
 
