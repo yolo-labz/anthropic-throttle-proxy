@@ -23,7 +23,16 @@ import time
 from collections import deque
 from typing import NamedTuple
 
-__all__ = ["RESOLUTION_S", "WINDOW_S", "Point", "observe", "record", "series", "level_since"]
+__all__ = [
+    "RESOLUTION_S",
+    "WINDOW_S",
+    "Point",
+    "observe",
+    "observe_tokens",
+    "record",
+    "series",
+    "level_since",
+]
 
 RESOLUTION_S = 10.0
 WINDOW_S = 3600.0
@@ -47,12 +56,21 @@ class Point(NamedTuple):
     cap: int
     p50: float | None
     p95: float | None
+    # Output/input tokens whose usage block the proxy parsed in this bucket.
+    # Arrive at request completion, not while streaming, so a bucket's count
+    # says "tokens accounted here", which is what a tokens/s gauge over a
+    # 60 s window actually needs. Defaults keep positional construction in
+    # older callers and tests valid.
+    tok_out: int = 0
+    tok_in: int = 0
 
 
 _ring: deque[Point] = deque(maxlen=POINTS)
 # Open bucket — accumulates until the next `record()` closes it.
 _served = 0
 _errors = 0
+_tok_out = 0
+_tok_in = 0
 # Bounded on purpose: an unbounded list would grow without limit if the
 # sampler task never starts (an app that attaches the routes but never runs
 # on_startup) or dies, and `record()` sorts it on the event loop. 4096
@@ -84,9 +102,20 @@ def observe(status: int | None, duration: float) -> None:
     _durations.append(duration)
 
 
+def observe_tokens(out: int = 0, in_: int = 0) -> None:
+    """Account parsed usage tokens into the open bucket (O(1), never raises).
+
+    Called from the request path's usage bookkeeping, so the same contract as
+    :func:`observe`: a dashboard nicety must not be able to fail a request.
+    """
+    global _tok_out, _tok_in
+    _tok_out += out
+    _tok_in += in_
+
+
 def record(queued: int, inflight: int, cap: int, now: float | None = None) -> Point:
     """Close the open bucket with the current gauge readings and ring it."""
-    global _served, _errors
+    global _served, _errors, _tok_out, _tok_in
     if now is None:
         now = time.time()
     ds = sorted(_durations)
@@ -99,10 +128,14 @@ def record(queued: int, inflight: int, cap: int, now: float | None = None) -> Po
         cap=cap,
         p50=_quantile(ds, 0.50),
         p95=_quantile(ds, 0.95),
+        tok_out=_tok_out,
+        tok_in=_tok_in,
     )
     _ring.append(point)
     _served = 0
     _errors = 0
+    _tok_out = 0
+    _tok_in = 0
     _durations.clear()
     return point
 
@@ -148,9 +181,11 @@ def level_since(level: str, now: float | None = None, *, track: str = "fleet") -
 
 def reset() -> None:
     """Drop all history — tests only."""
-    global _served, _errors
+    global _served, _errors, _tok_out, _tok_in
     _ring.clear()
     _served = 0
     _errors = 0
+    _tok_out = 0
+    _tok_in = 0
     _durations.clear()
     _level_at.clear()

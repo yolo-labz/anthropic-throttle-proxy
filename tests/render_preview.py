@@ -34,6 +34,9 @@ def _seed_history() -> None:
             history.observe(200, 0.6 + 0.4 * (1 + jitter))
         if i > 250 and jitter > 0.2:
             history.observe(429, 0.2)
+        # Tokens/s tide: output tokens accounted per bucket, so the gauge's
+        # arc and trace have the same deterministic shape to eyeball.
+        history.observe_tokens(out=int(1800 + 900 * tide + 300 * jitter))
         history.record(
             queued=max(0, int(4 * tide + jitter)),
             inflight=max(0, int(5 + 3 * tide)),

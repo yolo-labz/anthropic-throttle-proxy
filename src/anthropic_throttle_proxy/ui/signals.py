@@ -16,7 +16,7 @@ from typing import NamedTuple
 
 from .. import history as _history
 
-__all__ = ["Signal", "Spark", "collect", "sparkline"]
+__all__ = ["Signal", "Spark", "TpsGauge", "collect", "sparkline", "tps_gauge"]
 
 SPARK_W = 96.0
 SPARK_H = 20.0
@@ -135,6 +135,96 @@ def _level(value: float, warn: float, crit: float) -> str:
     if value >= warn:
         return "warn"
     return ""
+
+
+class TpsGauge(NamedTuple):
+    """Geometry + numbers for the tokens/s arc gauge.
+
+    Server-side math only; the template places values. The arc is a 180°
+    speedometer of radius 90 whose sweep length is π·r, so the value arc is a
+    `stroke-dasharray` fraction of that and the peak marker/ticks are plain
+    coordinate pairs — no charting library, per the dashboard invariant.
+    """
+
+    value: float  # current tokens/s over the trailing window
+    peak: float  # highest windowed tokens/s in the ring
+    scale: float  # arc full-scale (nice 1/2/5·10ⁿ ≥ peak floor)
+    frac: float  # value/scale, clamped to [0, 1]
+    peak_frac: float  # peak/scale, clamped to [0, 1]
+    arc_len: float  # full sweep length in SVG units
+    window_s: float
+    ticks: list[tuple[float, float, float, float]]  # (x1, y1, x2, y2) at 0/25/50/75/100%
+    peak_marker: tuple[float, float, float, float]  # small radial line at peak
+    spark: Spark  # tokens/s trace, same treatment as the four signals
+    tok_in_now: float  # trailing-window input tokens/s (input + cache reads)
+    seen: bool  # False until the ring holds a bucket with any token traffic
+
+
+# Arc geometry — one place, so the template never recomputes it.
+_ARC_CX, _ARC_CY, _ARC_R = 110.0, 108.0, 90.0
+_ARC_LEN = math.pi * _ARC_R
+_TPS_WINDOW_BUCKETS = 6  # 6 × 10 s = the 60 s the headline number averages
+_TPS_FLOOR = 100.0  # arcs need a full-scale even when nothing has flowed yet
+
+
+def _nice_scale(v: float, floor: float) -> float:
+    """Smallest 1/2/5·10ⁿ ≥ max(v, floor) — arc labels stay round."""
+    target = max(v, floor)
+    if target <= 0:
+        return floor
+    exp = math.floor(math.log10(target))
+    for mult in (1.0, 2.0, 5.0):
+        cand = mult * (10.0**exp)
+        if cand >= target:
+            return cand
+    return 10.0 ** (exp + 1)
+
+
+def _arc_point(frac: float, r_out: float) -> tuple[float, float]:
+    """Point at `frac` of the sweep, measured from the left end (180° → 0°)."""
+    f = min(1.0, max(0.0, frac))
+    angle = math.pi * (1.0 - f)
+    return (_ARC_CX + r_out * math.cos(angle), _ARC_CY - r_out * math.sin(angle))
+
+
+def tps_gauge() -> TpsGauge:
+    """Build the tokens/s gauge from the history ring."""
+    points = _history.series()
+    rates = [p.tok_out / _history.RESOLUTION_S for p in points]
+    in_rates = [p.tok_in / _history.RESOLUTION_S for p in points]
+    # Windowed mean over the last N closed buckets: token usage lands at
+    # completion, so a single 10 s bucket is a lumpy estimator. Mean of the
+    # trailing 60 s is what the number claims to be (“current” = last minute).
+    n = min(_TPS_WINDOW_BUCKETS, len(rates))
+    value = (sum(rates[-n:]) / n) if n else 0.0
+    tok_in_now = (sum(in_rates[-n:]) / n) if n else 0.0
+    peak = max(rates) if rates else 0.0
+    scale = _nice_scale(peak, _TPS_FLOOR)
+    frac = min(1.0, value / scale) if scale else 0.0
+    peak_frac = min(1.0, peak / scale) if scale else 0.0
+
+    ticks = []
+    for t in (0.0, 0.25, 0.5, 0.75, 1.0):
+        x1, y1 = _arc_point(t, _ARC_R - 8.0)
+        x2, y2 = _arc_point(t, _ARC_R - 2.0)
+        ticks.append((round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)))
+    mx1, my1 = _arc_point(peak_frac, _ARC_R - 12.0)
+    mx2, my2 = _arc_point(peak_frac, _ARC_R + 6.0)
+
+    return TpsGauge(
+        value=value,
+        peak=peak,
+        scale=scale,
+        frac=frac,
+        peak_frac=peak_frac,
+        arc_len=_ARC_LEN,
+        window_s=_TPS_WINDOW_BUCKETS * _history.RESOLUTION_S,
+        ticks=ticks,
+        peak_marker=(round(mx1, 1), round(my1, 1), round(mx2, 1), round(my2, 1)),
+        spark=sparkline(_fold(rates, peaks=True)),
+        tok_in_now=tok_in_now,
+        seen=any(p.tok_out > 0 for p in points),
+    )
 
 
 def collect() -> list[Signal]:

@@ -93,6 +93,59 @@
 </div>
 {% endif %}
 
+{# ── TOKENS/S GAUGE — throughput at a glance ───────────────────────────
+   The one number Pedro asked for by name: how many tokens per second is
+   the fleet pulling RIGHT NOW. A 180° arc speedometer (server-computed
+   geometry, pure SVG, Catppuccin tokens only), the trailing-60s mean as
+   the big number, a mauve tick marking the hour's peak, and the same
+   zero-baseline sparkline treatment as the four signals underneath. "Now"
+   is honest by construction: token usage is parsed at request completion,
+   so the value is the last minute of accounted output tokens, not an
+   extrapolated instant. #}
+{% if tps | default(false) %}
+<section class="tps-panel" aria-label="Output tokens per second over the last minute">
+  <div class="tps-dial" data-seen="{{ 'true' if tps.seen else 'false' }}">
+    <svg class="tps-arc" viewBox="0 0 220 120" role="img"
+         aria-label="Output {{ '%.0f'|format(tps.value) }} tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, hourly peak {{ '%.0f'|format(tps.peak) }}">
+      <defs>
+        <linearGradient id="tps-fill" x1="0" y1="0" x2="1" y2="0">
+          <stop class="tps-stop-a" offset="0" />
+          <stop class="tps-stop-b" offset="1" />
+        </linearGradient>
+      </defs>
+      {# Background sweep #}
+      <path class="tps-track" d="M 20 108 A 90 90 0 0 1 200 108" />
+      {# Value sweep — dasharray does the proportional fill (no JS) #}
+      <path class="tps-value" d="M 20 108 A 90 90 0 0 1 200 108"
+            stroke-dasharray="{{ '%.1f'|format(tps.frac * tps.arc_len) }} {{ '%.1f'|format(tps.arc_len + 2) }}" />
+      {# Ticks at 0 / 25 / 50 / 75 / 100 % #}
+      {% for t in tps.ticks %}
+      <line class="tps-tick" x1="{{ t[0] }}" y1="{{ t[1] }}" x2="{{ t[2] }}" y2="{{ t[3] }}" />
+      {% endfor %}
+      {# Peak marker — where the hour's best minute sits on the same arc #}
+      <line class="tps-peak" x1="{{ tps.peak_marker[0] }}" y1="{{ tps.peak_marker[1] }}"
+            x2="{{ tps.peak_marker[2] }}" y2="{{ tps.peak_marker[3] }}" />
+    </svg>
+    <div class="tps-readout">
+      <span class="tps-num">{{ '%.0f'|format(tps.value) }}</span>
+      <span class="tps-unit">tokens/s</span>
+    </div>
+  </div>
+  <div class="tps-side">
+    <span class="gauge-label">output throughput</span>
+    <div class="gauge-row">
+      <span class="tps-detail">last {{ '%.0f'|format(tps.window_s) }}s · peak <b>{{ '%.0f'|format(tps.peak) }}</b> · scale {{ '%.0f'|format(tps.scale) }}</span>
+      <svg class="spark" viewBox="0 0 {{ tps.spark.width }} {{ tps.spark.height }}" preserveAspectRatio="none" role="img"
+           aria-label="Tokens per second over the last hour, peak {{ '%.0f'|format(tps.spark.peak) }}">
+        <line class="spark-base" x1="0" y1="{{ tps.spark.height }}" x2="{{ tps.spark.width }}" y2="{{ tps.spark.height }}" />
+        {% if tps.spark.points %}<polyline points="{{ tps.spark.points }}" />{% endif %}
+      </svg>
+    </div>
+    <span class="tps-foot">output tokens accounted at completion · input {{ tps.tok_in_now | default('—') }}/s</span>
+  </div>
+</section>
+{% endif %}
+
 {# ── GAUGES — the four golden signals, as traces ────────────────────────────
    A scalar with no baseline cannot be judged (`served 87` is a busy hour or a
    dead one depending on when). Each tile carries its scalar beside its
