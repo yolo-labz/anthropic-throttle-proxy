@@ -68,6 +68,100 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
     }
 
 
+# The team seat row's lane id: sibling of the individual plan row, never a
+# replacement for it and never additive with it (two independent allowances).
+_TEAM_LANE_ID = "mimo:team-owner"
+
+
+def _team_fail(reason: str) -> dict:
+    """Fresh fail-closed team row: no meters, nothing measured implied.
+
+    Team failures must never raise: a raise skips the report write, which
+    silently retains the previously written HEALTHY team meter until the
+    report goes stale. Every failure class instead rewrites the row as
+    explicitly unusable (spec 281 falsifier).
+    """
+    return {"id": _TEAM_LANE_ID, "kind": "mimo", "status": "unknown", "reason": reason}
+
+
+def team_seat_lane(seat_response: object, now: datetime) -> dict:
+    """The `mimo:team-owner` row from one team-seat console reading.
+
+    Counters-only truth: `creditsTotal`/`creditsUsed` derive every number; the
+    payload's `usedPercent`/`historyUsedPercent` are redundant display values
+    and are never read. bool/NaN/negative/non-numeric/ambiguous values are
+    rejected (fail closed, no meters). An unassigned seat is not usable
+    capacity and its counters are never fabricated into one. Project, user and
+    seat ids stay in the payload — the allowlisted output must not carry them.
+    A quota row is not proof of account authorization.
+    """
+    if not isinstance(seat_response, dict) or seat_response.get("code") != 0:
+        return _team_fail("Team seat reading unavailable")
+    data = seat_response.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("seat"), dict):
+        return _team_fail("Team seat reading invalid")
+    if type(data.get("expired")) is not bool or not isinstance(data.get("planName"), str):
+        return _team_fail("Team seat reading invalid")
+    seat = data["seat"]
+    status_raw = seat.get("seatStatus")
+    if not isinstance(status_raw, str):
+        return _team_fail("Team seat reading invalid")
+    if status_raw != "ASSIGNED":
+        return _team_fail("Team seat unassigned — not usable capacity")
+    total = seat.get("creditsTotal")
+    used = seat.get("creditsUsed")
+    history = seat.get("historyCreditsUsed")
+    if any(type(x) not in (int, float) or not math.isfinite(x) for x in (total, used, history)):
+        return _team_fail("Team seat counters invalid")
+    if total <= 0 or used < 0 or history < 0 or history < used:
+        return _team_fail("Team seat counters invalid or ambiguous")
+    try:
+        period_end = datetime.strptime(data["currentPeriodEnd"], "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=UTC
+        )
+    except (KeyError, TypeError, ValueError):
+        return _team_fail("Team seat period unparseable")
+    reset_raw = seat.get("nextResetTime")
+    if reset_raw is None:
+        reset = period_end
+    elif isinstance(reset_raw, str):
+        try:
+            reset = datetime.strptime(reset_raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+        except ValueError:
+            return _team_fail("Team seat reset unparseable")
+    else:
+        return _team_fail("Team seat reset ambiguous")
+    status = "exhausted" if data["expired"] or period_end <= now or used >= total else "ok"
+    return {
+        "id": _TEAM_LANE_ID,
+        "kind": "mimo",
+        "status": status,
+        "plan": f"{data['planName']} · {total / 1e9:g}B seat credits",
+        "reason": "Team seat · console sample " + now.strftime("%d/%m/%Y %H:%M UTC"),
+        "meters": [
+            {
+                "limitId": "seat",
+                "usedPercent": used / total * 100,
+                "allowance": total,
+                "current": used,
+                "remaining": max(0, total - used),
+                "resetsAt": reset.timestamp(),
+                # Same discipline as the plan row: no period-start observation.
+                "windowMins": None,
+            }
+        ],
+    }
+
+
+def team_report(detail: dict, usage: dict, seat_response: object, now: datetime) -> dict:
+    """`report(...)` plus the team row — always one fresh team row when the
+    Team lane is configured, healthy or fail-closed (see `team_seat_lane`).
+    """
+    result = report(detail, usage, now)
+    result["lanes"].append(team_seat_lane(seat_response, now))
+    return result
+
+
 def main() -> int:
     from lib import interactive
 
@@ -77,6 +171,12 @@ def main() -> int:
         "/api/v1/tokenPlan/usage": "usage",
         "/api/v1/userProfile": "profile",
     }
+    # Team seat reading is opt-in via an explicit environment project id: no
+    # real ids or credentials in source. Unset keeps legacy individual-only
+    # behaviour exactly (spec 281).
+    team_project = os.environ.get("MIMO_TEAM_PROJECT_ID", "").strip()
+    if team_project:
+        routes[f"/api/v1/project/{team_project}/teamTokenPlan/my/seat"] = "seat"
     expected = os.environ.get("MIMO_EXPECTED_ACCOUNT_ID", "")
     if not expected:
         raise ValueError("expected account is required")
@@ -98,12 +198,20 @@ def main() -> int:
             timeout=20000,
         )
         deadline = time.monotonic() + 20
-        while len(observed) != 3 and time.monotonic() < deadline:
+        while len(observed) != len(routes) and time.monotonic() < deadline:
             page.wait_for_timeout(200)
         profile = observed["profile"]
         if profile.get("code") != 0 or str(profile["data"]["userId"]) != expected:
             raise ValueError("browser identity does not match the expected account")
-        result = report(observed["detail"], observed["usage"], datetime.now(UTC))
+        now = datetime.now(UTC)
+        if team_project:
+            # A missing team response is itself a team failure: still write one
+            # fresh fail-closed team row rather than retaining the old meter.
+            result = team_report(
+                observed["detail"], observed["usage"], observed.get("seat"), now
+            )
+        else:
+            result = report(observed["detail"], observed["usage"], now)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
