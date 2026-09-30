@@ -35,15 +35,13 @@ export const QUEUE_COMPLETIONS_PATH = "/api/coding/paas/v4/chat/completions";
 export const QUEUE_DEFAULT_PORT = 8766;
 
 export const QUEUE_WAIT_DEFAULTS = Object.freeze({
-  /** Total admission-wait budget in ms (waits only — never a running stream). */
-  maxWaitMs: 1_800_000,
+  /** No default expiry for proven pre-stream queue waits; caller may cancel. */
+  maxWaitMs: Infinity,
   /**
-   * Maximum number of queue rejections that are each followed by exactly one
-   * re-dispatch of the same request. The first maxRejections rejections retry;
-   * the (maxRejections + 1)-th rejection ends the request with the synthetic
-   * give-up error. It never surfaces the original stamped 503.
+   * No default rejection ceiling. Explicit finite DI ceilings still produce
+   * a synthetic give-up error on the (maxRejections + 1)-th rejection.
    */
-  maxRejections: 32,
+  maxRejections: Infinity,
   /** Used when Retry-After is missing, unparsable, or <= 0 (conservative, non-hot). */
   fallbackRetryAfterMs: 15_000,
   /** Strictly positive jitter upper bound in ms. */
@@ -60,7 +58,7 @@ export function parseRetryAfterMs(value, nowMs) {
   if (trimmed === "") return null;
   if (/^\d+(\.\d+)?$/.test(trimmed)) {
     const ms = Math.round(parseFloat(trimmed) * 1000);
-    return ms > 0 ? ms : null;
+    return Number.isFinite(ms) && ms > 0 ? ms : null;
   }
   const date = Date.parse(trimmed);
   if (Number.isNaN(date)) return null;
@@ -405,10 +403,20 @@ function defaultSleep(ms, signal) {
       reject(new DOMException("Request was aborted", "AbortError"));
       return;
     }
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
+    let remaining = ms;
+    let timer;
+    const schedule = () => {
+      // ponytail: chunk at Node's timer ceiling; larger timers become 1 ms.
+      const delay = Math.min(remaining, 2_147_483_647);
+      timer = setTimeout(() => {
+        remaining -= delay;
+        if (remaining > 0) schedule();
+        else {
+          cleanup();
+          resolve();
+        }
+      }, delay);
+    };
     const onAbort = () => {
       cleanup();
       reject(new DOMException("Request was aborted", "AbortError"));
@@ -418,6 +426,7 @@ function defaultSleep(ms, signal) {
       signal?.removeEventListener("abort", onAbort);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
+    schedule();
   });
 }
 
