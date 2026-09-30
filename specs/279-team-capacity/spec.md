@@ -5,6 +5,7 @@
 2. See whether a lane is reachable, has usable fresh capacity, and is eligible for the intended work; these are different facts.
 3. Distribute work among eligible seats without concentrating it on a retired, exhausted, unknown or otherwise unavailable credential.
 4. Improve successful work per unit time through safe overlapping requests and fair queues, not arbitrary cap increases or amplified retries.
+5. P0: temporary pre-stream admission saturation must keep the request pending beyond arbitrary elapsed-wait/rejection-count defaults until admitted or cancelled. Preserve request identity, progress visibility, Retry-After pacing and all provenance/usage/privacy guards; real quota/auth failures and partial streams are not blindly retried.
 
 ## Boundaries
 Coordinate only existing workers in Herdr `side-projects:w1P`. Preserve private-data restrictions, model capability and independent-family review requirements, premium reservations and Pi behavior. Purchased but unassigned seats are not active capacity. Do not combine unlike credits, money, windows or percentages into a fictitious aggregate. No additional purchases or member invitations. Never expose credentials or raw authenticated records.
