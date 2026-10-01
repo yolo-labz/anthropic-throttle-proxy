@@ -175,8 +175,7 @@ def test_team_seat_derives_counters_and_leaks_no_ids():
         ({"used": float("nan")}, "invalid"),
         ({"used": -1}, "invalid"),
         ({"history": -5}, "invalid"),
-        ({"total": 0}, "ambiguous"),
-        ({"used": 250, "history": 100}, "ambiguous"),
+        ({"total": 0}, "invalid"),
         ({"period_end": "not-a-date"}, "unparseable"),
         ({"next_reset": 42}, "ambiguous"),
         ({"next_reset": "garbage"}, "unparseable"),
@@ -194,6 +193,25 @@ def test_team_unassigned_seat_is_not_usable_capacity():
     row = team_seat_lane(team_sample(seat_status="PENDING", total=1000, used=0), NOW)
     assert row["status"] == "unknown" and "meters" not in row
     assert "not usable capacity" in row["reason"]
+
+
+def test_team_history_below_used_is_the_real_assigned_seat_shape():
+    # Live protocol check 30/09: the only real ASSIGNED seat reported
+    # historyCreditsUsed < creditsUsed. History is informational; it must
+    # never gate the meters.
+    row = team_seat_lane(team_sample(used=250, history=3), NOW)
+    assert row["status"] == "ok"
+    assert row["meters"][0]["current"] == 250
+
+
+def test_team_period_end_uses_t_separator():
+    # Live protocol check 30/09: the console serialises team period ends with
+    # a literal `T`. The space spelling stays accepted for compatibility.
+    row = team_seat_lane(team_sample(period_end="2026-10-30T23:59:59"), NOW)
+    assert row["status"] == "ok"
+    assert (
+        row["meters"][0]["resetsAt"] == datetime(2026, 10, 30, 23, 59, 59, tzinfo=UTC).timestamp()
+    )
 
 
 @pytest.mark.parametrize(
