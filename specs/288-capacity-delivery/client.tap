@@ -1,0 +1,1408 @@
+TAP version 13
+# Subtest: unit: the covered-provider set is the single source of truth the harness imports
+ok 1 - unit: the covered-provider set is the single source of truth the harness imports
+  ---
+  duration_ms: 1.635682
+  type: 'test'
+  ...
+# Subtest: unit: providerFamily mirrors the harness classification
+ok 2 - unit: providerFamily mirrors the harness classification
+  ---
+  duration_ms: 0.258742
+  type: 'test'
+  ...
+# Subtest: unit: a foreign thinking block is dropped and the tool pair survives
+ok 3 - unit: a foreign thinking block is dropped and the tool pair survives
+  ---
+  duration_ms: 1.595447
+  type: 'test'
+  ...
+# Subtest: unit: a message emptied by the drop keeps a boundary marker instead of vanishing
+ok 4 - unit: a message emptied by the drop keeps a boundary marker instead of vanishing
+  ---
+  duration_ms: 0.302215
+  type: 'test'
+  ...
+# Subtest: unit: same-family, untagged and non-assistant messages pass through untouched
+ok 5 - unit: same-family, untagged and non-assistant messages pass through untouched
+  ---
+  duration_ms: 0.250799
+  type: 'test'
+  ...
+# Subtest: unit: normalization is idempotent and safe on a missing target family
+ok 6 - unit: normalization is idempotent and safe on a missing target family
+  ---
+  duration_ms: 0.329547
+  type: 'test'
+  ...
+# Subtest: integration: the registered wrapper strips foreign reasoning before it reaches the wire
+ok 7 - integration: the registered wrapper strips foreign reasoning before it reaches the wire
+  ---
+  duration_ms: 2466.489598
+  type: 'test'
+  ...
+# Subtest: integration: deepseek is registered and its requests are normalized too
+ok 8 - integration: deepseek is registered and its requests are normalized too
+  ---
+  duration_ms: 26.170812
+  type: 'test'
+  ...
+# Subtest: integration control: the raw adapter alone DOES leak foreign reasoning as assistant text
+ok 9 - integration control: the raw adapter alone DOES leak foreign reasoning as assistant text
+  ---
+  duration_ms: 22.915853
+  type: 'test'
+  ...
+# Subtest: mimo native: adapter version is exactly 0.85.1
+ok 10 - mimo native: adapter version is exactly 0.85.1
+  ---
+  duration_ms: 4.826801
+  type: 'test'
+  ...
+# Subtest: persistent native: mimo-desktop survives 30 minutes then streams
+ok 11 - persistent native: mimo-desktop survives 30 minutes then streams
+  ---
+  duration_ms: 1022.245494
+  type: 'test'
+  ...
+# Subtest: persistent native: mimo-desktop survives 32 rejections then streams
+ok 12 - persistent native: mimo-desktop survives 32 rejections then streams
+  ---
+  duration_ms: 225.841124
+  type: 'test'
+  ...
+# Subtest: persistent native: mimo-desktop cancels after the former wait ceiling
+ok 13 - persistent native: mimo-desktop cancels after the former wait ceiling
+  ---
+  duration_ms: 55.191677
+  type: 'test'
+  ...
+# Subtest: persistent native: zai survives 30 minutes then streams
+ok 14 - persistent native: zai survives 30 minutes then streams
+  ---
+  duration_ms: 58.381975
+  type: 'test'
+  ...
+# Subtest: persistent native: zai survives 32 rejections then streams
+ok 15 - persistent native: zai survives 32 rejections then streams
+  ---
+  duration_ms: 195.556282
+  type: 'test'
+  ...
+# Subtest: persistent native: zai cancels after the former wait ceiling
+ok 16 - persistent native: zai cancels after the former wait ceiling
+  ---
+  duration_ms: 41.484677
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6 waits 210/241s with maxRetries=0
+ok 17 - mimo native: mimo-v2.6 waits 210/241s with maxRetries=0
+  ---
+  duration_ms: 15.668819
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6 waits 210/241s with maxRetries=2
+ok 18 - mimo native: mimo-v2.6 waits 210/241s with maxRetries=2
+  ---
+  duration_ms: 20.969918
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=0
+ok 19 - mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=0
+  ---
+  duration_ms: 17.23385
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=2
+ok 20 - mimo native: mimo-v2.6-pro waits 210/241s with maxRetries=2
+  ---
+  duration_ms: 14.519123
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=0
+ok 21 - mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=0
+  ---
+  duration_ms: 14.176869
+  type: 'test'
+  ...
+# Subtest: mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=2
+ok 22 - mimo native: mimo-v2.6-flash waits 210/241s with maxRetries=2
+  ---
+  duration_ms: 15.251939
+  type: 'test'
+  ...
+# Subtest: mimo native: bounded first wait exceeds budget
+ok 23 - mimo native: bounded first wait exceeds budget
+  ---
+  duration_ms: 11.158715
+  type: 'test'
+  ...
+# Subtest: mimo native: bounded cumulative waits exceed budget
+ok 24 - mimo native: bounded cumulative waits exceed budget
+  ---
+  duration_ms: 8.095645
+  type: 'test'
+  ...
+# Subtest: mimo native: bounded rejection ceiling
+ok 25 - mimo native: bounded rejection ceiling
+  ---
+  duration_ms: 16.447704
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible missing marker passes through
+ok 26 - mimo native: ineligible missing marker passes through
+  ---
+  duration_ms: 5.879652
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible missing queue stamp passes through
+ok 27 - mimo native: ineligible missing queue stamp passes through
+  ---
+  duration_ms: 5.011873
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong marker passes through
+ok 28 - mimo native: ineligible wrong marker passes through
+  ---
+  duration_ms: 6.764913
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong queue stamp passes through
+ok 29 - mimo native: ineligible wrong queue stamp passes through
+  ---
+  duration_ms: 5.734863
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible missing newline passes through
+ok 30 - mimo native: ineligible missing newline passes through
+  ---
+  duration_ms: 5.305887
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible extra newline passes through
+ok 31 - mimo native: ineligible extra newline passes through
+  ---
+  duration_ms: 5.091937
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible body prefix passes through
+ok 32 - mimo native: ineligible body prefix passes through
+  ---
+  duration_ms: 4.884823
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong body passes through
+ok 33 - mimo native: ineligible wrong body passes through
+  ---
+  duration_ms: 5.543736
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 401 passes through
+ok 34 - mimo native: ineligible status 401 passes through
+  ---
+  duration_ms: 4.801116
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 403 passes through
+ok 35 - mimo native: ineligible status 403 passes through
+  ---
+  duration_ms: 4.41713
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 429 passes through
+ok 36 - mimo native: ineligible status 429 passes through
+  ---
+  duration_ms: 5.162221
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 500 passes through
+ok 37 - mimo native: ineligible status 500 passes through
+  ---
+  duration_ms: 5.060006
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible status 529 passes through
+ok 38 - mimo native: ineligible status 529 passes through
+  ---
+  duration_ms: 4.620105
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible foreign provider
+ok 39 - mimo native: ineligible foreign provider
+  ---
+  duration_ms: 4.250662
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible other desktop provider
+ok 40 - mimo native: ineligible other desktop provider
+  ---
+  duration_ms: 4.287922
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible non-MiMo model
+ok 41 - mimo native: ineligible non-MiMo model
+  ---
+  duration_ms: 5.211172
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible foreign host
+ok 42 - mimo native: ineligible foreign host
+  ---
+  duration_ms: 5.452492
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible https
+ok 43 - mimo native: ineligible https
+  ---
+  duration_ms: 4.986688
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible wrong port
+ok 44 - mimo native: ineligible wrong port
+  ---
+  duration_ms: 4.448844
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible ZAI cannot inherit MiMo lane
+ok 45 - mimo native: ineligible ZAI cannot inherit MiMo lane
+  ---
+  duration_ms: 17.504154
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible crossed ZAI lane
+ok 46 - mimo native: ineligible crossed ZAI lane
+  ---
+  duration_ms: 5.257957
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible crossed ZAI path
+ok 47 - mimo native: ineligible crossed ZAI path
+  ---
+  duration_ms: 3.963494
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible path prefix
+ok 48 - mimo native: ineligible path prefix
+  ---
+  duration_ms: 3.391208
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible query
+ok 49 - mimo native: ineligible query
+  ---
+  duration_ms: 5.262802
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible fragment
+ok 50 - mimo native: ineligible fragment
+  ---
+  duration_ms: 5.00287
+  type: 'test'
+  ...
+# Subtest: mimo native: ineligible credentials
+ok 51 - mimo native: ineligible credentials
+  ---
+  duration_ms: 4.4468
+  type: 'test'
+  ...
+# Subtest: mimo native: redirect cannot lend provenance
+ok 52 - mimo native: redirect cannot lend provenance
+  ---
+  duration_ms: 4.645877
+  type: 'test'
+  ...
+# Subtest: mimo native: foreign final URL cannot lend provenance
+ok 53 - mimo native: foreign final URL cannot lend provenance
+  ---
+  duration_ms: 4.442263
+  type: 'test'
+  ...
+# Subtest: mimo native: final query cannot lend provenance
+ok 54 - mimo native: final query cannot lend provenance
+  ---
+  duration_ms: 5.130296
+  type: 'test'
+  ...
+# Subtest: mimo native: unrelated raw503 keeps maxRetries=1
+ok 55 - mimo native: unrelated raw503 keeps maxRetries=1
+  ---
+  duration_ms: 11.213956
+  type: 'test'
+  ...
+# Subtest: mimo native: unrelated quota429 keeps maxRetries=1
+ok 56 - mimo native: unrelated quota429 keeps maxRetries=1
+  ---
+  duration_ms: 11.080429
+  type: 'test'
+  ...
+# Subtest: mimo native: unrelated wrong body keeps maxRetries=1
+ok 57 - mimo native: unrelated wrong body keeps maxRetries=1
+  ---
+  duration_ms: 11.002302
+  type: 'test'
+  ...
+# Subtest: mimo native: cancellation during REAL admission sleep never redispatches
+ok 58 - mimo native: cancellation during REAL admission sleep never redispatches
+  ---
+  duration_ms: 6.521278
+  type: 'test'
+  ...
+# Subtest: mimo native: stamped rejection has exactly zero usage and no earlier event
+ok 59 - mimo native: stamped rejection has exactly zero usage and no earlier event
+  ---
+  duration_ms: 5.352416
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: content
+ok 60 - mimo native event guard: content
+  ---
+  duration_ms: 6.049657
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: reason
+ok 61 - mimo native event guard: reason
+  ---
+  duration_ms: 7.762264
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: stopReason
+ok 62 - mimo native event guard: stopReason
+  ---
+  duration_ms: 4.693205
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.input=1
+ok 63 - mimo native event guard: usage.input=1
+  ---
+  duration_ms: 3.844513
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.input=null
+ok 64 - mimo native event guard: usage.input=null
+  ---
+  duration_ms: 3.546548
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.input=undefined
+ok 65 - mimo native event guard: usage.input=undefined
+  ---
+  duration_ms: 3.673048
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.input=0
+ok 66 - mimo native event guard: usage.input=0
+  ---
+  duration_ms: 3.665044
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.output=1
+ok 67 - mimo native event guard: usage.output=1
+  ---
+  duration_ms: 3.545334
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.output=null
+ok 68 - mimo native event guard: usage.output=null
+  ---
+  duration_ms: 3.618676
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.output=undefined
+ok 69 - mimo native event guard: usage.output=undefined
+  ---
+  duration_ms: 3.779922
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.output=0
+ok 70 - mimo native event guard: usage.output=0
+  ---
+  duration_ms: 4.639995
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=1
+ok 71 - mimo native event guard: usage.cacheRead=1
+  ---
+  duration_ms: 6.10494
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=null
+ok 72 - mimo native event guard: usage.cacheRead=null
+  ---
+  duration_ms: 4.38935
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=undefined
+ok 73 - mimo native event guard: usage.cacheRead=undefined
+  ---
+  duration_ms: 4.44468
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheRead=0
+ok 74 - mimo native event guard: usage.cacheRead=0
+  ---
+  duration_ms: 5.130482
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=1
+ok 75 - mimo native event guard: usage.cacheWrite=1
+  ---
+  duration_ms: 4.419435
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=null
+ok 76 - mimo native event guard: usage.cacheWrite=null
+  ---
+  duration_ms: 4.4444
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=undefined
+ok 77 - mimo native event guard: usage.cacheWrite=undefined
+  ---
+  duration_ms: 16.848803
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.cacheWrite=0
+ok 78 - mimo native event guard: usage.cacheWrite=0
+  ---
+  duration_ms: 6.184046
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=1
+ok 79 - mimo native event guard: usage.totalTokens=1
+  ---
+  duration_ms: 4.806113
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=null
+ok 80 - mimo native event guard: usage.totalTokens=null
+  ---
+  duration_ms: 5.776072
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=undefined
+ok 81 - mimo native event guard: usage.totalTokens=undefined
+  ---
+  duration_ms: 6.074871
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: usage.totalTokens=0
+ok 82 - mimo native event guard: usage.totalTokens=0
+  ---
+  duration_ms: 5.062327
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.input=1
+ok 83 - mimo native event guard: cost.input=1
+  ---
+  duration_ms: 5.532786
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.input=null
+ok 84 - mimo native event guard: cost.input=null
+  ---
+  duration_ms: 4.821385
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.input=undefined
+ok 85 - mimo native event guard: cost.input=undefined
+  ---
+  duration_ms: 9.066919
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.input=0
+ok 86 - mimo native event guard: cost.input=0
+  ---
+  duration_ms: 5.882894
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.output=1
+ok 87 - mimo native event guard: cost.output=1
+  ---
+  duration_ms: 4.150826
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.output=null
+ok 88 - mimo native event guard: cost.output=null
+  ---
+  duration_ms: 4.175236
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.output=undefined
+ok 89 - mimo native event guard: cost.output=undefined
+  ---
+  duration_ms: 4.108056
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.output=0
+ok 90 - mimo native event guard: cost.output=0
+  ---
+  duration_ms: 4.434321
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=1
+ok 91 - mimo native event guard: cost.cacheRead=1
+  ---
+  duration_ms: 4.480643
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=null
+ok 92 - mimo native event guard: cost.cacheRead=null
+  ---
+  duration_ms: 4.431438
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=undefined
+ok 93 - mimo native event guard: cost.cacheRead=undefined
+  ---
+  duration_ms: 3.920815
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheRead=0
+ok 94 - mimo native event guard: cost.cacheRead=0
+  ---
+  duration_ms: 4.148873
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=1
+ok 95 - mimo native event guard: cost.cacheWrite=1
+  ---
+  duration_ms: 4.693051
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=null
+ok 96 - mimo native event guard: cost.cacheWrite=null
+  ---
+  duration_ms: 4.282853
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=undefined
+ok 97 - mimo native event guard: cost.cacheWrite=undefined
+  ---
+  duration_ms: 4.106719
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.cacheWrite=0
+ok 98 - mimo native event guard: cost.cacheWrite=0
+  ---
+  duration_ms: 4.339803
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.total=1
+ok 99 - mimo native event guard: cost.total=1
+  ---
+  duration_ms: 4.746279
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.total=null
+ok 100 - mimo native event guard: cost.total=null
+  ---
+  duration_ms: 5.519421
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.total=undefined
+ok 101 - mimo native event guard: cost.total=undefined
+  ---
+  duration_ms: 4.514989
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: cost.total=0
+ok 102 - mimo native event guard: cost.total=0
+  ---
+  duration_ms: 4.017399
+  type: 'test'
+  ...
+# Subtest: mimo native: partial text stream is never replayed
+ok 103 - mimo native: partial text stream is never replayed
+  ---
+  duration_ms: 4.931242
+  type: 'test'
+  ...
+# Subtest: mimo native: partial thinking stream is never replayed
+ok 104 - mimo native: partial thinking stream is never replayed
+  ---
+  duration_ms: 4.463472
+  type: 'test'
+  ...
+# Subtest: mimo native: partial toolcall stream is never replayed
+ok 105 - mimo native: partial toolcall stream is never replayed
+  ---
+  duration_ms: 4.316216
+  type: 'test'
+  ...
+# Subtest: mimo native: caller options and wire serialization survive redispatch
+ok 106 - mimo native: caller options and wire serialization survive redispatch
+  ---
+  duration_ms: 13.159523
+  type: 'test'
+  ...
+# Subtest: mimo native: canonical loopback localhost
+ok 107 - mimo native: canonical loopback localhost
+  ---
+  duration_ms: 21.936872
+  type: 'test'
+  ...
+# Subtest: mimo native: canonical loopback [::1]
+ok 108 - mimo native: canonical loopback [::1]
+  ---
+  duration_ms: 7.519766
+  type: 'test'
+  ...
+# Subtest: mimo native: already aborted signal makes zero requests
+ok 109 - mimo native: already aborted signal makes zero requests
+  ---
+  duration_ms: 0.772514
+  type: 'test'
+  ...
+# Subtest: mimo native event guard: prior start vetoes even an exact zero-usage rejection
+ok 110 - mimo native event guard: prior start vetoes even an exact zero-usage rejection
+  ---
+  duration_ms: 5.683734
+  type: 'test'
+  ...
+# Subtest: mimo extension: absent MiMo configuration creates no provider or auth entry
+ok 111 - mimo extension: absent MiMo configuration creates no provider or auth entry
+  ---
+  duration_ms: 1097.674954
+  type: 'test'
+  ...
+# Subtest: mimo extension: real loader overlay preserves models.json configuration
+ok 112 - mimo extension: real loader overlay preserves models.json configuration
+  ---
+  duration_ms: 136.91728
+  type: 'test'
+  ...
+# Subtest: unit: persistent wait rejects numeric Retry-After overflow
+ok 113 - unit: persistent wait rejects numeric Retry-After overflow
+  ---
+  duration_ms: 4.521758
+  type: 'test'
+  ...
+# Subtest: unit: persistent wait chunks long advice without timer overflow
+ok 114 - unit: persistent wait chunks long advice without timer overflow
+  ---
+  duration_ms: 9.754601
+  type: 'test'
+  ...
+# Subtest: native: glm-5.3-flash outer queue accounting with maxRetries=1, budget=1
+ok 115 - native: glm-5.3-flash outer queue accounting with maxRetries=1, budget=1
+  ---
+  duration_ms: 956.142672
+  type: 'test'
+  ...
+# Subtest: native: glm-5.3-flash outer queue accounting with maxRetries=1, budget=100
+ok 116 - native: glm-5.3-flash outer queue accounting with maxRetries=1, budget=100
+  ---
+  duration_ms: 29.96111
+  type: 'test'
+  ...
+# Subtest: native: glm-5.3 outer queue accounting with maxRetries=1, budget=1
+ok 117 - native: glm-5.3 outer queue accounting with maxRetries=1, budget=1
+  ---
+  duration_ms: 10.230208
+  type: 'test'
+  ...
+# Subtest: native: glm-5.3 outer queue accounting with maxRetries=1, budget=100
+ok 118 - native: glm-5.3 outer queue accounting with maxRetries=1, budget=100
+  ---
+  duration_ms: 17.255567
+  type: 'test'
+  ...
+# Subtest: native: unrelated raw503 retains maxRetries=1 behavior
+ok 119 - native: unrelated raw503 retains maxRetries=1 behavior
+  ---
+  duration_ms: 14.950303
+  type: 'test'
+  ...
+# Subtest: native: unrelated quota429 retains maxRetries=1 behavior
+ok 120 - native: unrelated quota429 retains maxRetries=1 behavior
+  ---
+  duration_ms: 20.262208
+  type: 'test'
+  ...
+# Subtest: native: unrelated wrong-body retains maxRetries=1 behavior
+ok 121 - native: unrelated wrong-body retains maxRetries=1 behavior
+  ---
+  duration_ms: 21.06802
+  type: 'test'
+  ...
+# Subtest: native: marked queue rejection then success — no intermediate assistant error
+ok 122 - native: marked queue rejection then success — no intermediate assistant error
+  ---
+  duration_ms: 14.928188
+  type: 'test'
+  ...
+# Subtest: native: request serialization identical with and without the wrapper
+ok 123 - native: request serialization identical with and without the wrapper
+  ---
+  duration_ms: 11.322278
+  type: 'test'
+  ...
+# Subtest: native: real adapter's 503 is one terminal error event, empty content, zero usage
+ok 124 - native: real adapter's 503 is one terminal error event, empty content, zero usage
+  ---
+  duration_ms: 6.630102
+  type: 'test'
+  ...
+# Subtest: extension: real Pi loader preserves the zai overlay and configured providers
+ok 125 - extension: real Pi loader preserves the zai overlay and configured providers
+  ---
+  duration_ms: 1245.735572
+  type: 'test'
+  ...
+# Subtest: native: wrong provider is a passthrough even against an eligible-looking 503
+ok 126 - native: wrong provider is a passthrough even against an eligible-looking 503
+  ---
+  duration_ms: 34.428063
+  type: 'test'
+  ...
+# Subtest: native: abort while parked in an admission wait
+ok 127 - native: abort while parked in an admission wait
+  ---
+  duration_ms: 42.5256
+  type: 'test'
+  ...
+# Subtest: unit: fail closed on terminal semantics stop/error
+ok 128 - unit: fail closed on terminal semantics stop/error
+  ---
+  duration_ms: 1.73747
+  type: 'test'
+  ...
+# Subtest: unit: fail closed on terminal semantics error/stop
+ok 129 - unit: fail closed on terminal semantics error/stop
+  ---
+  duration_ms: 0.753822
+  type: 'test'
+  ...
+# Subtest: unit: fail closed on terminal semantics undefined/error
+ok 130 - unit: fail closed on terminal semantics undefined/error
+  ---
+  duration_ms: 0.726059
+  type: 'test'
+  ...
+# Subtest: unit: fail closed on terminal semantics error/undefined
+ok 131 - unit: fail closed on terminal semantics error/undefined
+  ---
+  duration_ms: 0.448801
+  type: 'test'
+  ...
+# Subtest: unit: throwing injected clock cannot erase an original failure
+ok 132 - unit: throwing injected clock cannot erase an original failure
+  ---
+  duration_ms: 2.410956
+  type: 'test'
+  ...
+# Subtest: unit: a message-only aborted error is not cancellation
+ok 133 - unit: a message-only aborted error is not cancellation
+  ---
+  duration_ms: 0.874103
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — noMarkerHeader
+ok 134 - unit: ineligible passthrough — noMarkerHeader
+  ---
+  duration_ms: 0.642399
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — noQueueTimeoutStamp
+ok 135 - unit: ineligible passthrough — noQueueTimeoutStamp
+  ---
+  duration_ms: 0.564388
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — stampsOn401
+ok 136 - unit: ineligible passthrough — stampsOn401
+  ---
+  duration_ms: 0.346868
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — stampsOn403
+ok 137 - unit: ineligible passthrough — stampsOn403
+  ---
+  duration_ms: 0.28085
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — stampsOn429
+ok 138 - unit: ineligible passthrough — stampsOn429
+  ---
+  duration_ms: 0.243232
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — stampsOn500
+ok 139 - unit: ineligible passthrough — stampsOn500
+  ---
+  duration_ms: 0.226091
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — bodyWrongText
+ok 140 - unit: ineligible passthrough — bodyWrongText
+  ---
+  duration_ms: 0.319547
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — bodyPrefixOnly
+ok 141 - unit: ineligible passthrough — bodyPrefixOnly
+  ---
+  duration_ms: 0.292277
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — bodySuffixOnly
+ok 142 - unit: ineligible passthrough — bodySuffixOnly
+  ---
+  duration_ms: 0.385636
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — bodyMissingTrailingNewline
+ok 143 - unit: ineligible passthrough — bodyMissingTrailingNewline
+  ---
+  duration_ms: 0.314997
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — bodyExtraNewline
+ok 144 - unit: ineligible passthrough — bodyExtraNewline
+  ---
+  duration_ms: 0.288182
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — bodyDashSwapped
+ok 145 - unit: ineligible passthrough — bodyDashSwapped
+  ---
+  duration_ms: 0.253487
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — foreignRedirect
+ok 146 - unit: ineligible passthrough — foreignRedirect
+  ---
+  duration_ms: 0.24634
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — finalUrlDiffers
+ok 147 - unit: ineligible passthrough — finalUrlDiffers
+  ---
+  duration_ms: 0.223922
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — wrongProvider
+ok 148 - unit: ineligible passthrough — wrongProvider
+  ---
+  duration_ms: 0.282591
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — wrongModelId
+ok 149 - unit: ineligible passthrough — wrongModelId
+  ---
+  duration_ms: 0.172673
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — otherHost
+ok 150 - unit: ineligible passthrough — otherHost
+  ---
+  duration_ms: 0.208569
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — otherPort
+ok 151 - unit: ineligible passthrough — otherPort
+  ---
+  duration_ms: 0.20598
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — otherPath
+ok 152 - unit: ineligible passthrough — otherPath
+  ---
+  duration_ms: 0.260637
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — httpsScheme
+ok 153 - unit: ineligible passthrough — httpsScheme
+  ---
+  duration_ms: 0.254116
+  type: 'test'
+  ...
+# Subtest: unit: ineligible passthrough — non-POST request method
+ok 154 - unit: ineligible passthrough — non-POST request method
+  ---
+  duration_ms: 0.44602
+  type: 'test'
+  ...
+# Subtest: unit: strict full URL — request URL has a query
+ok 155 - unit: strict full URL — request URL has a query
+  ---
+  duration_ms: 0.606015
+  type: 'test'
+  ...
+# Subtest: unit: strict full URL — request URL has credentials
+ok 156 - unit: strict full URL — request URL has credentials
+  ---
+  duration_ms: 0.249779
+  type: 'test'
+  ...
+# Subtest: unit: strict full URL — request URL has a fragment
+ok 157 - unit: strict full URL — request URL has a fragment
+  ---
+  duration_ms: 0.233378
+  type: 'test'
+  ...
+# Subtest: unit: strict full URL — final URL differing only in query is ineligible
+ok 158 - unit: strict full URL — final URL differing only in query is ineligible
+  ---
+  duration_ms: 0.380263
+  type: 'test'
+  ...
+# Subtest: unit: eligible rejection is retried transparently to a full success stream
+ok 159 - unit: eligible rejection is retried transparently to a full success stream
+  ---
+  duration_ms: 0.808541
+  type: 'test'
+  ...
+# Subtest: unit: random=0 yields exactly Retry-After + 1 ms
+ok 160 - unit: random=0 yields exactly Retry-After + 1 ms
+  ---
+  duration_ms: 0.651219
+  type: 'test'
+  ...
+# Subtest: unit: Retry-After as HTTP-date resolves against the injected clock
+ok 161 - unit: Retry-After as HTTP-date resolves against the injected clock
+  ---
+  duration_ms: 0.716173
+  type: 'test'
+  ...
+# Subtest: unit: missing/invalid Retry-After falls back conservatively — garbageRetryAfter
+ok 162 - unit: missing/invalid Retry-After falls back conservatively — garbageRetryAfter
+  ---
+  duration_ms: 0.541789
+  type: 'test'
+  ...
+# Subtest: unit: missing/invalid Retry-After falls back conservatively — missingRetryAfter
+ok 163 - unit: missing/invalid Retry-After falls back conservatively — missingRetryAfter
+  ---
+  duration_ms: 0.361748
+  type: 'test'
+  ...
+# Subtest: unit: missing/invalid Retry-After falls back conservatively — zeroRetryAfter
+ok 164 - unit: missing/invalid Retry-After falls back conservatively — zeroRetryAfter
+  ---
+  duration_ms: 0.444474
+  type: 'test'
+  ...
+# Subtest: unit: no retry once a stream event was forwarded to the client
+ok 165 - unit: no retry once a stream event was forwarded to the client
+  ---
+  duration_ms: 0.440749
+  type: 'test'
+  ...
+# Subtest: unit: no retry when the native error carries content
+ok 166 - unit: no retry when the native error carries content
+  ---
+  duration_ms: 0.533838
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.input is non-zero
+ok 167 - unit: no retry when usage.input is non-zero
+  ---
+  duration_ms: 0.438347
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.output is non-zero
+ok 168 - unit: no retry when usage.output is non-zero
+  ---
+  duration_ms: 0.286163
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheRead is non-zero
+ok 169 - unit: no retry when usage.cacheRead is non-zero
+  ---
+  duration_ms: 0.29181
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheWrite is non-zero
+ok 170 - unit: no retry when usage.cacheWrite is non-zero
+  ---
+  duration_ms: 0.265039
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.totalTokens is non-zero
+ok 171 - unit: no retry when usage.totalTokens is non-zero
+  ---
+  duration_ms: 0.254845
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.input is non-zero
+ok 172 - unit: no retry when usage.cost.input is non-zero
+  ---
+  duration_ms: 0.419389
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.output is non-zero
+ok 173 - unit: no retry when usage.cost.output is non-zero
+  ---
+  duration_ms: 0.265821
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheRead is non-zero
+ok 174 - unit: no retry when usage.cost.cacheRead is non-zero
+  ---
+  duration_ms: 0.258662
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheWrite is non-zero
+ok 175 - unit: no retry when usage.cost.cacheWrite is non-zero
+  ---
+  duration_ms: 0.28211
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.total is non-zero
+ok 176 - unit: no retry when usage.cost.total is non-zero
+  ---
+  duration_ms: 0.259741
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.input is null
+ok 177 - unit: no retry when usage.input is null
+  ---
+  duration_ms: 0.403571
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.output is null
+ok 178 - unit: no retry when usage.output is null
+  ---
+  duration_ms: 0.31608
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheRead is null
+ok 179 - unit: no retry when usage.cacheRead is null
+  ---
+  duration_ms: 0.274522
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheWrite is null
+ok 180 - unit: no retry when usage.cacheWrite is null
+  ---
+  duration_ms: 0.263868
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.totalTokens is null
+ok 181 - unit: no retry when usage.totalTokens is null
+  ---
+  duration_ms: 0.31039
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.input is null
+ok 182 - unit: no retry when usage.cost.input is null
+  ---
+  duration_ms: 0.376696
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.output is null
+ok 183 - unit: no retry when usage.cost.output is null
+  ---
+  duration_ms: 0.274035
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheRead is null
+ok 184 - unit: no retry when usage.cost.cacheRead is null
+  ---
+  duration_ms: 0.27661
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheWrite is null
+ok 185 - unit: no retry when usage.cost.cacheWrite is null
+  ---
+  duration_ms: 0.256665
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.total is null
+ok 186 - unit: no retry when usage.cost.total is null
+  ---
+  duration_ms: 0.259369
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.input is undefined
+ok 187 - unit: no retry when usage.input is undefined
+  ---
+  duration_ms: 0.403916
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.output is undefined
+ok 188 - unit: no retry when usage.output is undefined
+  ---
+  duration_ms: 0.362894
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheRead is undefined
+ok 189 - unit: no retry when usage.cacheRead is undefined
+  ---
+  duration_ms: 0.27057
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheWrite is undefined
+ok 190 - unit: no retry when usage.cacheWrite is undefined
+  ---
+  duration_ms: 0.38622
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.totalTokens is undefined
+ok 191 - unit: no retry when usage.totalTokens is undefined
+  ---
+  duration_ms: 0.289847
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.input is undefined
+ok 192 - unit: no retry when usage.cost.input is undefined
+  ---
+  duration_ms: 0.261593
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.output is undefined
+ok 193 - unit: no retry when usage.cost.output is undefined
+  ---
+  duration_ms: 0.273455
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheRead is undefined
+ok 194 - unit: no retry when usage.cost.cacheRead is undefined
+  ---
+  duration_ms: 0.259549
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheWrite is undefined
+ok 195 - unit: no retry when usage.cost.cacheWrite is undefined
+  ---
+  duration_ms: 1.146156
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.total is undefined
+ok 196 - unit: no retry when usage.cost.total is undefined
+  ---
+  duration_ms: 0.36843
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.input is string
+ok 197 - unit: no retry when usage.input is string
+  ---
+  duration_ms: 0.293243
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.output is string
+ok 198 - unit: no retry when usage.output is string
+  ---
+  duration_ms: 0.240361
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheRead is string
+ok 199 - unit: no retry when usage.cacheRead is string
+  ---
+  duration_ms: 0.243873
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cacheWrite is string
+ok 200 - unit: no retry when usage.cacheWrite is string
+  ---
+  duration_ms: 0.268197
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.totalTokens is string
+ok 201 - unit: no retry when usage.totalTokens is string
+  ---
+  duration_ms: 0.256181
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.input is string
+ok 202 - unit: no retry when usage.cost.input is string
+  ---
+  duration_ms: 0.273665
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.output is string
+ok 203 - unit: no retry when usage.cost.output is string
+  ---
+  duration_ms: 0.27349
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheRead is string
+ok 204 - unit: no retry when usage.cost.cacheRead is string
+  ---
+  duration_ms: 0.256587
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.cacheWrite is string
+ok 205 - unit: no retry when usage.cost.cacheWrite is string
+  ---
+  duration_ms: 0.258125
+  type: 'test'
+  ...
+# Subtest: unit: no retry when usage.cost.total is string
+ok 206 - unit: no retry when usage.cost.total is string
+  ---
+  duration_ms: 0.288069
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.input fails closed
+ok 207 - unit: missing usage.input fails closed
+  ---
+  duration_ms: 0.411598
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.output fails closed
+ok 208 - unit: missing usage.output fails closed
+  ---
+  duration_ms: 0.290904
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cacheRead fails closed
+ok 209 - unit: missing usage.cacheRead fails closed
+  ---
+  duration_ms: 0.284241
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cacheWrite fails closed
+ok 210 - unit: missing usage.cacheWrite fails closed
+  ---
+  duration_ms: 0.245903
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.totalTokens fails closed
+ok 211 - unit: missing usage.totalTokens fails closed
+  ---
+  duration_ms: 0.237098
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cost.input fails closed
+ok 212 - unit: missing usage.cost.input fails closed
+  ---
+  duration_ms: 0.377964
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cost.output fails closed
+ok 213 - unit: missing usage.cost.output fails closed
+  ---
+  duration_ms: 0.2563
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cost.cacheRead fails closed
+ok 214 - unit: missing usage.cost.cacheRead fails closed
+  ---
+  duration_ms: 0.246309
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cost.cacheWrite fails closed
+ok 215 - unit: missing usage.cost.cacheWrite fails closed
+  ---
+  duration_ms: 0.237289
+  type: 'test'
+  ...
+# Subtest: unit: missing usage.cost.total fails closed
+ok 216 - unit: missing usage.cost.total fails closed
+  ---
+  duration_ms: 0.247845
+  type: 'test'
+  ...
+# Subtest: unit: missing assistant error role fails closed
+ok 217 - unit: missing assistant error role fails closed
+  ---
+  duration_ms: 0.357733
+  type: 'test'
+  ...
+# Subtest: unit: missing assistant error usage fails closed
+ok 218 - unit: missing assistant error usage fails closed
+  ---
+  duration_ms: 0.258393
+  type: 'test'
+  ...
+# Subtest: unit: maxRejections exhaustion surfaces a synthetic, retry-safe error
+ok 219 - unit: maxRejections exhaustion surfaces a synthetic, retry-safe error
+  ---
+  duration_ms: 0.791947
+  type: 'test'
+  ...
+# Subtest: unit: maxWaitMs stops admission waits and never re-surfaces the 503
+ok 220 - unit: maxWaitMs stops admission waits and never re-surfaces the 503
+  ---
+  duration_ms: 0.603375
+  type: 'test'
+  ...
+# Subtest: unit: budget caps admission waits only — a started stream runs to completion
+ok 221 - unit: budget caps admission waits only — a started stream runs to completion
+  ---
+  duration_ms: 0.468409
+  type: 'test'
+  ...
+# Subtest: unit: abort while sleeping — no further upstream call, waiting UI cleared
+ok 222 - unit: abort while sleeping — no further upstream call, waiting UI cleared
+  ---
+  duration_ms: 47.518213
+  type: 'test'
+  ...
+# Subtest: unit: abort before the first fetch — zero upstream calls
+ok 223 - unit: abort before the first fetch — zero upstream calls
+  ---
+  duration_ms: 0.687
+  type: 'test'
+  ...
+# Subtest: unit: non-abort sleep rejection preserves the failure as one native error
+ok 224 - unit: non-abort sleep rejection preserves the failure as one native error
+  ---
+  duration_ms: 0.927324
+  type: 'test'
+  ...
+# Subtest: unit: synchronous streamSimple throw emits exactly one native terminal error
+ok 225 - unit: synchronous streamSimple throw emits exactly one native terminal error
+  ---
+  duration_ms: 0.557952
+  type: 'test'
+  ...
+# Subtest: unit: async iterator throw emits exactly one native terminal error
+ok 226 - unit: async iterator throw emits exactly one native terminal error
+  ---
+  duration_ms: 0.457937
+  type: 'test'
+  ...
+# Subtest: unit: clone body completing after the native error still yields the retry
+ok 227 - unit: clone body completing after the native error still yields the retry
+  ---
+  duration_ms: 1.166006
+  type: 'test'
+  ...
+# Subtest: unit: clone read failure fails closed — the native error surfaces, no retry
+ok 228 - unit: clone read failure fails closed — the native error surfaces, no retry
+  ---
+  duration_ms: 0.588309
+  type: 'test'
+  ...
+# Subtest: unit: a later underlying fetch failure clears an earlier eligible capture
+ok 229 - unit: a later underlying fetch failure clears an earlier eligible capture
+  ---
+  duration_ms: 0.763325
+  type: 'test'
+  ...
+# Subtest: unit: stale clone from an earlier internal fetch cannot authorize outer redispatch
+ok 230 - unit: stale clone from an earlier internal fetch cannot authorize outer redispatch
+  ---
+  duration_ms: 7.671359
+  type: 'test'
+  ...
+# Subtest: unit: abort during a stalled clone terminates promptly without retry
+ok 231 - unit: abort during a stalled clone terminates promptly without retry
+  ---
+  duration_ms: 1.263356
+  type: 'test'
+  ...
+# Subtest: unit: no bearer tokens or request bodies leak through surfaced errors or wait info
+ok 232 - unit: no bearer tokens or request bodies leak through surfaced errors or wait info
+  ---
+  duration_ms: 0.756394
+  type: 'test'
+  ...
+# Subtest: unit: concurrent requests isolate scripts and wait state
+ok 233 - unit: concurrent requests isolate scripts and wait state
+  ---
+  duration_ms: 1.099615
+  type: 'test'
+  ...
+1..233
+# tests 233
+# suites 0
+# pass 233
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3776.323836

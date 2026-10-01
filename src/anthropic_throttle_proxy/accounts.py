@@ -55,8 +55,8 @@ PACE_WARN = 1.15
 # Mirrors claude-account-pick's b_usable grace.
 _TOKEN_GRACE_S = 90 * 60
 
-# path -> (mtime_ns, size, bearer_id, expires_at_ms, error, access_token)
-_cache: dict[str, tuple[int, int, str | None, int | None, str | None, str | None]] = {}
+# path -> (mtime_ns, size, bearer_id, expires_at_ms, error, access_token, kind)
+_cache: dict[str, tuple[int, int, str | None, int | None, str | None, str | None, str]] = {}
 
 
 def parse_spec(raw: str) -> list[tuple[str, str]]:
@@ -78,23 +78,23 @@ def parse_spec(raw: str) -> list[tuple[str, str]]:
     return out
 
 
-def _json_credential_fields(data: object) -> tuple[str | None, Any]:
-    """OAuth wins over static-key aliases; expiry follows the chosen source."""
+def _json_credential_fields(data: object) -> tuple[str | None, Any, str]:
+    """OAuth wins over static-key aliases; expiry and kind follow the source."""
     if not isinstance(data, dict):
-        return None, None
+        return None, None, "unknown"
     oauth = data.get("claudeAiOauth") or {}
     token = oauth.get("accessToken") if isinstance(oauth, dict) else None
     if isinstance(token, str) and token:
-        return token, oauth.get("expiresAt")
+        return token, oauth.get("expiresAt"), "oauth"
     for key in ("apiKey", "token", "accessToken"):
         value = data.get(key)
         if isinstance(value, str) and value:
-            return value, data.get("expiresAt")
-    return None, data.get("expiresAt")
+            return value, data.get("expiresAt"), "static"
+    return None, data.get("expiresAt"), "unknown"
 
 
-def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | None]:
-    """Read one credentials file → (bearer_id, expires_at_ms, error, token).
+def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | None, str]:
+    """Read a credential → (bearer_id, expires_at_ms, error, token, kind).
 
     The access token is hashed exactly as the proxy hashes the incoming
     ``Authorization`` header (``Bearer <token>``). The dashboard callers drop
@@ -111,7 +111,7 @@ def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | N
         with open(path, encoding="utf-8") as fh:
             raw = fh.read()
     except OSError:
-        return None, None, "credentials file unreadable", None
+        return None, None, "credentials file unreadable", None, "unknown"
     try:
         data = json.loads(raw)
     except ValueError:
@@ -120,14 +120,14 @@ def _digest_cred(path: str) -> tuple[str | None, int | None, str | None, str | N
         # file must never be mistaken for a credential.
         candidate = raw.strip()
         if candidate and _STATIC_TOKEN_RE.fullmatch(candidate):
-            return _token_bearer_id(candidate), None, None, candidate
-        return None, None, "credentials file malformed", None
-    token, expires = _json_credential_fields(data)
+            return _token_bearer_id(candidate), None, None, candidate, "static"
+        return None, None, "credentials file malformed", None, "unknown"
+    token, expires, kind = _json_credential_fields(data)
     expires_ms = int(expires) if isinstance(expires, (int, float)) else None
     if not token:
-        return None, None, "no access token in credentials", None
+        return None, None, "no access token in credentials", None, "unknown"
     bid = _token_bearer_id(token)
-    return bid, expires_ms, None, token
+    return bid, expires_ms, None, token, kind
 
 
 def account_snapshot() -> list[dict[str, Any]]:
@@ -156,8 +156,8 @@ def account_snapshot() -> list[dict[str, Any]]:
             continue
         cached = _cache.get(path)
         if cached is None or cached[:2] != key:
-            bid, expires_ms, error, token = _digest_cred(path)
-            cached = (*key, bid, expires_ms, error, token)
+            bid, expires_ms, error, token, kind = _digest_cred(path)
+            cached = (*key, bid, expires_ms, error, token, kind)
             _cache[path] = cached
         out.append(
             {
@@ -203,7 +203,12 @@ def routing_snapshot(now: float | None = None) -> list[dict[str, Any]]:
         if isinstance(expires_at, int) and expires_at <= now_ms:
             continue
         usable.append(
-            {**acct, "token": token, "endpoint": _fresh_endpoint_entry(acct["path"], now_s)}
+            {
+                **acct,
+                "token": token,
+                "credential_kind": cached[6],
+                "endpoint": _fresh_endpoint_entry(acct["path"], now_s),
+            }
         )
     return usable
 

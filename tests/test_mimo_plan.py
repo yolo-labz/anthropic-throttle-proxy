@@ -2,8 +2,11 @@
 
 import json
 import runpy
+import sys
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -174,7 +177,6 @@ def test_team_seat_derives_counters_and_leaks_no_ids():
         ({"total": True}, "invalid"),
         ({"used": float("nan")}, "invalid"),
         ({"used": -1}, "invalid"),
-        ({"history": -5}, "invalid"),
         ({"total": 0}, "invalid"),
         ({"period_end": "not-a-date"}, "unparseable"),
         ({"next_reset": 42}, "ambiguous"),
@@ -202,6 +204,14 @@ def test_team_history_below_used_is_the_real_assigned_seat_shape():
     row = team_seat_lane(team_sample(used=250, history=3), NOW)
     assert row["status"] == "ok"
     assert row["meters"][0]["current"] == 250
+
+
+@pytest.mark.parametrize("history", [None, -5, "unavailable", float("nan")])
+def test_team_historical_display_field_cannot_veto_current_counters(history):
+    payload = team_sample(history=history)
+    assert team_seat_lane(payload, NOW)["status"] == "ok"
+    del payload["data"]["seat"]["historyCreditsUsed"]
+    assert team_seat_lane(payload, NOW)["meters"][0]["current"] == 250
 
 
 def test_team_period_end_uses_t_separator():
@@ -303,3 +313,69 @@ def test_view_team_failure_row_replaces_the_healthy_meter(tmp_path, monkeypatch)
     view = _write_mimo_report(tmp_path, monkeypatch, failed)
     rows = [row for row in view["lanes"] if row["id"] == "mimo:team-owner"]
     assert rows[0]["status"] == "unknown" and not rows[0]["meters"]
+
+
+@pytest.mark.parametrize("project", ["../escape", "a/b", "a?x=1", "a#fragment", "x" * 129])
+def test_probe_rejects_project_path_before_attaching(monkeypatch, project):
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid project reached the browser")
+
+    monkeypatch.setitem(
+        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=forbidden))
+    )
+    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", project)
+    with pytest.raises(ValueError):
+        _probe["main"]()
+
+
+@pytest.mark.parametrize("identity_matches", [True, False])
+def test_probe_explicit_team_read_requires_verified_identity(monkeypatch, capsys, identity_matches):
+    calls = []
+
+    class Page:
+        def on(self, event, callback):
+            self.capture = callback
+
+        def goto(self, *args, **kwargs):
+            # Navigation never emits the Team-seat response.
+            for path, body in {
+                "/api/v1/tokenPlan/detail": plan_detail(),
+                "/api/v1/tokenPlan/usage": plan_usage(),
+                "/api/v1/userProfile": {
+                    "code": 0,
+                    "data": {"userId": "expected" if identity_matches else "other"},
+                },
+            }.items():
+                self.capture(
+                    SimpleNamespace(
+                        url="https://platform.xiaomimimo.com" + path,
+                        status=200,
+                        json=lambda body=body: body,
+                    )
+                )
+
+        def evaluate(self, script, path):
+            calls.append(path)
+            assert "AbortController" in script
+            return team_sample()
+
+    @contextmanager
+    def attach(*args, **kwargs):
+        yield None, None, None, Page()
+
+    monkeypatch.setitem(
+        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=attach))
+    )
+    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+    if not identity_matches:
+        with pytest.raises(ValueError, match="identity"):
+            _probe["main"]()
+        assert calls == []
+    else:
+        assert _probe["main"]() == 0
+        assert calls == ["/api/v1/project/synthetic-project/teamTokenPlan/my/seat"]
+        result = json.loads(capsys.readouterr().out)
+        assert result["lanes"][1]["id"] == "mimo:team-owner"
+        assert result["lanes"][1]["meters"][0]["current"] == 250

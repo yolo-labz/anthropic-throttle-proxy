@@ -41,7 +41,7 @@ from .. import metrics as _metrics
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
 from . import signals as _signals
-from .presentation import apply_display
+from .presentation import apply_display, attach_provider_capacity, capacity_summary
 
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
@@ -808,7 +808,13 @@ def _anthropic_subscription_row(account: dict) -> dict:
 
 
 def _lane_meters(lane: dict[str, Any]) -> list[dict]:
-    """Meter rows for one out-of-process lane report entry."""
+    """Meter rows for one out-of-process lane report entry.
+
+    ``remaining`` / ``allowance`` / ``balance_total`` ride through so the board
+    can show used/remaining/reset per seat (spec 285 FR-3): the normalizer
+    already reports them, and a meter that only renders its used % answers
+    "how full" but never "how much is left".
+    """
     return [
         {
             "label": m.get("label") or "?",
@@ -822,6 +828,9 @@ def _lane_meters(lane: dict[str, Any]) -> list[dict]:
             "window_mins": m.get("window_mins"),
             "resets_at": m.get("resets_at"),
             "unlimited": bool(m.get("unlimited")),
+            "remaining": m.get("remaining"),
+            "allowance": m.get("allowance"),
+            "balance_total": m.get("balance_total"),
         }
         for m in lane.get("meters") or []
     ]
@@ -1151,8 +1160,17 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
         "bearers": bearers,
     }
     # Display projection is a RENDERING concern: metrics and gauges were already
-    # published above from the unfiltered snapshot.
-    return apply_display(view, ui_cfg) if project else view
+    # published above from the unfiltered snapshot. Capacity truth (the summary
+    # and the routing rows' capacity chips, spec 285) joins the PROJECTED rows
+    # the operator actually sees — hiding a family hides its seats from the
+    # at-a-glance counts and from the join, or the board would count rows that
+    # are not on it.
+    if not project:
+        return view
+    projected = apply_display(view, ui_cfg)
+    attach_provider_capacity(projected.get("providers") or [], projected.get("subscriptions") or [])
+    projected["summary"] = capacity_summary(projected)
+    return projected
 
 
 async def index(

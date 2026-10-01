@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import time
 from datetime import UTC, datetime
@@ -123,15 +124,14 @@ def team_seat_lane(seat_response: object, now: datetime) -> dict:
         return _team_fail("Team seat unassigned — not usable capacity")
     total = seat.get("creditsTotal")
     used = seat.get("creditsUsed")
-    history = seat.get("historyCreditsUsed")
-    if any(type(x) not in (int, float) or not math.isfinite(x) for x in (total, used, history)):
+    try:
+        valid = all(type(x) in (int, float) and math.isfinite(x) for x in (total, used))
+    except OverflowError:
+        valid = False
+    if not valid:
         return _team_fail("Team seat counters invalid")
-    # Coordinator fix (live protocol check 30/09): a valid ASSIGNED seat may
-    # report historyCreditsUsed < creditsUsed — history is an informational
-    # prior counter, not an invariant bounding current usage. Rejecting it
-    # fail-closed the only real seat this fleet has. Only type/finiteness/
-    # non-negativity are provable invariants here.
-    if total <= 0 or used < 0 or history < 0:
+    # Historical/display counters are not prerequisites for current quota.
+    if total <= 0 or used < 0:
         return _team_fail("Team seat counters invalid")
     try:
         # Coordinator fix (live protocol check 30/09): the console serialises
@@ -194,6 +194,8 @@ def main() -> int:
     # real ids or credentials in source. Unset keeps legacy individual-only
     # behaviour exactly (spec 281).
     team_project = os.environ.get("MIMO_TEAM_PROJECT_ID", "").strip()
+    if team_project and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", team_project):
+        raise ValueError("invalid team project identifier")
     if team_project:
         # Passive capture only (never fires on plan-manage navigation — live
         # check 30/09): the seat is read explicitly after identity check.
@@ -204,8 +206,14 @@ def main() -> int:
     with interactive.attach("xiaomi", start_if_down=False, timeout_ms=20000) as (_, _, _, page):
 
         def capture(response):
-            key = routes.get(urlsplit(response.url).path)
-            if key and response.status == 200:
+            url = urlsplit(response.url)
+            key = routes.get(url.path)
+            if (
+                key
+                and url.scheme == "https"
+                and url.netloc == "platform.xiaomimimo.com"
+                and response.status == 200
+            ):
                 try:
                     observed[key] = response.json()
                 except ValueError:
@@ -221,7 +229,7 @@ def main() -> int:
         deadline = time.monotonic() + 20
         # Wait for the base plan readings only: the team seat never arrives
         # from this navigation and is fetched explicitly below.
-        while len(observed) < 3 and time.monotonic() < deadline:
+        while not {"profile", "detail", "usage"} <= observed.keys() and time.monotonic() < deadline:
             page.wait_for_timeout(200)
         profile = observed["profile"]
         if profile.get("code") != 0 or str(profile["data"]["userId"]) != expected:

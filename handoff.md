@@ -6,6 +6,24 @@ host activation. Latest incident first.
 
 ---
 
+## 01/10/2026 — Team capacity delivery (288, source acceptance)
+
+Integrated 279/281/282 with current main and recovered 283/284/285 work without
+changing original worker worktrees. Explicit credential kind prevents retired
+static keys from escaping a replacement pool, including while the replacement
+is mid-recovery-probe; routing pressure respects each seat's live capacity.
+Real-handler retirement covers messages and chat/completions. Team telemetry
+validates identity/project boundaries and current counters, not informational
+history. The capacity board separates mixed seats, binding windows, unknown
+inventory, throughput and model eligibility; unassigned is never usable.
+
+Acceptance: **1478 pytest**, **233 native Pi tests**, **24/24 synthetic fairness**,
+ruff clean, isolated Chromium at 1440px/390px with no page overflow. See
+`specs/288-capacity-delivery/evidence.md` and `docs/examples/fleet-ui-mimo.yaml`.
+Optional different-family review could not spawn (no Z.AI capacity); no approval
+is claimed. Source delivery, Nix package/client pins and activation are separate;
+no higher provider cap or improved live throughput is established by these tests.
+
 ## 27/09/2026 — Short cooldown queue-spin (276, not activated)
 
 MiMo `:8773` emitted 10,000 queue/start lines in 7.882921 s while waiting on a
