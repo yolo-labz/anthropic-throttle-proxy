@@ -1,11 +1,8 @@
-Downloading playwright (46.0MiB)
- Downloading playwright
-Installed 4 packages in 10ms
-127.0.0.1 - - [01/Oct/2026 14:29:38] "GET /specs/288-capacity-delivery/capacity-preview.html HTTP/1.1" 200 -
-127.0.0.1 - - [01/Oct/2026 14:29:38] "GET /src/anthropic_throttle_proxy/ui/static/style.css HTTP/1.1" 200 -
-127.0.0.1 - - [01/Oct/2026 14:29:39] code 404, message File not found
-127.0.0.1 - - [01/Oct/2026 14:29:39] "GET /ui/static/favicon.svg?v=preview HTTP/1.1" 404 -
-127.0.0.1 - - [01/Oct/2026 14:29:40] "GET /specs/288-capacity-delivery/capacity-preview.html HTTP/1.1" 200 -
-127.0.0.1 - - [01/Oct/2026 14:29:40] "GET /src/anthropic_throttle_proxy/ui/static/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 14:44:46] "GET /specs/288-capacity-delivery/capacity-preview.html HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 14:44:46] "GET /src/anthropic_throttle_proxy/ui/static/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 14:44:46] code 404, message File not found
+127.0.0.1 - - [01/Oct/2026 14:44:46] "GET /ui/static/favicon.svg?v=preview HTTP/1.1" 404 -
+127.0.0.1 - - [01/Oct/2026 14:44:47] "GET /specs/288-capacity-delivery/capacity-preview.html HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 14:44:47] "GET /src/anthropic_throttle_proxy/ui/static/style.css HTTP/1.1" 200 -
 {"viewport": 1440, "content": 1440}
 {"viewport": 390, "content": 390}

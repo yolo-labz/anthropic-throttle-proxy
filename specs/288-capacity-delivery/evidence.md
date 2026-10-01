@@ -66,6 +66,15 @@ PLAYWRIGHT_NODEJS_PATH="$(command -v node)" BROWSER_EXECUTABLE=/path/to/installe
   specs/288-capacity-delivery/capacity-preview.html
 ```
 
+## Required quality-gate correction
+
+The first required Sonar scan rejected five cognitive-complexity findings (new
+coverage 92.3%, duplication 0%). Split meter headroom, binding-window extraction,
+measured throughput and mixed-provider verdicts into focused functions; keep the
+static-pool boundary inside the existing OAuth exception predicate and remove a
+duplicate anonymous-bearer comparison. Re-ran all **1478 tests**, ruff and both
+render widths after these changes. No gate was suppressed or bypassed.
+
 ## Delivery boundaries
 
 Source PR/CI, Nix pin/hash, private project configuration, client pin and runtime

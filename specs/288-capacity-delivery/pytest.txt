@@ -47,4 +47,4 @@ tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
     warnings.warn(
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-1478 passed, 122 warnings in 102.03s (0:01:42)
+1478 passed, 122 warnings in 87.81s (0:01:27)

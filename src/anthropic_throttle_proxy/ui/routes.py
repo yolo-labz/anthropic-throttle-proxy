@@ -1043,7 +1043,7 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
     # that reads as plumbing. Keep it out of the operator's bearer table.
     anon_bid = "_anon"  # ratelimit._bearer_id's unauthenticated bypass slot
     for bid, bstate in _proxy.bearer_state.items():
-        if bid == anon_bid or bid == "_anon":
+        if bid == anon_bid:
             continue
         lim = _proxy.bearer_limiters.get(bid)
         unified = bstate.get("unified")

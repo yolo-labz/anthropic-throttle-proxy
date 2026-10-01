@@ -1613,10 +1613,20 @@ def _route_to_selected_auth(
 
 
 def _healthy_known_unconfigured_bearer(
-    incoming_bid: str, configured_bids: set[str], best_configured_load: float, now: float
+    incoming_bid: str,
+    configured_bids: set[str],
+    best_configured_load: float,
+    now: float,
+    *,
+    static_pool: bool,
 ) -> bool:
-    """True when an incoming non-configured bearer has fresh no-pressure evidence."""
-    if not incoming_bid or incoming_bid in configured_bids or _bearer_credential_dead(incoming_bid):
+    """Fresh unconfigured OAuth evidence may escape an OAuth-only pool."""
+    if (
+        static_pool
+        or not incoming_bid
+        or incoming_bid in configured_bids
+        or _bearer_credential_dead(incoming_bid)
+    ):
         return False
     limiter = config.bearer_limiters.get(incoming_bid)
     if limiter is None:
@@ -1686,8 +1696,8 @@ def _account_route_decision(
     # configured static pool is authoritative: an old rotated key must not
     # beat its replacement merely because its stale limiter looks idle.
     static_pool = any(acct.get("credential_kind") == "static" for acct in snapshot)
-    if not static_pool and _healthy_known_unconfigured_bearer(
-        incoming_bid, configured_bids, best_configured_load, now
+    if _healthy_known_unconfigured_bearer(
+        incoming_bid, configured_bids, best_configured_load, now, static_pool=static_pool
     ):
         return None, False
     if selected is not None:

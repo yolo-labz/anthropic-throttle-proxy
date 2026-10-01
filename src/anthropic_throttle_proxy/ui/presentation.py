@@ -166,6 +166,14 @@ def _positive(value: object) -> bool:
         return False
 
 
+def _meter_has_headroom(meter: dict, pct: float | None) -> bool:
+    return (
+        (pct is not None and pct < 100 and not meter.get("exhausted_ok"))
+        or meter.get("unlimited") is True
+        or any(_positive(meter.get(key)) for key in ("balance_total", "remaining"))
+    )
+
+
 def _meter_evidence(meters: list) -> str:
     """``usable`` / ``exhausted`` / ``unknown`` from MEASURED meter fields only.
 
@@ -175,7 +183,6 @@ def _meter_evidence(meters: list) -> str:
     ceiling to be a percentage of). Full readings with nothing live beside
     them prove exhaustion; anything unmeasured stays unknown — never usable.
     """
-    readings: list[float] = []
     live = False
     for meter in meters:
         if not isinstance(meter, dict):
@@ -187,15 +194,8 @@ def _meter_evidence(meters: list) -> str:
             pct is not None and pct >= 100 and not meter.get("exhausted_ok")
         ):
             return "exhausted"
-        if pct is not None and not meter.get("exhausted_ok"):
-            readings.append(pct)
-        if meter.get("unlimited") is True:
-            live = True
-        if _positive(meter.get("balance_total")) or _positive(meter.get("remaining")):
-            live = True
-    if live or any(r < 100.0 for r in readings):
-        return "usable"
-    return "unknown"
+        live = live or _meter_has_headroom(meter, pct)
+    return "usable" if live else "unknown"
 
 
 def row_capacity_class(row: dict) -> str:
@@ -218,6 +218,37 @@ def row_capacity_class(row: dict) -> str:
     return "unknown"
 
 
+def _binding_windows(row: dict) -> list[dict]:
+    windows = []
+    for meter in row.get("meters") or []:
+        if not isinstance(meter, dict):
+            continue
+        pct = _pct(meter.get("pct"))
+        rejected = bool(meter.get("rejected"))
+        full = pct is not None and pct >= 100.0 and not meter.get("exhausted_ok")
+        if rejected or full:
+            windows.append(
+                {
+                    "row": row.get("id") or "",
+                    "label": row.get("label") or row.get("identity") or row.get("id") or "?",
+                    "window": meter.get("label") or "?",
+                    "pct": pct,
+                    "rejected": rejected,
+                    "reset_in": meter.get("reset_in") or "",
+                    "reset_at": meter.get("reset_at") or "",
+                }
+            )
+    return windows
+
+
+def _measured_throughput(tps: object) -> dict | None:
+    seen = tps.get("seen") if isinstance(tps, dict) else getattr(tps, "seen", False)
+    value = _pct(tps.get("value") if isinstance(tps, dict) else getattr(tps, "value", None))
+    if seen and value is not None and value >= 0:
+        return {"value": round(value, 1), "unit": "tokens/s"}
+    return None
+
+
 def capacity_summary(view: dict) -> dict:
     """At-a-glance board truth (FR-1/FR-2/FR-4), from the projected rows.
 
@@ -236,25 +267,7 @@ def capacity_summary(view: dict) -> dict:
         counts[cls] = counts.get(cls, 0) + 1
         if cls in {"stale", "unknown"}:
             continue
-        for meter in row.get("meters") or []:
-            if not isinstance(meter, dict):
-                continue
-            pct = _pct(meter.get("pct"))
-            rejected = bool(meter.get("rejected"))
-            full = pct is not None and pct >= 100.0 and not meter.get("exhausted_ok")
-            if not (rejected or full):
-                continue
-            windows.append(
-                {
-                    "row": row.get("id") or "",
-                    "label": row.get("label") or row.get("identity") or row.get("id") or "?",
-                    "window": meter.get("label") or "?",
-                    "pct": pct,
-                    "rejected": rejected,
-                    "reset_in": meter.get("reset_in") or "",
-                    "reset_at": meter.get("reset_at") or "",
-                }
-            )
+        windows.extend(_binding_windows(row))
     summary: dict = {
         "counts": counts,
         "total": len(rows),
@@ -271,12 +284,7 @@ def capacity_summary(view: dict) -> dict:
         "queued": int(view.get("queued") or 0),
         "capacity": int(view.get("max_concurrent") or 0),
     }
-    tps = view.get("tps")
-    if tps is not None:
-        seen = tps.get("seen") if isinstance(tps, dict) else getattr(tps, "seen", False)
-        value = _pct(tps.get("value") if isinstance(tps, dict) else getattr(tps, "value", None))
-        if seen and value is not None and value >= 0:
-            summary["throughput"] = {"value": round(value, 1), "unit": "tokens/s"}
+    summary["throughput"] = _measured_throughput(view.get("tps"))
     return summary
 
 
@@ -296,6 +304,17 @@ def _row_tokens(row: dict) -> set[str]:
     return {t for t in {_norm_token(head), _norm_token(row.get("provider"))} if len(t) >= 2}
 
 
+def _provider_capacity_state(classes: list[str]) -> str:
+    states = set(classes)
+    if not states:
+        return "unmeasured"
+    if len(states) == 1:
+        return next(iter(states))
+    if states & {"usable", "limited"}:
+        return "limited"
+    return "unknown"
+
+
 def attach_provider_capacity(providers: list, rows: list) -> None:
     """Join seat capacity onto routing rows (FR-5/FR-6), in place, display-only.
 
@@ -312,11 +331,7 @@ def attach_provider_capacity(providers: list, rows: list) -> None:
         tokens = {t for t in tokens if len(t) >= 2}
         matched = [r for r in seats if tokens & _row_tokens(r)] if tokens else []
         classes = [row_capacity_class(r) for r in matched]
-        state = "unmeasured"
-        if classes:
-            state = classes[0] if len(set(classes)) == 1 else "unknown"
-            if len(set(classes)) > 1 and any(c in {"usable", "limited"} for c in classes):
-                state = "limited"
+        state = _provider_capacity_state(classes)
         provider["capacity"] = {
             "state": state,
             "label": _CAPACITY_LABELS[state],
