@@ -6,11 +6,11 @@ Integrated onto `9fc1eed` (landed persistent admission wait fix), preserving
 original worker worktrees. No concurrency ceiling, privacy rule, reserved lane,
 credential assignment or provider purchase changed.
 
-- Full Python suite: **1478 passed**, 122 existing aiohttp warnings; `pytest.log`.
+- Full Python suite: **1478 passed**, 122 existing aiohttp warnings; `pytest.txt`.
 - Native Pi 0.85.1 adapter: **233 passed, 0 failed**, `client.tap`.
 - Ruff check and format check: clean for `src`, `tests`, Team sampler and render
   check (81 files formatted). `git diff --check`: clean.
-- Synthetic fairness: **24/24 assertions**, `fairness.log`; not a provider benchmark.
+- Synthetic fairness: **24/24 assertions**, `fairness.txt`; not a provider benchmark.
 - Headless isolated Chromium render: **1440/1440** and **390/390** viewport/content
   widths; screenshots `capacity-1440.png`, `capacity-390.png`. Synthetic inputs,
   no operator profile, credentials, provider requests or external CDN.
