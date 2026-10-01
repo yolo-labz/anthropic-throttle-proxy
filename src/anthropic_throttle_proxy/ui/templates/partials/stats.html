@@ -206,6 +206,39 @@
     {% if lanes.error %}<span class="pm-sep">·</span><span class="pm-err">{{ lanes.error }}</span>{% endif %}
   </p>
   {% endif %}
+  {# ── CAPACITY SUMMARY — the at-a-glance answer (spec 285) ──────────────
+     "How many seats can actually serve traffic, what is binding, and what is
+     the live load" — before the eye enters the table. Counts are SEATS by
+     capacity class (measured evidence only: unknown and stale are never
+     usable), binding windows are listed individually because their units and
+     cycles are unlike and are never summed into a fictitious total, and the
+     live line is scoped to this proxy. #}
+  {% if summary %}
+  <div class="summary" aria-label="Capacity at a glance: seats by capacity class, binding windows and live load">
+    <div class="sum-row">
+      {% for cls in ("usable", "limited", "exhausted", "stale", "unknown") %}
+      {% if cls != "limited" or summary.counts.limited %}
+      <span class="sum-chip chip-{{ cls }}"><b>{{ summary.counts[cls] }}</b> {{ cls }}</span>
+      {% endif %}
+      {% endfor %}
+      <span class="sum-note" title="Seat counts, never a summed budget — the windows, units and currencies below are unlike and are never added into one number">of {{ summary.total }} seat{{ '' if summary.total == 1 else 's' }} · windows and units are unlike — never summed</span>
+    </div>
+    {% if summary.windows %}
+    <div class="sum-row sum-windows" aria-label="Binding windows; each measured, never summed">
+      {% for w in summary.windows %}
+      <span class="win-chip{% if w.rejected %} is-rej{% endif %}" title="Seat {{ w.row }} — measured reading, not an estimate">{{ w.label }} · {{ w.window }}{% if w.pct is not none %} {{ w.pct | round(0) | int }}%{% endif %}{% if w.reset_in %} · reopens {{ w.reset_in }}{% endif %}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if summary.live %}
+    <div class="sum-row sum-live" title="Live load on this proxy process, right now">
+      <span class="sum-k">live</span>
+      <span class="sum-v">{{ summary.live.inflight }} in-flight · {{ summary.live.queued }} queued / {{ summary.live.capacity }} slots</span>
+      {% if summary.throughput %}<span class="sum-sep">·</span><span class="sum-v sum-tps">{{ summary.throughput.value }} {{ summary.throughput.unit }}</span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
   <section id="subs-scroll" class="bearers-wrap" tabindex="0" aria-labelledby="subs-heading">
   <table class="bearers subs">
     <colgroup>
@@ -277,6 +310,11 @@
                   {% if m.rejected %}<span class="tag-rejected">rejected</span>
                   {% elif m.exhausted_ok %}<span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
                   {% endif %}
+                  {# used/remaining/reset (spec 285 FR-3): the remaining figure
+                     renders exactly as the provider reports it — money and
+                     credits have no percentage to be converted into. #}
+                  {% set left = m.remaining | default(none) %}{% set allow = m.allowance | default(none) %}
+                  {% if left is not none and left != '' %}<span class="meter-left" title="Remaining on this meter, exactly as the provider reports it">{{ left }} left{% if allow is not none and allow != '' %} of {{ allow }}{% endif %}</span>{% endif %}
                   {% if m.reset_in %}<span class="reset-in"{% if m.resets_at %} data-reset-epoch="{{ m.resets_at }}"{% endif %}>{{ "reopens in" if m.rejected or m.exhausted_ok else "resets" }} {{ m.reset_in }}{% if m.reset_at %}<span class="reset-at">{{ m.reset_at }}</span>{% endif %}</span>
                   {% elif m.note %}<span class="reset-in">{{ m.note }}</span>{% endif %}
                 </span>
@@ -332,7 +370,7 @@
       <tr>
         <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH. The upstream URL is in the row tooltip.">provider</th>
         <th scope="col" title="in-flight · queued / concurrency ceiling, and lifetime served">load</th>
-        <th scope="col" title="Proxy HTTP availability; DNS resolution does not verify auth or inference">status</th>
+        <th scope="col" title="Three separate facts: transport availability (reachability, key rejection, DNS — connectivity is never quota), subscription capacity of the seats joined to this destination, and model eligibility, which this UI cannot verify">transport · capacity</th>
       </tr>
     </thead>
     <tbody>
@@ -365,16 +403,25 @@
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
         <td class="prov-status">
+          {# Transport, capacity and eligibility are THREE facts (spec 285
+             FR-5) and the row labels all three: a reachable lane whose seats
+             are exhausted renders `transport ok · capacity exhausted`, never
+             a bare HEALTHY that reads as usable quota. `unmeasured` is not
+             healthy either — no seat joined to this destination. #}
           {% if not p.ok %}
-            <span class="prov-state prov-crit">unreachable</span>
+            <span class="prov-state prov-crit">transport down</span>
             {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
           {% elif p.auth_dead %}
             <span class="prov-state prov-crit" title="The lane is reachable but its own credential is rejected upstream — it can serve nothing">key rejected</span>
             {% if p.err %}<span class="prov-err" title="{{ p.err }}">{{ p.err }}</span>{% endif %}
           {% else %}
-            <span class="prov-state prov-{{ p.level }}">{{ p.level }}</span>
+            <span class="prov-state prov-{{ p.level }}" title="Transport only: reachability says nothing about quota or permissions">transport ok</span>
             <span class="egress {{ 'up' if dns is sameas true else ('down' if dns is sameas false else 'unknown') }}" title="DNS resolution only — TCP, authentication and inference are not verified">DNS {{ 'resolved' if dns is sameas true else ('failed' if dns is sameas false else 'unmeasured') }}</span>
           {% endif %}
+          {% if p.level in ("throttled", "pacing") %}<span class="prov-local" title="This proxy's live pacing state — a local verdict, not the provider's quota">{{ p.level }}</span>{% endif %}
+          {% set cap = p.capacity | default(none) %}
+          {% if cap %}<span class="cap cap-{{ cap.state }}" title="{{ cap.detail }}">{{ cap.label }}</span>{% endif %}
+          <span class="elig" title="This UI never verifies which models a lane may serve — observed quota is not permission">models unverified</span>
         </td>
       </tr>
       {% endfor %}

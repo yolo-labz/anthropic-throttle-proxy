@@ -1,0 +1,34 @@
+== seat-fairness / capacity check — SIMULATION (not a provider benchmark) ==
+-- phase1 client round-robin (real limiter)
+  [PASS] F1 RR interleaves 1-for-1 — first dispatches: ['A', 'B', 'A', 'B']
+  [PASS] F2 sibling backlog not starved (B completes within first 2k=4 dispatches) — order=['A', 'B', 'A', 'B', 'A', 'A', 'A', 'A', 'A', 'A']
+  [PASS] phase1 accounting clean
+-- phase2 equal-eligible capacity (illustrative scheduling)
+  [PASS] C5 denominator excludes stale seats — eligible=['X', 'Y']
+  [PASS] F3 (illustrative) toy scheduler routes zero work to unavailable seat — not production-router proof; completed={'X': 6, 'Y': 6, 'Z': 0}
+  [PASS] effective overlap == live cap on each seat — overlap_max={'X': 2, 'Y': 1}
+  [PASS] phase2 accounting clean
+  [PASS] C5 eligible-concurrency denominator excludes stale seats
+  [PASS] equal raw split is NOT equal concurrency-normalized utilization — norm={'X': 0.75, 'Y': 1.5}
+  [info] SIMULATION wall=74.7ms completed=12 (illustrative toy scheduler) mean_overlap=1.34 queue_wait p50=8.65ms max=62.22ms busy={'X': 25.7, 'Y': 74.2}ms
+-- phase3 cancellation (real limiter)
+  [PASS] F4 cancelled waiter never acquired — got=['c1', 'c2']
+  [PASS] F4 queue order preserved after cancel — got=['c1', 'c2']
+  [PASS] F4 no slot/lease leak after cancel
+-- phase4 bounded wait (real limiter)
+  [PASS] F5 bounded wait raises QueueWaitTimeout
+  [PASS] F5 no slot held by the rejected request — inflight=1
+  [PASS] F5 lease bookkeeping clean
+-- phase5 AIMD floor (real limiter)
+  [PASS] F6 shrink never drops below AIMD_MIN — caps=[2, 1, 1, 1, 1, 1, 1]
+  [PASS] F6 floor reached and stable — final=1
+-- phase6 accounting model functions (not running-system guards)
+  [PASS] C1 equal accounts 40%/30% aggregate to 35% (weighted), never 70 — got=35.0
+  [PASS] C1 mixed-window aggregation refused
+  [PASS] C1 mixed-unit aggregation refused
+  [PASS] C1 unbound denominator refused
+  [PASS] C3/C5 excluded seats contribute no eligible slots (concurrency slots, NOT subscription quota) — eligible_slots=2
+  [PASS] T1 cap raise without measured overlap is not admissible
+  [PASS] T3 halt on any 429
+
+RESULT: PASS — 24/24 assertions hold (simulation)

@@ -2421,6 +2421,7 @@ class _RoutingLimiter:
     def __init__(self, *, queued: int = 0, inflight: int = 0) -> None:
         self.queued = queued
         self.inflight = inflight
+        self.max_concurrent = config.MAX_CONCURRENT
 
     @property
     def queued_total(self) -> int:
@@ -2951,3 +2952,108 @@ def test_auth_probe_failure_logs_shrink_as_the_streak_grows():
     logged = [n for n in range(1, 129) if n & (n - 1) == 0]
     assert logged == [1, 2, 4, 8, 16, 32, 64, 128], "log on the first failure and each doubling"
     assert len(logged) < 130 / 10, "the whole point is that it is far below one-per-attempt"
+
+
+# ---------------------------------------------------------------------------
+# 283 static pool routing — falsifiers (written RED before the fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("seat_inflight", [0, 1])
+def test_retired_incoming_cannot_bypass_usable_static_pool_seat(
+    isolated_account_routing,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    seat_inflight: int,
+) -> None:
+    """283 incident: a static-key slot rotated A -> B; carrying A must not win.
+
+    The unconfigured (retired) incoming bearer may never ride its idle
+    occupancy past a usable configured static seat — including a seat already
+    serving a request. On a static pool only pool credentials work upstream, so
+    the request belongs to the seat, queued if busy.
+    """
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    seat_token = "tp-" + "b" * 24  # static pool material, never a live credential
+    slot = tmp_path / "slot.txt"
+    slot.write_text(seat_token)
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"M:{slot}")
+    monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
+    seat_bid = hashlib.sha256(f"Bearer {seat_token}".encode()).hexdigest()[:8]
+    seat_limiter = FairBearerLimiter(8, "fair")
+    seat_limiter.inflight = seat_inflight
+    config.bearer_limiters[seat_bid] = seat_limiter
+
+    incoming_value = "Bearer tp-" + "a" * 24  # retired sibling key
+    incoming_bid = hashlib.sha256(incoming_value.encode()).hexdigest()[:8]
+    config.bearer_limiters[incoming_bid] = FairBearerLimiter(8, "fair")
+    config.bearer_state[incoming_bid] = {
+        "unified": {"status": "allowed", "util_5h": 0.10, "util_7d": 0.10},
+        "unified_at": time.time(),
+    }
+    headers = {"Authorization": incoming_value}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    assert selected == seat_bid
+    assert label == "M"
+    assert headers["Authorization"] == f"Bearer {seat_token}"
+
+
+def test_symmetric_normalized_load_spreads_across_configured_seats(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Two seats at equal occupancy/capacity must not concentrate on one.
+
+    A's live ceiling shrank to 2 (AIMD after pushback) with 1 inflight = 50 %;
+    B runs at 8 with 4 inflight = 50 %. Raw counters read A as four times
+    cheaper and pile every request onto the weakened seat until it saturates.
+    The comparison must be normalized occupancy/capacity.
+    """
+    bid_a, bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    lim_a = FairBearerLimiter(8, "fair")
+    lim_a.max_concurrent = 2
+    lim_a.inflight = 1
+    lim_b = FairBearerLimiter(8, "fair")
+    lim_b.max_concurrent = 8
+    lim_b.inflight = 4
+    config.bearer_limiters[bid_a] = lim_a
+    config.bearer_limiters[bid_b] = lim_b
+
+    picks: list[str] = []
+    for _ in range(4):
+        headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A"}
+        selected, _label = proxy._route_account_if_enabled(
+            headers, bid_a, method="POST", path="v1/messages"
+        )
+        picks.append(str(selected))
+        config.bearer_limiters[str(selected)].inflight += 1
+
+    assert len(set(picks)) == 2, f"symmetric normalized load concentrated: {picks}"
+
+
+def test_quarantined_incoming_never_wins_on_idle_occupancy(
+    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Authoritative credential death beats apparent idle occupancy."""
+    bid_a, _bid_b = _setup_route_creds(tmp_path, monkeypatch)
+    monkeypatch.setattr(proxy, "UTILIZATION_WARN", 0.9)
+    incoming_value = "Bearer sk-ant-oat01-DEAD"
+    incoming_bid = hashlib.sha256(incoming_value.encode()).hexdigest()[:8]
+    config.bearer_limiters[incoming_bid] = FairBearerLimiter(8, "fair")
+    config.bearer_state[incoming_bid] = {
+        "unified": {"status": "allowed", "util_5h": 0.0, "util_7d": 0.0},
+        "unified_at": time.time(),
+        "credential": {"ok": False, "status": 403, "reason": "revoked"},
+    }
+    headers = {"Authorization": incoming_value}
+
+    selected, label = proxy._route_account_if_enabled(
+        headers, incoming_bid, method="POST", path="v1/messages"
+    )
+
+    assert selected == bid_a
+    assert label == "A"
+    assert headers["Authorization"] == "Bearer sk-ant-oat01-SIM-A"

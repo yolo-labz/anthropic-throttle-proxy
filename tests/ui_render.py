@@ -50,6 +50,9 @@ _EMPTY_CONTEXT: dict[str, object] = {
     "holds": 0,
     "retries": 0,
     "disconnects": 0,
+    # Spec 285: the at-a-glance capacity summary is derived per render by
+    # `presentation.capacity_summary`; the empty render carries none.
+    "summary": None,
 }
 
 # Per-row keys a builder emits only when it has something to say. Required on
@@ -85,6 +88,9 @@ _OPTIONAL_METER: dict[str, object] = {
     "note": "",
     "rejected": False,
     "exhausted_ok": False,
+    # Spec 285 FR-3: provider-reported remaining/allowance, when measured.
+    "remaining": None,
+    "allowance": None,
 }
 
 _OPTIONAL_PROVIDER: dict[str, object] = {
@@ -101,6 +107,8 @@ _OPTIONAL_PROVIDER: dict[str, object] = {
     "dns_ok": None,
     "auth_dead": False,
     "err": "",
+    # Spec 285 FR-5: the joined subscription-capacity verdict (display only).
+    "capacity": None,
 }
 
 _OPTIONAL_BEARER: dict[str, object] = {

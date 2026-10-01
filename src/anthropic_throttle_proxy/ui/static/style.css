@@ -774,6 +774,71 @@ col.c-prov-status { width: auto; }
 .egress.down { color: var(--crit); }
 .egress.unknown { color: var(--muted); }
 
+/* ── capacity truth (spec 285) ─────────────────────────────────────────────
+   Transport ≠ subscription capacity ≠ model eligibility, each labelled on
+   its own line. Coloured TEXT on the panel surface (the contrast-tested
+   pairs), no fills: a chip background would create a new composite surface
+   the WCAG gate cannot see. */
+.prov-local {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--fs-tag);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn);
+  margin-top: 0.05rem;
+}
+.cap { display: block; font-family: var(--mono); font-size: var(--fs-meta); margin-top: 0.05rem; }
+.cap-usable { color: var(--ok); }
+.cap-limited { color: var(--warn); }
+.cap-exhausted { color: var(--crit); font-weight: 600; }
+.cap-stale { color: var(--warn); }
+.cap-unknown, .cap-unmeasured { color: var(--ctp-subtext0); }
+.elig {
+  display: block;
+  font-family: var(--mono);
+  font-size: var(--fs-tag);
+  color: var(--muted);
+  margin-top: 0.05rem;
+}
+
+/* The at-a-glance summary: seat counts (never a summed budget), the binding
+   windows listed one by one, and the live load line. */
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.35rem 0 0.55rem;
+  min-width: 0;
+}
+.sum-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.7rem; min-width: 0; }
+.sum-chip { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ctp-subtext0); white-space: nowrap; }
+.sum-chip b { font-family: var(--mono); font-size: var(--fs-body); font-weight: 600; }
+.sum-chip.chip-usable b { color: var(--ok); }
+.sum-chip.chip-limited b { color: var(--warn); }
+.sum-chip.chip-exhausted b { color: var(--crit); }
+.sum-chip.chip-stale b { color: var(--warn); }
+.sum-chip.chip-unknown b { color: var(--ctp-subtext0); }
+.sum-note { font-size: var(--fs-meta); color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.win-chip {
+  font-family: var(--mono);
+  font-size: var(--fs-tag);
+  color: var(--ctp-subtext1);
+  border: 1px solid var(--ctp-surface2);
+  border-radius: var(--radius-sm);
+  padding: 0.02rem 0.35rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.win-chip.is-rej { color: var(--crit); border-color: color-mix(in srgb, var(--crit) 45%, var(--ctp-surface0)); }
+.sum-k { text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-size: var(--fs-tag); }
+.sum-v { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ctp-text); }
+.sum-sep { color: var(--ctp-surface2); }
+/* Remaining of a meter's allowance, exactly as the provider reports it. Same
+   shrink/wrap rules as the reset countdown beside it — the two share the
+   meter-state cell and neither may overflow it. */
+.meter-left { font-family: var(--mono); font-size: var(--fs-meta); color: var(--ctp-subtext0); min-width: 0; overflow-wrap: anywhere; }
+
 /* Per-token table: six columns instead of ten. `req left` (API-key tiers
    only, always `—` on this host), `retry-after` and `clients` moved into the
    row tooltip — present, not prominent, which is what the design brief asked

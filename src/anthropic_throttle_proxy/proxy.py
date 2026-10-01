@@ -1501,7 +1501,14 @@ def _bearer_local_load_score(bid: str) -> float:
         # rather than default to 0.0, because "no data" scored as "idle" makes
         # the loaded account look like the cheapest one in the fleet.
         return 0.0
-    return lim.queued_total * 100.0 + lim.priority_queued * 100.0 + lim.inflight * 10.0
+    pressure = lim.queued_total * 100.0 + lim.priority_queued * 100.0 + lim.inflight * 10.0
+    # Compare occupancy against each bearer's live ceiling, not raw counts.
+    # Retain the original score scale at full configured capacity so budget,
+    # Retry-After and spillover surcharges keep their units. Reserved slots
+    # remain independent in the limiter; this is only a routing estimate.
+    reference = config.MAX_CONCURRENT + config.PRIORITY_RESERVE_SLOTS
+    capacity = max(1, lim.max_concurrent + config.PRIORITY_RESERVE_SLOTS)
+    return pressure * reference / capacity
 
 
 def _account_selection(
@@ -1606,10 +1613,20 @@ def _route_to_selected_auth(
 
 
 def _healthy_known_unconfigured_bearer(
-    incoming_bid: str, configured_bids: set[str], best_configured_load: float, now: float
+    incoming_bid: str,
+    configured_bids: set[str],
+    best_configured_load: float,
+    now: float,
+    *,
+    static_pool: bool,
 ) -> bool:
-    """True when an incoming non-configured bearer has fresh no-pressure evidence."""
-    if not incoming_bid or incoming_bid in configured_bids:
+    """Fresh unconfigured OAuth evidence may escape an OAuth-only pool."""
+    if (
+        static_pool
+        or not incoming_bid
+        or incoming_bid in configured_bids
+        or _bearer_credential_dead(incoming_bid)
+    ):
         return False
     limiter = config.bearer_limiters.get(incoming_bid)
     if limiter is None:
@@ -1675,16 +1692,23 @@ def _account_route_decision(
         now=now,
         allow_retry_probe=allow_retry_probe,
     )
-    if _healthy_known_unconfigured_bearer(incoming_bid, configured_bids, best_configured_load, now):
+    # The OAuth escape preserves independently healthy Claude accounts. A
+    # configured static pool is authoritative: an old rotated key must not
+    # beat its replacement merely because its stale limiter looks idle.
+    static_pool = any(acct.get("credential_kind") == "static" for acct in snapshot)
+    if _healthy_known_unconfigured_bearer(
+        incoming_bid, configured_bids, best_configured_load, now, static_pool=static_pool
+    ):
         return None, False
     if selected is not None:
         return selected, False
     if api_key is not None and config.API_KEY_ROUTING_MODE == "overflow":
         return api_key, False
-    # Every configured account is hard-unusable. Preserve a merely throttled
-    # incoming bearer, but never hand a known-dead credential back to the client:
-    # a retryable 429 from a pressured sibling strictly dominates a terminal 403.
-    if _bearer_credential_dead(incoming_bid):
+    # No account can dispatch yet. A static replacement may be mid-probe:
+    # stay on its admission gate instead of escaping with a retired key.
+    # OAuth-only pools still preserve a merely throttled incoming bearer.
+    dead = _bearer_credential_dead(incoming_bid)
+    if dead or (static_pool and incoming_bid not in configured_bids):
         live = [
             acct
             for acct in snapshot
@@ -1695,7 +1719,7 @@ def _account_route_decision(
         if live:
             return min(
                 live, key=lambda acct: _bearer_local_load_score(str(acct["bearer_id"]))
-            ), True
+            ), dead
     return None, False
 
 

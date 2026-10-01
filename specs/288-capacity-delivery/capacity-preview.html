@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="catppuccin-mocha">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>anthropic-throttle-proxy</title>
+  <link rel="icon" href="/ui/static/favicon.svg?v=preview" type="image/svg+xml">
+  <link rel="stylesheet" href="/src/anthropic_throttle_proxy/ui/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <h1>anthropic-throttle-proxy</h1>
+      
+        <span class="role">direct upstream</span>
+      
+    </div>
+    <div class="config">
+      
+      <span class="badge" title="Per-bearer concurrent ceiling. AIMD lowers the live value on 429s.">MAX <b>8</b></span>
+      <span class="badge" title="Queue mode: off / observe / fair.">mode <b>fair</b></span>
+      <span class="badge" title="Minimum gap between upstream dispatches (ms). 0 = disabled.">gap <b>50ms</b></span>
+      
+      
+    </div>
+  </header>
+
+  
+  <main>
+    <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML"
+             hx-vals='{"rev": "preview", "local": "true"}'>
+      
+<span id="stats-meta" hidden data-revision="preview" data-local="true"></span>
+
+
+<div class="shell">
+
+
+
+<section class="hero pacing" aria-label="Fleet verdict">
+  <div class="hero-verdict">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="verdict">PACING</span>
+    <span class="since" title="How long this proxy has held this verdict">for 23m</span>
+    <span class="as-of" title="Server render time of this panel. It is re-rendered every 2s; the tint below turns amber if a swap stops arriving, so a frozen reading says so on its own.">as of 14:44:44</span>
+  </div>
+  <p class="hero-detail">2 of 4 bearers pacing · binding: 7d window 94% on b144f62f</p>
+  
+  
+  
+  
+  <dl class="hero-facts">
+    <div class="fact">
+      <dt>binding constraint</dt>
+      <dd>
+        <span class="fact-v">pedro@pm.me</span>
+        
+        
+      </dd>
+    </div>
+    <div class="fact">
+      <dt>7d window</dt>
+      <dd>
+        <span class="fact-v">94%</span>
+        <span class="fact-sub">resets in 2d 04h</span>
+        
+      </dd>
+    </div>
+    <div class="fact">
+      <dt>takes traffic next</dt>
+      <dd>
+        
+          <span class="fact-v">pedro@proton.me</span>
+          <span class="fact-sub">38% used</span>
+        
+      </dd>
+    </div>
+  </dl>
+  
+</section>
+
+
+
+
+
+
+<section class="tps-panel" aria-label="Output tokens per second over the last minute">
+  <div class="tps-dial" data-seen="true">
+    <svg class="tps-arc" viewBox="0 0 220 120" role="img"
+         aria-label="Output 199 tokens per second over the last 60 seconds, hourly peak 300">
+      <defs>
+        <linearGradient id="tps-fill" x1="0" y1="0" x2="1" y2="0">
+          <stop class="tps-stop-a" offset="0" />
+          <stop class="tps-stop-b" offset="1" />
+        </linearGradient>
+      </defs>
+      
+      <path class="tps-track" d="M 20 108 A 90 90 0 0 1 200 108" />
+      
+      <path class="tps-value" d="M 20 108 A 90 90 0 0 1 200 108"
+            stroke-dasharray="112.3 284.7" />
+      
+      
+      <line class="tps-tick" x1="28.0" y1="108.0" x2="22.0" y2="108.0" />
+      
+      <line class="tps-tick" x1="52.0" y1="50.0" x2="47.8" y2="45.8" />
+      
+      <line class="tps-tick" x1="110.0" y1="26.0" x2="110.0" y2="20.0" />
+      
+      <line class="tps-tick" x1="168.0" y1="50.0" x2="172.2" y2="45.8" />
+      
+      <line class="tps-tick" x1="192.0" y1="108.0" x2="198.0" y2="108.0" />
+      
+      
+      <line class="tps-peak" x1="133.9" y1="33.7"
+            x2="139.4" y2="16.6" />
+    </svg>
+    <div class="tps-readout">
+      <span class="tps-num">199</span>
+      <span class="tps-unit">tokens/s</span>
+    </div>
+  </div>
+  <div class="tps-side">
+    <span class="gauge-label">output throughput</span>
+    <div class="gauge-row">
+      <span class="tps-detail">last 60s · peak <b>300</b> · scale 500</span>
+      <svg class="spark" viewBox="0 0 96.0 20.0" preserveAspectRatio="none" role="img"
+           aria-label="Tokens per second over the last hour, peak 300">
+        <line class="spark-base" x1="0" y1="20.0" x2="96.0" y2="20.0" />
+        <polyline points="0.0,5.7 1.6,3.8 3.3,3.4 4.9,2.2 6.5,1.2 8.1,0.5 9.8,0.1 11.4,0.1 13.0,0.3 14.6,1.1 16.3,1.1 17.9,1.8 19.5,3.1 21.2,4.3 22.8,5.8 24.4,7.0 26.0,8.6 27.7,9.4 29.3,9.9 30.9,11.2 32.5,11.6 34.2,12.0 35.8,12.1 37.4,11.6 39.1,11.5 40.7,10.1 42.3,9.9 43.9,8.7 45.6,7.2 47.2,5.9 48.8,4.3 50.4,3.4 52.1,1.9 53.7,1.5 55.3,0.9 56.9,0.4 58.6,0.0 60.2,0.2 61.8,0.4 63.5,1.4 65.1,2.2 66.7,2.9 68.3,3.5 70.0,5.3 71.6,6.3 73.2,7.8 74.8,9.0 76.5,10.3 78.1,11.3 79.7,11.4 81.4,12.3 83.0,12.0 84.6,12.0 86.2,11.5 87.9,10.6 89.5,9.8 91.1,8.3 92.7,7.5 94.4,6.7 96.0,5.0" />
+      </svg>
+    </div>
+    <span class="tps-foot">output tokens accounted at completion · input 0.0/s</span>
+  </div>
+</section>
+
+
+
+
+<section class="gauges" aria-label="Rate, errors, latency and saturation over the last hour for this process">
+  
+  <div class="gauge">
+    <span class="gauge-label">requests / min</span>
+    <div class="gauge-row">
+      <span class="gauge-value">93</span>
+      <svg class="spark" viewBox="0 0 96.0 20.0" preserveAspectRatio="none" role="img" aria-label="requests / min over the last hour, peak 135.0">
+        <line class="spark-base" x1="0" y1="20.0" x2="96.0" y2="20.0" />
+        <polyline points="0.0,7.3 1.6,5.5 3.3,4.0 4.9,2.8 6.5,1.5 8.1,0.4 9.8,0.3 11.4,0.0 13.0,0.3 14.6,0.9 16.3,1.6 17.9,2.8 19.5,4.4 21.2,6.1 22.8,7.6 24.4,9.0 26.0,11.0 27.7,12.4 29.3,13.6 30.9,14.7 32.5,15.7 34.2,15.7 35.8,15.9 37.4,15.9 39.1,14.8 40.7,13.9 42.3,12.7 43.9,11.3 45.6,9.5 47.2,7.9 48.8,6.2 50.4,4.7 52.1,2.8 53.7,1.8 55.3,1.0 56.9,0.3 58.6,0.0 60.2,0.3 61.8,0.4 63.5,1.3 65.1,2.7 66.7,3.9 68.3,4.7 70.0,6.5 71.6,8.6 73.2,10.1 74.8,11.6 76.5,13.2 78.1,14.2 79.7,14.4 81.4,15.6 83.0,15.7 84.6,15.4 86.2,14.8 87.9,14.1 89.5,12.6 91.1,11.0 92.7,9.8 94.4,7.9 96.0,6.2" />
+      </svg>
+    </div>
+    <span class="gauge-detail">peak 138 · 60m</span>
+  </div>
+  
+  <div class="gauge is-warn">
+    <span class="gauge-label">pushback / min</span>
+    <div class="gauge-row">
+      <span class="gauge-value">3.0</span>
+      <svg class="spark" viewBox="0 0 96.0 20.0" preserveAspectRatio="none" role="img" aria-label="pushback / min over the last hour, peak 6.0">
+        <line class="spark-base" x1="0" y1="20.0" x2="96.0" y2="20.0" />
+        <polyline points="0.0,20.0 1.6,20.0 3.3,20.0 4.9,20.0 6.5,20.0 8.1,20.0 9.8,20.0 11.4,20.0 13.0,20.0 14.6,20.0 16.3,20.0 17.9,20.0 19.5,20.0 21.2,20.0 22.8,20.0 24.4,20.0 26.0,20.0 27.7,20.0 29.3,20.0 30.9,20.0 32.5,20.0 34.2,20.0 35.8,20.0 37.4,20.0 39.1,20.0 40.7,20.0 42.3,20.0 43.9,20.0 45.6,20.0 47.2,20.0 48.8,20.0 50.4,20.0 52.1,20.0 53.7,20.0 55.3,20.0 56.9,20.0 58.6,20.0 60.2,20.0 61.8,20.0 63.5,20.0 65.1,20.0 66.7,20.0 68.3,0.0 70.0,0.0 71.6,0.0 73.2,0.0 74.8,0.0 76.5,0.0 78.1,0.0 79.7,0.0 81.4,0.0 83.0,0.0 84.6,0.0 86.2,0.0 87.9,0.0 89.5,0.0 91.1,0.0 92.7,0.0 94.4,0.0 96.0,0.0" />
+      </svg>
+    </div>
+    <span class="gauge-detail">peak 6.0 · 429/503/529</span>
+  </div>
+  
+  <div class="gauge">
+    <span class="gauge-label">upstream p95</span>
+    <div class="gauge-row">
+      <span class="gauge-value">1.4s</span>
+      <svg class="spark" viewBox="0 0 96.0 20.0" preserveAspectRatio="none" role="img" aria-label="upstream p95 over the last hour, peak 1.4">
+        <line class="spark-base" x1="0" y1="20.0" x2="96.0" y2="20.0" />
+        <polyline points="0.0,1.2 1.6,0.2 3.3,1.0 4.9,0.0 6.5,0.4 8.1,0.1 9.8,0.1 11.4,0.4 13.0,0.0 14.6,1.0 16.3,0.3 17.9,0.2 19.5,0.0 21.2,0.6 22.8,0.0 24.4,0.2 26.0,0.3 27.7,0.9 29.3,0.0 30.9,0.4 32.5,0.1 34.2,0.1 35.8,0.5 37.4,0.0 39.1,1.1 40.7,0.2 42.3,1.1 43.9,0.0 45.6,0.5 47.2,0.1 48.8,0.1 50.4,0.4 52.1,0.0 53.7,0.9 55.3,0.3 56.9,0.1 58.6,0.0 60.2,0.5 61.8,0.0 63.5,0.2 65.1,0.3 66.7,1.0 68.3,0.0 70.0,0.4 71.6,0.1 73.2,0.1 74.8,0.4 76.5,0.0 78.1,1.0 79.7,0.2 81.4,1.2 83.0,0.0 84.6,0.6 86.2,0.0 87.9,0.2 89.5,0.3 91.1,0.0 92.7,0.8 94.4,0.4 96.0,0.1" />
+      </svg>
+    </div>
+    <span class="gauge-detail">p50 1.3s</span>
+  </div>
+  
+  <div class="gauge">
+    <span class="gauge-label">saturation</span>
+    <div class="gauge-row">
+      <span class="gauge-value">69%</span>
+      <svg class="spark" viewBox="0 0 96.0 20.0" preserveAspectRatio="none" role="img" aria-label="saturation over the last hour, peak 131.2">
+        <line class="spark-base" x1="0" y1="20.0" x2="96.0" y2="20.0" />
+        <polyline points="0.0,10.2 1.6,8.3 3.3,5.7 4.9,4.1 6.5,1.6 8.1,0.6 9.8,0.6 11.4,0.0 13.0,0.3 14.6,0.6 16.3,1.6 17.9,3.8 19.5,6.0 21.2,9.2 22.8,10.5 24.4,12.4 26.0,13.7 27.7,14.3 29.3,15.9 30.9,16.2 32.5,16.2 34.2,16.2 35.8,16.2 37.4,16.2 39.1,16.2 40.7,16.2 42.3,14.3 43.9,14.0 45.6,12.4 47.2,10.8 48.8,9.5 50.4,6.7 52.1,4.1 53.7,1.3 55.3,1.6 56.9,0.3 58.6,0.0 60.2,0.6 61.8,1.0 63.5,0.6 65.1,2.9 66.7,5.4 68.3,7.9 70.0,10.2 71.6,12.4 73.2,13.0 74.8,14.3 76.5,15.2 78.1,16.2 79.7,16.2 81.4,16.2 83.0,16.2 84.6,16.2 86.2,16.2 87.9,16.2 89.5,14.9 91.1,14.3 92.7,12.7 94.4,11.7 96.0,9.5" />
+      </svg>
+    </div>
+    <span class="gauge-detail">(in-flight + queued) ÷ live cap</span>
+  </div>
+  
+  
+  <div class="gauge totals">
+    <span class="gauge-label">served since start</span>
+    <div class="gauge-row"><span class="gauge-value">5,258</span></div>
+    <span class="gauge-detail">3 in-flight · 2 queued · <b class="holds" title="Streams answered 200 and held open with SSE keepalives while the proxy retries behind them — counted by neither in-flight nor queued">2</b> held · 4 retries · 9 disconnects</span>
+  </div>
+</section>
+
+
+
+
+<section class="board" aria-label="Configured subscription meters; observed usage does not prove model eligibility">
+  <h2 id="subs-heading">Capacity · <span class="count">9</span>
+    
+    <span class="h2-note">fullest binding window first</span>
+    
+  </h2>
+  
+  
+  <p class="panel-meta" title="The meter report is written by an out-of-process probe timer; the page poll every 2s is not the sampling cadence.">
+    <span class="pm-k">meter report</span>
+    <span class="pm-v">42s old</span>
+    <span class="pm-sep">·</span>
+    <span class="pm-k">sampling every</span>
+    <span class="pm-v">900s</span>
+    <span class="pm-sep">·</span><span class="pm-k">next sample in</span><span class="pm-v">858s</span>
+    <span class="pm-sep">·</span><span class="pm-k">observed</span><span class="pm-v">01/10/2026 17:44 UTC</span>
+    
+  </p>
+  
+  
+  
+  <div class="summary" aria-label="Capacity at a glance: seats by capacity class, binding windows and live load">
+    <div class="sum-row">
+      
+      
+      <span class="sum-chip chip-usable"><b>4</b> usable</span>
+      
+      
+      
+      
+      
+      <span class="sum-chip chip-exhausted"><b>2</b> exhausted</span>
+      
+      
+      
+      <span class="sum-chip chip-stale"><b>0</b> stale</span>
+      
+      
+      
+      <span class="sum-chip chip-unknown"><b>3</b> unknown</span>
+      
+      
+      <span class="sum-note" title="Seat counts, never a summed budget — the windows, units and currencies below are unlike and are never added into one number">of 9 seats · windows and units are unlike — never summed</span>
+    </div>
+    
+    <div class="sum-row sum-windows" aria-label="Binding windows; each measured, never summed">
+      
+      <span class="win-chip" title="Seat chatgpt:work — measured reading, not an estimate">Codex A · codex 100% · reopens 14h 59m</span>
+      
+      <span class="win-chip" title="Seat mimo:plan — measured reading, not an estimate">MiMo individual · monthly 100% · reopens 15d</span>
+      
+    </div>
+    
+    
+    <div class="sum-row sum-live" title="Live load on this proxy process, right now">
+      <span class="sum-k">live</span>
+      <span class="sum-v">3 in-flight · 2 queued / 8 slots</span>
+      <span class="sum-sep">·</span><span class="sum-v sum-tps">198.5 tokens/s</span>
+    </div>
+    
+  </div>
+  
+  <section id="subs-scroll" class="bearers-wrap" tabindex="0" aria-labelledby="subs-heading">
+  <table class="bearers subs">
+    <colgroup>
+      <col class="c-sub" /><col class="c-meters" /><col class="c-burn" />
+    </colgroup>
+    <thead>
+      <tr>
+        <th scope="col" title="Configured account identity. Family, observed plan, provenance and the current verdict all belong to the row they describe, so they sit in this cell instead of in three columns the eye had to join across 1200px.">subscription</th>
+        <th scope="col" title="Every window this subscription publishes, fullest first. The tick marks the 90% line.">meters</th>
+        <th scope="col" title="Binding-window usage divided by elapsed cycle fraction (a linear projection, not a guarantee), and when that pace exhausts the window if it lands before the reset.">burn</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+      <tr id="subscription-A" data-subscription-id="A">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🤖</span>
+            <span class="acct">pedro@pm.me</span>
+            
+            
+            
+            
+            <span class="lane-status lane-ok" ><span aria-hidden="true">✅</span> ok</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">anthropic</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">max20</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">endpoint</span>
+            <span class="im-sep">·</span><span class="id-tag" title="Local report identifier">A</span>
+          </div>
+          
+          <div class="im-caption warn-text">Configured caption: max 20×</div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📅</span>7d</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="crit" style="width: 94%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">94%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1791049484.3058064">resets 2d 04h<span class="reset-at">03/10/2026 17:44 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">⏱️</span>5h</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 61%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">61%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1790881004.3058064">resets 1h 12m<span class="reset-at">01/10/2026 18:56 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            <span class="pace is-warn" title="Usage divided by elapsed window: a linear projection, not a guarantee">1.42×</span>
+            <span class="burn-eta is-warn">out in 1d 22h</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-B" data-subscription-id="B">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🤖</span>
+            <span class="acct">pedro@proton.me</span>
+            
+            
+            
+            
+            <span class="lane-status lane-ok" ><span aria-hidden="true">✅</span> ok</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">anthropic</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">max20</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">proxy</span>
+            <span class="im-sep">·</span><span class="id-tag" title="Local report identifier">B</span>
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📅</span>7d</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 38%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">38%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1791049484.3058064">resets 2d 04h<span class="reset-at">03/10/2026 17:44 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">⏱️</span>5h</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 12%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">12%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1790881004.3058064">resets 1h 12m<span class="reset-at">01/10/2026 18:56 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            <span class="pace" title="Usage divided by elapsed window: a linear projection, not a guarantee">0.71×</span>
+            <span class="burn-eta">no exhaustion</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-chatgpt:work" data-subscription-id="chatgpt:work">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🌀</span>
+            <span class="acct">Codex A</span>
+            
+            
+            <span class="account-badge" title="Local credential label">A</span>
+            
+            
+            <span class="lane-status lane-exhausted" title="binding meter at 100% — upstream answers &#39;you&#39;ve hit your usage limit&#39;"><span aria-hidden="true">⛔</span> exhausted</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">openai</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">pro</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">report</span>
+            <span class="im-sep">·</span><span class="id-tag" title="Local report identifier">chatgpt:work</span>
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>codex</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="crit" style="width: 100%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">100%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1790930624.3058064">resets 14h 59m<span class="reset-at">02/10/2026 08:43 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>codex_bengalfox</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 54%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">54%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1790937884.3058064">resets 17h<span class="reset-at">02/10/2026 10:44 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            
+            <span class="burn-none" title="this subscription is already refusing, so a burn projection would describe the past">—</span>
+            <span class="burn-eta">refusing</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-zai:plan" data-subscription-id="zai:plan">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">✨</span>
+            <span class="acct">Z.AI</span>
+            
+            
+            
+            
+            <span class="lane-status lane-ok" ><span aria-hidden="true">✅</span> ok</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">chinese-frontier</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">Pro V3</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">Pi meter report</span>
+            <span class="im-sep">·</span><span class="id-tag" title="Local report identifier">zai:plan</span>
+          </div>
+          
+          
+          <div class="billing billing-ok" title="Provider plan status: VALID · raw payment type: WAIT_PAY">
+            ✅ billing current
+            
+            <span class="billing-meta">💳 $80/mo · 🔄 renews 27/09</span>
+          </div>
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📅</span>7d</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 2%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">2%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  <span class="meter-left" title="Remaining on this meter, exactly as the provider reports it">1960 left of 2000</span>
+                  <span class="reset-in" data-reset-epoch="1791326684.3058064">resets 5d 05h<span class="reset-at">06/10/2026 22:44 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">⏱️</span>5h</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 1%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">1%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  
+                  <span class="reset-in" data-reset-epoch="1790883404.3058064">resets 1h 52m<span class="reset-at">01/10/2026 19:36 UTC</span></span>
+                  
+                </span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            <span class="pace" title="Usage divided by elapsed window: a linear projection, not a guarantee">0.40×</span>
+            <span class="burn-eta">no exhaustion</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-deepseek" data-subscription-id="deepseek">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🐋</span>
+            <span class="acct">DeepSeek</span>
+            
+            
+            
+            
+            <span class="lane-status lane-ok" ><span aria-hidden="true">✅</span> ok</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">chinese-frontier</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">pay-go</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">report</span>
+            <span class="im-sep">·</span><span class="id-tag" title="Local report identifier">deepseek</span>
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>balance</span>
+              
+                <span class="meter-note">$15.20</span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            
+            <span class="burn-none" title="no metered window to project a burn rate from">—</span>
+            <span class="burn-eta">no window</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-copilot:personal" data-subscription-id="copilot:personal">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🤖</span>
+            <span class="acct">copilot:personal</span>
+            
+            
+            
+            
+            <span class="lane-status lane-unknown" title="no usage API for individual seats"><span aria-hidden="true">❓</span> unknown</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">github</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">individual</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">report</span>
+            
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>premium_interactions</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="crit" style="width: 100.0%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">100%</span>
+                
+                <span class="meter-state">
+                  <span class="tag-exhausted" title="This meter is spent, but it is not the lane's lifeline — unlimited windows keep the lane serving">spent</span>
+                  
+                  
+                  
+                  
+                  
+                </span>
+              
+            </div>
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>chat</span>
+              
+                <span class="meter-note">unlimited</span>
+              
+            </div>
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>completions</span>
+              
+                <span class="meter-note">unlimited</span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            
+            <span class="burn-none" title="no metered window to project a burn rate from">—</span>
+            <span class="burn-eta">no window</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-mimo:plan" data-subscription-id="mimo:plan">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🔶</span>
+            <span class="acct">MiMo individual</span>
+            
+            
+            
+            
+            <span class="lane-status lane-exhausted" title="synthetic fixture"><span aria-hidden="true">⛔</span> exhausted</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">chinese-frontier</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">Max</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">report</span>
+            
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>monthly</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="crit" style="width: 100%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">100%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  <span class="meter-left" title="Remaining on this meter, exactly as the provider reports it">0 left of 1000</span>
+                  <span class="reset-in">resets 15d</span>
+                  
+                </span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            
+            <span class="burn-none" title="this subscription is already refusing, so a burn projection would describe the past">—</span>
+            <span class="burn-eta">refusing</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-mimo:team-owner" data-subscription-id="mimo:team-owner">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🔶</span>
+            <span class="acct">MiMo Team owner</span>
+            
+            
+            
+            
+            <span class="lane-status lane-ok" title="synthetic fixture"><span aria-hidden="true">✅</span> ok</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">chinese-frontier</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">Team</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">report</span>
+            
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            
+            <div class="meter">
+              <span class="meter-label"><span class="mi" aria-hidden="true">📊</span>monthly</span>
+              
+                
+                
+                <span class="track" aria-hidden="true">
+                  <i class="" style="width: 25%"></i>
+                  <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
+                </span>
+                <span class="pct">25%</span>
+                
+                <span class="meter-state">
+                  
+                  
+                  
+                  <span class="meter-left" title="Remaining on this meter, exactly as the provider reports it">750 left of 1000</span>
+                  <span class="reset-in">resets 15d</span>
+                  
+                </span>
+              
+            </div>
+            
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            
+            <span class="burn-none" title="no metered window to project a burn rate from">—</span>
+            <span class="burn-eta">no window</span>
+          
+        </td>
+      </tr>
+      
+      <tr id="subscription-mimo:team-unassigned" data-subscription-id="mimo:team-unassigned">
+        <td class="sub-ident">
+          <div class="ident-row">
+            <span class="provider-icon" aria-hidden="true">🔶</span>
+            <span class="acct">MiMo Team — unassigned</span>
+            
+            
+            
+            
+            <span class="lane-status lane-unknown" title="Unassigned; not routable"><span aria-hidden="true">❓</span> unknown</span>
+          </div>
+          <div class="ident-meta">
+            <span class="im-family">chinese-frontier</span>
+            <span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">Team</span>
+            <span class="im-sep">·</span><span class="im-src" title="Where this row's numbers come from">config</span>
+            
+          </div>
+          
+          
+        </td>
+        <td class="sub-meters">
+          
+            <span class="meter-note">no reading</span>
+          
+        </td>
+        <td class="burn">
+          
+          
+          
+            
+            <span class="burn-none" title="no metered window to project a burn rate from">—</span>
+            <span class="burn-eta">no window</span>
+          
+        </td>
+      </tr>
+      
+    </tbody>
+  </table>
+  </section>
+</section>
+
+
+
+
+<aside class="rail" aria-label="Live routing and per-token traffic">
+  
+  <h2 id="traffic-heading">Live routing · <span class="count">2</span></h2>
+  <section id="providers-scroll" class="bearers-wrap" tabindex="0" aria-labelledby="traffic-heading">
+  <table class="bearers providers">
+    <colgroup><col class="c-prov-name" /><col class="c-prov-load" /><col class="c-prov-status" /></colgroup>
+    <thead>
+      <tr>
+        <th scope="col" title="Routing destination: the primary upstream, plus any sibling proxies from THROTTLE_FLEET_HEALTH. The upstream URL is in the row tooltip.">provider</th>
+        <th scope="col" title="in-flight · queued / concurrency ceiling, and lifetime served">load</th>
+        <th scope="col" title="Three separate facts: transport availability (reachability, key rejection, DNS — connectivity is never quota), subscription capacity of the seats joined to this destination, and model eligibility, which this UI cannot verify">transport · capacity</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+      
+      
+      <tr>
+        <td>
+          <span class="prov prov-pacing"><span class="pdot" aria-hidden="true"></span><span class="provider-icon" aria-hidden="true">✳️</span>anthropic</span>
+          <span class="prov-tag">primary</span>
+          
+          <span class="prov-where" title="Upstream base URL this provider forwards to">https://api.anthropic.com</span>
+        </td>
+        <td class="num prov-load">
+          
+            <span class="load-now">3<span class="load-of">/8</span></span>
+            
+            <span class="load-total">5,258 served</span>
+            <span class="load-q" title="Requests queued waiting for a slot on this provider">2 queued</span>
+          
+        </td>
+        <td class="prov-status">
+          
+          
+            <span class="prov-state prov-pacing" title="Transport only: reachability says nothing about quota or permissions">transport ok</span>
+            <span class="egress up" title="DNS resolution only — TCP, authentication and inference are not verified">DNS resolved</span>
+          
+          <span class="prov-local" title="This proxy's live pacing state — a local verdict, not the provider's quota">pacing</span>
+          
+          <span class="cap cap-unmeasured" title="no seat row joined to this routing destination">capacity unmeasured</span>
+          <span class="elig" title="This UI never verifies which models a lane may serve — observed quota is not permission">models unverified</span>
+        </td>
+      </tr>
+      
+      
+      
+      <tr>
+        <td>
+          <span class="prov prov-healthy"><span class="pdot" aria-hidden="true"></span><span class="provider-icon" aria-hidden="true">✨</span>zai</span>
+          
+          
+          <span class="prov-where" title="Upstream base URL this provider forwards to">http://127.0.0.1:8766</span>
+        </td>
+        <td class="num prov-load">
+          
+            <span class="load-now">0<span class="load-of">/4</span></span>
+            
+            <span class="load-total">191 served</span>
+            
+          
+        </td>
+        <td class="prov-status">
+          
+          
+            <span class="prov-state prov-healthy" title="Transport only: reachability says nothing about quota or permissions">transport ok</span>
+            <span class="egress up" title="DNS resolution only — TCP, authentication and inference are not verified">DNS resolved</span>
+          
+          
+          
+          <span class="cap cap-usable" title="zai:plan usable">capacity usable</span>
+          <span class="elig" title="This UI never verifies which models a lane may serve — observed quota is not permission">models unverified</span>
+        </td>
+      </tr>
+      
+    </tbody>
+  </table>
+  </section>
+  
+
+  
+  <h2 class="sub" id="bearers-heading">Per-token traffic · <span class="count">2</span>
+    <span class="h2-note">the account rows above are the budget</span>
+  </h2>
+  <section id="bearers-scroll" class="bearers-wrap" tabindex="0" aria-labelledby="bearers-heading">
+  <table class="bearers tokens">
+    <colgroup>
+      <col class="c-tok" /><col class="c-tok-acct" /><col class="c-tok-slots" />
+      <col class="c-tok-n" /><col class="c-tok-n" /><col class="c-tok-n" /><col class="c-tok-n" />
+      <col class="c-tok-win" /><col class="c-tok-n" />
+    </colgroup>
+    <thead>
+      <tr>
+        <th scope="col" title="8-char sha256 prefix of the Authorization bearer (raw token never logged)">bearer</th>
+        <th scope="col" title="Account label when the hash matches a configured credentials file">account</th>
+        <th scope="col" title="in-flight / live concurrency slots, then the hard ceiling AIMD can ramp back to">slots</th>
+        <th scope="col" title="requests queued waiting for a free slot">queued</th>
+        <th scope="col" title="how long the proxy is honouring the upstream's Retry-After header for">retry</th>
+        <th scope="col" title="lifetime served counter since this proxy instance started">served</th>
+        <th scope="col" title="distinct client_id values currently sharing this bearer's queue">clients</th>
+        <th scope="col" title="5h unified-window utilisation (OAuth/Max only)">5h window</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+      
+      
+      
+      
+      
+      <tr>
+        <td><code title="sha256-truncated bearer hash">b144f62f</code></td>
+        <td><span class="acct">pedro@pm.me</span><span class="id-tag" title="Local credential-file label">A</span></td>
+        <td class="num">
+          
+          <span class="slot-now" title="3 of 4 slots in use (75%)">3<span class="slot-of">/4</span></span>
+          
+          <span class="slot-hard" title="AIMD live cap 4 of hard 8 — the live value falls on 429/503 and ramps back after the cooldown">hard 8</span>
+          
+        </td>
+        <td class="num is-warn-text">2</td>
+        <td class="num"><span class="muted">—</span></td>
+        <td class="num">4,102</td>
+        <td class="num">1</td>
+        <td>
+          
+            
+            
+            <span class="util compact" title="5h unified-window utilisation">
+              <span class="track small"><i class="" style="width: 61%"></i></span>
+              <span class="pct">61%</span>
+              
+            </span>
+            
+          
+        </td>
+      </tr>
+      
+      
+      
+      
+      
+      
+      <tr>
+        <td><code title="sha256-truncated bearer hash">c0de9a11</code></td>
+        <td><span class="acct">phsb5321@gmail.com</span><span class="id-tag" title="Local credential-file label">B</span></td>
+        <td class="num">
+          
+          <span class="slot-now" title="0 of 8 slots in use (0%)">0<span class="slot-of">/8</span></span>
+          
+        </td>
+        <td class="num">0</td>
+        <td class="num"><span class="muted">—</span></td>
+        <td class="num">1,156</td>
+        <td class="num">0</td>
+        <td>
+          
+            
+            
+            <span class="util compact" title="5h unified-window utilisation">
+              <span class="track small"><i class="" style="width: 12%"></i></span>
+              <span class="pct">12%</span>
+              
+            </span>
+            
+          
+        </td>
+      </tr>
+      
+    </tbody>
+  </table>
+  </section>
+  
+
+  
+  
+  <p class="registry" aria-label="Registered providers; registration does not establish permission or eligibility">
+    <span class="registry-label">Registered providers</span>
+    
+      <span class="registry-provider"><span aria-hidden="true">✳️</span> Claude</span>
+    
+      <span class="registry-provider"><span aria-hidden="true">🌀</span> Codex</span>
+    
+      <span class="registry-provider"><span aria-hidden="true">🌙</span> DeepInfra</span>
+    
+      <span class="registry-provider"><span aria-hidden="true">🚀</span> Groq</span>
+    
+      <span class="registry-provider"><span aria-hidden="true">✨</span> Z.AI</span>
+    
+    <span class="registry-note">catalog membership, not current eligibility</span>
+  </p>
+  
+</aside>
+
+
+
+
+
+
+
+</div>
+    </section>
+
+    
+    
+    <details class="config-section">
+      <summary>
+        <span>settings</span>
+        <span id="config-summary" class="muted">14 settings · 3 overrides · autosave on change</span>
+        <span class="muted summary-hint" data-closed="expand" data-open="collapse" aria-hidden="true"></span>
+      </summary>
+      <section id="config" hx-get="/ui/config" hx-trigger="toggle from:closest details once" hx-target="#config" hx-swap="innerHTML">
+        <p class="muted">Loading…</p>
+      </section>
+    </details>
+    
+  </main>
+
+  <footer>
+    <a href="/__throttle/health">/__throttle/health</a> ·
+    <a href="/metrics">/metrics</a> ·
+    <span title="/nix/store/…-anthropic-throttle-proxy-0.1.0/lib/python3.13/site-packages">UI revision preview</span> ·
+    <a href="https://github.com/yolo-labz/anthropic-throttle-proxy" target="_blank" rel="noopener">github</a>
+  </footer>
+  
+</body>
+</html>

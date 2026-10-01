@@ -585,3 +585,51 @@ def test_a_lane_with_no_reading_gains_no_pace(tmp_path, monkeypatch):
     row = _sub_rows(payload, tmp_path, monkeypatch)[0]
     assert row["pace"] is None
     assert row["eta"] == ""
+
+
+# ── Team seat rows (spec 281) ───────────────────────────────────────────────────────────
+
+
+def test_the_team_row_carries_a_distinct_display_identity():
+    # Same provider, different allowance: the two MiMo rows must never be
+    # confusable on screen.
+    assert lanes._lane_identity("mimo", "mimo:team-owner", "MiMo") == "MiMo Team"
+    assert lanes._lane_identity("mimo", "mimo:plan", "MiMo") == "MiMo"
+
+
+def test_a_local_team_row_cannot_outlive_the_report_that_dropped_it(tmp_path, monkeypatch):
+    """Silent retention is the bug: a healthy team row in the LOCAL snapshot
+    must vanish when the mimo report no longer carries one (spec 281
+    falsifier), exactly as the individual plan row does."""
+    _write(
+        tmp_path,
+        monkeypatch,
+        {
+            "lanes": [
+                {
+                    "id": "mimo:team-owner",
+                    "kind": "mimo",
+                    "status": "ok",
+                    "meters": [{"limitId": "seat", "usedPercent": 1.0, "resetsAt": NOW + 900}],
+                }
+            ]
+        },
+    )
+    mimo = tmp_path / "mimo.json"
+    mimo.write_text(
+        json.dumps(
+            {
+                "generatedAt": datetime.fromtimestamp(NOW - 60, tz=UTC).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "intervalSeconds": 900,
+                "lanes": [],
+            }
+        )
+    )
+    monkeypatch.setenv("THROTTLE_MIMO_REPORT", str(mimo))
+    lanes._cache = None
+    view = lanes.view(NOW)
+    assert all(row["id"] != "mimo:team-owner" for row in view["lanes"]), (
+        "a team row the report dropped must not survive from the local snapshot"
+    )

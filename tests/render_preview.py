@@ -54,6 +54,8 @@ def _meter(
     resets_at: float | None = None,
     reset_at: str = "",
     window_mins: int | None = None,
+    remaining: float | None = None,
+    allowance: float | None = None,
 ) -> dict:
     # #227 derives the icon from `window_mins` before falling back to the label,
     # and renders the absolute UTC reset beside the countdown. The preview
@@ -71,6 +73,9 @@ def _meter(
         "resets_at": resets_at,
         "reset_at": reset_at,
         "window_mins": window_mins,
+        # Spec 285 FR-3: provider-reported remaining/allowance beside used %.
+        "remaining": remaining,
+        "allowance": allowance,
     }
 
 
@@ -78,6 +83,10 @@ def _context() -> dict:
     return {
         "asset_v": "preview",
         "signals": signals.collect(),
+        # The tokens/s gauge panel + the summary's throughput line (spec 285
+        # FR-4): `_seed_history` seeds token buckets precisely so this arc has
+        # a deterministic shape to eyeball.
+        "tps": signals.tps_gauge(),
         "status": {
             "level": "pacing",
             "verdict": "PACING",
@@ -213,7 +222,15 @@ def _context() -> dict:
                 "plan": "Pro V3",
                 "src": "Pi meter report",
                 "meters": [
-                    _meter("7d", 2, "5d 05h", resets_at=NOW + 450000, window_mins=10080),
+                    _meter(
+                        "7d",
+                        2,
+                        "5d 05h",
+                        resets_at=NOW + 450000,
+                        window_mins=10080,
+                        remaining=1960,
+                        allowance=2000,
+                    ),
                     _meter("5h", 1, "1h 52m", resets_at=NOW + 6720, window_mins=300),
                 ],
                 "pace": 0.4,
@@ -283,6 +300,32 @@ def _context() -> dict:
                 "status": "unknown",
                 "detail": "no usage API for individual seats",
             },
+            *[
+                {
+                    "id": sid,
+                    "label": label,
+                    "identity": sid,
+                    "provider": "MiMo",
+                    "icon": "🔶",
+                    "sub": "",
+                    "family": "chinese-frontier",
+                    "plan": "Team" if "team" in sid else "Max",
+                    "src": "report" if pct is not None else "config",
+                    "meters": [_meter("monthly", pct, "15d", remaining=remaining, allowance=1000)]
+                    if pct is not None
+                    else [],
+                    "pace": None,
+                    "pace_warn": False,
+                    "eta": "",
+                    "status": status,
+                    "detail": "Unassigned; not routable" if pct is None else "synthetic fixture",
+                }
+                for sid, label, status, pct, remaining in [
+                    ("mimo:plan", "MiMo individual", "exhausted", 100, 0),
+                    ("mimo:team-owner", "MiMo Team owner", "ok", 25, 750),
+                    ("mimo:team-unassigned", "MiMo Team — unassigned", "unknown", None, None),
+                ]
+            ],
         ],
         "lanes": {
             "stale": False,
@@ -369,6 +412,11 @@ def main(out: Path, mode: str = "local") -> None:
     ctx = _context()
     if mode == "subscriptions":
         ctx = _subscription_only(ctx)
+    # Spec 285: the preview renders the same capacity truth the server wires
+    # in `_collect_view` — the routing rows' capacity join and the at-a-glance
+    # summary — or the screenshot would accept a shape production never emits.
+    presentation.attach_provider_capacity(ctx["providers"], ctx["subscriptions"])
+    ctx["summary"] = presentation.capacity_summary(ctx)
     # Production derives the badge icon from the status word; the fixture used
     # to omit it on every row but Z.AI, so the preview drew `❔ ok` — a shrug
     # next to a healthy lane. A preview that misreports the thing it exists to

@@ -220,7 +220,8 @@ def test_json_credential_keeps_token_and_expiry_from_same_source(
         json.dumps({"claudeAiOauth": oauth, static_field: static_token, "expiresAt": 5678})
     )
     token, expiry = (oauth_token, 1234) if oauth_shape == "valid" else (static_token, 5678)
-    assert accounts._digest_cred(str(cred)) == (_expected_bid(token), expiry, None, token)
+    kind = "oauth" if oauth_shape == "valid" else "static"
+    assert accounts._digest_cred(str(cred)) == (_expected_bid(token), expiry, None, token, kind)
 
 
 def test_snapshot_pool_mixes_oauth_and_static_keys(tmp_path, monkeypatch):

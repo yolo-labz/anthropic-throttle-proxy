@@ -76,6 +76,12 @@ _CYCLE_SUFFIX = {"monthly": "/mo", "annual": "/yr"}
 # The MiMo plan row's lane id: it is both the id of the synthetic row we mint
 # when the probe reports nothing, and the filter that keeps a stale copy out.
 _MIMO_PLAN_LANE_ID = "mimo:plan"
+# The team seat row's lane id (spec 281) — the individual plan's sibling, never
+# merged with it and never additive with it: two independent allowances. A
+# quota row is NOT proof of account authorization, and an unassigned purchased
+# seat is not usable capacity; the probe fails both closed instead of minting
+# counters.
+_MIMO_TEAM_LANE_ID = "mimo:team-owner"
 
 _cache: tuple[float, dict[str, Any]] | None = None
 
@@ -378,6 +384,10 @@ def _lane_identity(kind: str, lane_id: str, provider: str) -> str:
         return f"{provider} {suffix.upper()}"
     if kind == "copilot":
         return f"{provider} {suffix}"
+    if kind == "mimo" and suffix == "team-owner":
+        # Distinct display identity (spec 281): the team seat row and the
+        # individual plan row share a provider but not an allowance.
+        return f"{provider} Team"
     return provider
 
 
@@ -579,13 +589,13 @@ def view(now: float) -> dict[str, Any]:
     mimo_path = os.environ.get("THROTTLE_MIMO_REPORT", "").strip()
     if mimo_path:
         mimo = _read(now, mimo_path)
-        rows = [
+        plan_rows = [
             lane
             for lane in mimo["lanes"]
             if lane["id"] == _MIMO_PLAN_LANE_ID and lane["kind"] == "mimo"
         ]
-        if len(rows) != 1:
-            rows = [
+        if len(plan_rows) != 1:
+            plan_rows = [
                 _normalize(
                     {
                         "id": _MIMO_PLAN_LANE_ID,
@@ -597,10 +607,40 @@ def view(now: float) -> dict[str, Any]:
                     now,
                 )
             ]
+        # Team seat rows (spec 281), narrowly added beside the plan filter:
+        # zero rows keeps legacy individual-only behaviour (a host without
+        # Team configuration must not grow a phantom row); more than one is
+        # ambiguous and fails closed. A Team failure arrives as the probe's own
+        # fail-closed row, so a previously fresh healthy team meter is never
+        # silently retained — and the local drop below keeps a stale copy of
+        # either mimo row from surviving a report that no longer carries it.
+        team_rows = [
+            lane
+            for lane in mimo["lanes"]
+            if lane["id"] == _MIMO_TEAM_LANE_ID and lane["kind"] == "mimo"
+        ]
+        if len(team_rows) > 1:
+            team_rows = [
+                _normalize(
+                    {
+                        "id": _MIMO_TEAM_LANE_ID,
+                        "kind": "mimo",
+                        "status": "unknown",
+                        "reason": "MiMo team report ambiguous",
+                    },
+                    False,
+                    now,
+                )
+            ]
         snapshot = {
             **snapshot,
-            "lanes": [lane for lane in snapshot["lanes"] if lane["id"] != _MIMO_PLAN_LANE_ID]
-            + rows,
+            "lanes": [
+                lane
+                for lane in snapshot["lanes"]
+                if lane["id"] not in {_MIMO_PLAN_LANE_ID, _MIMO_TEAM_LANE_ID}
+            ]
+            + plan_rows
+            + team_rows,
         }
     _cache = (now, snapshot)
     return snapshot

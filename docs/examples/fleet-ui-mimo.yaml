@@ -1,0 +1,17 @@
+# Display inventory only. Merge these entries by id into FLEET_UI_CONFIG;
+# do not replace other subscriptions. Never supplies routing credentials/quota.
+subscriptions:
+  - id: mimo:plan
+    label: MiMo individual
+    provider: MiMo
+    family: chinese-frontier
+  - id: mimo:team-owner
+    label: MiMo Team owner
+    provider: MiMo
+    family: chinese-frontier
+  - id: mimo:team-unassigned
+    label: MiMo Team — unassigned (not routable)
+    provider: MiMo
+    family: chinese-frontier
+# An unassigned placeholder intentionally has no measured allowance, credential,
+# model eligibility or fabricated third usable account.
