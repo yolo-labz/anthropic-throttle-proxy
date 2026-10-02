@@ -846,6 +846,34 @@ def _is_text_only_endpoint(target: str) -> bool:
         return False  # malformed URL or port: not an endpoint this proxy can identify
 
 
+def _split_tool_use_blocks(
+    message: dict[str, Any], content: list[Any]
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """One block list → (rendered texts, reconstructed native tool calls).
+
+    Linkable tool-use blocks (id+name) become native ``tool_calls`` only on an
+    assistant turn that carries none yet; everything else is text-rendered.
+    """
+    linkage = message.get("role") == "assistant" and "tool_calls" not in message
+    generated: list[dict[str, Any]] = []
+    texts: list[str] = []
+    for part in content:
+        call = _native_tool_call(part) if linkage else None
+        if call is not None:
+            generated.append(call)
+            continue
+        text = _part_as_text(part)
+        if text is not None:
+            texts.append(text)
+    return texts, generated
+
+
+def _turn_flattened_to_nothing(message: dict[str, Any], texts: list[str]) -> bool:
+    """True when the turn kept no text and no native tool protocol."""
+    no_native_tool = "tool_calls" not in message and "tool_call_id" not in message
+    return not texts and no_native_tool and message.get("role") != "tool"
+
+
 def _flatten_message(message: dict[str, Any], *, is_last: bool) -> dict[str, Any] | None:
     """Flatten one message's block list to text, or None to drop the message.
 
@@ -859,24 +887,11 @@ def _flatten_message(message: dict[str, Any], *, is_last: bool) -> dict[str, Any
     """
     content = message.get("content")
     if isinstance(content, list) and content:
-        generated: list[dict[str, Any]] = []
-        texts: list[str] = []
-        for part in content:
-            # Reconstruct native linkage only where the protocol allows it: an
-            # assistant turn with no pre-existing tool_calls (issue #238 #1).
-            if message.get("role") == "assistant" and "tool_calls" not in message:
-                call = _native_tool_call(part)
-                if call is not None:
-                    generated.append(call)
-                    continue
-            text = _part_as_text(part)
-            if text is not None:
-                texts.append(text)
+        texts, generated = _split_tool_use_blocks(message, content)
         message = {**message, "content": "\n".join(texts)}
         if generated:
             message["tool_calls"] = generated
-        native_tool = "tool_calls" in message or "tool_call_id" in message
-        if not texts and not native_tool and message.get("role") != "tool":
+        if _turn_flattened_to_nothing(message, texts):
             if not is_last:
                 return None
             message["content"] = "[no text content]"
