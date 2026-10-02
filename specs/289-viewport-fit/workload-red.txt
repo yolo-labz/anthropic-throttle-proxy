@@ -1,0 +1,16 @@
+F
+=================================== FAILURES ===================================
+____________ test_selected_workload_replaces_local_zero_and_refusal ____________
+
+workload = {'client_disconnects': 0, 'inflight': 12, 'max_concurrent': 20, 'name': 'mimo', ...}
+
+    async def test_selected_workload_replaces_local_zero_and_refusal(workload):
+        view = await routes._collect_view()
+>       assert view["inflight"] == 12
+E       assert 0 == 12
+
+tests/test_workload_view.py:33: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_workload_view.py::test_selected_workload_replaces_local_zero_and_refusal
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 3.52s

@@ -1,0 +1,25 @@
+MODULE 1094231: looking for "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/cli.js" in ["/home/notroot/.node_modules","/home/notroot/.node_libraries","/nix/store/2gd4h12irmnanhg33md2rpjygrsj5ypb-nodejs-slim-22.23.2/lib/node"]
+MODULE 1094231: Module._load checking cache for /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/cli.js false
+MODULE 1094231: load "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/cli.js" for module "."
+MODULE 1094231: Module._load REQUEST ./lib/coreBundle parent: .
+MODULE 1094231: RELATIVE: requested: ./lib/coreBundle from parent.id .
+MODULE 1094231: looking for ["/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package"]
+MODULE 1094231: Module._load checking cache for /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js false
+MODULE 1094231: load "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js" for module "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js"
+MODULE 1094231: Module._load REQUEST os parent: /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js
+MODULE 1094231: Module._load checking cache for os false
+MODULE 1094231: load built-in module os
+MODULE 1094231: Module._load REQUEST path parent: /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js
+MODULE 1094231: Module._load checking cache for path false
+MODULE 1094231: load built-in module path
+MODULE 1094231: Module._load REQUEST fs parent: /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js
+MODULE 1094231: Module._load checking cache for fs false
+MODULE 1094231: load built-in module fs
+MODULE 1094231: Module._load REQUEST path parent: /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js
+MODULE 1094231: Module._load checking cache for path false
+MODULE 1094231: load built-in module path
+MODULE 1094231: Module._load REQUEST ./utilsBundle parent: /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js
+MODULE 1094231: RELATIVE: requested: ./utilsBundle from parent.id /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/coreBundle.js
+MODULE 1094231: looking for ["/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib"]
+MODULE 1094231: Module._load checking cache for /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/utilsBundle.js false
+MODULE 1094231: load "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/utilsBundle.js" for module "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-288-capacity-delivery/.venv/lib/python3.13/site-packages/playwright/driver/package/lib/utilsBundle.js"

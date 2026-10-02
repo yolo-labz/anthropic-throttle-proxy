@@ -3,12 +3,9 @@
    subscription is running out and when it reopens (capacity board), and what
    the routing is actually doing right now (traffic rail).
 
-   Layout is a `repeat(auto-fit, minmax(62rem, 1fr))` shell: one column until a
-   column can hold the capacity table without scrolling, two after. That is
-   what stops the 2560px page from being a 60%-wide strip with three different
-   right edges — measured before the pass: the capacity panel ended 766px short
-   of the viewport, the providers panel 1211px short, the bearers panel 1423px
-   short, i.e. 37% of the screen painted with nothing. #}
+   The desktop overview shares one row between throughput and golden signals,
+   then one between capacity and routing. The native header checkbox exposes
+   secondary provenance/reset details without losing its state on a poll. #}
 <span id="stats-meta" hidden data-revision="{{ asset_v | default('') }}" data-local="{{ 'true' if show_local | default(true) else 'false' }}"></span>
 {% if partial_response | default(false) and show_local | default(true) %}
 <span id="config-summary" class="muted" hx-swap-oob="true">{{ config_count | default('—') }} settings · {{ override_count | default('—') }} overrides · autosave on change</span>
@@ -102,11 +99,12 @@
    is honest by construction: token usage is parsed at request completion,
    so the value is the last minute of accounted output tokens, not an
    extrapolated instant. #}
+{% if tps | default(false) or signals %}<div class="telemetry">{% endif %}
 {% if tps | default(false) %}
 <section class="tps-panel" aria-label="Output tokens per second over the last minute">
   <div class="tps-dial" data-seen="{{ 'true' if tps.seen else 'false' }}">
     <svg class="tps-arc" viewBox="0 0 220 120" role="img"
-         aria-label="Output {{ '%.0f'|format(tps.value) }} tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, hourly peak {{ '%.0f'|format(tps.peak) }}">
+         aria-label="{% if tps.seen %}Output {{ '%.0f'|format(tps.value) }} tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, hourly peak {{ '%.0f'|format(tps.peak) }}{% else %}Output throughput not yet measured{% endif %}">
       <defs>
         <linearGradient id="tps-fill" x1="0" y1="0" x2="1" y2="0">
           <stop class="tps-stop-a" offset="0" />
@@ -127,12 +125,12 @@
             x2="{{ tps.peak_marker[2] }}" y2="{{ tps.peak_marker[3] }}" />
     </svg>
     <div class="tps-readout">
-      <span class="tps-num">{{ '%.0f'|format(tps.value) }}</span>
+      <span class="tps-num">{{ '%.0f'|format(tps.value) if tps.seen else '—' }}</span>
       <span class="tps-unit">tokens/s</span>
     </div>
   </div>
   <div class="tps-side">
-    <span class="gauge-label">output throughput</span>
+    <span class="gauge-label">{{ workload_label | default('local') }} output throughput</span>
     <div class="gauge-row">
       <span class="tps-detail">last {{ '%.0f'|format(tps.window_s) }}s · peak <b>{{ '%.0f'|format(tps.peak) }}</b> · scale {{ '%.0f'|format(tps.scale) }}</span>
       <svg class="spark" viewBox="0 0 {{ tps.spark.width }} {{ tps.spark.height }}" preserveAspectRatio="none" role="img"
@@ -141,8 +139,13 @@
         {% if tps.spark.points %}<polyline points="{{ tps.spark.points }}" />{% endif %}
       </svg>
     </div>
-    <span class="tps-foot">output tokens accounted at completion · input {{ tps.tok_in_now | default('—') }}/s</span>
+    <span class="tps-foot">{% if tps.seen %}accounted at completion · input {{ '%.1f'|format(tps.tok_in_now) }}/s{% else %}waiting for accounted output; not a measured zero{% endif %}</span>
   </div>
+</section>
+{% elif workload_label | default(false) %}
+<section class="tps-panel" aria-label="Workload throughput unavailable">
+  <span class="gauge-label">{{ workload_label }} throughput unavailable</span>
+  <span class="muted">No compatible token telemetry; the workload runtime must publish it. Not zero tokens/s.</span>
 </section>
 {% endif %}
 
@@ -182,6 +185,8 @@
 </section>
 {% endif %}
 
+{% if tps | default(false) or signals %}</div>{% endif %}
+
 {# ── CAPACITY BOARD — the payload ──────────────────────────────────────────── #}
 {% if subscriptions %}
 <section class="board" aria-label="Configured subscription meters; observed usage does not prove model eligibility">
@@ -201,8 +206,10 @@
     <span class="pm-sep">·</span>
     <span class="pm-k">sampling every</span>
     <span class="pm-v">{% if lanes.interval_s %}{{ lanes.interval_s | int }}s{% else %}unknown{% endif %}</span>
+    <span class="sample-extra">
     {% if lanes.next_sample_in_s is defined and lanes.next_sample_in_s is not none %}<span class="pm-sep">·</span><span class="pm-k">next sample in</span><span class="pm-v">{{ lanes.next_sample_in_s | int }}s</span>{% endif %}
     {% if lanes.observed_at %}<span class="pm-sep">·</span><span class="pm-k">observed</span><span class="pm-v">{{ lanes.observed_at }}</span>{% endif %}
+    </span>
     {% if lanes.error %}<span class="pm-sep">·</span><span class="pm-err">{{ lanes.error }}</span>{% endif %}
   </p>
   {% endif %}
@@ -288,6 +295,7 @@
           {% endif %}
         </td>
         <td class="sub-meters">
+          <div class="meter-list">
           {% if s.meters %}
             {% for m in s.meters %}
             <div class="meter">
@@ -326,6 +334,7 @@
           {% else %}
             <span class="meter-note">{{ "no reading" if s.detail else "—" }}</span>
           {% endif %}
+          </div>
         </td>
         <td class="burn">
           {# `refusing` is a claim about the STATUS, never an inference from a
@@ -439,7 +448,7 @@
     <colgroup>
       <col class="c-tok" /><col class="c-tok-acct" /><col class="c-tok-slots" />
       <col class="c-tok-n" /><col class="c-tok-n" /><col class="c-tok-n" /><col class="c-tok-n" />
-      <col class="c-tok-win" /><col class="c-tok-n" />
+      <col class="c-tok-win" />
     </colgroup>
     <thead>
       <tr>
@@ -466,9 +475,9 @@
          from local queue contention. A tooltip is not a place to hide an
          incident fact (cross-family review, 18/09/2026). #}
       <tr>
-        <td><code title="sha256-truncated bearer hash">{{ b.bearer_id }}</code></td>
-        <td>{% if b.identity %}<span class="acct">{{ b.identity }}</span>{% if b.account and b.account != b.identity %}<span class="id-tag" title="Local credential-file label">{{ b.account }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="num">
+        <td data-label="bearer"><code title="sha256-truncated bearer hash">{{ b.bearer_id }}</code></td>
+        <td data-label="account">{% if b.identity %}<span class="acct">{{ b.identity }}</span>{% if b.account and b.account != b.identity %}<span class="id-tag" title="Local credential-file label">{{ b.account }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num" data-label="slots">
           {# in-flight FIRST, matching the provider table's `2/8`. The header
              says "slots" and the cell rendered `8 2` — cap then in-flight,
              unseparated, i.e. literally the opposite number
@@ -478,11 +487,11 @@
           <span class="slot-hard{% if lcap <= 1 %} is-floor{% endif %}" title="AIMD live cap {{ lcap }} of hard {{ hard }} — the live value falls on 429/503 and ramps back after the cooldown">hard {{ hard }}</span>
           {% endif %}
         </td>
-        <td class="num{% if b.queued > 0 %} is-warn-text{% endif %}">{{ b.queued }}</td>
-        <td class="num">{% if b.retry_after_in %}<span class="retry-after">{{ b.retry_after_in }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="num">{{ "{:,}".format(b.served) }}{% if reqleft is not none %}<span class="req-left" title="anthropic-ratelimit-requests-remaining">{{ reqleft }} left</span>{% endif %}</td>
-        <td class="num">{% if b.limiter %}{{ (b.limiter.queued_per_client or {}) | length }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td>
+        <td class="num{% if b.queued > 0 %} is-warn-text{% endif %}" data-label="queued">{{ b.queued }}</td>
+        <td class="num" data-label="retry">{% if b.retry_after_in %}<span class="retry-after">{{ b.retry_after_in }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num" data-label="served">{{ "{:,}".format(b.served) }}{% if reqleft is not none %}<span class="req-left" title="anthropic-ratelimit-requests-remaining">{{ reqleft }} left</span>{% endif %}</td>
+        <td class="num" data-label="clients">{% if b.limiter %}{{ (b.limiter.queued_per_client or {}) | length }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td data-label="5h">
           {% if b.unified and b.unified.util_5h is not none %}
             {% if b.unified_5h_stale %}<span class="muted" title="Last reading predates this window's reset — effectively 0%">reset</span>
             {% else %}

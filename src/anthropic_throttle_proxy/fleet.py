@@ -97,6 +97,8 @@ def _parse_health(body: Any) -> dict[str, Any]:
         # None where the client supplies the token (nothing lane-wide to judge).
         "upstream_auth_ok": body.get("upstream_auth_ok"),
         "upstream_auth_error": str(body.get("upstream_auth_error") or ""),
+        "throughput": body.get("throughput"),  # validated before gauge arithmetic
+        "keepalive_holds_active": _safe_int(body.get("keepalive_holds_active")),
         "client_disconnects": _safe_int(body.get("client_disconnects")),
         "upstream_retries": _safe_int(body.get("upstream_retries")),
     }

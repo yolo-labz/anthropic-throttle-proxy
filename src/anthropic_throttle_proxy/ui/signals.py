@@ -187,11 +187,28 @@ def _arc_point(frac: float, r_out: float) -> tuple[float, float]:
     return (_ARC_CX + r_out * math.cos(angle), _ARC_CY - r_out * math.sin(angle))
 
 
-def tps_gauge() -> TpsGauge:
-    """Build the tokens/s gauge from the history ring."""
-    points = _history.series()
-    rates = [p.tok_out / _history.RESOLUTION_S for p in points]
-    in_rates = [p.tok_in / _history.RESOLUTION_S for p in points]
+def remote_tps(snapshot: object) -> TpsGauge | None:
+    """Accept bounded, measured token buckets; absent/old/bad telemetry is unknown."""
+    if not isinstance(snapshot, dict) or snapshot.get("bucket_seconds") != _history.RESOLUTION_S:
+        return None
+    buckets = snapshot.get("tokens")
+    if not isinstance(buckets, list) or len(buckets) > 360:
+        return None
+    for pair in buckets:
+        if not isinstance(pair, list) or len(pair) != 2:
+            return None
+        if any(type(v) is not int or not 0 <= v <= 2**53 for v in pair):
+            return None
+    return tps_gauge(buckets)
+
+
+def tps_gauge(token_buckets: list | None = None) -> TpsGauge:
+    """Build the gauge from local history or validated sibling token buckets."""
+    buckets = token_buckets
+    if buckets is None:
+        buckets = [(p.tok_out, p.tok_in) for p in _history.series()]
+    rates = [p[0] / _history.RESOLUTION_S for p in buckets]
+    in_rates = [p[1] / _history.RESOLUTION_S for p in buckets]
     # Windowed mean over the last N closed buckets: token usage lands at
     # completion, so a single 10 s bucket is a lumpy estimator. Mean of the
     # trailing 60 s is what the number claims to be (“current” = last minute).
@@ -223,7 +240,7 @@ def tps_gauge() -> TpsGauge:
         peak_marker=(round(mx1, 1), round(my1, 1), round(mx2, 1), round(my2, 1)),
         spark=sparkline(_fold(rates, peaks=True)),
         tok_in_now=tok_in_now,
-        seen=any(p.tok_out > 0 for p in points),
+        seen=any(p[0] > 0 for p in buckets),
     )
 
 

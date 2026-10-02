@@ -62,6 +62,10 @@ def _validate_defaults(defaults: Any) -> None:
             raise ValueError("defaults.hidden_families must be a list of strings")
     if "show_primary" in defaults and not isinstance(defaults["show_primary"], bool):
         raise ValueError("defaults.show_primary must be a boolean")
+    if "workload" in defaults and (
+        not isinstance(defaults["workload"], str) or not defaults["workload"].strip()
+    ):
+        raise ValueError("defaults.workload must name a configured fleet sibling")
 
 
 def _validate_subscription(entry: Any, index: int, ids: set[str]) -> None:
@@ -137,6 +141,7 @@ def _parse(path: Path) -> dict[str, Any]:
             # while the load test only looked at subscriptions+emoji.
             "hidden_families": list(raw_defaults.get("hidden_families") or []),
             "show_primary": raw_defaults.get("show_primary", True),
+            **({"workload": raw_defaults["workload"]} if "workload" in raw_defaults else {}),
         },
     }
 
