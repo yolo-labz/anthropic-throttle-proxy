@@ -223,8 +223,8 @@ async def test_saturation_reports_all_usable_pools_park_without_closing_lane():
     assert sat["all_usable_bearers_would_park"] is True, sat
 
 
-async def test_priority_traffic_does_not_fake_a_full_normal_pool():
-    """The reserve dispatches outside the normal pool and must be subtracted."""
+def _mixed_reserve_bearer() -> None:
+    """One bearer: 3 reserve holders over 5 normal-cap slots (inflight 6)."""
     config.bearer_state["a"] = {"unified": _unified()}
     config.bearer_limiters["a"] = _Snap(
         max_concurrent=5,
@@ -233,11 +233,30 @@ async def test_priority_traffic_does_not_fake_a_full_normal_pool():
         queued_total=0,
     )
 
+
+async def test_priority_traffic_does_not_fake_a_full_normal_pool(monkeypatch):
+    """The reserve dispatches outside the normal pool and must be subtracted."""
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 3)  # live reserve covers the holders
+    _mixed_reserve_bearer()
+
     sat = (await _get())["saturation"]
     assert sat["normal_inflight"] == 3, sat
     assert sat["priority_inflight"] == 3, sat
     assert sat["free"] == 2, sat
     assert sat["all_usable_bearers_would_park"] is False, sat
+
+
+async def test_retired_reserve_holders_count_as_normal_occupancy(monkeypatch):
+    """spec 221 §5c follow-up: once the reserve is lowered below
+    ``priority_inflight``, the retired holders drain against the COMBINED cap,
+    so the hint must not report their slots as free normal capacity."""
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 0)  # retired mid-flight
+    _mixed_reserve_bearer()
+
+    sat = (await _get())["saturation"]
+    assert sat["normal_inflight"] == 6, sat  # only the live reserve is subtracted
+    assert sat["free"] == 0, sat
+    assert sat["all_usable_bearers_would_park"] is True, sat
 
 
 async def test_a_free_slot_behind_a_queue_still_parks():

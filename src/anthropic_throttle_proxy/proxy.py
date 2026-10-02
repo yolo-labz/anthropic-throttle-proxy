@@ -3479,14 +3479,39 @@ def _plan_lane_has_headroom(now: float | None = None) -> bool:
     reads — so this costs a cached file read and never a credential or an
     outbound call. Every way of answering "we do not know" returns False, which
     keeps the conservative budget backoff as the default.
+
+    The knob names ONE lane's meter, but the headerless 429 being classified
+    belongs to whatever bearer routed here — and since spec 281 one instance
+    routes SIBLING allowances (``mimo:plan`` + ``mimo:team-owner``: two
+    independent allowances, never additive). The report strips credential
+    identity, so a bearer cannot be bound to its own quota row (integration
+    gap — never invented here), and "a plan far from its allowance cannot be at
+    a budget wall" is only sound for a bearer spending a quota we can see. So
+    the inference fires only when EVERY same-provider lane in the report is
+    fresh and below the pressure line: whichever of them this bearer spends, it
+    is not at its wall. One exhausted or unreadable sibling means an allowance
+    in play is unknown → the conservative budget backoff stands.
     """
     lane_id = config.PLAN_METER_LANE
     if not lane_id:
         return False
-    used = _lanes.plan_meter_used_percent(lane_id, now if now is not None else time.time())
-    if used is None:
+    now = time.time() if now is None else now
+    rows = _lanes.view(now).get("lanes")
+    if not isinstance(rows, list):
         return False
-    return used < config.PLAN_PRESSURE_PERCENT
+    namespace = f"{lane_id.split(':', 1)[0]}:"
+    seen = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        rid = str(row.get("id") or "")
+        if rid != lane_id and not rid.startswith(namespace):
+            continue
+        seen = True
+        used = _lanes.plan_meter_used_percent(rid, now)
+        if used is None or used >= config.PLAN_PRESSURE_PERCENT:
+            return False
+    return seen
 
 
 def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> bool:
@@ -3540,6 +3565,10 @@ def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> boo
         # its 429 is concurrency/rate. (MiMo Token Plan, 23/09/2026: headerless
         # 429 at ~6 % of an 82 B-credit month was read as budget, bought a 30 s
         # synthetic hold and collapsed the lane to one slot under fleet load.)
+        # The inference is scoped to allowances in play (every same-provider
+        # lane must show headroom — see ``_plan_lane_has_headroom``): one
+        # instance can route a SIBLING allowance whose quota IS spent, and
+        # classifying that bearer's wall as "concurrency" blocks real pushback.
         # Unknown, stale or absent meter still means budget.
         return not _plan_lane_has_headroom()
     statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
@@ -5622,9 +5651,11 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
 
     The priority reserve dispatches outside the normal pool: ``inflight``
     includes it, while ``max_concurrent`` does not. Match the limiter's own
-    admission predicate by subtracting ``priority_inflight`` before comparing
-    normal occupancy with the cap. A non-empty normal queue also means a new
-    normal request parks even if a slot has just freed, because dequeue is FIFO.
+    admission predicate (``limiter.normal_busy``) before comparing normal
+    occupancy with the cap — at most the live reserve is subtracted, so
+    retired holders from a lowered reserve count as normal occupancy. A
+    non-empty normal queue also means a new normal request parks even if a slot
+    has just freed, because dequeue is FIFO.
     """
     usable_count = sum(1 for ok in usable.values() if ok)
     measured_count = 0
@@ -5653,7 +5684,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
 
         measured_count += 1
         drains.append(snapshot.get("drain"))
-        normal = total - reserve
+        normal = _limiter.normal_busy(total, reserve)
         bearer_free = max(0, cap - normal)
         slots += cap
         normal_inflight += normal
