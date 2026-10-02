@@ -720,21 +720,18 @@ TEXT_ONLY_PATH = "/api/coding/paas/v4/chat/completions"
 # The kinds this function models. A dict block whose kind is NOT one of
 # these is unmodelled, not malformed: it gets a placeholder instead of aborting
 # the rewrite (see ``_part_as_text``).
-_KNOWN_BLOCK_TYPES = frozenset(
-    {
-        "text",
-        "thinking",
-        "redacted_thinking",
-        "toolCall",
-        "tool_use",
-        "function_call",
-        "function",
-        "toolResult",
-        "tool_result",
-        "image",
-        "image_url",
-        "input_image",
-    }
+#
+# DERIVED from the branch-predicate groups below (issue #238 drift guard): the
+# branches consult these groups and this frozenset is their union, so the two
+# can no longer drift apart. A future branch that models a new kind must add it
+# to a group; the synthetic drift regression fails on literal kind comparisons.
+_TEXT_KINDS = frozenset({"text"})
+_THINKING_KINDS = frozenset({"thinking", "redacted_thinking"})
+_TOOL_CALL_KINDS = frozenset({"toolCall", "tool_use", "function_call", "function"})
+_TOOL_RESULT_KINDS = frozenset({"toolResult", "tool_result"})
+_IMAGE_KINDS = frozenset({"image", "image_url", "input_image"})
+_KNOWN_BLOCK_TYPES = (
+    _TEXT_KINDS | _THINKING_KINDS | _TOOL_CALL_KINDS | _TOOL_RESULT_KINDS | _IMAGE_KINDS
 )
 
 
@@ -778,15 +775,15 @@ def _part_as_text(part: Any) -> str | None:
     if not isinstance(part, dict):
         raise ValueError("invalid content block")
     kind = part.get("type")
-    if kind == "text" and isinstance(part.get("text"), str):
+    if kind in _TEXT_KINDS and isinstance(part.get("text"), str):
         return part["text"]
-    if kind in ("thinking", "redacted_thinking"):
+    if kind in _THINKING_KINDS:
         return None
-    if kind in ("toolCall", "tool_use", "function_call", "function"):
+    if kind in _TOOL_CALL_KINDS:
         return _tool_call_text(part)
-    if kind in ("toolResult", "tool_result"):
+    if kind in _TOOL_RESULT_KINDS:
         return _tool_result_text(part)
-    if kind in ("image", "image_url", "input_image"):
+    if kind in _IMAGE_KINDS:
         return "[image omitted: this lane accepts text only]"
     # A well-formed block of a kind this lane does not model (`document`,
     # `audio`, `server_tool_use`, `web_search_tool_result`, any future kind)
@@ -801,6 +798,28 @@ def _part_as_text(part: Any) -> str | None:
         text = part.get("text")
         return text if isinstance(text, str) else f"[{kind} omitted: this lane accepts text only]"
     raise ValueError("unsupported content block")
+
+
+def _native_tool_call(part: Any) -> dict[str, Any] | None:
+    """One native ``tool_calls`` entry for a linkable tool-use block, else None.
+
+    None means the block cannot carry native linkage (no usable id/name) and
+    falls back to the text rendering in ``_part_as_text``. Native ``tool_calls``
+    are what this endpoint accepts (PR #236: 1210 hits content[] types, never
+    tool_calls), and reconstructing them is what stops a content-level
+    ``tool_use`` from orphaning its ``role:"tool"`` partner (issue #238 #1).
+    """
+    if not isinstance(part, dict) or part.get("type") not in _TOOL_CALL_KINDS:
+        return None
+    ref = part.get("id")
+    fn = part.get("function")
+    fn = fn if isinstance(fn, dict) else {}
+    name = part.get("name", part.get("toolName", fn.get("name")))
+    if not isinstance(ref, str) or not ref or not isinstance(name, str) or not name:
+        return None
+    args = part.get("arguments", part.get("input", fn.get("arguments", "")))
+    args = args if isinstance(args, str) else json.dumps(args)
+    return {"id": ref, "type": "function", "function": {"name": name, "arguments": args}}
 
 
 def _is_text_only_endpoint(target: str) -> bool:
@@ -840,8 +859,22 @@ def _flatten_message(message: dict[str, Any], *, is_last: bool) -> dict[str, Any
     """
     content = message.get("content")
     if isinstance(content, list) and content:
-        texts = [t for p in content if (t := _part_as_text(p)) is not None]
+        generated: list[dict[str, Any]] = []
+        texts: list[str] = []
+        for part in content:
+            # Reconstruct native linkage only where the protocol allows it: an
+            # assistant turn with no pre-existing tool_calls (issue #238 #1).
+            if message.get("role") == "assistant" and "tool_calls" not in message:
+                call = _native_tool_call(part)
+                if call is not None:
+                    generated.append(call)
+                    continue
+            text = _part_as_text(part)
+            if text is not None:
+                texts.append(text)
         message = {**message, "content": "\n".join(texts)}
+        if generated:
+            message["tool_calls"] = generated
         native_tool = "tool_calls" in message or "tool_call_id" in message
         if not texts and not native_tool and message.get("role") != "tool":
             if not is_last:
@@ -850,6 +883,40 @@ def _flatten_message(message: dict[str, Any], *, is_last: bool) -> dict[str, Any
     elif content is not None and not isinstance(content, (str, list)):
         raise ValueError("unsupported content shape")
     return message
+
+
+def _relink_tool_results(messages: list[Any]) -> list[Any]:
+    """Rewrite tool-result turns whose originating call no longer exists.
+
+    A content-level ``tool_use`` rendered as text (no linkable id) leaves its
+    ``role:"tool"`` partner referencing an id with no native ``tool_calls``
+    entry — a strict validator rejects that orphaned reference (issue #238 #1,
+    pinned failure mode). When the call cannot be reconstructed, the result
+    degrades to explicit text instead of an invalid protocol message. Covered
+    references and everything else are untouched, and this pass never raises
+    (the transactional contract stays with ``_flatten_message``).
+    """
+    covered = {
+        call["id"]
+        for message in messages
+        if isinstance(message, dict) and isinstance(message.get("tool_calls"), list)
+        for call in message["tool_calls"]
+        if isinstance(call, dict) and isinstance(call.get("id"), str)
+    }
+    out = []
+    for message in messages:
+        ref = message.get("tool_call_id") if isinstance(message, dict) else None
+        if isinstance(ref, str) and ref not in covered:
+            body = message.get("content")
+            out.append(
+                {
+                    "role": "user",
+                    "content": f"[tool result] {body if isinstance(body, str) else ''}",
+                }
+            )
+        else:
+            out.append(message)
+    return out
 
 
 def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
@@ -878,6 +945,7 @@ def normalize_text_content_blocks(raw: bytes, target: str) -> bytes:
             flattened = _flatten_message(message, is_last=index == last)
             if flattened is not None:
                 kept.append(flattened)
+        kept = _relink_tool_results(kept)
         if kept == messages:
             return raw
         obj["messages"] = kept
