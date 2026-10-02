@@ -207,6 +207,47 @@ async def test_reserve_lowered_to_zero_migrates_parked_lane_waiters(monkeypatch)
     assert lim.inflight == 0
 
 
+async def test_retired_reserve_holders_drain_against_the_combined_cap(monkeypatch) -> None:
+    """spec 221 evidence §5c MINOR follow-up (283 routing verification).
+
+    Lowering ``PRIORITY_RESERVE_SLOTS`` while reserve holders are still in
+    flight must not let a migrated waiter start over the NEW combined cap.
+    Reserve 2 → 0 with two priority holders in flight: the combined cap becomes
+    ``max_concurrent`` (=2 here) and both retired holders drain against IT, so
+    no waiter may start until one of them releases. The old predicate
+    subtracted ALL ``priority_inflight`` from normal occupancy, so the migrated
+    waiter dispatched immediately — ``inflight=3`` against a combined cap of 2.
+    """
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 2)
+    lim = limiter.FairBearerLimiter(2, "fair")
+    lim.max_concurrent = 2
+    monkeypatch.setitem(config.bearer_limiters, "testbearer", lim)
+    await lim.acquire("p1", priority=True)
+    await lim.acquire("p2", priority=True)  # reserve (2) full: both in flight
+    assert lim.inflight == 2 and lim.priority_inflight == 2
+
+    queued = asyncio.create_task(lim.acquire("p3", priority=True))  # parks in the lane
+    await _yield_loop()
+    assert lim.snapshot()["priority_queued"] == 1
+
+    monkeypatch.setattr(config, "PRIORITY_RESERVE_SLOTS", 0)  # lane retired mid-flight
+    await limiter.kick_existing_limiters()  # the hot-tune's migrate + dispatch
+    await _yield_loop()
+    assert lim.inflight == 2  # nothing started over the combined cap of 2
+    assert not queued.done()
+    # Shared admission predicate agrees (drain estimate feeds queue admission).
+    assert lim.drain_estimate().busy == 2
+
+    await lim.release(priority=True)  # one retired holder drains
+    await _yield_loop()
+    assert queued.done()
+    assert queued.result() is False  # dispatched via the normal pool
+    assert lim.inflight == 2  # exactly the cap: one waiter replaced one holder
+    await lim.release(priority=True)
+    await lim.release()  # demoted slot releases as normal
+    assert lim.inflight == 0 and lim.priority_inflight == 0
+
+
 async def test_reserve_raised_kick_wakes_parked_lane_waiters(monkeypatch) -> None:
     """Codex round-2 MAJOR (raise direction): raising the reserve must wake
     already-parked lane waiters via kick_existing_limiters — without waiting

@@ -178,6 +178,20 @@ def _initial_live_cap(hard_max: int) -> int:
     return min(hard_max, max(config.AIMD_MIN, config.AIMD_INITIAL_CONCURRENT))
 
 
+def normal_busy(inflight: int, priority_inflight: int) -> int:
+    """Main-pool occupancy counted against ``max_concurrent``.
+
+    Reserve holders sit outside the main cap only while the reserve lane still
+    covers them: after a hot-tune drops ``PRIORITY_RESERVE_SLOTS`` below
+    ``priority_inflight``, the RETIRED holders drain against the COMBINED cap
+    (spec 221 evidence §5c follow-up), so at most ``PRIORITY_RESERVE_SLOTS`` of
+    them are subtracted here. ``_try_dispatch``, ``drain_estimate`` and the
+    saturation hint share this ONE predicate; total upstream concurrency stays
+    bounded by ``max_concurrent + PRIORITY_RESERVE_SLOTS`` in every regime.
+    """
+    return inflight - min(priority_inflight, config.PRIORITY_RESERVE_SLOTS)
+
+
 def _retry_after_state_path() -> Path | None:
     raw = config.RETRY_AFTER_STATE_FILE
     return Path(os.path.expanduser(raw)) if raw else None
@@ -933,7 +947,7 @@ class FairBearerLimiter:
             samples = self._priority_samples
         else:
             slots = self.max_concurrent
-            busy = self.inflight - self.priority_inflight
+            busy = normal_busy(self.inflight, self.priority_inflight)
             queued = self.queued_total
             samples = self._samples
         service_time_s, residuals, count, source = _service_estimate(
@@ -1252,8 +1266,10 @@ class FairBearerLimiter:
         satisfy ``inflight >= max_concurrent + reserve`` and pinch a shared
         lane shut exactly when the evaluator needs it. Normal round-robin
         traffic is capped at ``max_concurrent`` main-pool slots
-        (``inflight - priority_inflight``), so sustained priority load cannot
-        starve it and the main pool cannot overrun the AIMD ceiling.
+        (``normal_busy``: ``inflight`` minus at most the live reserve — retired
+        holders from a lowered reserve drain against the COMBINED cap), so
+        sustained priority load cannot starve it and the main pool cannot
+        overrun the AIMD ceiling.
         Total upstream concurrency is bounded by
         ``max_concurrent + PRIORITY_RESERVE_SLOTS``.
 
@@ -1276,7 +1292,7 @@ class FairBearerLimiter:
             self.inflight += 1
             self.priority_inflight += 1
             fut.set_result((True, self._note_dispatch(True)))
-        while (self.inflight - self.priority_inflight) < self.max_concurrent:
+        while normal_busy(self.inflight, self.priority_inflight) < self.max_concurrent:
             fut = self._next_waiter(self._rr_order, self._queues)
             if fut is None:
                 break

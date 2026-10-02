@@ -5651,9 +5651,11 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
 
     The priority reserve dispatches outside the normal pool: ``inflight``
     includes it, while ``max_concurrent`` does not. Match the limiter's own
-    admission predicate by subtracting ``priority_inflight`` before comparing
-    normal occupancy with the cap. A non-empty normal queue also means a new
-    normal request parks even if a slot has just freed, because dequeue is FIFO.
+    admission predicate (``limiter.normal_busy``) before comparing normal
+    occupancy with the cap — at most the live reserve is subtracted, so
+    retired holders from a lowered reserve count as normal occupancy. A
+    non-empty normal queue also means a new normal request parks even if a slot
+    has just freed, because dequeue is FIFO.
     """
     usable_count = sum(1 for ok in usable.values() if ok)
     measured_count = 0
@@ -5682,7 +5684,7 @@ def _lane_saturation(bearers: dict[str, dict], usable: dict[str, bool]) -> dict:
 
         measured_count += 1
         drains.append(snapshot.get("drain"))
-        normal = total - reserve
+        normal = _limiter.normal_busy(total, reserve)
         bearer_free = max(0, cap - normal)
         slots += cap
         normal_inflight += normal
