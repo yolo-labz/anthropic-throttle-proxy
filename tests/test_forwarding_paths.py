@@ -625,3 +625,17 @@ async def test_central_single_probe_blip_does_not_flap(monkeypatch) -> None:
     forwarding._record_central_sample(True)
     assert config.state["central_status"] == "up"
     assert config.state["central_consecutive_fail"] == 0
+
+
+def test_rebind_headers_contract():
+    # Issue #238 #3: the Content-Length rebinding assumes the plain dict
+    # proxy.handler builds. Duplicates must not be collapsed silently.
+    out = forwarding._rebind_headers({"content-length": "5", "Authorization": "x", "X-A": "1"}, 42)
+    assert out == {"Authorization": "x", "X-A": "1", "Content-Length": "42"}
+
+    class MultiDict:
+        def items(self):
+            return [("a", "1"), ("a", "2")]
+
+    with pytest.raises(AssertionError):
+        forwarding._rebind_headers(MultiDict(), 1)
