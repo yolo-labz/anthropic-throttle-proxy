@@ -8,9 +8,12 @@ to a single slot, so a concurrency blip became a queue collapse — 156 local
 queue-wait timeouts in 24 h on the same lane.
 
 These tests pin the disambiguation: a fresh plan meter below the pressure line
-outranks the headerless default, and every unknown state (unset knob, stale
-report, unreadable meter, wrong lane) falls back to the conservative budget
-backoff.
+outranks the headerless default, but only while EVERY same-provider allowance in
+the report (``mimo:plan`` + its Team sibling, spec 281) shows fresh headroom —
+the knob names one quota row and the report cannot bind a bearer to its own.
+Every unknown state (unset knob, stale report, unreadable meter, wrong lane, an
+exhausted or unreadable sibling allowance) falls back to the conservative
+budget backoff.
 """
 
 import time
@@ -30,9 +33,28 @@ def _plan_knobs_default_off(monkeypatch):
     yield
 
 
+TEAM_LANE = "mimo:team-owner"
+
+
 def _snapshot(*, lane_status: str = "ok", used: float | None = 6.3, lane_id: str = PLAN_LANE):
     meters = [] if used is None else [{"label": "monthly", "used_pct": used}]
     return {"lanes": [{"id": lane_id, "status": lane_status, "meters": meters}]}
+
+
+def _sibling_snapshot(*, plan_used=6.3, team_used=100.0, team_status="ok", extra=()):
+    """One instance, TWO independent allowances (spec 281): plan + Team seat."""
+
+    def row(lane_id, status, used, label):
+        meters = [] if used is None else [{"label": label, "used_pct": used}]
+        return {"id": lane_id, "kind": "mimo", "status": status, "meters": meters}
+
+    return {
+        "lanes": [
+            row(PLAN_LANE, "ok", plan_used, "monthly"),
+            row(TEAM_LANE, team_status, team_used, "seat"),
+            *extra,
+        ]
+    }
 
 
 def test_unset_knob_keeps_the_conservative_budget_default():
@@ -108,3 +130,72 @@ def test_plan_meter_used_percent_reads_the_fullest_meter(monkeypatch):
     assert lanes.plan_meter_used_percent(PLAN_LANE, time.time()) == 41.0
     assert lanes.plan_meter_used_percent("", time.time()) is None
     assert lanes.plan_meter_used_percent("nope", time.time()) is None
+
+
+def test_sibling_lane_wall_is_not_rescued_by_plan_headroom(monkeypatch):
+    """Hypothesis (283 routing verification), reproduced here first.
+
+    ``THROTTLE_PLAN_METER_LANE`` names ONE lane's meter, but the fallback
+    classifies a headerless 429 for EVERY bearer on the instance. Since spec
+    281 one instance routes SIBLING allowances (``mimo:plan`` +
+    ``mimo:team-owner`` — two independent allowances, never additive), so an
+    exhausted Team seat whose quota is spent must NOT read as "concurrency"
+    just because the individual plan is at 6 %. That misclassification blocks
+    real pushback: no AIMD shrink, a 2 s cooldown and a doomed keepalive hold
+    for a bearer that is at its own budget wall.
+    """
+    monkeypatch.setattr(config, "PLAN_METER_LANE", PLAN_LANE)
+    monkeypatch.setattr(lanes, "view", lambda now: _sibling_snapshot())
+    assert proxy._budget_under_pressure({}, "team-seat") is True
+    pause, synthetic = proxy._pushback_pause({}, "team-seat")
+    assert synthetic is True
+    assert pause == min(max(0.0, config.AIMD_BACKOFF_S), config.MAX_HOLD_RETRY_AFTER_S)
+
+
+def test_sibling_lane_headroom_keeps_the_concurrency_inference(monkeypatch):
+    """Both allowances far from their walls: whichever a bearer spends, its
+    headerless 429 cannot be a budget wall — the 23/09 inference stands."""
+    monkeypatch.setattr(config, "PLAN_METER_LANE", PLAN_LANE)
+    monkeypatch.setattr(lanes, "view", lambda now: _sibling_snapshot(team_used=6.0))
+    assert proxy._plan_lane_has_headroom() is True
+    assert proxy._budget_under_pressure({}, "team-seat") is False
+    pause, synthetic = proxy._pushback_pause({}, "team-seat")
+    assert synthetic is True
+    assert pause == max(0.0, config.CONCURRENCY_COOLDOWN_S)
+
+
+def test_unreadable_sibling_lane_falls_back_to_budget(monkeypatch):
+    """UNKNOWN IS NOT HEADROOM, and it now applies per allowance in play: a
+    sibling the probe could not read (or a purchased-but-unassigned seat) may
+    be exactly the quota this bearer is spending."""
+    monkeypatch.setattr(config, "PLAN_METER_LANE", PLAN_LANE)
+    monkeypatch.setattr(
+        lanes,
+        "view",
+        lambda now: _sibling_snapshot(team_used=None, team_status="unknown"),
+    )
+    assert proxy._plan_lane_has_headroom() is False
+    assert proxy._budget_under_pressure({}, "team-seat") is True
+
+
+def test_other_provider_rows_do_not_speak_for_a_plan_bearer(monkeypatch):
+    """Only same-provider allowances are candidates for what a plan-lane bearer
+    spends; an exhausted unrelated lane must not disable the inference."""
+    monkeypatch.setattr(config, "PLAN_METER_LANE", PLAN_LANE)
+    monkeypatch.setattr(
+        lanes,
+        "view",
+        lambda now: _sibling_snapshot(
+            team_used=6.0,
+            extra=(
+                {
+                    "id": "zai:glm",
+                    "kind": "zai",
+                    "status": "exhausted",
+                    "meters": [{"label": "5h", "used_pct": 100.0}],
+                },
+            ),
+        ),
+    )
+    assert proxy._plan_lane_has_headroom() is True
+    assert proxy._budget_under_pressure({}, "team-seat") is False
