@@ -5916,6 +5916,13 @@ async def health(_request: web.Request) -> web.Response:
         # shows fleet parallelism + fair-RR queue depths in one glance.
         "bearers": bearers_view,
     }
+    # Opt-in dashboard telemetry leaves the default health schema/size unchanged.
+    # Bounded token counts only: no account identity, prompts or external I/O.
+    if _request is not None and _request.query.get("telemetry") == "1":
+        body["throughput"] = {
+            "bucket_seconds": _history.RESOLUTION_S,
+            "tokens": [[p.tok_out, p.tok_in] for p in _history.series()],
+        }
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
 

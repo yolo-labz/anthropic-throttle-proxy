@@ -13,7 +13,7 @@
     <div class="brand">
       <h1>{{ 'anthropic-throttle-proxy' if show_local | default(true) else 'Subscription capacity' }}</h1>
       {% if not show_local | default(true) %}
-        <span class="role">read-only account meters</span>
+        <span class="role">{% if workload_label | default(false) %}{{ workload_label }} workload · {% endif %}read-only account meters</span>
       {% elif central_url != "(direct)" %}
         <span class="role">local · forwards to central</span>
       {% else %}
@@ -21,6 +21,8 @@
       {% endif %}
     </div>
     <div class="config">
+      {# Outside #stats so polling refreshes the data, not the view preference. #}
+      <label class="detail-toggle"><input id="show-details" type="checkbox" aria-controls="stats"> show details</label>
       {% if show_local | default(true) %}
       <span class="badge" title="Per-bearer concurrent ceiling. AIMD lowers the live value on 429s.">MAX <b>{{ max_concurrent }}</b></span>
       <span class="badge" title="Queue mode: off / observe / fair.">mode <b>{{ queue_mode }}</b></span>
@@ -46,6 +48,9 @@
       {% include "partials/stats.html" %}
     </section>
 
+  </main>
+
+  <div class="bottom-bar">
     {% if show_local | default(true) %}
     {# A disclosure sized to its own label. It used to span 2500px — a summary
        bar with six words on the left, a hint on the far right and nothing in
@@ -61,7 +66,6 @@
       </section>
     </details>
     {% endif %}
-  </main>
 
   <footer>
     <a href="/__throttle/health">/__throttle/health</a> ·
@@ -69,6 +73,7 @@
     <span title="{{ build | default('') }}">UI revision {{ asset_v }}</span> ·
     <a href="https://github.com/yolo-labz/anthropic-throttle-proxy" target="_blank" rel="noopener">github</a>
   </footer>
+  </div>
   {# Load-bearing invariant (CLAUDE.md): the dashboard renders without
      JavaScript modules — exactly ONE script tag (the HTMX runtime above).
      Disconnect/build-change staleness is signalled server-side instead:

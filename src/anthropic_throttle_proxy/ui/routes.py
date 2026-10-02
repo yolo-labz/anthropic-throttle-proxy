@@ -41,7 +41,7 @@ from .. import metrics as _metrics
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
 from . import signals as _signals
-from .presentation import apply_display, attach_provider_capacity, capacity_summary
+from .presentation import apply_display, apply_workload, attach_provider_capacity, capacity_summary
 
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
@@ -1168,6 +1168,7 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
     if not project:
         return view
     projected = apply_display(view, ui_cfg)
+    apply_workload(projected, ui_cfg, fleet_view)
     attach_provider_capacity(projected.get("providers") or [], projected.get("subscriptions") or [])
     projected["summary"] = capacity_summary(projected)
     return projected

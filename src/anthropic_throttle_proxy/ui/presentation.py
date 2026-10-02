@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from math import isfinite
 
 from ..lanes import _pct
+from . import signals
 
 
 def _family(value: str) -> str:
@@ -59,6 +60,7 @@ def _hide_primary(result: dict) -> None:
     """Drop the primary lane's evidence when the operator hides the local board."""
     result["providers"] = [p for p in result.get("providers", []) if p.get("kind") == "sibling"]
     result["bearers"], result["signals"] = [], []
+    result["tps"] = None
     result["identity"] = {}
     result["status"] = _subscriptions_only_status()
 
@@ -123,12 +125,47 @@ def apply_display(view: dict, config: dict) -> dict:
     lanes = result.get("lanes") or {}
     lanes["registry"] = _visible_lane_registry(lanes, hidden)
     result["lanes"] = lanes
-    result["show_local"] = defaults.get("show_primary", True)
+    result["show_local"] = defaults.get("show_primary", True) and not defaults.get("workload")
     if not result["show_local"]:
         _hide_primary(result)
     for row in result["subscriptions"]:
         _decorate_row(row)
     return result
+
+
+def apply_workload(view: dict, config: dict, fleet: list[dict]) -> None:
+    """Select observed sibling telemetry, never routing or local admin controls."""
+    name = (config.get("defaults") or {}).get("workload")
+    if not name:
+        return
+    view["workload_label"] = name
+    view["workload_available"] = False
+    view["status"] = {
+        "level": "warn",
+        "verdict": "WORKLOAD UNKNOWN",
+        "since": "",
+        "binding": None,
+        "detail": f"{name}: no fresh workload health; never replaced with local zeroes",
+    }
+    row = next((r for r in fleet if r.get("name") == name), None)
+    if not row or row.get("ok") is not True:
+        return
+    view["workload_available"] = True
+    for key in ("inflight", "queued", "served", "max_concurrent"):
+        view[key] = row.get(key, 0)
+    view["holds"] = row.get("keepalive_holds_active", 0)
+    view["tps"] = signals.remote_tps(row.get("throughput"))
+    refused = row.get("upstream_auth_ok") is False
+    view["status"] = {
+        "level": "warn" if refused else "idle",
+        "verdict": "AUTH REFUSED" if refused else f"{name.upper()} WORKLOAD",
+        "since": "",
+        "binding": None,
+        "detail": (
+            f"{name}: {view['inflight']} in-flight · {view['queued']} queued · "
+            f"{view['served']} served; quota and model eligibility are separate below"
+        ),
+    }
 
 
 # ── capacity truth (spec 285) ───────────────────────────────────────────────
@@ -277,7 +314,7 @@ def capacity_summary(view: dict) -> dict:
         # key the summary may forget to carry.
         "throughput": None,
     }
-    if not view.get("show_local", True):
+    if not (view.get("show_local", True) or view.get("workload_available")):
         return summary
     summary["live"] = {
         "inflight": int(view.get("inflight") or 0),

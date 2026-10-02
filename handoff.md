@@ -6,6 +6,24 @@ host activation. Latest incident first.
 
 ---
 
+## 01/10/2026 — Viewport-fit dashboard (289)
+
+The nine-seat overview now passes isolated browser checks at 1366×768,
+1440×900, 1920×1080 and 2210×1240 with no document or panel scrolling.
+The unchanged base rendered 1765px tall at 1366×768. Throughput and golden
+signals share a row; capacity and routing share the next; token records reflow.
+A native **show details** checkbox outside the polled fragment reveals secondary
+provenance/absolute resets without resetting on a poll. No smaller type, clipped
+document, new JS, dependencies, routing or quota changes. Mobile retains normal
+vertical flow. See `specs/289-viewport-fit/evidence.md` for executable checks,
+renderer limitations, and the distinction between fixture proof and activation.
+All 1478 tests passed on the isolated server. Later: workload-selection fix
+(1494 green) so the gauge reports the selected sibling instead of idle local
+zeroes; unknown telemetry is never fabricated as 0. Delivery runs the normal
+hooks on the server (exact gate bytes verified there) because the desktop's
+~900 load average stalls them; no bypass. Resume from branch `289-viewport-fit`;
+do not restart busy MiMo just for dashboard freshness.
+
 ## 01/10/2026 — Team capacity delivery (288, source acceptance)
 
 Integrated 279/281/282 with current main and recovered 283/284/285 work without

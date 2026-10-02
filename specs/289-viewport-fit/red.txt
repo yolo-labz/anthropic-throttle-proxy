@@ -1,0 +1,18 @@
+Base bd18131, unchanged base templates and CSS, same nine-seat fixture/check.
+127.0.0.1 - - [01/Oct/2026 19:49:05] "HEAD /specs/baseline/preview.html HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 19:49:05] "GET /specs/baseline/preview.html HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 19:49:06] "GET /specs/baseline/style.css HTTP/1.1" 200 -
+127.0.0.1 - - [01/Oct/2026 19:49:06] code 404, message File not found
+127.0.0.1 - - [01/Oct/2026 19:49:06] "GET /ui/static/favicon.svg?v=preview HTTP/1.1" 404 -
+{"width": 1366, "height": 768, "contentWidth": 1366, "contentHeight": 1765, "blocks": [{"id": "HEADER", "height": 36}, {"id": "hero pacing", "height": 84}, {"id": "board", "height": 758}, {"id": "subscription-A", "height": 74}, {"id": "subscription-B", "height": 69}, {"id": "subscription-chatgpt:work", "height": 69}, {"id": "subscription-zai:plan", "height": 93}, {"id": "subscription-deepseek", "height": 56}, {"id": "subscription-copilot:personal", "height": 76}, {"id": "subscription-mimo:plan", "height": 56}, {"id": "subscription-mimo:team-owner", "height": 56}, {"id": "subscription-mimo:team-unassigned", "height": 55}, {"id": "rail", "height": 437}, {"id": "FOOTER", "height": 37}], "panels": [{"id": "subs-scroll", "width": 1316, "contentWidth": 1316}, {"id": "providers-scroll", "width": 1316, "contentWidth": 1316}, {"id": "bearers-scroll", "width": 1316, "contentWidth": 1316}]}
+Traceback (most recent call last):
+  File "/var/tmp/throttle-viewport-289.gOmDnj/tests/check_viewport.py", line 114, in <module>
+    main()
+    ~~~~^^
+  File "/var/tmp/throttle-viewport-289.gOmDnj/tests/check_viewport.py", line 107, in main
+    check(page, url, args.output)
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/var/tmp/throttle-viewport-289.gOmDnj/tests/check_viewport.py", line 47, in check
+    assert dimensions["contentHeight"] <= height, dimensions
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'width': 1366, 'height': 768, 'contentWidth': 1366, 'contentHeight': 1765, 'blocks': [{'id': 'HEADER', 'height': 36}, {'id': 'hero pacing', 'height': 84}, {'id': 'board', 'height': 758}, {'id': 'subscription-A', 'height': 74}, {'id': 'subscription-B', 'height': 69}, {'id': 'subscription-chatgpt:work', 'height': 69}, {'id': 'subscription-zai:plan', 'height': 93}, {'id': 'subscription-deepseek', 'height': 56}, {'id': 'subscription-copilot:personal', 'height': 76}, {'id': 'subscription-mimo:plan', 'height': 56}, {'id': 'subscription-mimo:team-owner', 'height': 56}, {'id': 'subscription-mimo:team-unassigned', 'height': 55}, {'id': 'rail', 'height': 437}, {'id': 'FOOTER', 'height': 37}], 'panels': [{'id': 'subs-scroll', 'width': 1316, 'contentWidth': 1316}, {'id': 'providers-scroll', 'width': 1316, 'contentWidth': 1316}, {'id': 'bearers-scroll', 'width': 1316, 'contentWidth': 1316}]}
