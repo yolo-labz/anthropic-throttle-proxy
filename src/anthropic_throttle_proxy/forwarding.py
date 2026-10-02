@@ -351,6 +351,22 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     return response, upstream.status, captured, None, meta
 
 
+def _rebind_headers(headers: Mapping[str, str], body_length: int) -> dict[str, str]:
+    """Replace Content-Length after a body-shaping transform rewrote the body.
+
+    The rebinding REQUIRES a plain mapping: ``proxy.handler`` builds one from a
+    dict comprehension over ``request.headers.items()`` (duplicates already
+    collapsed upstream of here), so this comprehension cannot silently drop a
+    distinct duplicate value. A multi-dict would collapse duplicates here
+    (last-wins) — fail loudly instead of letting that premise rot (issue #238
+    follow-up 3).
+    """
+    assert isinstance(headers, dict), "header rebinding needs the plain dict proxy.handler builds"
+    out = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+    out["Content-Length"] = str(body_length)
+    return out
+
+
 async def _forward_once(
     request: web.Request,
     headers: Mapping[str, str],
@@ -389,8 +405,7 @@ async def _forward_once(
             log(f"chat_body_unfittable path={request.path} normalized={len(normalized)}")
         if fitted != body:
             body = fitted
-            headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
-            headers["Content-Length"] = str(len(body))
+            headers = _rebind_headers(headers, len(body))
     connector = aiohttp.TCPConnector(ssl=True)
     async with aiohttp.ClientSession(
         timeout=client_timeout,

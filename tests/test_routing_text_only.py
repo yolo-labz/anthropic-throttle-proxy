@@ -256,3 +256,97 @@ def test_exact_zai_endpoint_and_query_normalize(target):
 def test_normalization_is_idempotent():
     raw = _raw([{"role": "assistant", "content": [THINKING, {"type": "text", "text": "hi"}]}])
     assert norm(norm(raw, ZAI), ZAI) == norm(raw, ZAI)
+
+
+# --- issue #238 follow-ups: tool linkage + drift guard (synthetic only) ------
+
+
+def test_tool_linkage_reconstructs_native_tool_calls():
+    # The pinned failure mode from issue #238 #1: a content-level tool_use with
+    # a usable id/name becomes NATIVE tool_calls (the shape this endpoint
+    # accepts), so the role:"tool" partner is no longer an orphaned reference.
+    messages = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "call_1", "name": "get_weather", "input": {"city": "SP"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "22C"},
+    ]
+    out = _normalized(messages)
+    assert out[0]["content"] == ""
+    assert out[0]["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": json.dumps({"city": "SP"})},
+        }
+    ]
+    assert out[1] == messages[1]  # covered reference: never touched
+    covered = {c["id"] for m in out for c in m.get("tool_calls", [])}
+    orphans = [
+        m
+        for m in out
+        if isinstance(m.get("tool_call_id"), str) and m["tool_call_id"] not in covered
+    ]
+    assert orphans == []  # strict-validator shape: no orphaned tool_call_id
+
+
+def test_orphan_tool_result_degrades_when_link_impossible():
+    # No linkable id -> the call stays text and its partner cannot keep a
+    # dangling tool_call_id: it degrades to explicit text, never a 1210 bait.
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": "get_weather", "input": {}}],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "22C"},
+    ]
+    out = _normalized(messages)
+    assert "[tool call: get_weather({})]" in out[0]["content"]
+    assert out[1] == {"role": "user", "content": "[tool result] 22C"}
+    assert all("tool_call_id" not in m for m in out)
+
+
+def test_orphan_rewrite_keeps_covered_references_and_native_calls():
+    calls = [{"id": "call_ok", "type": "function", "function": {"name": "read", "arguments": "{}"}}]
+    messages = [
+        {"role": "assistant", "content": [{"type": "text", "text": "x"}], "tool_calls": calls},
+        {"role": "tool", "tool_call_id": "call_ok", "content": "kept"},
+        {"role": "tool", "tool_call_id": "ghost", "content": "lost call"},
+    ]
+    out = _normalized(messages)
+    assert out[0]["tool_calls"] == calls
+    assert out[1] == messages[1]
+    assert out[2] == {"role": "user", "content": "[tool result] lost call"}
+
+
+def test_known_block_types_derived_from_branch_groups():
+    from anthropic_throttle_proxy import routing
+
+    assert routing._KNOWN_BLOCK_TYPES == (
+        routing._TEXT_KINDS
+        | routing._THINKING_KINDS
+        | routing._TOOL_CALL_KINDS
+        | routing._TOOL_RESULT_KINDS
+        | routing._IMAGE_KINDS
+    )
+
+
+def test_no_literal_kind_drift_in_normalizer_branches():
+    # Issue #238 #2: a future branch may model a kind without adding it to the
+    # derived set, silently inverting the transactional contract. Branches must
+    # consult the group frozensets; a NEW literal kind comparison fails here.
+    import inspect
+    import re
+
+    from anthropic_throttle_proxy import routing
+
+    source = inspect.getsource(routing._part_as_text) + inspect.getsource(routing._native_tool_call)
+    literals = set(re.findall(r'kind\s*==\s*"([^"]+)"', source))
+    for pattern in (r"kind\s+in\s+\(([^)]*)\)", r"kind\s+in\s+\{([^}]*)\}"):
+        for group in re.findall(pattern, source):
+            literals |= set(re.findall(r'"([^"]+)"', group))
+    stray = sorted(literals - routing._KNOWN_BLOCK_TYPES)
+    assert literals <= routing._KNOWN_BLOCK_TYPES, f"kind literals outside derived set: {stray}"
