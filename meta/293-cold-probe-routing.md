@@ -80,3 +80,10 @@ expiry, explicitly unlimited queue setting (no meter wait), all meters refused,
 and the original half-open burst control. Only B spends in all three held-probe
 variants, the refused variants dispatch only the original B probe, and no lease
 remains held. Full final source acceptance and CI follow before rollout.
+
+Final Mac acceptance after rebasing onto `d4e4a39` (merged ledger290, registry291
+and backoff292): **1,717 full tests passed**, full-tree Ruff lint/format passed
+(87 files), and diff whitespace checks passed. The five bounded upstream cases
+are included. No new50-token clone was detected in the changed files; the seven
+reported existing clones are outside the changed regions. No runtime swap has
+been made for this source. Rollback remains one revert PR.
