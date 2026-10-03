@@ -277,12 +277,16 @@ def test_b_seat_absent_keeps_the_spec_281_shape():
     assert [lane["id"] for lane in result["lanes"]] == ["mimo:plan", "mimo:team-owner"]
 
 
-def test_b_seat_failed_read_still_writes_a_fresh_fail_closed_row():
-    result = team_report(plan_detail(), plan_usage(), team_sample(), NOW, None)
+def _assert_unknown_b_preserves_owner(result):
     b_row = result["lanes"][2]
     assert b_row["id"] == "mimo:team-b" and b_row["status"] == "unknown"
     assert "meters" not in b_row
-    assert result["lanes"][1]["status"] == "ok"  # owner row unaffected
+    assert result["lanes"][1]["status"] == "ok"
+
+
+def test_b_seat_failed_read_still_writes_a_fresh_fail_closed_row():
+    result = team_report(plan_detail(), plan_usage(), team_sample(), NOW, None)
+    _assert_unknown_b_preserves_owner(result)
 
 
 @pytest.mark.parametrize(
@@ -416,10 +420,7 @@ def test_probe_team_b_failed_read_still_writes_fail_closed_row(monkeypatch, caps
     _, result = _run_probe_with_b(
         monkeypatch, capsys, team_b="synthetic-b", b_response=RuntimeError("session closed")
     )
-    b_row = result["lanes"][2]
-    assert b_row["id"] == "mimo:team-b" and b_row["status"] == "unknown"
-    assert "meters" not in b_row
-    assert result["lanes"][1]["status"] == "ok"  # owner row unaffected
+    _assert_unknown_b_preserves_owner(result)
 
 
 @pytest.mark.parametrize("b_identity", ["expected", "unexpected-account"])
@@ -433,9 +434,7 @@ def test_probe_wrong_b_identity_never_reads_seat_or_borrows_owner(monkeypatch, c
     )
     assert calls[-1] == ("xiaomi-mimo2", "/api/v1/userProfile")
     assert not any("synthetic-b" in path for _, path in calls)
-    assert result["lanes"][2]["status"] == "unknown"
-    assert "meters" not in result["lanes"][2]
-    assert result["lanes"][1]["status"] == "ok"
+    _assert_unknown_b_preserves_owner(result)
 
 
 def test_probe_unavailable_b_profile_is_unknown_without_starting_browser(monkeypatch, capsys):
@@ -455,9 +454,7 @@ def test_probe_b_identity_change_discards_healthy_seat(monkeypatch, capsys):
         b_response=team_sample_b(),
         b_identity=("expected-b", "expected"),
     )
-    assert result["lanes"][2]["status"] == "unknown"
-    assert "meters" not in result["lanes"][2]
-    assert result["lanes"][1]["status"] == "ok"
+    _assert_unknown_b_preserves_owner(result)
 
 
 @pytest.mark.parametrize("expected_b", [None, "expected"])
