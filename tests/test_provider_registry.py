@@ -124,8 +124,13 @@ async def test_registry_cannot_widen_role_overflow_or_capacity(registry, monkeyp
     assert ingress._session_lane == {"synthetic": "anthropic"}
 
 
-@pytest.mark.parametrize("mode,capacity", [("unknown", True), ("subscription", False)])
-async def test_membership_does_not_grant_subscription(registry, monkeypatch, mode, capacity):
+@pytest.mark.parametrize(
+    "mode,capacity,revoke",
+    [("unknown", True, False), ("subscription", False, False), ("subscription", True, True)],
+)
+async def test_membership_requires_fresh_eligible_policy(
+    registry, monkeypatch, mode, capacity, revoke
+):
     _policy(registry, ["anthropic"])
     await ingress._reload_provider_registry()
 
@@ -133,27 +138,16 @@ async def test_membership_does_not_grant_subscription(registry, monkeypatch, mod
         ingress.lane_state[lane.id] = LaneState(
             True, time.time(), credential_mode=mode, credential_capacity_ok=capacity
         )
+        if revoke:
+            _policy(registry, [])
+            await ingress._reload_provider_registry()
 
     monkeypatch.setattr(ingress, "_probe_lane_health", probe)
     assert await ingress._select_constrained_lane(None, "generate", set()) is None
-
-
-async def test_reload_during_fresh_probe_cannot_authorize_removed_lane(registry, monkeypatch):
-    _policy(registry, ["anthropic"])
-    await ingress._reload_provider_registry()
-
-    async def probe(_session, lane):
-        ingress.lane_state[lane.id] = LaneState(
-            True, time.time(), credential_mode="subscription", credential_capacity_ok=True
-        )
-        _policy(registry, [])
-        await ingress._reload_provider_registry()
-
-    monkeypatch.setattr(ingress, "_probe_lane_health", probe)
-    assert await ingress._select_constrained_lane(None, "generate", set()) is None
-    refusal = ingress._policy_refusal("generate", "subscription")
-    assert refusal.status == 403
-    assert json.loads(refusal.body)["error"]["eligible_configured"] == 0
+    if revoke:
+        refusal = ingress._policy_refusal("generate", "subscription")
+        assert refusal.status == 403
+        assert json.loads(refusal.body)["error"]["eligible_configured"] == 0
 
 
 async def test_reload_preserves_active_stream_lane_and_session(registry, monkeypatch):

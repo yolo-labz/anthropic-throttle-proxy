@@ -179,3 +179,9 @@ configuration stays unset, so publication does not activate a new policy.
 Full Mac suite on this final candidate: **1,643 passed**, 125 existing warnings,
 in 73.62 seconds. This includes the 21 new registry cases plus all 1,622 main
 regressions. No external provider call or live registry activation was used.
+
+The cached clone detector then found two duplicated probe fixtures (3.17%
+on the new test/parser files). They now share one parameterized policy test;
+all21 cases remain and pass, with0% detected clones. Production code is
+unchanged by that test-only cleanup. Parser coverage is100% of statements
+and branches on the207 focused cases.
