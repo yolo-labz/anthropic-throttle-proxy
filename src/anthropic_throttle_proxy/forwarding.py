@@ -16,12 +16,30 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import web
 
-from . import config
+from . import config, prospective_runtime
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
+from .prospective_refusal import strip_incoming_provenance
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 from .routing import fit_chat_completions_body, normalize_text_content_blocks
+
+
+def _prospective_reservation(request: web.Request, body: bytes | None):
+    """T003 reservation seam plumbing: generation attempts only.
+
+    Returns the #297 bridge's ``runtime.reserve(selected, final_body)`` context
+    for an actual generation attempt (POST carrying the final body), else the
+    no-op context. Control GETs never enter the generation API; an enabled
+    runtime decides whether a POST body is accountable. Owner, ledger
+    and policy all live in ``prospective_runtime`` (#297); no parallel runtime.
+    """
+    if request.method != "POST":
+        return contextlib.nullcontext(None)
+    return prospective_runtime.get_runtime(request).reserve(
+        prospective_runtime.get_selected_dispatch(request), body
+    )
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -304,6 +322,10 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
             config.ENTITLEMENT_REFUSAL_HEADER,
         }
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
+    if prospective_runtime.get_runtime(request).mode != "off":
+        # Enabled strict supports direct transport only. No upstream header,
+        # including a proxy marker, grants local prospective provenance.
+        resp_headers = strip_incoming_provenance(resp_headers)
     meta = _extract_ratelimit(upstream.headers)
     # Status only: reading the body here would drain the stream the client is
     # about to receive. The lane verdict needs the status; the human-readable
@@ -384,6 +406,8 @@ async def _forward_once(
     extracted upstream rate-limit headers. Raises ConnectionResetError /
     ClientConnectionResetError on client-side disconnect.
     """
+    if request.method == "POST" and prospective_runtime.get_runtime(request).mode != "off":
+        headers = strip_incoming_provenance(headers)
     # Per-attempt target identity: central receives the original body, while a
     # direct Z.AI retry gets the same shaping as an initial direct request. Both
     # transforms are no-ops off the Z.AI coding endpoint, which is why they can
@@ -417,33 +441,45 @@ async def _forward_once(
         # set-up time doesn't count against the gap budget — we pace the
         # actual upstream request issuance, not the prep.
         await _pace_dispatch()
-        try:
-            async with session.request(
-                request.method,
-                url,
-                headers=headers,
-                data=body,
-                allow_redirects=False,
-            ) as upstream:
-                if retryable_statuses and upstream.status in retryable_statuses:
-                    payload = await upstream.read()
-                    return (
-                        None,
-                        upstream.status,
-                        bytearray(payload[: 1024 * 1024]),
-                        RetryableStatusError(
-                            f"retryable upstream status {upstream.status}",
-                            proxy_served=config.MARKER_HEADER in upstream.headers,
-                        ),
-                        _extract_ratelimit(upstream.headers),
-                    )
-                return await _stream_response(request, upstream)
-        except aiohttp.ClientConnectionResetError:
-            # Raised by StreamResponse.write/write_eof when the Claude client
-            # closes its local socket while we are streaming. Let proxy.handler
-            # record this as a client disconnect; treating it as an upstream or
-            # central failure wastes a retry and can push the local proxy into
-            # direct fallback under load.
-            raise
-        except (TimeoutError, aiohttp.ClientError) as exc:
-            return None, None, None, exc, None
+        # T003 final-body reservation seam: the LAST admission point — after
+        # normalize/fit/rebind and after pacing, immediately before transport
+        # handoff. One reserve per actual attempt, so the caller's retries can
+        # never double-debit. permit.handoff() is synchronous and is the last
+        # statement before session.request (no intervening await): unsent
+        # cancellation rolls back inside the bridge while sent/unknown outcomes
+        # keep the debt. LocalProspectiveRefusal propagates untouched — the
+        # caller catches it OUTSIDE, before provider retry/AIMD handling — and
+        # transport exceptions below are never translated into local policy.
+        async with _prospective_reservation(request, body) as permit:
+            if permit is not None:
+                permit.handoff()
+            try:
+                async with session.request(
+                    request.method,
+                    url,
+                    headers=headers,
+                    data=body,
+                    allow_redirects=False,
+                ) as upstream:
+                    if retryable_statuses and upstream.status in retryable_statuses:
+                        payload = await upstream.read()
+                        return (
+                            None,
+                            upstream.status,
+                            bytearray(payload[: 1024 * 1024]),
+                            RetryableStatusError(
+                                f"retryable upstream status {upstream.status}",
+                                proxy_served=config.MARKER_HEADER in upstream.headers,
+                            ),
+                            _extract_ratelimit(upstream.headers),
+                        )
+                    return await _stream_response(request, upstream)
+            except aiohttp.ClientConnectionResetError:
+                # Raised by StreamResponse.write/write_eof when the Claude client
+                # closes its local socket while we are streaming. Let proxy.handler
+                # record this as a client disconnect; treating it as an upstream or
+                # central failure wastes a retry and can push the local proxy into
+                # direct fallback under load.
+                raise
+            except (TimeoutError, aiohttp.ClientError) as exc:
+                return None, None, None, exc, None

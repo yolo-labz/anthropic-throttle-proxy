@@ -2,10 +2,9 @@
 
 Spec 245 T004 (``specs/245-prospective-admission/t004-refusal-plan.md``).
 
-Default-off by construction: nothing in the hot path imports this module and no
-route/wiring references it. It is a small payload library for the future
-prospective-admission boundary, deliberately self-contained (stdlib + aiohttp
-only, no config/accounts/lanes imports).
+The app runtime is default-off. Enabled transport seams use this payload
+library to distinguish locally minted policy from provider pushback. The
+library is self-contained (stdlib + aiohttp; no account discovery).
 
 Design constraints honored here:
 
@@ -27,9 +26,8 @@ Design constraints honored here:
   required** at wiring time (see the plan); this module never writes streams
   and does not claim drop-in compatibility.
 
-Provenance stripping (``strip_incoming_provenance``) exists for FUTURE trust
-boundaries (proxy-to-proxy hops, ingestion of forwarded headers). It is NOT
-wired anywhere yet; see the plan's "Remaining wiring".
+Enabled ingress/forwarding boundaries strip incoming provenance. Unsupported
+strict relay topologies refuse before transport; headers never grant authority.
 """
 
 from __future__ import annotations

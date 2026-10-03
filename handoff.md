@@ -6,6 +6,28 @@ host activation. Latest incident first.
 
 ---
 
+## 03/10/2026 — Prospective dispatch integration, default off
+
+One app-owned runtime now joins the ledger, explicit source/endpoint/model
+resolver, normal and prepared-SSE forwarding, route replacements and startup
+custody. Strict local refusals terminate before provider retry/AIMD handling;
+a prepared stream emits one terminal error after stopping its keeper. Probes
+and relay topologies are explicitly unsupported under strict, not silently
+unaccounted. Observe shadow samples are incomplete demand evidence.
+
+`THROTTLE_PROSPECTIVE_MODE` defaults to `off`. Enabled modes require the bounded
+manifest described in `specs/245-prospective-admission/t003-lifecycle-plan.md`.
+Observe and strict use distinct directories; a live owner locks its directory,
+and an undrained close retains custody until process exit. No automatic ledger
+reset, fabricated capacity or vendor-token guarantee. Calibration still needs
+one full day of complete demand and estimator-error evidence; strict activation
+remains a separate MiMo-only canary after that gate.
+
+The final Team B source6ac87f11 was deployed separately through NixOS2609 after
+233 native checks. This newer integration does not alter that accepted pin or
+turn on prospective enforcement. Original six worker sessions and worktrees
+remain intact. Integration acceptance records follow in the spec evidence.
+
 ## 01/10/2026 — Viewport-fit dashboard (289)
 
 The nine-seat overview now passes isolated browser checks at 1366×768,

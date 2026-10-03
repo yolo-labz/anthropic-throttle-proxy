@@ -1751,7 +1751,7 @@ async def test_retry_direct_once_nudges_swapped_account(
         return att.response, None
 
     monkeypatch.setattr(proxy, "_try_forward", stub)
-    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    fake_request = cast(Any, type("R", (dict,), {"query_string": ""})())
 
     resp = await proxy._retry_direct_once(
         fake_request,
@@ -1786,7 +1786,7 @@ async def test_retry_direct_once_attributes_response_to_direct_fallback(monkeypa
     monkeypatch.setattr(proxy, "_try_forward", stub)
     lines: list[str] = []
     monkeypatch.setattr(proxy, "log", lines.append)
-    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    fake_request = cast(Any, type("R", (dict,), {"query_string": ""})())
     attempt = proxy._Attempt()
     attempt.context = {
         "method": "POST",
@@ -1834,7 +1834,7 @@ async def test_forward_with_retry_skips_retry_when_client_disconnected(monkeypat
     monkeypatch.setattr(proxy, "_request_disconnected", lambda _req: True)
     monkeypatch.setattr(proxy, "_retry_direct_once", fail_retry)
     config.state["client_disconnects"] = 0  # baseline the counter
-    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    fake_request = cast(Any, type("R", (dict,), {"query_string": ""})())
     attempt = proxy._Attempt()
     attempt.context = {
         "method": "POST",
@@ -1879,7 +1879,7 @@ async def test_forward_with_retry_no_retry_on_mid_stream_commit(monkeypatch) -> 
     monkeypatch.setattr(proxy, "_retry_direct_once", fail_retry)
     config.state["client_disconnects"] = 0
     config.state["upstream_retries"] = 0
-    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    fake_request = cast(Any, type("R", (dict,), {"query_string": ""})())
     attempt = proxy._Attempt()
     attempt.context = {"method": "POST", "bid": "99e59638", "via": "direct", "model": "glm-5.2"}
 
@@ -1915,7 +1915,7 @@ async def test_retry_direct_once_relays_telemetry_throttle_unchanged(monkeypatch
         return upstream_response, None
 
     monkeypatch.setattr(proxy, "_try_forward", stub)
-    fake_request = cast(Any, type("R", (), {"query_string": ""})())
+    fake_request = cast(Any, type("R", (dict,), {"query_string": ""})())
 
     response = await proxy._retry_direct_once(
         fake_request,
@@ -2914,7 +2914,7 @@ async def _auth_probe_loop_sleeps(monkeypatch, probe, steps: int) -> list[float]
 async def test_the_auth_probe_loop_actually_backs_off(monkeypatch):
     """The LOOP, not the helper — a helper nothing calls would pass on its own."""
 
-    async def always_fails() -> None:
+    async def always_fails(*, prospective=None) -> None:
         raise RuntimeError("upstream unreachable")
 
     sleeps = await _auth_probe_loop_sleeps(monkeypatch, always_fails, steps=5)
@@ -2929,7 +2929,7 @@ async def test_the_auth_probe_loop_forgets_a_streak_that_ended(monkeypatch):
     """A probe that answers resets the cadence, so a blip costs one retry."""
     results: list[Exception | None] = [RuntimeError("down"), RuntimeError("down"), None, None]
 
-    async def flaky() -> None:
+    async def flaky(*, prospective=None) -> None:
         outcome = results.pop(0)
         if outcome is not None:
             raise outcome
