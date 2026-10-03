@@ -46,3 +46,8 @@ asserted before that receipt arrives.
 CI's clone ratchet caught a duplicated row factory in the new fixture. The
 fixture now reuses the existing sibling-snapshot helper with optional lane
 identity/status arguments; defaults and production code are unchanged.
+
+Independent Astra review of the MiMo-authored source found one P2 test gap:
+the cached-unified precedence case exhausted only A, leaving B fresh. The
+fixture now exhausts B's own row, so ignoring B's cache would fail the test.
+No production defect was reported. The repaired focused suite passes.

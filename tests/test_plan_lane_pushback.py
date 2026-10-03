@@ -307,6 +307,6 @@ def test_explicit_unified_evidence_precedes_the_meter(monkeypatch):
             "unified_at": time.time(),
         },
     )
-    # A fresh cached allowed/low sample is concurrency even with a spent meter.
-    monkeypatch.setattr(lanes, "view", lambda now: _bound_rows())
+    # B's own spent meter conflicts with its fresh cached allowed sample.
+    monkeypatch.setattr(lanes, "view", lambda now: _bound_rows(team_used=100.0))
     assert proxy._budget_under_pressure({}, "bid-b") is False
