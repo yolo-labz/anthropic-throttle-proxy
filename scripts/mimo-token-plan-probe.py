@@ -77,9 +77,10 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
 # The team seat row's lane id: sibling of the individual plan row, never a
 # replacement for it and never additive with it (two independent allowances).
 _TEAM_LANE_ID = "mimo:team-owner"
-# The B seat's lane id (second Team seat, per-assigned-seat catalog): its own
-# allowance, never summed with the owner seat or the individual plan row.
-_TEAM_B_LANE_ID = "mimo:team-seat-b"
+# The Team B seat's lane id (second Team seat, per-assigned-seat catalog): its
+# own allowance, never summed with the owner seat or the individual plan row.
+# Id spelling follows the wiring plan (spec 279 G2): `mimo:team-b`.
+_TEAM_B_LANE_ID = "mimo:team-b"
 
 
 def _parse_console_ts(raw: str) -> datetime:
@@ -181,7 +182,7 @@ def team_seat_lane(seat_response: object, now: datetime) -> dict:
 
 
 def team_seat_b_lane(seat_response: object, now: datetime) -> dict:
-    """The `mimo:team-seat-b` row — the second Team seat — from one seat reading.
+    """The `mimo:team-b` row — the second Team seat — from one seat reading.
 
     The B seat is a distinct account's assigned seat: same validation and
     fail-closed rules as `team_seat_lane`, its own allowance, never summed
@@ -217,6 +218,44 @@ def team_report(
     return result
 
 
+# One bounded in-page fetch per seat read; shared by the owner and Team B
+# explicit reads (spec 279 G2), so the two cannot drift apart.
+_SEAT_FETCH_SCRIPT = """async (path) => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 15000);
+    try {
+        const r = await fetch(path, {
+            signal: ctl.signal,
+            credentials: "include",
+        });
+        return await r.json();
+    } finally { clearTimeout(t); }
+}"""
+
+
+def read_team_b_seat(interactive, project: str, expected: str) -> object:
+    """Read only the independently authenticated B profile; never borrow owner identity."""
+    with interactive.attach("xiaomi-mimo2", start_if_down=False, timeout_ms=20000) as (
+        _,
+        _,
+        _,
+        page,
+    ):
+        page.goto(
+            "https://platform.xiaomimimo.com/console/plan-manage",
+            wait_until="domcontentloaded",
+            timeout=20000,
+        )
+        profile = page.evaluate(_SEAT_FETCH_SCRIPT, "/api/v1/userProfile")
+        if profile.get("code") != 0 or str(profile["data"]["userId"]) != expected:
+            raise ValueError("Team B browser identity does not match the expected account")
+        seat = page.evaluate(_SEAT_FETCH_SCRIPT, f"/api/v1/project/{project}/teamTokenPlan/my/seat")
+        verified = page.evaluate(_SEAT_FETCH_SCRIPT, "/api/v1/userProfile")
+        if verified.get("code") != 0 or str(verified["data"]["userId"]) != expected:
+            raise ValueError("Team B browser identity changed during the reading")
+        return seat
+
+
 def main() -> int:
     from lib import interactive
 
@@ -232,6 +271,16 @@ def main() -> int:
     team_project = os.environ.get("MIMO_TEAM_PROJECT_ID", "").strip()
     if team_project and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", team_project):
         raise ValueError("invalid team project identifier")
+    # Team B (spec 279 G2) is OFF unless explicitly configured; the same path
+    # discipline applies before anything reaches the browser.
+    team_b_project = os.environ.get("MIMO_TEAM_B_PROJECT_ID", "").strip()
+    if team_b_project and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", team_b_project):
+        raise ValueError("invalid team B project identifier")
+    # A B seat is a Team seat: reject B-without-Team BEFORE the browser, the
+    # same rule the wrapper enforces (spec 279 G1/G2) — never silently drop a
+    # configured lane.
+    if team_b_project and not team_project:
+        raise ValueError("team B requires team configuration")
     if team_project:
         # Passive capture only (never fires on plan-manage navigation — live
         # check 30/09): the seat is read explicitly after identity check.
@@ -239,6 +288,9 @@ def main() -> int:
     expected = os.environ.get("MIMO_EXPECTED_ACCOUNT_ID", "")
     if not expected:
         raise ValueError("expected account is required")
+    expected_b = os.environ.get("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", "")
+    if team_b_project and (not expected_b or expected_b == expected):
+        raise ValueError("team B requires an independent expected account")
     with interactive.attach("xiaomi", start_if_down=False, timeout_ms=20000) as (_, _, _, page):
 
         def capture(response):
@@ -280,17 +332,7 @@ def main() -> int:
         if team_project:
             try:
                 seat = page.evaluate(
-                    """async (path) => {
-                        const ctl = new AbortController();
-                        const t = setTimeout(() => ctl.abort(), 15000);
-                        try {
-                            const r = await fetch(path, {
-                                signal: ctl.signal,
-                                credentials: "include",
-                            });
-                            return await r.json();
-                        } finally { clearTimeout(t); }
-                    }""",
+                    _SEAT_FETCH_SCRIPT,
                     f"/api/v1/project/{team_project}/teamTokenPlan/my/seat",
                 )
             except Exception:
@@ -301,7 +343,22 @@ def main() -> int:
             # fresh fail-closed team row rather than retaining the old meter.
             # Prefer the explicit read; the passive capture is only a fallback.
             seat_reading = seat if seat is not None else observed.get("seat")
-            result = team_report(observed["detail"], observed["usage"], seat_reading, now)
+            # Team B (spec 279 G2): default OFF — the row exists only when the
+            # env is configured. A configured-but-failed read still rewrites a
+            # fresh fail-closed B row (team-line semantics), and seats are
+            # never aggregated.
+            seat_b = None
+            if team_b_project:
+                try:
+                    seat_b = read_team_b_seat(interactive, team_b_project, expected_b)
+                except Exception:
+                    seat_b = None
+            if team_b_project:
+                result = team_report(
+                    observed["detail"], observed["usage"], seat_reading, now, seat_b_response=seat_b
+                )
+            else:
+                result = team_report(observed["detail"], observed["usage"], seat_reading, now)
         else:
             result = report(observed["detail"], observed["usage"], now)
     print(json.dumps(result, ensure_ascii=False))
