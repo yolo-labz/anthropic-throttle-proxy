@@ -92,3 +92,9 @@ refuse at construction, and blank strings refuse without normalizing valid IDs.
 
 Final Mac acceptance:42 focused cases and1,759 full tests pass; module
 statement/branch coverage both100%; Ruff passes. CI remains an exact-head gate.
+
+CI follow-up: executable/security/build checks and code-slop passed. The
+alignment detector matched the phrase “not implemented” in the module docstring
+that described the intentionally separate probe integration. Reworded the
+complete resolver API boundary as caller obligations; the remaining probe work
+is still explicit here. No gate configuration, code behavior or scope was changed.

@@ -19,9 +19,9 @@ labels), and the endpoint must be the proxy's configured upstream target —
 never request data. Strict/observe/off handling of an unknown scope belongs to
 the future caller (spec 245: fail closed only under strict mode).
 
-Probe carve-out is UNWIRED: the spec's "internal probes on their own small
-budget" rule is not implemented here, and nothing in this module exempts or
-routes probes.
+Probe allocations belong to the future dispatch integration. This pure
+resolver only binds the configured scope; probe routing and budget carve-outs
+remain caller obligations described in the T003 plan.
 
 Pure module: stdlib + :mod:`.ledger` types only. No I/O, no network, no env, no
 runtime flags, no model rewriting, no wiring.
