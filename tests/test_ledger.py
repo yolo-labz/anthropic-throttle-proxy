@@ -184,6 +184,62 @@ def test_late_completion_is_independent_of_snapshot_order(prune_first):
     assert ledger.snapshot() == {"requests": 1, "tokens": 100}
 
 
+def test_cancel_unsent_removes_both_debits_and_preserves_high_water(ledger):
+    lease = ledger.check_and_debit(50, 50)
+    assert ledger.cancel_unsent(lease) == 100
+    assert ledger.snapshot() == {"requests": 0, "tokens": 0}
+    with pytest.raises(ValueError, match="not outstanding"):
+        ledger.cancel_unsent(lease)
+    current = ledger.check_and_debit(50, 50)
+    assert current.seq > lease.seq
+    with pytest.raises(ValueError):
+        ledger.cancel_unsent(lease)
+    assert ledger.snapshot() == {"requests": 1, "tokens": 100}
+
+
+@pytest.mark.parametrize("other_key", [KEY, (KEY[0], "other-account", KEY[2])])
+def test_cancel_unsent_rejects_foreign_identity(ledger, other_key):
+    other = LaneLedger(other_key, ledger.budgets, clock=ledger.clock)
+    foreign = other.check_and_debit(50, 50)
+    ledger.check_and_debit(50, 50)
+    with pytest.raises(ValueError):
+        ledger.cancel_unsent(foreign)
+    assert ledger.snapshot() == {"requests": 1, "tokens": 100}
+
+
+def test_cancel_unsent_rejects_settled_lease(ledger):
+    lease = ledger.check_and_debit(50, 50)
+    ledger.settle(lease, 20)
+    with pytest.raises(ValueError, match="settled"):
+        ledger.cancel_unsent(lease)
+    assert ledger.snapshot() == {"requests": 1, "tokens": 20}
+
+
+@pytest.mark.parametrize("prune_first", [False, True])
+def test_cancel_unsent_expired_lease_cannot_remove_new_debit(ledger, prune_first):
+    old = ledger.check_and_debit(50, 50)
+    ledger.clock.advance(60)
+    if prune_first:
+        ledger.snapshot()
+    current = ledger.check_and_debit(50, 50)
+    assert ledger.cancel_unsent(old) == 0
+    assert current.seq > old.seq
+    assert ledger.snapshot() == {"requests": 1, "tokens": 100}
+
+
+def test_cancel_unsent_save_retains_high_water_after_restart(tmp_path):
+    state, clock, pool, lease = _persisted_pool(tmp_path)
+    assert pool.ledger_for(KEY).cancel_unsent(lease) == 100
+    pool.save()
+    restored = LedgerPool(pool.budgets, str(state), clock)
+    assert restored.ledger_for(KEY).snapshot() == {"requests": 0, "tokens": 0}
+    current = restored.check_and_debit(KEY, 50, 50)
+    assert current.ledger_id == lease.ledger_id and current.seq > lease.seq
+    with pytest.raises(ValueError):
+        restored.ledger_for(KEY).cancel_unsent(lease)
+    assert restored.ledger_for(KEY).snapshot() == {"requests": 1, "tokens": 100}
+
+
 def _persisted_pool(tmp_path):
     state = tmp_path / "ledger.json"
     clock = FakeClock()
