@@ -68,6 +68,7 @@ class _OffPermit:
     __slots__ = ()
 
     def handoff(self) -> None:
+        # Off grants no ledger authority and has no state to mark as sent.
         pass
 
 
@@ -82,12 +83,15 @@ class _OffRuntime:
     mode = "off"
 
     async def start(self) -> None:
+        # The immutable off fallback owns no worker or file to initialize.
         pass
 
     async def aclose(self) -> None:
+        # Off never acquired resources, so app shutdown has nothing to drain.
         pass
 
-    def reserve(self, selected, final_body):
+    def reserve(self, *_accounting_args, **_accounting_kwargs):
+        # Preserve positional/keyword calls without inspecting accounting inputs.
         return _OFF_CONTEXT
 
     def observations(self) -> Mapping[str, int]:

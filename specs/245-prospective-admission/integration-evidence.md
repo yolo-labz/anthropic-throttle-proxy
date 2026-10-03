@@ -41,3 +41,10 @@ No prospective mode was activated. T005 requires one full day of complete demand
 and estimator-error calibration; T006 is a later MiMo-only strict canary. The
 independent final TeamB6ac source was already deployed through NixOS2609 with233
 native checks. This source integration does not modify that live pin.
+
+Hosted acceptance on the first exact head passed eight checks; Sonar measured
+93.3% new-code coverage and zero new duplication, but reported six issues. The
+repair documents the intentional immutable off no-ops, keeps ignored accounting
+arguments compatible with positional and keyword callers, and uses the standard
+attribute default when no prior dispatch exists. The off-path regression now
+exercises keyword calls with invalid accounting objects as well. No gate changed.

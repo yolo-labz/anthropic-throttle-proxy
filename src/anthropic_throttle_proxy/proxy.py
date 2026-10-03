@@ -2200,7 +2200,7 @@ async def _retry_direct_once(
         request,
         _selected_dispatch(
             retry_via,
-            credential_source=prior.credential_source if prior is not None else None,
+            credential_source=getattr(prior, "credential_source", None),
         ),
     )
     # Telemetry polls are counted separately from fleet traffic. The retry

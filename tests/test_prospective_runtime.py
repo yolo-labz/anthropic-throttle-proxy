@@ -119,6 +119,8 @@ async def test_off_and_absent_accessor_never_touch_accounting(monkeypatch):
         body = object()
         assert await dispatch(runtime, selected=object(), body=body) is body
         assert runtime.reserve(None, None) is runtime.reserve(None, None)
+        async with runtime.reserve(selected=object(), final_body=body) as permit:
+            permit.handoff()
         assert runtime.observations() == {}
         await runtime.aclose()
 
