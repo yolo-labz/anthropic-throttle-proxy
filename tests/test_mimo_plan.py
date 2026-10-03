@@ -14,8 +14,8 @@ from anthropic_throttle_proxy import lanes
 from anthropic_throttle_proxy.ui.routes import _build_subscriptions
 
 _probe = runpy.run_path(str(Path(__file__).parents[1] / "scripts/mimo-token-plan-probe.py"))
-report, team_seat_lane, team_report = (
-    _probe[key] for key in ("report", "team_seat_lane", "team_report")
+report, team_seat_b_lane, team_seat_lane, team_report = (
+    _probe[key] for key in ("report", "team_seat_b_lane", "team_seat_lane", "team_report")
 )
 NOW = datetime(2026, 9, 23, 16, tzinfo=UTC)
 
@@ -246,6 +246,110 @@ def test_team_failure_writes_a_fresh_fail_closed_row_instead_of_raising():
     team_row = result["lanes"][1]
     assert team_row["status"] == "unknown" and "meters" not in team_row
     assert result["lanes"][0]["status"] == "ok"  # plan reading unaffected
+
+
+def team_sample_b(**seat_overrides):
+    """The B seat's reading: explicit synthetic counters only, never real quota."""
+    return team_sample(**seat_overrides)
+
+
+def test_b_seat_row_is_independent_of_owner_and_plan():
+    result = team_report(
+        plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b(total=2000, used=500)
+    )
+    ids = [lane["id"] for lane in result["lanes"]]
+    assert ids == ["mimo:plan", "mimo:team-owner", "mimo:team-seat-b"]
+    meters = {lane["id"]: lane["meters"][0] for lane in result["lanes"]}
+    # Explicit synthetic counters per seat; nothing is ever summed or replaced.
+    assert (meters["mimo:team-owner"]["allowance"], meters["mimo:team-owner"]["current"]) == (
+        1000,
+        250,
+    )
+    assert (meters["mimo:team-seat-b"]["allowance"], meters["mimo:team-seat-b"]["current"]) == (
+        2000,
+        500,
+    )
+    assert meters["mimo:plan"]["allowance"] == 82_000_000_000
+
+
+def test_b_seat_absent_keeps_the_spec_281_shape():
+    result = team_report(plan_detail(), plan_usage(), team_sample(), NOW)
+    assert [lane["id"] for lane in result["lanes"]] == ["mimo:plan", "mimo:team-owner"]
+
+
+def test_b_seat_failed_read_still_writes_a_fresh_fail_closed_row():
+    result = team_report(plan_detail(), plan_usage(), team_sample(), NOW, None)
+    b_row = result["lanes"][2]
+    assert b_row["id"] == "mimo:team-seat-b" and b_row["status"] == "unknown"
+    assert "meters" not in b_row
+    assert result["lanes"][1]["status"] == "ok"  # owner row unaffected
+
+
+@pytest.mark.parametrize(
+    "overrides,reason",
+    [
+        ({"seat_status": "PENDING"}, "not usable capacity"),
+        ({"total": 0}, "invalid"),
+        ({"used": float("nan")}, "invalid"),
+        ({"used": -1}, "invalid"),
+    ],
+)
+def test_b_seat_fail_closed_payloads(overrides, reason):
+    row = team_seat_b_lane(team_sample_b(**overrides), NOW)
+    assert row["id"] == "mimo:team-seat-b" and row["kind"] == "mimo"
+    assert row["status"] == "unknown" and "meters" not in row
+    assert reason in row["reason"]
+
+
+def test_b_seat_full_counter_is_exhausted_with_measured_numbers():
+    row = team_seat_b_lane(team_sample_b(total=2000, used=2000), NOW)
+    assert row["status"] == "exhausted"
+    assert row["meters"][0]["current"] == 2000
+
+
+def test_b_seat_leaks_no_identifiers():
+    payload = team_sample_b()
+    payload["data"]["projectId"] = "project-b-must-not-leak"
+    payload["data"]["seat"]["seatId"] = "seat-b-identifier-must-not-leak"
+    dump = json.dumps(team_seat_b_lane(payload, NOW))
+    assert "project-b-must-not-leak" not in dump
+    assert "seat-b-identifier-must-not-leak" not in dump
+
+
+def test_view_renders_b_seat_row_with_distinct_identity(tmp_path, monkeypatch):
+    combined = team_report(plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b())
+    view = _write_mimo_report(tmp_path, monkeypatch, combined["lanes"])
+    rows = {row["id"]: row for row in view["lanes"]}
+    assert set(rows) == {"mimo:plan", "mimo:team-owner", "mimo:team-seat-b"}
+    assert rows["mimo:team-seat-b"]["identity"] == "MiMo Team B"
+    assert rows["mimo:team-seat-b"]["status"] == "ok"
+
+
+def test_view_absent_b_seat_row_preserves_owner_shape(tmp_path, monkeypatch):
+    combined = team_report(plan_detail(), plan_usage(), team_sample(), NOW)
+    view = _write_mimo_report(tmp_path, monkeypatch, combined["lanes"])
+    assert [row["id"] for row in view["lanes"]] == ["mimo:plan", "mimo:team-owner"]
+
+
+def test_view_ambiguous_b_seat_rows_fail_closed(tmp_path, monkeypatch):
+    combined = team_report(plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b())
+    b_row = combined["lanes"][2]
+    view = _write_mimo_report(
+        tmp_path, monkeypatch, [combined["lanes"][0], combined["lanes"][1], b_row, b_row]
+    )
+    rows = [row for row in view["lanes"] if row["id"] == "mimo:team-seat-b"]
+    assert len(rows) == 1 and rows[0]["status"] == "unknown"
+    assert "ambiguous" in rows[0]["reason"]
+
+
+def test_view_b_seat_failure_replaces_the_healthy_meter(tmp_path, monkeypatch):
+    fresh = team_report(plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b())["lanes"]
+    failed = team_report(plan_detail(), plan_usage(), team_sample(), NOW, None)["lanes"]
+    view = _write_mimo_report(tmp_path, monkeypatch, fresh)
+    assert [r for r in view["lanes"] if r["id"] == "mimo:team-seat-b"][0]["status"] == "ok"
+    view = _write_mimo_report(tmp_path, monkeypatch, failed)
+    rows = [row for row in view["lanes"] if row["id"] == "mimo:team-seat-b"]
+    assert rows[0]["status"] == "unknown" and not rows[0]["meters"]
 
 
 def test_team_row_never_replaces_or_adds_to_the_plan_allowance():

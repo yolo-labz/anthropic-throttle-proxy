@@ -77,6 +77,9 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
 # The team seat row's lane id: sibling of the individual plan row, never a
 # replacement for it and never additive with it (two independent allowances).
 _TEAM_LANE_ID = "mimo:team-owner"
+# The B seat's lane id (second Team seat, per-assigned-seat catalog): its own
+# allowance, never summed with the owner seat or the individual plan row.
+_TEAM_B_LANE_ID = "mimo:team-seat-b"
 
 
 def _parse_console_ts(raw: str) -> datetime:
@@ -177,12 +180,40 @@ def team_seat_lane(seat_response: object, now: datetime) -> dict:
     }
 
 
-def team_report(detail: dict, usage: dict, seat_response: object, now: datetime) -> dict:
-    """`report(...)` plus the team row — always one fresh team row when the
-    Team lane is configured, healthy or fail-closed (see `team_seat_lane`).
+def team_seat_b_lane(seat_response: object, now: datetime) -> dict:
+    """The `mimo:team-seat-b` row — the second Team seat — from one seat reading.
+
+    The B seat is a distinct account's assigned seat: same validation and
+    fail-closed rules as `team_seat_lane`, its own allowance, never summed
+    with the owner seat or the individual plan. Only the lane id differs, so
+    validation lives in exactly one place and the two rows cannot diverge.
+    """
+    row = team_seat_lane(seat_response, now)
+    row["id"] = _TEAM_B_LANE_ID
+    return row
+
+
+# Sentinel: the B seat is not configured at all. Distinct from None, which
+# means the B seat WAS read and failed — that still rewrites a fresh
+# fail-closed row so a previously healthy B meter is never silently retained.
+_UNSET = object()
+
+
+def team_report(
+    detail: dict,
+    usage: dict,
+    seat_response: object,
+    now: datetime,
+    seat_b_response: object = _UNSET,
+) -> dict:
+    """`report(...)` plus one fresh row per configured Team seat, healthy or
+    fail-closed (see `team_seat_lane`). `seat_b_response` absent keeps the
+    spec-281 two-row shape exactly; anything else adds the B seat's own row.
     """
     result = report(detail, usage, now)
     result["lanes"].append(team_seat_lane(seat_response, now))
+    if seat_b_response is not _UNSET:
+        result["lanes"].append(team_seat_b_lane(seat_b_response, now))
     return result
 
 
