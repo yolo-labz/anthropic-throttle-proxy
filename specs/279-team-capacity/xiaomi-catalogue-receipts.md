@@ -31,15 +31,24 @@ account/billing evidence stays with pF.
 | 2 | **Sampler freshness** | **FAIL — stale (root cause found)** | `mimo-plan.json` `generatedAt=2026-10-02T23:33:16Z`, checked 03/10 02:26Z: age **~2 h 53 min** against the 900 s cadence. Probe journal shows the concrete cause at 23:03 and 23:18: **`cat: write error: No space left on device`** — the sampler cannot write its temp file. **Storage recovery is already owned jointly by pJ + Ops p6 (CI/storage); this seat does not compete.** Once space returns, verify the 15-min cadence resumes before trusting either lane row. |
 | 3 | **Exhausted-lane exclusion** | **FAIL — inconsistent status** | `mimo:plan` shows `usedPercent=100.044` (fully used) but `status: "ok"`; `mimo:team-owner` shows `100.132` and correctly `status: "exhausted"`. The individual-plan `report()` marks exhausted only on `expired` or period-end, not `used >= total` — an exhausted lane renders as healthy. The UI must not present it as usable capacity, and routing must keep excluding exhausted/retired keys (spec 283 groundwork landed in #283). |
 
+## Live acceptance receipts (root/protected — redacted only)
+
+| Time (BRT) | Event | Result |
+|---|---|---|
+| 03/10 00:03:59 | PR #284 merged (squash `f4612584fa05115acf5f2423ce38f2f74dfb80f2`), 9/9 checks incl. Sonar, review-clean | PASS (merge receipt, root-guarded, no duplicate) |
+| 03/10 00:29:56–00:30:01 | Sampler leaf rollout by pJ: ExecStart `/nix/store/l5rrq6n1rkjz54b5lqaw47sija0s1lxi-new-wrapper`, unit run exit 0, effective scoped override | PASS (rollout receipt; durable pin `3479c43` NixOS PR2600; pJ holds rollback/retirement custody) |
+| 03/10 00:36 | Protected pF redacted receipt: expected-account guard / freshness / `used>=total → exhausted` classification | **PASS for SAMPLED OWNER ONLY** — NOT B freshness, NOT pool-wide capacity. Raw private evidence stays pF. |
+
+Publication of NixOS PR2600 is pending a Nix protected-base exception — a
+process gate, not sampler functionality. Revert path for merged proxy work:
+`git revert f4612584fa05115acf5f2423ce38f2f74dfb80f2` via PR.
+
 ## Follow-ups with original owners (no ownership change)
 
-- **pH (sampler):** after pJ/p6 restore disk space, fix the individual-plan
-  exhausted condition (`used >= total` → `exhausted`) to match the team row;
-  add one seat-B meter row (per-assigned-seat catalogue); synthetic regression
-  for both.
-- **pK (routing):** serving bearer is slot B (`07c7ae8a`); slot A (`6994af7a`)
-  is 429-shrunk and must keep attracting no new load while B has free slots —
-  confirm end-to-end with #283 semantics after the sampler is truthful.
+- **pH (sampler):** B-meter synthetic integration in progress on original
+  brief (worktree `282-sampler-recovery`, base 210a45e).
+- **pK (routing):** exhausted-A exclusion acceptance in progress on original
+  brief (worktree `283-routing-verification`, main merged in, WIP preserved).
 - **pJ + Ops p6 (CI/storage, already active):** `No space left on device` is
   the sampler-stale root cause — this seat does not run competing reclaim.
 - **pM (tab preservation):** untouched by this verification; the one observed
