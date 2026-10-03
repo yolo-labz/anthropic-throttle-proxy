@@ -46,7 +46,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from test_proxy_app import _reset_proxy_state, _wait_for_limiter_queued
 
-from anthropic_throttle_proxy import accounts, config, limiter, pacing, proxy
+from anthropic_throttle_proxy import accounts, config, lanes, limiter, pacing, proxy
 
 _BODY = {"model": "claude-sonnet-4-6", "messages": [{"role": "user", "content": "acceptance"}]}
 
@@ -787,3 +787,103 @@ async def test_no_state_leakage_between_seats(pool) -> None:
     assert limiter.retry_probe_blocks_routing(pool.bids["A"]) is True
     assert lim_a.retry_after_remaining() > 0
     assert config.bearer_state[pool.bids["A"]]["served"] == 0
+
+
+# ── 8. account-bound meter binding — G3 dispatch acceptance (293) ───────────
+#
+# Explicit validated label->meter mapping (pF/pJ contract): seat A rides
+# `mimo:plan`, seat B rides `mimo:team-b`. Scoped NEW dispatch obeys the bound
+# row; B never borrows the owner row's quota; missing/stale evidence fails
+# closed with an honest bounded refusal, never a silent pass-through.
+
+
+async def test_bound_exhausted_owner_excluded_while_fresh_team_b_serves(
+    pool, monkeypatch: pytest.MonkeyPatch, meter_rows
+) -> None:
+    """A's bound quota row is spent; B's OWN row is freshly metered — B serves."""
+    monkeypatch.setattr(config, "METER_BINDINGS", {"A": "mimo:plan", "B": "mimo:team-b"})
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": meter_rows()})
+    await _open_seat(pool, "A", live=2)
+    await _open_seat(pool, "B", live=3)
+
+    tasks = [asyncio.create_task(_post(pool.client, tag=f"m{i}", hold=True)) for i in range(3)]
+    for i in range(3):
+        await pool.upstream.wait_arrived(f"m{i}")
+    assert dict(pool.upstream.count) == {"B": 3}  # owner row spent: A never dispatched
+    for i in range(3):
+        pool.upstream.let_go(f"m{i}")
+    outcomes = await asyncio.wait_for(asyncio.gather(*tasks), 5)
+    assert [status for status, _body in outcomes] == [200, 200, 200]
+    await _settle()
+    assert config.bearer_state[pool.bids["A"]]["served"] == 0
+    assert config.bearer_state[pool.bids["B"]]["served"] == 3
+
+
+@pytest.mark.parametrize("case", ["stale", "empty", "unknown", "unmapped", "malformed"])
+async def test_bound_stale_and_spent_seats_refuse_new_scoped_dispatch(
+    pool, monkeypatch: pytest.MonkeyPatch, meter_rows, case
+) -> None:
+    """Missing/stale/spent evidence fails CLOSED on new scoped dispatch.
+
+    A's row is spent and B's row is unreadable: no seat may take new work. The
+    request must answer an honest bounded refusal (503 + Retry-After) and must
+    never reach upstream — not a silent pass-through with the caller's key.
+    """
+    bindings = {"A": "mimo:plan", "B": "mimo:team-b"}
+    if case == "empty":
+        bindings = {}
+    elif case == "unmapped":
+        bindings = {"other": "mimo:plan"}
+    monkeypatch.setattr(config, "METER_BINDINGS", bindings)
+    monkeypatch.setattr(config, "METER_BINDING_REQUIRED", True)
+    monkeypatch.setattr(config, "METER_BINDINGS_VALID", case != "malformed")
+    if case == "unknown":
+        monkeypatch.setattr(accounts, "bearer_labels", lambda: {})
+    monkeypatch.setattr(
+        lanes,
+        "view",
+        lambda now: {
+            "lanes": meter_rows("exhausted", "stale") if case == "stale" else meter_rows("ok", "ok")
+        },
+    )
+    lim_a = await _open_seat(pool, "A", live=2)
+    lim_b = await _open_seat(pool, "B", live=2)
+    response = await pool.client.post(
+        "/v1/messages",
+        headers={"Authorization": f"Bearer {pool.tokens['A']}", "X-Test-Tag": "refused"},
+        json=_BODY,
+    )
+    assert response.status == 503
+    assert response.headers["x-throttle-meter-refusal"] == "1"
+    assert int(response.headers["retry-after"]) > 0
+    assert "local policy" in await response.text()
+    assert lim_a.max_concurrent == lim_b.max_concurrent == 2
+    assert dict(pool.upstream.count) == {}  # nothing reached upstream
+    assert pool.upstream.order == []
+
+
+async def test_queued_request_rechecks_meter_before_spending(pool, monkeypatch, meter_rows):
+    rows = meter_rows("ok", "exhausted")
+    monkeypatch.setattr(config, "METER_BINDINGS", {"A": "mimo:plan", "B": "mimo:team-b"})
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": rows})
+    lim = await _open_seat(pool, "A", live=1)
+    held = asyncio.create_task(_post(pool.client, tag="held", hold=True, token=pool.tokens["A"]))
+    await pool.upstream.wait_arrived("held")
+    queued = asyncio.create_task(_post(pool.client, tag="queued", token=pool.tokens["A"]))
+    await _wait_for_limiter_queued(lim, 1)
+    rows[:] = meter_rows("unknown", "exhausted")
+    pool.upstream.let_go("held")
+    assert (await asyncio.wait_for(held, 5))[0] == 200
+    status, body = await asyncio.wait_for(queued, 5)
+    assert status == 503 and b"local policy" in body
+    assert pool.upstream.order == [("A", "held")]
+    await _settle()
+    assert lim.max_concurrent == 1
+    assert lim.snapshot()["inflight"] == lim.snapshot()["queued_total"] == 0
+
+
+async def test_synthetic_recheck_does_not_spend_a_refused_meter(pool, monkeypatch, meter_rows):
+    monkeypatch.setattr(config, "METER_BINDINGS", {"A": "mimo:plan"})
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": meter_rows()})
+    await proxy._credential_recheck_one(pool.bids["A"], pool.tokens["A"])
+    assert pool.upstream.order == []

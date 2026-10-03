@@ -717,6 +717,7 @@ class _Attempt:
         # exhausted 529/queue-timeout hold (terminal synthetic 503) does not
         # AIMD-shrink the bearer (invariants 7 + 9; Codex panel BLOCKER).
         self.aimd_owned = False
+        self.local_meter_refused = False
 
 
 # Client-side disconnects we must NOT retry upstream (the client gave up).
@@ -1313,6 +1314,11 @@ def _bearer_routing_retry_after(bid: str, *, allow_retry_probe: bool) -> float |
     # first, ABOVE the retry-probe branch, so ``allow_retry_probe`` can never
     # elect a dead account. That election is what spent 40 client turns on 403s.
     if _bearer_credential_dead(bid):
+        return None
+    if not _meter_binding_allows(bid):
+        # Account-bound meter refusal: this seat's bound quota row is spent,
+        # stale or unreadable — no new scoped dispatch, and it claims no
+        # eligible capacity (spec 279 seat-b plan).
         return None
     retry_after_remaining = _bearer_retry_after_remaining(bid)
     if _limiter.retry_probe_required(bid) and (
@@ -2058,6 +2064,18 @@ async def _try_forward(
     ``(None, exc)`` on an upstream error so the caller can decide whether to
     retry. Client-side disconnects propagate as exceptions to the caller.
     """
+    bid = _bearer_id(headers)
+    if not _meter_binding_allows(bid):
+        # Recheck after queue waits and before every ordinary/direct retry.
+        # Internal provenance prevents this local503 becoming provider feedback.
+        response = _meter_refusal_response(bid, request.path.lstrip("/"))
+        attempt.local_meter_refused = True
+        attempt.aimd_owned = True
+        attempt.final_status = response.status
+        attempt.response = response
+        attempt.meta = None
+        attempt.captured = None
+        return response, None
     response, status, captured, exc, meta = await _forward_once(
         request, headers, body, url, client_timeout, retryable_statuses
     )
@@ -2087,6 +2105,8 @@ def _maybe_fast_fail_throttle_direct(
     attempt: _Attempt,
 ) -> web.Response | None:
     """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
+    if attempt.local_meter_refused:
+        return None
     if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
         return None
     pause, _ = _pushback_pause(attempt.meta, bid)
@@ -2989,6 +3009,19 @@ async def _keepalive_one_attempt(
     ``_keepalive_attempt_verdict``. A client disconnect ends the hold with 499; a
     network error is logged and retried after a brief pause.
     """
+    if not _meter_binding_allows(bid):
+        # HTTP200 is already committed: stop our emitter, send one terminal
+        # SSE error and EOF; never prepare a second HTTP response or retry.
+        await cancel_keepalive()
+        await _emit_sse_error_terminal(
+            sse_resp, "local policy: seat quota meter exhausted or unreadable"
+        )
+        M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+        attempt.final_status = 503
+        attempt.response = sse_resp
+        attempt.meta = None
+        attempt.captured = None
+        return sse_resp
     # Stamp the remaining budget on central-bound requests.
     send_headers: dict = dict(headers)
     if via == "central" and wait_deadline is not None:
@@ -3302,7 +3335,7 @@ async def _forward_or_recover(
     except _CLIENT_DISCONNECT_EXC as cexc:
         return _record_disconnect(path, "first", cexc, attempt), False
     if exc is None:
-        return response, True
+        return response, not attempt.local_meter_refused
     return (
         await _forward_recover_from_error(
             request, headers, body, path, via, url, client_timeout, response, exc, attempt, bid
@@ -3470,6 +3503,36 @@ async def _pushback_retry_step(
     await _aimd_feedback(bid, limiter, attempt)
     await limiter.wait_retry_after()
     return None
+
+
+def _meter_binding_allows(bid: str, now: float | None = None) -> bool:
+    """Apply only this credential's fresh meter to admission and route selection."""
+    if not config.METER_BINDINGS_VALID:
+        return False
+    bindings = config.METER_BINDINGS
+    if not bindings:
+        return not config.METER_BINDING_REQUIRED
+    from . import accounts
+
+    label = accounts.bearer_labels().get(bid)
+    lane_id = bindings.get(label)
+    if lane_id is None:
+        return not config.METER_BINDING_REQUIRED
+    if not lane_id:
+        return False
+    used = _lanes.plan_meter_used_percent(lane_id, time.time() if now is None else now)
+    return used is not None and 0.0 <= used < 100.0
+
+
+def _meter_refusal_response(bid: str, path: str) -> web.Response:
+    """Honest bounded refusal for a meter-refused scoped seat (fail closed)."""
+    retry_after_s = max(1, int(config.QUEUE_TIMEOUT_RETRY_AFTER_S))
+    log(f"meter-binding-refusal bid={bid} path=/{path} retry_after={retry_after_s}")
+    return web.Response(
+        status=503,
+        headers={"retry-after": str(retry_after_s), "x-throttle-meter-refusal": "1"},
+        text="local policy: seat quota meter is exhausted or unreadable; refusing new dispatch\n",
+    )
 
 
 def _plan_lane_has_headroom(now: float | None = None) -> bool:
@@ -4593,6 +4656,15 @@ async def _pre_dispatch_gate(
     """
     queue_mode, hard_max = _effective_admission(bid)
     limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+    if not _meter_binding_allows(bid):
+        # Same binding as the admission verdict (one predicate): a meter-refused
+        # scoped seat must not dispatch new work. The routing pass already
+        # preferred any fresh sibling; reaching here means there is none, so
+        # refuse honestly and bounded instead of passing the caller's key
+        # through. Only finish the probe when THIS request owns its lease.
+        if probe_lease["bid"] == bid:
+            finish_probe(success=False)
+        return limiter, bid, headers, _meter_refusal_response(bid, path), "answer"
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if (
         _retry_after_blocks_path(path)
@@ -5193,6 +5265,10 @@ def _touch_credential_check(bid: str) -> None:
 
 async def _credential_recheck_one(bid: str, token: str) -> None:
     """One synthetic ``max_tokens: 1`` message on a quarantined account's own token."""
+    if not _meter_binding_allows(bid):
+        # Keep quarantine and normal probe cadence; no synthetic quota spend.
+        _touch_credential_check(bid)
+        return
     url = config.UPSTREAM.rstrip("/") + MESSAGES_PATH
     timeout = aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT)
     headers = {
@@ -5796,7 +5872,9 @@ async def admission(_request: web.Request) -> web.Response:
     # is quarantined. Use the same live+restored accessor as account routing;
     # otherwise a restart resurrects an org-dead bearer in admission only.
     usable = {
-        bid: _bearer_usable(view, now) and not _bearer_credential_dead(bid)
+        bid: _bearer_usable(view, now)
+        and not _bearer_credential_dead(bid)
+        and _meter_binding_allows(bid, now)
         for bid, view in bearers.items()
     }
     serving = [bid for bid, ok in usable.items() if ok]

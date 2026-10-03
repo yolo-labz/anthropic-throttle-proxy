@@ -66,3 +66,21 @@ def _isolate_lane_report(monkeypatch, tmp_path_factory):
     lanes._cache = None
     yield
     lanes._cache = None
+
+
+@pytest.fixture
+def meter_rows():
+    """Synthetic independently scoped quota rows for endpoint/dispatch acceptance."""
+
+    def rows(owner="exhausted", secondary="ok"):
+        return [
+            {
+                "id": lane,
+                "kind": "mimo",
+                "status": status,
+                "meters": [{"used_pct": 100.0 if status == "exhausted" else 25.0}],
+            }
+            for lane, status in (("mimo:plan", owner), ("mimo:team-b", secondary))
+        ]
+
+    return rows
