@@ -18,6 +18,9 @@ Contract:
 * Settlement accepts exact non-negative integers, records full known spend
   (including overspend), and refunds only the known-unspent difference. Its
   mutation is provisional until an explicit pool.save; retain grants no refund.
+* cancel_unsent removes both debits only when the caller proves no transport
+  handoff. It rejects foreign/settled leases, preserves sequence high-water,
+  and is provisional until save. The ledger cannot observe transport itself.
 * Successful save uses a same-directory temporary file, file fsync, replace,
   then directory fsync. A post-replace failure can leave durable debt without
   acknowledgment, which is conservative. A missing file is a cold start, not
@@ -190,6 +193,21 @@ class LaneLedger:
         entry.tokens = spent_tokens  # known overspend is liability, not a discount
         entry.settled = True
         return refund
+
+    def cancel_unsent(self, lease: Lease) -> int:
+        """Provisional rollback ONLY for caller-proven unsent work.
+
+        Remove RPM as well as tokens, unlike settle(lease, 0). An expired
+        legitimate lease is a no-op; a repeated active cancellation raises
+        rather than granting a second refund. Persist before reusing headroom.
+        """
+        entry = self._entry_for(lease)
+        if entry is None:
+            return 0
+        if entry.settled:
+            raise ValueError("a settled lease cannot be cancelled as unsent")
+        self.entries.remove(entry)
+        return entry.tokens
 
     def retain(self, lease: Lease) -> None:
         """429 / timeout / missing usage: the full reservation stands."""
