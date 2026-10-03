@@ -10,6 +10,8 @@ against a local recording upstream. The acceptance matrix from
   4. differing caps and durations                         -> test ..._caps_and_durations_...
   5. queued cancellation returning leases                 -> test ..._queued_cancellation_...
   6. measured per-client fair access without exceeding caps -> test ..._per_client_fair_...
+  7. shrunk/cooldown/meter-full A excluded while B serves  -> test ..._attracts_no_load/
+     ..._live_ceiling_.../..._both_busy_fair_.../..._full_meter_.../..._leakage_...
 
 Determinism rules used here (no real providers, no real credentials):
 
@@ -581,3 +583,207 @@ async def test_per_client_fair_access_measured_within_caps(
     assert lim_a.inflight == 0
     assert lim_a.queued_total == 0
     assert lim_a._holds == {}
+
+
+# ── 7. shrunk/cooldown/meter-full A exclusion (spec 285 verification) ────────
+#
+# Coordinator-verified live shape (03/10/2026): slot B serves while slot A is
+# AIMD-shrunk to 2 after a 429 and in retry-probe cooldown. These are END-TO-END
+# synthetic regressions of the EXCLUSION: while the healthy sibling has room,
+# a shrunk, cooldown or meter-exhausted A must attract no load, hold no lease
+# and never be counted as usable capacity — with no state leaking between lanes.
+
+
+async def test_retry_probe_cooldown_seat_attracts_no_load(pool) -> None:
+    """A in retry-probe cooldown is unroutable while B has free slots.
+
+    Both of A's gates must hold: the blocking half-open probe window
+    (``retry_probe_blocks_routing``) excludes it even for the retry-probe
+    routing pass, and its post-shrink live ceiling (2) is preserved untouched.
+    """
+    lim_a = await _open_seat(pool, "A", live=2)
+    await _open_seat(pool, "B", live=3)
+    # The 429 aftermath: a pacing window plus a blocking half-open probe gate.
+    lim_a.note_retry_after(30)
+    limiter.require_retry_probe(pool.bids["A"], block_while_retry=True)
+
+    # The routing pass that ALLOWS retry probes still refuses A.
+    assert proxy._bearer_routing_retry_after(pool.bids["A"], allow_retry_probe=True) is None
+    assert limiter.retry_probe_blocks_routing(pool.bids["A"]) is True
+
+    tasks = [asyncio.create_task(_post(pool.client, tag=f"c{i}")) for i in range(3)]
+    outcomes = await asyncio.wait_for(asyncio.gather(*tasks), 5)
+    assert [status for status, _body in outcomes] == [200, 200, 200]
+    assert dict(pool.upstream.count) == {"B": 3}  # A absent from every dispatch
+
+    await _settle()
+    assert lim_a.inflight == 0 and lim_a.queued_total == 0 and lim_a._holds == {}
+    assert lim_a.max_concurrent == 2  # live ceiling preserved, never "fixed up"
+    assert config.bearer_state[pool.bids["A"]]["served"] == 0
+    assert config.bearer_state[pool.bids["B"]]["served"] == 3
+
+
+async def test_shrunk_seat_at_live_ceiling_keeps_new_load_off(
+    pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saturated at its SHRUNK live ceiling is not a candidate while B has room.
+
+    The least-loaded score normalizes occupancy by the live cap: A at 2/2
+    scores 1.0 while B idles at 0/3, so new arrivals must land on B and A must
+    never run more than its ceiling — the shrink does not become a queue magnet.
+    """
+    await _open_seat(pool, "A", live=2)
+    await _open_seat(pool, "B", live=3)
+    # Fill A deterministically with the suite's single-seat idiom (stickiness is
+    # a tie-breaker, not a pin): A-only pool for the fill, then restore.
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{pool.key_files['A']}")
+    a1 = asyncio.create_task(_post(pool.client, tag="a1", hold=True))
+    await pool.upstream.wait_arrived("a1")
+    a2 = asyncio.create_task(_post(pool.client, tag="a2", hold=True))
+    await pool.upstream.wait_arrived("a2")
+    assert dict(pool.upstream.inflight) == {"A": 2}  # A full at its live cap
+    monkeypatch.setattr(
+        config, "ACCOUNT_CRED_PATHS", f"A:{pool.key_files['A']},B:{pool.key_files['B']}"
+    )
+
+    # Anonymous arrivals must use B's free capacity, not queue onto full A.
+    b1 = asyncio.create_task(_post(pool.client, tag="b1", hold=True))
+    await pool.upstream.wait_arrived("b1")
+    b2 = asyncio.create_task(_post(pool.client, tag="b2", hold=True))
+    await pool.upstream.wait_arrived("b2")
+    assert dict(pool.upstream.count) == {"A": 2, "B": 2}
+    assert dict(pool.upstream.max_inflight) == {"A": 2, "B": 2}  # ceilings held
+
+    for tag in ("a1", "a2", "b1", "b2"):
+        pool.upstream.let_go(tag)
+    statuses = await asyncio.wait_for(asyncio.gather(a1, a2, b1, b2), 5)
+    assert [status for status, _body in statuses] == [200, 200, 200, 200]
+
+
+async def test_both_seats_busy_fair_queue_per_client(pool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both seats occupied: queued work drains by per-client fair rotation.
+
+    A (cap 2) and B (cap 1) are both filled to their live ceilings (single-seat
+    fill idiom, so tag placement is deterministic). Queue depth counts as load,
+    so the router SPREADS the backlog: X's first parks on A (stable tie), X's
+    second on B, Y's on A. Each busy bearer drains its own queue by per-client
+    RR — Y is served within one turn, never starved behind X — and no seat
+    exceeds its own live ceiling.
+    """
+    await _open_seat(pool, "A", live=2)
+    await _open_seat(pool, "B", live=1)
+    upstream = pool.upstream
+
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{pool.key_files['A']}")
+    a_hold = asyncio.create_task(_post(pool.client, tag="a-hold", hold=True))
+    await upstream.wait_arrived("a-hold")
+    a_hold2 = asyncio.create_task(_post(pool.client, tag="a-hold2", hold=True))
+    await upstream.wait_arrived("a-hold2")
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"B:{pool.key_files['B']}")
+    b_hold = asyncio.create_task(_post(pool.client, tag="b-hold", hold=True))
+    await upstream.wait_arrived("b-hold")
+    monkeypatch.setattr(
+        config, "ACCOUNT_CRED_PATHS", f"A:{pool.key_files['A']},B:{pool.key_files['B']}"
+    )
+    assert dict(upstream.inflight) == {"A": 2, "B": 1}  # both occupied
+
+    x2 = asyncio.create_task(_post(pool.client, tag="x2", hold=True, cid="cx"))
+    x3 = asyncio.create_task(_post(pool.client, tag="x3", hold=True, cid="cx"))
+    y1 = asyncio.create_task(_post(pool.client, tag="y1", hold=True, cid="cy"))
+    lim_a = await proxy._get_bearer_limiter(pool.bids["A"], "fair", config.MAX_CONCURRENT)
+    lim_b = await proxy._get_bearer_limiter(pool.bids["B"], "fair", config.MAX_CONCURRENT)
+    await _wait_for_limiter_queued(lim_a, 2)
+    await _wait_for_limiter_queued(lim_b, 1)
+    # Deterministic spread: two on A (one per client), one on B; nothing ran.
+    assert lim_a.snapshot()["queued_per_client"] == {"cx": 1, "cy": 1}
+    assert lim_b.snapshot()["queued_per_client"] == {"cx": 1}
+    for tag in ("x2", "x3", "y1"):
+        assert tag not in upstream.arrived
+
+    upstream.let_go("a-hold")  # a slot frees on A: its queue drains by RR
+    _seat, tag = await upstream.next_arrival(len(upstream.order))
+    assert tag == "x2"
+    upstream.let_go(tag)
+    _seat, tag = await upstream.next_arrival(len(upstream.order))
+    assert tag == "y1"  # fair access: Y within one turn, never behind X
+    upstream.let_go(tag)
+
+    upstream.let_go("b-hold")  # a slot frees on B: its queue drains too
+    _seat, tag = await upstream.next_arrival(len(upstream.order))
+    assert tag == "x3"
+    upstream.let_go(tag)
+
+    await asyncio.wait_for(asyncio.gather(x2, x3, y1), 5)
+    upstream.let_go("a-hold2")
+    await asyncio.wait_for(asyncio.gather(a_hold, a_hold2, b_hold), 5)
+    await _settle()
+    assert dict(upstream.max_inflight) == {"A": 2, "B": 1}  # ceilings never exceeded
+
+
+async def test_full_meter_seat_is_exhausted_never_usable_capacity(pool) -> None:
+    """A meter at 100% is EXHAUSTED whatever the status field claims.
+
+    The routing gate echoes #284's probe rule (used>=total is exhausted; the
+    display field is not authoritative): a lagging ``allowed`` sample with
+    ``util_5h=1.0`` must hard-gate A — even under the pressure/spillover pass —
+    so its "free" slots are never counted as usable capacity while B queues
+    and serves the load.
+    """
+    lim_a = await _open_seat(pool, "A", live=3)
+    lim_b = await _open_seat(pool, "B", live=1)
+    config.bearer_state[pool.bids["A"]]["unified"] = {
+        "status_5h": "allowed",  # lagging display — the meter is authoritative
+        "util_5h": 1.0,
+        "reset_5h": time.time() + 600,
+    }
+
+    holder = asyncio.create_task(_post(pool.client, tag="b-hold", hold=True))
+    await pool.upstream.wait_arrived("b-hold")
+    assert pool.upstream.order[-1] == ("B", "b-hold")
+
+    # B is full and A LOOKS idle: the arrival must queue on B, never spill to A.
+    queued = asyncio.create_task(_post(pool.client, tag="spill", hold=True))
+    await _wait_for_limiter_queued(lim_b, 1)
+    assert "spill" not in pool.upstream.arrived
+    assert lim_a.inflight == 0 and lim_a._holds == {}  # A holds no slot, no lease
+
+    pool.upstream.let_go("b-hold")
+    await pool.upstream.wait_arrived("spill")
+    pool.upstream.let_go("spill")
+    (holder_status, _holder_body), (queued_status, _queued_body) = await asyncio.wait_for(
+        asyncio.gather(holder, queued), 5
+    )
+    assert holder_status == queued_status == 200
+    assert dict(pool.upstream.count) == {"B": 2}  # A's capacity never used
+
+    await _settle()
+    assert config.bearer_state[pool.bids["A"]]["served"] == 0
+    assert config.bearer_state[pool.bids["B"]]["served"] == 2
+
+
+async def test_no_state_leakage_between_seats(pool) -> None:
+    """A's cooldown/gate state must not gate, pause or reopen across to B.
+
+    B serves with no induced pause while A sits behind a 30s window (a leak
+    would park this request for the window — the 5s round-trip bound is the
+    falsifier), B's own gate state stays untouched, and B's success must NOT
+    clear A's gate or window.
+    """
+    lim_a = await _open_seat(pool, "A", live=2)
+    lim_b = await _open_seat(pool, "B", live=3)
+    lim_a.note_retry_after(30)
+    limiter.require_retry_probe(pool.bids["A"], block_while_retry=True)
+
+    status, body = await asyncio.wait_for(_post(pool.client, tag="b1"), 5)
+    assert status == 200 and _seat_of(body) == "B"  # completed inside 5s: no leak
+    await _settle()  # let post-response bookkeeping land before reading counters
+
+    # B's state is untouched by A's gate.
+    assert lim_b.retry_after_remaining() == 0
+    assert limiter.retry_probe_required(pool.bids["B"]) is False
+    assert config.bearer_state[pool.bids["B"]]["served"] == 1
+    # B's success did not reopen or clear A's gate or window.
+    assert limiter.retry_probe_required(pool.bids["A"]) is True
+    assert limiter.retry_probe_blocks_routing(pool.bids["A"]) is True
+    assert lim_a.retry_after_remaining() > 0
+    assert config.bearer_state[pool.bids["A"]]["served"] == 0
