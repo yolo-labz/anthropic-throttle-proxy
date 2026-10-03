@@ -19,10 +19,11 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from test_keepalive_hold import _make_proxy_app
 
 from anthropic_throttle_proxy import accounts, config, limiter, pacing, proxy
 from anthropic_throttle_proxy.ui import routes as ui_routes
-from anthropic_throttle_proxy.ui.routes import _compute_status, attach_ui
+from anthropic_throttle_proxy.ui.routes import _compute_status
 
 # A minimal but realistic streamed Messages response: message_start carries the
 # input usage, message_delta the output usage — exactly the two blocks the SSE
@@ -364,12 +365,7 @@ async def client(monkeypatch) -> TestClient:
     monkeypatch.setattr(config, "CENTRAL_URL", "")
     _reset_proxy_state()
 
-    app = web.Application(client_max_size=8 * 1024 * 1024)
-    app.router.add_get("/", proxy.root_probe)
-    app.router.add_get("/__throttle/health", proxy.health)
-    app.router.add_get("/metrics", proxy.metrics)
-    attach_ui(app)
-    app.router.add_route("*", "/{path:.*}", proxy.handler)
+    app = _make_proxy_app()
 
     proxy_server = TestServer(app)
     test_client = TestClient(proxy_server)

@@ -1,8 +1,9 @@
 # Prospective admission — authority, accounting and refusal contract
 
-**Status: contract only.** No enforcement is implemented by this slice. The
-predecessor is 244, which shipped six red assertions and three positive controls
-showing that the current admission bounds *time and slots*, never *tokens*.
+**Status: default-off integration.** The app-owned runtime now wires the audited
+dispatch boundaries. Production remains off; T005 calibration and T006 strict
+activation remain pending. Spec244 preserves the original off-mode evidence
+and positive controls alongside the explicit strict acceptance adapter.
 
 ## Why a contract comes first
 
@@ -63,8 +64,10 @@ enforcement flag may be turned on.
 - Reuse the existing fair queue; do not add a second scheduler. The first
   integration may refuse locally with provenance rather than sleep while holding
   an inference slot.
-- Internal probes are accounted to their own small budget so diagnostics can
-  never starve the fleet.
+- Internal probes have no configured small-budget carve-out yet: strict refuses
+  them as local-inconclusive, preserving credential state. Observe records unknown
+  and preserves existing transport. A later explicit probe scope is required
+  before strict can permit them.
 
 ## Refusal semantics
 

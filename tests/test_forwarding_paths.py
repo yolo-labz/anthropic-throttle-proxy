@@ -329,7 +329,7 @@ async def test_central_failure_direct_retry_is_serialized(monkeypatch) -> None:
     monkeypatch.setattr(proxy, "_try_forward", fake_try_forward)
     timeout = aiohttp.ClientTimeout(total=1)
 
-    class FakeRequest:
+    class FakeRequest(dict):
         query_string = ""
 
     async def one_retry() -> web.StreamResponse | web.Response:
@@ -444,8 +444,9 @@ async def test_forward_once_propagates_client_disconnect(monkeypatch) -> None:
     upstream.app.router.add_route("*", "/{path:.*}", ok)
     await upstream.start_server()
 
-    class FakeRequest:
+    class FakeRequest(dict):
         method = "POST"
+        app = {}
 
     try:
         with pytest.raises(aiohttp.ClientConnectionResetError):

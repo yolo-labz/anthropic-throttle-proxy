@@ -66,6 +66,18 @@ M_REQUESTS = Counter(
     ["method", "status", "model"],
     registry=REGISTRY,
 )
+M_PROSPECTIVE_REFUSALS = Counter(
+    "anthropic_prospective_refusals_total",
+    "Strict local admission refusals, separate from provider pushback.",
+    ["reason"],
+    registry=REGISTRY,
+)
+M_PROSPECTIVE_OBSERVATIONS = Counter(
+    "anthropic_prospective_observations_total",
+    "Bounded shadow outcomes; unknown/dropped samples are not measured headroom.",
+    ["outcome"],
+    registry=REGISTRY,
+)
 M_TOKENS = Counter(
     "anthropic_tokens_total",
     "Tokens parsed from Anthropic SSE usage blocks.",

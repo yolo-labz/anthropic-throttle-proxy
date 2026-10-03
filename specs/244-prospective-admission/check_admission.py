@@ -32,6 +32,58 @@ def within_budget(value, limit, label):
         raise BudgetExceeded(f"{label}: {value} > fictional budget {limit}")
 
 
+def configure_fixture_proxy(monkeypatch):
+    for key, value in {
+        "CENTRAL_URL": "",
+        "QUEUE_MODE": "fair",
+        "MAX_CONCURRENT": 2,
+        "AIMD_INITIAL_CONCURRENT": 2,
+        "PRIORITY_RESERVE_SLOTS": 0,
+        "RATE_PUSHBACK_RETRIES": 0,
+        "AIMD_BACKOFF_S": 0.001,
+        "MIN_DISPATCH_GAP_S": 8.0,
+        "QUEUE_MAX_WAIT_S": 5,
+        "ACCOUNT_ROUTING_MODE": "off",
+        "API_KEY_ROUTING_MODE": "off",
+        "KEEPALIVE_HOLD": False,
+    }.items():
+        monkeypatch.setattr(config, key, value)
+    monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
+
+
+class FixtureProvider:
+    """One counting loopback provider shared by the off and strict experiments."""
+
+    def __init__(self, first_429=False):
+        self.first_429 = first_429
+        self.seen = []
+        self.active = self.peak = 0
+        self.release = asyncio.Event()
+
+    async def handle(self, request):
+        payload = await request.json()
+        self.seen.append(
+            {
+                "account": KEYS[request.headers["Authorization"]],
+                "model": payload["model"],
+                "output_bound": payload.get("max_tokens", payload.get("max_output_tokens")),
+            }
+        )
+        if self.first_429 and len(self.seen) == 1:
+            return web.json_response({"error": "fixture pushback"}, status=429)
+        self.active += 1
+        self.peak = max(self.peak, self.active)
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        try:
+            await response.prepare(request)
+            await self.release.wait()
+            await response.write(b"data: [DONE]\n\n")
+            await response.write_eof()
+            return response
+        finally:
+            self.active -= 1
+
+
 @pytest.fixture
 async def burst(monkeypatch, proxy_admission_state):
     """Hold streams after headers so overlapping reservations are observable."""
@@ -61,54 +113,14 @@ async def burst(monkeypatch, proxy_admission_state):
     monkeypatch.setattr(pacing, "asyncio", SimpleNamespace(sleep=advance))
     monkeypatch.setattr(pacing, "_last_dispatch_ts", -8.0)
     monkeypatch.setattr(forwarding, "_pace_dispatch", paced)
-    for key, value in {
-        "CENTRAL_URL": "",
-        "QUEUE_MODE": "fair",
-        "MAX_CONCURRENT": 2,
-        "AIMD_INITIAL_CONCURRENT": 2,
-        "PRIORITY_RESERVE_SLOTS": 0,
-        "RATE_PUSHBACK_RETRIES": 0,
-        "AIMD_BACKOFF_S": 0.001,
-        "MIN_DISPATCH_GAP_S": 8.0,
-        "QUEUE_MAX_WAIT_S": 5,
-        "ACCOUNT_ROUTING_MODE": "off",
-        "API_KEY_ROUTING_MODE": "off",
-        "KEEPALIVE_HOLD": False,
-    }.items():
-        monkeypatch.setattr(config, key, value)
-    monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
+    configure_fixture_proxy(monkeypatch)
 
     async def run(path, keys, *, waves=1, first_429=False):
-        seen = []
-        active = peak = 0
-        release = asyncio.Event()
-
-        async def upstream(request):
-            nonlocal active, peak
-            payload = await request.json()
-            seen.append(
-                {
-                    "account": KEYS[request.headers["Authorization"]],
-                    "model": payload["model"],
-                    "output_bound": payload.get("max_tokens", payload.get("max_output_tokens")),
-                }
-            )
-            if first_429 and len(seen) == 1:
-                return web.json_response({"error": "fixture pushback"}, status=429)
-            active += 1
-            peak = max(peak, active)
-            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
-            try:
-                await response.prepare(request)
-                await release.wait()
-                await response.write(b"data: [DONE]\n\n")
-                await response.write_eof()
-                return response
-            finally:
-                active -= 1
+        provider = FixtureProvider(first_429)
+        seen, release = provider.seen, provider.release
 
         remote = web.Application()
-        remote.router.add_post(path, upstream)
+        remote.router.add_post(path, provider.handle)
         async with TestServer(remote) as origin:
             ports.add(origin.port)
             monkeypatch.setattr(config, "UPSTREAM", str(origin.make_url("")).rstrip("/"))
@@ -142,10 +154,10 @@ async def burst(monkeypatch, proxy_admission_state):
                 finally:
                     release.set()
         assert config.state["inflight"] == config.state["queued"] == 0
-        assert active == 0
+        assert provider.active == 0
         assert len(sends) == len(seen)
         assert all(b - a >= 8 for a, b in zip(sends, sends[1:], strict=False))
-        return {"attempts": seen, "dispatch_times": sends, "peak": peak}
+        return {"attempts": seen, "dispatch_times": sends, "peak": provider.peak}
 
     yield run
 

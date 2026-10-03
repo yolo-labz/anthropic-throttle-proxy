@@ -32,6 +32,7 @@ from aiohttp import web
 from prometheus_client import CollectorRegistry, Counter, generate_latest
 
 from . import provider_registry, routing
+from .prospective_refusal import local_refusal_response, strip_incoming_provenance
 from .routing import (
     Lane,
     LaneState,
@@ -377,13 +378,17 @@ _RESERVED_CREDENTIAL_RESPONSE_HEADERS: Final[frozenset[str]] = frozenset(
 )
 
 
-def _forward_headers(request: web.Request) -> dict[str, str]:
-    """Client headers minus hop-by-hop + ingress-internal, ready for upstream."""
-    return {
+def _forward_headers(request: web.Request, *, prospective_enabled: bool = False) -> dict[str, str]:
+    """Client headers minus hop-by-hop and ingress-internal fields.
+
+    Enabled admission strips caller-minted provenance; off keeps legacy bytes.
+    """
+    headers = {
         k: v
         for k, v in request.headers.items()
         if k.lower() not in _HOP_BY_HOP and k.lower() not in _INGRESS_ONLY_HEADERS
     }
+    return strip_incoming_provenance(headers) if prospective_enabled else headers
 
 
 def _require_credential_mode(request: web.Request) -> str | None:
@@ -1003,6 +1008,19 @@ def _lane_body(
     return request.content
 
 
+def _prospective_bridge():
+    """The T003/T004 runtime bridge (pM's published API, 297 slice).
+
+    Lazy import: this module stays importable while the bridge lands in the
+    same integration PR, and off mode pays nothing at import. Consumers call
+    ``get_runtime``/``set_selected_dispatch`` only — never construct owners
+    or invent app keys (published accessor convention).
+    """
+    from . import prospective_runtime as prt
+
+    return prt
+
+
 async def _send_upstream(
     session: aiohttp.ClientSession,
     request: web.Request,
@@ -1018,16 +1036,49 @@ async def _send_upstream(
     error must not end the search) and a terminal 503/504 for an unconstrained
     one.
     """
-    try:
+
+    async def _send():
         return await session.request(
             request.method,
             target,
-            headers=_forward_headers(request),
+            headers=_forward_headers(request, prospective_enabled=runtime.mode != "off"),
             data=body_data,
             timeout=client_timeout,
             allow_redirects=False,
             auto_decompress=False,
         )
+
+    # T004 seam: the per-attempt final lane body enters the prospective
+    # reserve IMMEDIATELY before transport (synchronous handoff, no
+    # intervening await). The ingress forwards to a SIBLING PROXY that selects
+    # the final credential, so this attempt is `ingress_relay` — explicitly
+    # UNSUPPORTED in strict (the honest first support boundary): the bridge
+    # refuses with its typed LOCAL verdict before any transport. Observe
+    # records unknown and sends; off is the shared no-op. Authority is never
+    # guessed from downstream token/hash/stamp (a prerequisite, not an
+    # assumption), and metadata is set per attempt so reroutes refresh it.
+    # The body OBJECT is handed to the bridge unchanged: non-bytes/streaming
+    # generation bodies are classified UNKNOWN there (strict refuses before
+    # transport; observe records unknown and sends) — never silently forwarded
+    # as if accounted. Control GETs and local synthetic responses never reach
+    # this call site (their probes own their own sessions).
+    runtime_mod = _prospective_bridge()
+    selected = runtime_mod.SelectedDispatch(
+        credential_source=None,
+        endpoint=None,
+        topology="ingress_relay",
+        internal_probe=False,
+    )
+    runtime_mod.set_selected_dispatch(request, selected)
+    runtime = runtime_mod.get_runtime(request)
+    try:
+        async with runtime.reserve(selected, body_data) as permit:
+            permit.handoff()
+            return await _send()
+    except runtime_mod.LocalProspectiveRefusal as exc:
+        # Caught OUTSIDE the reservation context and BEFORE any retry/AIMD/
+        # spill handling: a local prospective refusal is policy, not capacity.
+        return local_refusal_response(exc.refusal)
     except aiohttp.ClientError:
         if required_mode is not None:
             return None
@@ -1195,6 +1246,8 @@ async def _relay_response(
             if k.lower() not in _HOP_BY_HOP
             and k.lower() not in _RESERVED_CREDENTIAL_RESPONSE_HEADERS
         }
+        if _prospective_bridge().get_runtime(request).mode != "off":
+            out_headers = strip_incoming_provenance(out_headers)
         resp = web.StreamResponse(status=upstream.status, headers=out_headers)
         resp.headers[MARKER_HEADER] = "1"
         resp.headers[ROLE_HEADER] = role
@@ -1517,6 +1570,9 @@ def build_app() -> web.Application:
     """Wire the ingress aiohttp app (route table + lifecycle hooks)."""
     _warn_roles_without_a_lane()
     app = web.Application(client_max_size=128 * 1024 * 1024, middlewares=[_count_served])
+    from .prospective_lifecycle import prospective_context
+
+    app.cleanup_ctx.append(prospective_context)
     app.cleanup_ctx.append(_session_context)
     app.cleanup_ctx.append(_lane_health_context)  # S3: depends on the session existing
     app.router.add_get("/", _root_probe)

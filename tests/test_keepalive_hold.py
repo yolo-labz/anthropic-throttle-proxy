@@ -130,6 +130,16 @@ def _make_upstream_app(
     return app
 
 
+def _make_proxy_app() -> web.Application:
+    app = web.Application(client_max_size=8 * 1024 * 1024)
+    app.router.add_get("/", proxy.root_probe)
+    app.router.add_get("/__throttle/health", proxy.health)
+    app.router.add_get("/metrics", proxy.metrics)
+    attach_ui(app)
+    app.router.add_route("*", "/{path:.*}", proxy.handler)
+    return app
+
+
 async def _make_client_with_upstream(
     monkeypatch,
     upstream_app: web.Application,
@@ -153,12 +163,7 @@ async def _make_client_with_upstream(
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", rate_pushback_retries)
     _reset_state()
 
-    app = web.Application(client_max_size=8 * 1024 * 1024)
-    app.router.add_get("/", proxy.root_probe)
-    app.router.add_get("/__throttle/health", proxy.health)
-    app.router.add_get("/metrics", proxy.metrics)
-    attach_ui(app)
-    app.router.add_route("*", "/{path:.*}", proxy.handler)
+    app = _make_proxy_app()
 
     proxy_server = TestServer(app)
     test_client = TestClient(proxy_server)
@@ -820,7 +825,7 @@ async def test_forward_once_into_sse_strips_unmarked_queue_timeout(monkeypatch) 
     try:
         url = str(upstream_server.make_url("/v1/messages"))
         monkeypatch.setattr(config, "UPSTREAM", url)
-        req = make_mocked_request("POST", "/v1/messages")
+        req = make_mocked_request("POST", "/v1/messages", app=web.Application())
         sse_resp = web.StreamResponse(status=200, headers={"content-type": "text/event-stream"})
         status, meta, _captured, exc = await proxy._forward_once_into_sse(
             req, {}, None, url, aiohttp.ClientTimeout(total=5), sse_resp

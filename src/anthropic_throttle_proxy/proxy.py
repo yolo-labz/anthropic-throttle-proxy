@@ -718,6 +718,11 @@ class _Attempt:
         # AIMD-shrink the bearer (invariants 7 + 9; Codex panel BLOCKER).
         self.aimd_owned = False
         self.local_meter_refused = False
+        # Internal provenance for a LOCAL prospective-admission refusal: kept
+        # distinct from the plan-meter label so no consumer can conflate local
+        # budget policy with seat-meter exhaustion. Together with
+        # ``aimd_owned`` it skips every later finalization/retry/hold feedback.
+        self.local_prospective_refused = False
 
 
 # Client-side disconnects we must NOT retry upstream (the client gave up).
@@ -1921,6 +1926,8 @@ def _try_retry_after_reroute(
     cid: str,
     retry_after_remaining: float,
     source: str,
+    request: web.Request,
+    via: str,
 ) -> tuple[str, dict[str, str]] | None:
     rerouted = _retry_after_reroute_headers(
         base_headers,
@@ -1942,6 +1949,16 @@ def _try_retry_after_reroute(
         f"retry_after={math.ceil(retry_after_remaining)}"
     )
     seen_bids.add(next_bid)
+    # P1 (pF): this successful Retry-After replacement swaps the credential
+    # WITHOUT passing through _reroute_from_base — record the new trusted
+    # authority here or A's identity would ride B's headers. next_label is the
+    # routing decision's own label; None clears (never derived from a bearer
+    # hash or a label map).
+    from . import prospective_runtime
+
+    prospective_runtime.set_selected_dispatch(
+        request, _selected_dispatch(via, credential_source=next_label)
+    )
     return next_bid, next_headers
 
 
@@ -2076,9 +2093,22 @@ async def _try_forward(
         attempt.meta = None
         attempt.captured = None
         return response, None
-    response, status, captured, exc, meta = await _forward_once(
-        request, headers, body, url, client_timeout, retryable_statuses
-    )
+    from .prospective_refusal import local_refusal_response
+    from .prospective_runtime import LocalProspectiveRefusal
+
+    try:
+        response, status, captured, exc, meta = await _forward_once(
+            request, headers, body, url, client_timeout, retryable_statuses
+        )
+    except LocalProspectiveRefusal as refused:
+        response = local_refusal_response(refused.refusal)
+        attempt.local_prospective_refused = True
+        attempt.aimd_owned = True
+        attempt.final_status = response.status
+        attempt.response = response
+        attempt.meta = None
+        attempt.captured = None
+        return response, None
     if captured is not None:
         attempt.captured = captured
     if meta is not None:
@@ -2105,7 +2135,7 @@ def _maybe_fast_fail_throttle_direct(
     attempt: _Attempt,
 ) -> web.Response | None:
     """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
-    if attempt.local_meter_refused:
+    if attempt.local_meter_refused or attempt.local_prospective_refused:
         return None
     if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
         return None
@@ -2140,6 +2170,7 @@ async def _retry_direct_once(
         log(f"central relayed upstream 5xx: {first_exc!r} → central stays up, retrying direct")
         # pick_target would re-pick the still-up central; go direct explicitly.
         retry_url, retry_timeout = direct_target(path, request.query_string)
+        retry_via = "direct"
         retry_where = "during direct-retry"
     elif via == "central":
         log(f"central forward failed: {first_exc!r} → marking DOWN, retrying direct")
@@ -2148,14 +2179,30 @@ async def _retry_direct_once(
         # ok streak so recovery still has to clear the OK_THRESHOLD hysteresis.
         state["central_status"] = "down"
         state["central_consecutive_ok"] = 0
-        retry_url, retry_timeout, _ = pick_target(path, request.query_string)
+        retry_url, retry_timeout, retry_via = pick_target(path, request.query_string)
         retry_where = "during direct-retry"
     else:
         log(f"upstream-error path=/{path}: {first_exc!r} → retry direct once")
         retry_url, retry_timeout = url, client_timeout
+        retry_via = via
         retry_where = "during upstream-retry"
     if via == "central":
         attempt.context["via"] = "direct-fallback"
+    # T003 target identity: every target selection re-records the exact
+    # endpoint/topology. This fallback never replaces the credential (same
+    # headers), so the authoritative source is preserved from the record; an
+    # absent record stays unknown — never derived from a bearer hash or a
+    # label map.
+    from . import prospective_runtime
+
+    prior = prospective_runtime.get_selected_dispatch(request)
+    prospective_runtime.set_selected_dispatch(
+        request,
+        _selected_dispatch(
+            retry_via,
+            credential_source=prior.credential_source if prior is not None else None,
+        ),
+    )
     # Telemetry polls are counted separately from fleet traffic. The retry
     # counter is read as upstream pushback — on the dashboard's `N retries` and
     # on `/metrics` — and a self-inflicted poll against a dead account endpoint
@@ -2727,34 +2774,53 @@ async def _forward_once_into_sse(
     retry).
     """
     from .pacing import _pace_dispatch
+    from .prospective_refusal import strip_incoming_provenance
+    from .prospective_runtime import get_runtime, get_selected_dispatch
     from .ratelimit import _extract_ratelimit
 
+    # Trust boundary: a client-minted provenance stamp is never forwarded —
+    # but only when the prospective runtime actually engages the boundary.
+    # Default-off must keep byte parity (no header rewriting at all).
+    runtime = get_runtime(request)
+    if runtime.mode != "off":
+        headers = strip_incoming_provenance(headers)
+    selected = get_selected_dispatch(request)
     connector = aiohttp.TCPConnector(ssl=True)
     async with aiohttp.ClientSession(
         timeout=client_timeout, connector=connector, auto_decompress=False
     ) as session:
         await _pace_dispatch()
-        try:
-            async with session.request(
-                request.method, url, headers=headers, data=body, allow_redirects=False
-            ) as upstream:
-                meta = _extract_ratelimit(upstream.headers)
-                # Throttle / error status: return body as captured, no piping.
-                if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
-                    status, meta, captured = await _capture_throttle_upstream(upstream, meta)
-                    return status, meta, captured, None
-                # 2xx: stop the keepalive emitter BEFORE the first body byte
-                # so it can never interleave a `: keepalive` comment into the
-                # real SSE frames, then pipe chunks into the prepared sse_resp.
-                captured = await _pipe_sse_upstream(request, upstream, sse_resp, cancel_keepalive)
-                return upstream.status, meta, captured, None
-        except (TimeoutError, aiohttp.ClientError) as exc:
-            if isinstance(exc, aiohttp.ClientConnectionResetError):
-                # A reset mid-relay is the client's problem, not a stall to
-                # report as a local failure: fall through to the outer
-                # handler, which re-raises it.
-                raise
-            return -1, None, None, exc
+        # Post-pacer reservation over the exact final bytes; the synchronous
+        # handoff immediately precedes transport with no intervening await.
+        # A LocalProspectiveRefusal from reserve entry or handoff propagates
+        # OUT of this seam (outside the transport try, so it can never be
+        # misread as a network error) and is classified by the caller before
+        # any provider retry/AIMD handling.
+        async with runtime.reserve(selected, body) as permit:
+            permit.handoff()
+            try:
+                async with session.request(
+                    request.method, url, headers=headers, data=body, allow_redirects=False
+                ) as upstream:
+                    meta = _extract_ratelimit(upstream.headers)
+                    # Throttle / error status: return body as captured, no piping.
+                    if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
+                        status, meta, captured = await _capture_throttle_upstream(upstream, meta)
+                        return status, meta, captured, None
+                    # 2xx: stop the keepalive emitter BEFORE the first body byte
+                    # so it can never interleave a `: keepalive` comment into the
+                    # real SSE frames, then pipe chunks into the prepared sse_resp.
+                    captured = await _pipe_sse_upstream(
+                        request, upstream, sse_resp, cancel_keepalive
+                    )
+                    return upstream.status, meta, captured, None
+            except (TimeoutError, aiohttp.ClientError) as exc:
+                if isinstance(exc, aiohttp.ClientConnectionResetError):
+                    # A reset mid-relay is the client's problem, not a stall to
+                    # report as a local failure: fall through to the outer
+                    # handler, which re-raises it.
+                    raise
+                return -1, None, None, exc
 
 
 async def _keepalive_hold_and_retry(
@@ -3028,6 +3094,9 @@ async def _keepalive_one_attempt(
         remaining_ms = max(0, int((wait_deadline - time.time()) * 1000))
         send_headers[config.WAIT_BUDGET_HEADER] = str(remaining_ms)
 
+    from .prospective_refusal import ERROR_TYPE as PROSPECTIVE_ERROR_TYPE
+    from .prospective_runtime import LocalProspectiveRefusal
+
     try:
         status, meta, captured, exc = await _forward_once_into_sse(
             request,
@@ -3043,6 +3112,24 @@ async def _keepalive_one_attempt(
         await cancel_keepalive()
         attempt.final_status = 499
         attempt.response = sse_resp
+        return sse_resp
+    except LocalProspectiveRefusal as refused:
+        # LOCAL policy, not provider pushback. The 200 is already committed:
+        # stop the keeper FIRST, then exactly one existing terminal error.
+        # Never a second response, never retry/AIMD shrink/hold/spill, never
+        # upstream usage manufactured. Explicit internal provenance below
+        # guarantees ALL later finalization/retry/hold feedback is skipped,
+        # not just this immediate branch. The only branch where a local
+        # prospective exception skips provider feedback.
+        await cancel_keepalive()
+        await _emit_sse_error_terminal(sse_resp, refused.refusal.message, PROSPECTIVE_ERROR_TYPE)
+        M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+        attempt.local_prospective_refused = True
+        attempt.aimd_owned = True
+        attempt.final_status = 503
+        attempt.response = sse_resp
+        attempt.meta = None
+        attempt.captured = None
         return sse_resp
 
     if exc is not None:
@@ -3335,7 +3422,7 @@ async def _forward_or_recover(
     except _CLIENT_DISCONNECT_EXC as cexc:
         return _record_disconnect(path, "first", cexc, attempt), False
     if exc is None:
-        return response, not attempt.local_meter_refused
+        return response, not (attempt.local_meter_refused or attempt.local_prospective_refused)
     return (
         await _forward_recover_from_error(
             request, headers, body, path, via, url, client_timeout, response, exc, attempt, bid
@@ -4360,6 +4447,31 @@ async def _wait_for_revalidation(
     return True
 
 
+def _selected_dispatch(via: str, *, credential_source: str | None):
+    """Build the bridge's SelectedDispatch for THIS attempt's target (pure).
+
+    Endpoint is the exact configured base for the selected target (no
+    normalization): central relays identify ``topology="central"`` and must
+    never pretend direct authority. An unrecognized target stays explicit
+    (endpoint unknown) rather than borrowing a base. Keyword args only — the
+    credential source is the selected operator account label or None.
+    """
+    from . import prospective_runtime
+
+    if via == "central":
+        endpoint, topology = config.CENTRAL_URL, "central"
+    elif via == "direct":
+        endpoint, topology = config.UPSTREAM, "direct"
+    else:
+        endpoint, topology = None, str(via) if via else "unknown"
+    return prospective_runtime.SelectedDispatch(
+        credential_source=credential_source,
+        endpoint=endpoint,
+        topology=topology,
+        internal_probe=False,  # a real user's half-open recovery is not a probe
+    )
+
+
 def _reroute_from_base(
     route_base_headers: Mapping[str, str],
     incoming_bid: str,
@@ -4370,6 +4482,7 @@ def _reroute_from_base(
     path: str,
     model: str,
     req_max_tokens: int | None,
+    via: str,
 ) -> tuple[str, dict[str, str]]:
     """Re-run account routing from the original auth headers.
 
@@ -4378,13 +4491,21 @@ def _reroute_from_base(
     never bounces back to a bearer already tried.
     """
     headers = dict(route_base_headers)
-    bid, _, claimed = _route_account_and_claim_retry_probe(
+    bid, account_label, claimed = _route_account_and_claim_retry_probe(
         headers,
         incoming_bid,
         method=request.method,
         path=path,
         model=model,
         max_tokens=req_max_tokens,
+    )
+    # T003 route identity: a reroute REPLACES the selected credential, so the
+    # previous authority is stale — re-record from this routing decision's own
+    # authoritative label (None when it has none: clear, never derive).
+    from . import prospective_runtime
+
+    prospective_runtime.set_selected_dispatch(
+        request, _selected_dispatch(via, credential_source=account_label)
     )
     probe_lease["bid"] = bid if claimed else ""
     seen_retry_after_bids.add(bid)
@@ -4535,6 +4656,7 @@ def _claim_route(
     bid: str,
     model: str,
     req_max_tokens: int | None,
+    via: str,
 ) -> tuple[str, dict[str, str], dict[str, str]]:
     """Select the routed account and claim its half-open retry probe.
 
@@ -4543,13 +4665,21 @@ def _claim_route(
     call actually won the probe.
     """
     route_base_headers = dict(headers)
-    bid, _account_label, probe_claimed = _route_account_and_claim_retry_probe(
+    bid, account_label, probe_claimed = _route_account_and_claim_retry_probe(
         headers,
         bid,
         method=request.method,
         path=path,
         model=model,
         max_tokens=req_max_tokens,
+    )
+    # T003 route identity: record the SELECTED operator account label and this
+    # attempt's exact configured target. Missing label is None (unknown) —
+    # never a caller header, a bearer hash, or a label guessed from a token.
+    from . import prospective_runtime
+
+    prospective_runtime.set_selected_dispatch(
+        request, _selected_dispatch(via, credential_source=account_label)
     )
     return bid, route_base_headers, {"bid": bid if probe_claimed else ""}
 
@@ -5048,7 +5178,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
     body = _shrink_forward_body(request, body, path, model_label, headers)
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
-        request, path, headers, bid, model, req_max_tokens
+        request, path, headers, bid, model, req_max_tokens, via
     )
 
     def finish_probe(*, success: bool) -> None:
@@ -5078,6 +5208,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             path=path,
             model=model,
             req_max_tokens=req_max_tokens,
+            via=via,
         )
         return bid, headers
 
@@ -5099,6 +5230,8 @@ async def handler(request: web.Request) -> web.StreamResponse:
             cid=cid,
             retry_after_remaining=remaining,
             source=source,
+            request=request,
+            via=via,
         )
 
     probe_waited: set[str] = set()
@@ -5195,7 +5328,70 @@ async def _upstream_egress_loop() -> None:
         await asyncio.sleep(min(interval, 5.0) if probe_failed else interval)
 
 
-async def _probe_upstream_auth_once() -> None:
+class _OffReservation:
+    """Transparent no-op reservation for genuinely-unconfigured deployments."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def handoff(self):
+        return None
+
+
+class ProbeProspective:
+    """Explicit runtime injection for request-less internal probe seams.
+
+    Lifecycle rule (mandatory): any owner of an enabled (observe/strict)
+    ProspectiveRuntime MUST inject it here with a SelectedDispatch carrying
+    internal_probe=True; None is legal ONLY for genuinely unconfigured
+    deployments. Internal probes are NEVER defaulted to off while the main
+    runtime is enabled. Strict mode refuses internal probes at the bridge (no
+    probe carve-out is invented) and the seams map that local refusal to
+    LOCAL INCONCLUSIVE — never a credential verdict.
+    """
+
+    __slots__ = ("runtime", "selected")
+
+    def __init__(self, runtime, selected) -> None:
+        if not getattr(selected, "internal_probe", False):
+            raise ValueError("probe dispatch must carry internal_probe=True")
+        self.runtime = runtime
+        self.selected = selected
+
+    def reserve(self, final_body: bytes):
+        if self.runtime is None:
+            return _OffReservation()
+        return self.runtime.reserve(self.selected, final_body)
+
+
+def _app_probe(app: web.Application) -> ProbeProspective:
+    from .prospective_runtime import RUNTIME_KEY, SelectedDispatch
+
+    # Strict excludes probes regardless of source: no invented credential or
+    # allowance. Observe records unknown. Off retains the existing wire path.
+    return ProbeProspective(
+        app.get(RUNTIME_KEY),
+        SelectedDispatch(None, config.UPSTREAM, "direct", True),
+    )
+
+
+async def _post_internal_probe(prospective, url, headers, payload, client_timeout):
+    """Reserve the serialized body once, then retain sent debt through the reply."""
+    final_bytes = json.dumps(payload).encode()
+    probe = prospective or ProbeProspective(None, _unconfigured_probe_dispatch())
+    async with (
+        aiohttp.ClientSession(timeout=client_timeout) as session,
+        probe.reserve(final_bytes) as permit,
+    ):
+        permit.handoff()
+        async with session.post(url, headers=headers, data=final_bytes) as response:
+            return response.status, await response.read()
+
+
+async def _probe_upstream_auth_once(*, prospective: ProbeProspective | None = None) -> None:
     """Ask the upstream whether this lane's own key is still accepted.
 
     A ``max_tokens: 1`` message against ``{UPSTREAM}/v1/messages``. 401/403
@@ -5224,19 +5420,32 @@ async def _probe_upstream_auth_once() -> None:
         "max_tokens": 1,
         "messages": [{"role": "user", "content": "."}],
     }
-    async with (
-        aiohttp.ClientSession(timeout=timeout) as session,
-        session.post(url, headers=headers, json=payload) as resp,
-    ):
-        body = await resp.read()
-        if 200 <= resp.status < 300:
+    from .prospective_runtime import LocalProspectiveRefusal
+
+    try:
+        status, body = await _post_internal_probe(prospective, url, headers, payload, timeout)
+        if 200 <= status < 300:
             # Only a real completion body reopens the lane (see docstring).
             if _is_anthropic_message(body):
-                note_upstream_auth(resp.status)
+                note_upstream_auth(status)
         else:
-            # note_upstream_auth ignores anything that is not a credential /
-            # billing verdict, so a plain 429 or a 5xx stays inconclusive here.
-            note_upstream_auth(resp.status, body)
+            # Only credential/billing verdicts affect authentication state.
+            note_upstream_auth(status, body)
+    except LocalProspectiveRefusal:
+        # LOCAL INCONCLUSIVE: a local policy refusal is not a credential
+        # verdict — no note_upstream_auth (never quarantine a valid
+        # credential), no fabricated probe budget, no verdict change.
+        log("auth-probe result=inconclusive reason=local-prospective-refusal")
+        return
+
+
+def _unconfigured_probe_dispatch():
+    """Honest unknown identity for a genuinely-unconfigured deployment."""
+    from .prospective_runtime import SelectedDispatch
+
+    return SelectedDispatch(
+        credential_source=None, endpoint=None, topology="direct", internal_probe=True
+    )
 
 
 def _is_anthropic_message(body: bytes) -> bool:
@@ -5276,12 +5485,12 @@ def _auth_probe_delay(failures: int) -> float:
     return min(base * (2**steps), _AUTH_PROBE_MAX_BACKOFF_S)
 
 
-async def _upstream_auth_loop() -> None:
+async def _upstream_auth_loop(*, prospective: ProbeProspective | None = None) -> None:
     """Refresh the credential verdict on a slow timer. Key-owning lanes only."""
     failures = 0
     while True:
         try:
-            await _probe_upstream_auth_once()
+            await _probe_upstream_auth_once(prospective=prospective)
         except Exception as exc:  # inconclusive: network/TLS/timeout
             failures += 1
             # Log on the first failure and then only on each doubling: an
@@ -5293,11 +5502,11 @@ async def _upstream_auth_loop() -> None:
         await asyncio.sleep(_auth_probe_delay(failures))
 
 
-async def _upstream_auth_context(_app: web.Application):
+async def _upstream_auth_context(app: web.Application):
     if not (_api_key_routing_enabled() and config.AUTH_PROBE_INTERVAL_S > 0):
         yield
         return
-    task = asyncio.create_task(_upstream_auth_loop())
+    task = asyncio.create_task(_upstream_auth_loop(prospective=_app_probe(app)))
     yield
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
@@ -5309,7 +5518,9 @@ def _touch_credential_check(bid: str) -> None:
         cred["last_checked"] = time.time()
 
 
-async def _credential_recheck_one(bid: str, token: str) -> None:
+async def _credential_recheck_one(
+    bid: str, token: str, *, prospective: ProbeProspective | None = None
+) -> None:
     """One synthetic ``max_tokens: 1`` message on a quarantined account's own token."""
     if not _meter_binding_allows(bid):
         # Keep quarantine and normal probe cadence; no synthetic quota spend.
@@ -5338,13 +5549,17 @@ async def _credential_recheck_one(bid: str, token: str) -> None:
         "system": [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PROMPT}],
         "messages": [{"role": "user", "content": "."}],
     }
+    from .prospective_runtime import LocalProspectiveRefusal
+
     try:
-        async with (
-            aiohttp.ClientSession(timeout=timeout) as session,
-            session.post(url, headers=headers, json=payload) as resp,
-        ):
-            status = resp.status
-            body = await resp.read()
+        status, body = await _post_internal_probe(prospective, url, headers, payload, timeout)
+    except LocalProspectiveRefusal:
+        # LOCAL INCONCLUSIVE — local policy, not a credential verdict: the
+        # quarantine is never touched by it and no probe budget is fabricated.
+        # Cadence touch only, matching every other inconclusive outcome.
+        log(f"credential-recheck bid={bid} result=inconclusive reason=local-refusal")
+        _touch_credential_check(bid)
+        return
     except Exception as exc:  # network/TLS/timeout — inconclusive, stay dead
         log(f"credential-recheck bid={bid} result=error err={exc!r}")
         _touch_credential_check(bid)
@@ -5359,7 +5574,7 @@ async def _credential_recheck_one(bid: str, token: str) -> None:
     log(f"credential-recheck bid={bid} result=still-dead status={status}")
 
 
-async def _credential_recheck_once() -> None:
+async def _credential_recheck_once(*, prospective: ProbeProspective | None = None) -> None:
     """Re-test every quarantined account. Recovery must not need a restart.
 
     Quarantine without a recovery path is a trap: a dead account receives no
@@ -5393,23 +5608,23 @@ async def _credential_recheck_once() -> None:
             continue
         due.append((bid, token))
     for bid, token in due:
-        await _credential_recheck_one(bid, token)
+        await _credential_recheck_one(bid, token, prospective=prospective)
 
 
-async def _credential_recheck_loop() -> None:
+async def _credential_recheck_loop(*, prospective: ProbeProspective | None = None) -> None:
     while True:
         try:
-            await _credential_recheck_once()
+            await _credential_recheck_once(prospective=prospective)
         except Exception as exc:
             log(f"credential-recheck loop error: {exc!r}")
         await asyncio.sleep(max(30.0, config.CREDENTIAL_RECHECK_S))
 
 
-async def _credential_recheck_context(_app: web.Application):
+async def _credential_recheck_context(app: web.Application):
     if config.CREDENTIAL_RECHECK_S <= 0 or not config.CREDENTIAL_RECHECK_MODEL:
         yield
         return
-    task = asyncio.create_task(_credential_recheck_loop())
+    task = asyncio.create_task(_credential_recheck_loop(prospective=_app_probe(app)))
     yield
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
@@ -6471,6 +6686,9 @@ def main() -> None:
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
+    from .prospective_lifecycle import prospective_context
+
+    app.cleanup_ctx.append(prospective_context)
     app.cleanup_ctx.append(_upstream_egress_context)
     app.cleanup_ctx.append(_upstream_auth_context)
     app.cleanup_ctx.append(_credential_recheck_context)

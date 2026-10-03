@@ -189,7 +189,7 @@ async def test_recheck_reopens_only_on_a_real_message_body(monkeypatch):
 
     calls: list[str] = []
 
-    async def fake_recheck(bid: str, token: str) -> None:
+    async def fake_recheck(bid: str, token: str, *, prospective=None) -> None:
         calls.append(bid)
 
     monkeypatch.setattr(config, "CREDENTIAL_RECHECK_S", 900.0)

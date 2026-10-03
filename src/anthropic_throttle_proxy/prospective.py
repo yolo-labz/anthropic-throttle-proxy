@@ -1,6 +1,6 @@
 """Default-off text/tool demand estimator for spec245 T001.
 
-No forwarding path calls this helper. It estimates the final serialized input
+Enabled dispatch accounting calls this helper on the final serialized input. It estimates it
 with UTF-8 bytes / 4, rounded up, and counts tool schemas without cache discounts.
 This is not calibrated vendor usage and cannot support strict admission yet.
 Unsupported media are refused: URL bytes cannot bound image/audio token cost.
