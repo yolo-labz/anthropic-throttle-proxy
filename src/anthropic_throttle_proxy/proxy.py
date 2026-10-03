@@ -3505,6 +3505,21 @@ async def _pushback_retry_step(
     return None
 
 
+def _meter_bound_lane(bid: str) -> str | None:
+    """Validated lane id this credential is bound to; None when unbound.
+
+    ``""`` (a malformed mapping entry) is preserved as-is so callers can fail
+    closed on it distinctly from "no binding".
+    """
+    bindings = config.METER_BINDINGS
+    if not bindings:
+        return None
+    from . import accounts
+
+    label = accounts.bearer_labels().get(bid)
+    return bindings.get(label)
+
+
 def _meter_binding_allows(bid: str, now: float | None = None) -> bool:
     """Apply only this credential's fresh meter to admission and route selection."""
     if not config.METER_BINDINGS_VALID:
@@ -3512,10 +3527,7 @@ def _meter_binding_allows(bid: str, now: float | None = None) -> bool:
     bindings = config.METER_BINDINGS
     if not bindings:
         return not config.METER_BINDING_REQUIRED
-    from . import accounts
-
-    label = accounts.bearer_labels().get(bid)
-    lane_id = bindings.get(label)
+    lane_id = _meter_bound_lane(bid)
     if lane_id is None:
         return not config.METER_BINDING_REQUIRED
     if not lane_id:
@@ -3535,25 +3547,55 @@ def _meter_refusal_response(bid: str, path: str) -> web.Response:
     )
 
 
-def _plan_lane_has_headroom(now: float | None = None) -> bool:
-    """True when THIS instance's plan meter is fresh and below the pressure line.
+def _plan_lane_has_headroom(bid: str = "", now: float | None = None) -> bool:
+    """True when the meter evidence for THIS bearer's 429 rules out a budget wall.
 
-    The evidence is the out-of-process lane report — the same file the dashboard
-    reads — so this costs a cached file read and never a credential or an
-    outbound call. Every way of answering "we do not know" returns False, which
-    keeps the conservative budget backoff as the default.
+    Two evidence regimes, selected by the validated binding:
+
+    * binding configured (spec 279 seat-b plan) → EXACT-bearer classification:
+      only the bearer's own bound row may clear it (``METER_BINDINGS`` label ->
+      lane id over the existing bearer-to-label metadata). A sibling's
+      headroom never borrows the inference: exhausted A must not drag fresh B
+      into budget backoff, and fresh B must not clear A's wall. Malformed
+      mappings, unknown/unmapped bindings and stale or unreadable rows all
+      fail closed to the conservative budget backoff.
+    * binding unconfigured → the legacy conservative all-sibling scan below:
+      the knob names one lane, but the headerless 429 may belong to any
+      same-provider sibling allowance, so the inference fires only when EVERY
+      one of them is fresh and below the pressure line.
+
+    The evidence is the out-of-process lane report — a cached file read, never
+    a credential or an outbound call — and every way of answering "we do not
+    know" keeps the conservative budget backoff as the default.
+    """
+    if not config.METER_BINDINGS_VALID:
+        return False
+    if not config.METER_BINDINGS and not config.METER_BINDING_REQUIRED:
+        return _plan_lane_siblings_have_headroom(now)
+    return _bound_lane_has_headroom(bid, now)
+
+
+def _bound_lane_has_headroom(bid: str, now: float | None = None) -> bool:
+    """Exact-bearer read: only THIS bearer's bound row may show headroom."""
+    lane_id = _meter_bound_lane(bid)
+    if not lane_id:
+        return False  # unknown/unmapped binding: fail closed
+    used = _lanes.plan_meter_used_percent(lane_id, time.time() if now is None else now)
+    return used is not None and 0.0 <= used < config.PLAN_PRESSURE_PERCENT
+
+
+def _plan_lane_siblings_have_headroom(now: float | None = None) -> bool:
+    """Legacy scan: every same-provider lane must be fresh and below pressure.
 
     The knob names ONE lane's meter, but the headerless 429 being classified
     belongs to whatever bearer routed here — and since spec 281 one instance
     routes SIBLING allowances (``mimo:plan`` + ``mimo:team-owner``: two
-    independent allowances, never additive). The report strips credential
-    identity, so a bearer cannot be bound to its own quota row (integration
-    gap — never invented here), and "a plan far from its allowance cannot be at
-    a budget wall" is only sound for a bearer spending a quota we can see. So
-    the inference fires only when EVERY same-provider lane in the report is
-    fresh and below the pressure line: whichever of them this bearer spends, it
-    is not at its wall. One exhausted or unreadable sibling means an allowance
-    in play is unknown → the conservative budget backoff stands.
+    independent allowances, never additive). Without a binding, "a plan far
+    from its allowance cannot be at a budget wall" is only sound for a bearer
+    spending a quota we can see, so the inference fires only when EVERY
+    same-provider lane in the report is fresh and below the pressure line.
+    One exhausted or unreadable sibling means an allowance in play is unknown
+    → the conservative budget backoff stands.
     """
     lane_id = config.PLAN_METER_LANE
     if not lane_id:
@@ -3628,12 +3670,12 @@ def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> boo
         # its 429 is concurrency/rate. (MiMo Token Plan, 23/09/2026: headerless
         # 429 at ~6 % of an 82 B-credit month was read as budget, bought a 30 s
         # synthetic hold and collapsed the lane to one slot under fleet load.)
-        # The inference is scoped to allowances in play (every same-provider
-        # lane must show headroom — see ``_plan_lane_has_headroom``): one
-        # instance can route a SIBLING allowance whose quota IS spent, and
-        # classifying that bearer's wall as "concurrency" blocks real pushback.
-        # Unknown, stale or absent meter still means budget.
-        return not _plan_lane_has_headroom()
+        # With a validated binding the read is EXACT-bearer (this bearer's own
+        # row only — never a sibling's headroom); without one it stays scoped
+        # to every same-provider allowance in play (see
+        # ``_plan_lane_has_headroom``). Unknown, stale or absent meter still
+        # means budget.
+        return not _plan_lane_has_headroom(bid)
     statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
     if any(s in ("allowed_warning", "rejected") for s in statuses):
         return True

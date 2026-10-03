@@ -7,29 +7,35 @@ budget") turned each of those into a 30 s synthetic hold and collapsed the lane
 to a single slot, so a concurrency blip became a queue collapse — 156 local
 queue-wait timeouts in 24 h on the same lane.
 
-These tests pin the disambiguation: a fresh plan meter below the pressure line
-outranks the headerless default, but only while EVERY same-provider allowance in
-the report (``mimo:plan`` + its Team sibling, spec 281) shows fresh headroom —
-the knob names one quota row and the report cannot bind a bearer to its own.
-Every unknown state (unset knob, stale report, unreadable meter, wrong lane, an
-exhausted or unreadable sibling allowance) falls back to the conservative
-budget backoff.
+These tests pin the disambiguation. With the validated ``METER_BINDINGS``
+account binding (spec 279 seat-b plan) the read is EXACT-bearer: only the
+bearer's own bound row may clear it — exhausted A must not drag fresh B into
+budget backoff, and fresh B must never clear A's wall. With the binding
+unconfigured, a fresh plan meter below the pressure line outranks the
+headerless default only while EVERY same-provider allowance in the report
+(``mimo:plan`` + its Team sibling, spec 281) shows fresh headroom. Every
+unknown state — unset knob, stale report, unreadable meter, wrong lane,
+unknown/unmapped/malformed binding — falls back to the conservative budget
+backoff.
 """
 
 import time
 
 import pytest
 
-from anthropic_throttle_proxy import config, lanes, proxy
+from anthropic_throttle_proxy import accounts, config, lanes, proxy
 
 PLAN_LANE = "mimo:plan"
 
 
 @pytest.fixture(autouse=True)
 def _plan_knobs_default_off(monkeypatch):
-    """Every test starts from the shipped default: no plan lane configured."""
+    """Every test starts from the shipped default: no plan lane, no bindings."""
     monkeypatch.setattr(config, "PLAN_METER_LANE", "")
     monkeypatch.setattr(config, "PLAN_PRESSURE_PERCENT", 80.0)
+    monkeypatch.setattr(config, "METER_BINDINGS", {})
+    monkeypatch.setattr(config, "METER_BINDINGS_VALID", True)
+    monkeypatch.setattr(config, "METER_BINDING_REQUIRED", False)
     yield
 
 
@@ -41,7 +47,15 @@ def _snapshot(*, lane_status: str = "ok", used: float | None = 6.3, lane_id: str
     return {"lanes": [{"id": lane_id, "status": lane_status, "meters": meters}]}
 
 
-def _sibling_snapshot(*, plan_used=6.3, team_used=100.0, team_status="ok", extra=()):
+def _sibling_snapshot(
+    *,
+    plan_used=6.3,
+    plan_status="ok",
+    team_used=100.0,
+    team_status="ok",
+    team_id=TEAM_LANE,
+    extra=(),
+):
     """One instance, TWO independent allowances (spec 281): plan + Team seat."""
 
     def row(lane_id, status, used, label):
@@ -50,8 +64,8 @@ def _sibling_snapshot(*, plan_used=6.3, team_used=100.0, team_status="ok", extra
 
     return {
         "lanes": [
-            row(PLAN_LANE, "ok", plan_used, "monthly"),
-            row(TEAM_LANE, team_status, team_used, "seat"),
+            row(PLAN_LANE, plan_status, plan_used, "monthly"),
+            row(team_id, team_status, team_used, "seat"),
             *extra,
         ]
     }
@@ -199,3 +213,100 @@ def test_other_provider_rows_do_not_speak_for_a_plan_bearer(monkeypatch):
     )
     assert proxy._plan_lane_has_headroom() is True
     assert proxy._budget_under_pressure({}, "team-seat") is False
+
+
+# ── exact-bearer classification (292: bound meter backoff) ─────────────────
+#
+# With the validated METER_BINDINGS account binding (spec 279 seat-b plan), a
+# headerless 429 is classified by THIS bearer's own bound meter row — never a
+# sibling's. Exhausted A must not drag independently-bound fresh B into budget
+# backoff, and fresh B must never clear A's wall.
+
+
+def _bind(monkeypatch, bindings, *, required=False, valid=True):
+    monkeypatch.setattr(config, "METER_BINDINGS", bindings)
+    monkeypatch.setattr(config, "METER_BINDINGS_VALID", valid)
+    monkeypatch.setattr(config, "METER_BINDING_REQUIRED", required)
+    monkeypatch.setattr(
+        accounts,
+        "bearer_labels",
+        lambda: {"bid-a": "plan", "bid-b": "team-b", "bid-x": "ghost"},
+    )
+
+
+def _bound_rows(*, plan_used=100.0, plan_status="ok", team_used=6.3, team_status="ok"):
+    """Two bound rows: the plan seat and the independently-bound team-b seat."""
+
+    return _sibling_snapshot(
+        plan_used=plan_used,
+        plan_status=plan_status,
+        team_used=team_used,
+        team_status=team_status,
+        team_id="mimo:team-b",
+    )
+
+
+def test_bound_bearer_reads_its_own_meter_not_a_sibling(monkeypatch):
+    """Exhausted A must not force budget backoff on fresh B — and B's headroom
+    must never clear A's wall (no borrowing in either direction)."""
+    _bind(monkeypatch, {"plan": PLAN_LANE, "team-b": "mimo:team-b"})
+    monkeypatch.setattr(lanes, "view", lambda now: _bound_rows())
+    assert proxy._budget_under_pressure({}, "bid-b") is False  # its own fresh row
+    assert proxy._budget_under_pressure({}, "bid-a") is True  # its own spent row
+    pause, synthetic = proxy._pushback_pause({}, "bid-b")
+    assert synthetic is True
+    assert pause == max(0.0, config.CONCURRENCY_COOLDOWN_S)
+
+
+@pytest.mark.parametrize("team_status", ["stale", "unknown"])
+def test_bound_stale_or_unreadable_row_fails_closed(monkeypatch, team_status):
+    """B's own row must be FRESH evidence: stale/unknown fails closed even
+    while the sibling plan row is wide open — and A's fresh row still clears A."""
+    _bind(monkeypatch, {"plan": PLAN_LANE, "team-b": "mimo:team-b"})
+    monkeypatch.setattr(
+        lanes, "view", lambda now: _bound_rows(plan_used=6.3, team_status=team_status)
+    )
+    assert proxy._budget_under_pressure({}, "bid-b") is True
+    assert proxy._budget_under_pressure({}, "bid-a") is False
+
+
+def test_unknown_and_malformed_bindings_fail_closed(monkeypatch):
+    """Unknown binding, unmapped label and malformed mapping all fail closed —
+    a bad entry must never read as headroom or disappear into feature-off."""
+    monkeypatch.setattr(lanes, "view", lambda now: _bound_rows(plan_used=6.3, team_used=6.3))
+    _bind(monkeypatch, {"plan": PLAN_LANE, "team-b": "mimo:team-b"})
+    assert proxy._budget_under_pressure({}, "bid-x") is True  # ghost label: unmapped
+    assert proxy._budget_under_pressure({}, "stranger") is True  # no label at all
+    _bind(monkeypatch, {"plan": PLAN_LANE}, valid=False)  # whole mapping malformed
+    assert proxy._budget_under_pressure({}, "bid-b") is True
+    _bind(monkeypatch, {"plan": ""})  # malformed entry residue
+    assert proxy._budget_under_pressure({}, "bid-a") is True
+
+
+def test_explicit_unified_evidence_precedes_the_meter(monkeypatch):
+    """Unified response headers and the fresh cache outrank the meter fallback:
+    no new budget/fallback — the meter only fills the headerless, cacheless gap."""
+    _bind(monkeypatch, {"plan": PLAN_LANE, "team-b": "mimo:team-b"})
+    monkeypatch.setattr(lanes, "view", lambda now: _bound_rows(plan_used=6.3, team_used=6.3))
+    # Explicit pressure on the RESPONSE is budget even with a fresh meter.
+    assert (
+        proxy._budget_under_pressure(
+            {"anthropic-ratelimit-unified-status": "allowed_warning"}, "bid-b"
+        )
+        is True
+    )
+    monkeypatch.setitem(
+        config.bearer_state,
+        "bid-b",
+        {
+            "unified": {
+                "status_5h": "allowed",
+                "util_5h": 0.2,
+                "reset_5h": time.time() + 600,
+            },
+            "unified_at": time.time(),
+        },
+    )
+    # B's own spent meter conflicts with its fresh cached allowed sample.
+    monkeypatch.setattr(lanes, "view", lambda now: _bound_rows(team_used=100.0))
+    assert proxy._budget_under_pressure({}, "bid-b") is False
