@@ -26,16 +26,19 @@ never cause a browser launch or borrow owner capacity.
   owner results and keep independent seat meters separate.
 - [x] Exercise missing identity, owner-identity reuse, wrong live identity,
   unavailable profile, failed reading, unassigned seat and legacy default.
-- [ ] Final-head full pytest, Ruff and normal PR checks.
+- [ ] Final-head full pytest, Ruff and normal PR checks after reviewer deadline correction.
 - [ ] Coherent Nix G1 + final proxy pin delivery, owned by the runtime lane.
 - [ ] Protected G4 credential binding and fresh B quota verification, followed
   by G5 observed useful traffic; no synthetic test substitutes for these.
 
 ## Delivery boundaries
 
-The browser helper opens and closes only its own background tab. Each attach,
-navigation and fetch is bounded; the existing service's 90-second deadline
-remains the overall ceiling. Timeout keeps the previous report aging out;
+The browser helper opens and closes only its own background tab. Owner and B
+attachments run sequentially, avoiding nested synchronous browser contexts.
+Each B attach, navigation and fetch is capped by the remaining 75-second
+sample budget; an exhausted budget produces an unknown B row while preserving
+the completed owner readings. The existing service's 90-second deadline
+remains the outer ceiling for SSH, cleanup and publication. Timeout keeps the previous report aging out;
 there is no retry loop or lifecycle recovery in the sampler.
 
 This change does not enable B, invent account/project identifiers, collect
@@ -51,3 +54,7 @@ pH authored the producer/row rename and synthetic fixtures on
 and released the three-file diff after desktop I/O admission refused execution.
 Mac integration added the independent-profile correction and its falsifiers.
 The original owner worktree remains intact.
+
+The Chinese-frontier pH review identified that independent per-operation
+timeouts could overrun the collector ceiling. Slow-owner/slow-B executable
+fixtures now cover the shared budget and preservation of owner readings.

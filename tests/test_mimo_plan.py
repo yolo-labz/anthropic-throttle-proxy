@@ -328,11 +328,43 @@ def _set_probe_browser(monkeypatch, attach):
     monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
 
 
+def _emit_base_readings(capture, identity="expected"):
+    for path, body in {
+        "/api/v1/tokenPlan/detail": plan_detail(),
+        "/api/v1/tokenPlan/usage": plan_usage(),
+        "/api/v1/userProfile": {"code": 0, "data": {"userId": identity}},
+    }.items():
+        capture(
+            SimpleNamespace(
+                url="https://platform.xiaomimimo.com" + path,
+                status=200,
+                json=lambda body=body: body,
+            )
+        )
+
+
 def _run_probe_with_b(
-    monkeypatch, capsys, *, team_b, b_response, b_identity="expected-b", b_unavailable=False
+    monkeypatch,
+    capsys,
+    *,
+    team_b,
+    b_response,
+    b_identity="expected-b",
+    b_unavailable=False,
+    owner_elapsed=0,
+    b_elapsed=0,
 ):
     """Drive main() with a synthetic page; b_response is a payload or an Exception."""
     calls = []
+    active = []
+    clock = [0.0]
+    if owner_elapsed or b_elapsed:
+        monkeypatch.setattr(_probe["time"], "monotonic", lambda: clock[0])
+
+    def advance_b(timeout_ms):
+        clock[0] += min(b_elapsed, timeout_ms / 1000)
+        if b_elapsed > timeout_ms / 1000:
+            raise TimeoutError("synthetic bounded slow browser")
 
     class Page:
         def __init__(self, name):
@@ -344,23 +376,17 @@ def _run_probe_with_b(
 
         def goto(self, *args, **kwargs):
             if self.name != "xiaomi":
+                advance_b(kwargs["timeout"])
                 return
-            for path, body in {
-                "/api/v1/tokenPlan/detail": plan_detail(),
-                "/api/v1/tokenPlan/usage": plan_usage(),
-                "/api/v1/userProfile": {"code": 0, "data": {"userId": "expected"}},
-            }.items():
-                self.capture(
-                    SimpleNamespace(
-                        url="https://platform.xiaomimimo.com" + path,
-                        status=200,
-                        json=lambda body=body: body,
-                    )
-                )
+            clock[0] += owner_elapsed
+            _emit_base_readings(self.capture)
 
-        def evaluate(self, script, path):
+        def evaluate(self, script, args):
+            path, timeout_ms = args
+            assert 0 < timeout_ms <= 15000
             calls.append((self.name, path))
             if self.name == "xiaomi-mimo2":
+                advance_b(timeout_ms)
                 if path == "/api/v1/userProfile":
                     identity = (
                         b_identity[self.profile_reads]
@@ -377,10 +403,15 @@ def _run_probe_with_b(
 
     @contextmanager
     def attach(name, *, start_if_down, timeout_ms):
-        assert start_if_down is False and timeout_ms == 20000
+        assert start_if_down is False and 0 < timeout_ms <= 20000
         if name == "xiaomi-mimo2" and b_unavailable:
             raise RuntimeError("B profile unavailable")
-        yield None, None, None, Page(name)
+        assert not active, "synchronous browser contexts must not be nested"
+        active.append(name)
+        try:
+            yield None, None, None, Page(name)
+        finally:
+            active.pop()
 
     _set_probe_browser(monkeypatch, attach)
     monkeypatch.setenv("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", "expected-b")
@@ -414,6 +445,22 @@ def test_probe_team_b_emits_own_row_when_configured(monkeypatch, capsys):
     # Explicit synthetic counters per seat; seats are never summed.
     assert (meters["mimo:team-b"]["allowance"], meters["mimo:team-b"]["current"]) == (2000, 500)
     assert meters["mimo:team-owner"]["allowance"] == 1000
+
+
+@pytest.mark.parametrize("owner_elapsed,b_elapsed", [(76, 0), (55, 10), (50, 16)])
+def test_probe_slow_b_preserves_owner_within_shared_budget(
+    monkeypatch, capsys, owner_elapsed, b_elapsed
+):
+    calls, result = _run_probe_with_b(
+        monkeypatch,
+        capsys,
+        team_b="synthetic-b",
+        b_response=team_sample_b(),
+        owner_elapsed=owner_elapsed,
+        b_elapsed=b_elapsed,
+    )
+    _assert_unknown_b_preserves_owner(result)
+    assert not any("synthetic-b" in path for _, path in calls)
 
 
 def test_probe_team_b_failed_read_still_writes_fail_closed_row(monkeypatch, capsys):
@@ -632,23 +679,11 @@ def test_probe_explicit_team_read_requires_verified_identity(monkeypatch, capsys
 
         def goto(self, *args, **kwargs):
             # Navigation never emits the Team-seat response.
-            for path, body in {
-                "/api/v1/tokenPlan/detail": plan_detail(),
-                "/api/v1/tokenPlan/usage": plan_usage(),
-                "/api/v1/userProfile": {
-                    "code": 0,
-                    "data": {"userId": "expected" if identity_matches else "other"},
-                },
-            }.items():
-                self.capture(
-                    SimpleNamespace(
-                        url="https://platform.xiaomimimo.com" + path,
-                        status=200,
-                        json=lambda body=body: body,
-                    )
-                )
+            _emit_base_readings(self.capture, "expected" if identity_matches else "other")
 
-        def evaluate(self, script, path):
+        def evaluate(self, script, args):
+            path, timeout_ms = args
+            assert 0 < timeout_ms <= 15000
             calls.append(path)
             assert "AbortController" in script
             return team_sample()

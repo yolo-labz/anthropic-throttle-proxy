@@ -220,9 +220,9 @@ def team_report(
 
 # One bounded in-page fetch per seat read; shared by the owner and Team B
 # explicit reads (spec 279 G2), so the two cannot drift apart.
-_SEAT_FETCH_SCRIPT = """async (path) => {
+_SEAT_FETCH_SCRIPT = """async ([path, timeoutMs]) => {
     const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 15000);
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
     try {
         const r = await fetch(path, {
             signal: ctl.signal,
@@ -233,9 +233,18 @@ _SEAT_FETCH_SCRIPT = """async (path) => {
 }"""
 
 
-def read_team_b_seat(interactive, project: str, expected: str) -> object:
+def read_team_b_seat(interactive, project: str, expected: str, deadline: float) -> object:
     """Read only the independently authenticated B profile; never borrow owner identity."""
-    with interactive.attach("xiaomi-mimo2", start_if_down=False, timeout_ms=20000) as (
+
+    def remaining_ms(limit: int) -> int:
+        remaining = int((deadline - time.monotonic()) * 1000)
+        if remaining <= 0:
+            raise TimeoutError("Team B sample budget exhausted")
+        return min(limit, remaining)
+
+    with interactive.attach(
+        "xiaomi-mimo2", start_if_down=False, timeout_ms=remaining_ms(20000)
+    ) as (
         _,
         _,
         _,
@@ -244,13 +253,16 @@ def read_team_b_seat(interactive, project: str, expected: str) -> object:
         page.goto(
             "https://platform.xiaomimimo.com/console/plan-manage",
             wait_until="domcontentloaded",
-            timeout=20000,
+            timeout=remaining_ms(20000),
         )
-        profile = page.evaluate(_SEAT_FETCH_SCRIPT, "/api/v1/userProfile")
+        profile = page.evaluate(_SEAT_FETCH_SCRIPT, ["/api/v1/userProfile", remaining_ms(15000)])
         if profile.get("code") != 0 or str(profile["data"]["userId"]) != expected:
             raise ValueError("Team B browser identity does not match the expected account")
-        seat = page.evaluate(_SEAT_FETCH_SCRIPT, f"/api/v1/project/{project}/teamTokenPlan/my/seat")
-        verified = page.evaluate(_SEAT_FETCH_SCRIPT, "/api/v1/userProfile")
+        seat = page.evaluate(
+            _SEAT_FETCH_SCRIPT,
+            [f"/api/v1/project/{project}/teamTokenPlan/my/seat", remaining_ms(15000)],
+        )
+        verified = page.evaluate(_SEAT_FETCH_SCRIPT, ["/api/v1/userProfile", remaining_ms(15000)])
         if verified.get("code") != 0 or str(verified["data"]["userId"]) != expected:
             raise ValueError("Team B browser identity changed during the reading")
         return seat
@@ -259,6 +271,9 @@ def read_team_b_seat(interactive, project: str, expected: str) -> object:
 def main() -> int:
     from lib import interactive
 
+    # Leave time for browser cleanup, SSH and the atomic writer within the
+    # collector's existing 90s ceiling. B uses only the remaining sample budget.
+    sample_deadline = time.monotonic() + 75
     observed = {}
     routes = {
         "/api/v1/tokenPlan/detail": "detail",
@@ -333,34 +348,34 @@ def main() -> int:
             try:
                 seat = page.evaluate(
                     _SEAT_FETCH_SCRIPT,
-                    f"/api/v1/project/{team_project}/teamTokenPlan/my/seat",
+                    [f"/api/v1/project/{team_project}/teamTokenPlan/my/seat", 15000],
                 )
             except Exception:
                 seat = None
-        now = datetime.now(UTC)
-        if team_project:
-            # A missing team response is itself a team failure: still write one
-            # fresh fail-closed team row rather than retaining the old meter.
-            # Prefer the explicit read; the passive capture is only a fallback.
-            seat_reading = seat if seat is not None else observed.get("seat")
-            # Team B (spec 279 G2): default OFF — the row exists only when the
-            # env is configured. A configured-but-failed read still rewrites a
-            # fresh fail-closed B row (team-line semantics), and seats are
-            # never aggregated.
-            seat_b = None
-            if team_b_project:
-                try:
-                    seat_b = read_team_b_seat(interactive, team_b_project, expected_b)
-                except Exception:
-                    seat_b = None
-            if team_b_project:
-                result = team_report(
-                    observed["detail"], observed["usage"], seat_reading, now, seat_b_response=seat_b
-                )
-            else:
-                result = team_report(observed["detail"], observed["usage"], seat_reading, now)
+    now = datetime.now(UTC)
+    if team_project:
+        # A missing team response is itself a team failure: still write one
+        # fresh fail-closed team row rather than retaining the old meter.
+        # Prefer the explicit read; the passive capture is only a fallback.
+        seat_reading = seat if seat is not None else observed.get("seat")
+        # Team B (spec 279 G2): default OFF — the row exists only when the
+        # env is configured. A configured-but-failed read still rewrites a
+        # fresh fail-closed B row (team-line semantics), and seats are
+        # never aggregated.
+        seat_b = None
+        if team_b_project:
+            try:
+                seat_b = read_team_b_seat(interactive, team_b_project, expected_b, sample_deadline)
+            except Exception:
+                seat_b = None
+        if team_b_project:
+            result = team_report(
+                observed["detail"], observed["usage"], seat_reading, now, seat_b_response=seat_b
+            )
         else:
-            result = report(observed["detail"], observed["usage"], now)
+            result = team_report(observed["detail"], observed["usage"], seat_reading, now)
+    else:
+        result = report(observed["detail"], observed["usage"], now)
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
