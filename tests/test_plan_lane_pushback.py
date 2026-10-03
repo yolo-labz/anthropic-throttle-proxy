@@ -47,7 +47,15 @@ def _snapshot(*, lane_status: str = "ok", used: float | None = 6.3, lane_id: str
     return {"lanes": [{"id": lane_id, "status": lane_status, "meters": meters}]}
 
 
-def _sibling_snapshot(*, plan_used=6.3, team_used=100.0, team_status="ok", extra=()):
+def _sibling_snapshot(
+    *,
+    plan_used=6.3,
+    plan_status="ok",
+    team_used=100.0,
+    team_status="ok",
+    team_id=TEAM_LANE,
+    extra=(),
+):
     """One instance, TWO independent allowances (spec 281): plan + Team seat."""
 
     def row(lane_id, status, used, label):
@@ -56,8 +64,8 @@ def _sibling_snapshot(*, plan_used=6.3, team_used=100.0, team_status="ok", extra
 
     return {
         "lanes": [
-            row(PLAN_LANE, "ok", plan_used, "monthly"),
-            row(TEAM_LANE, team_status, team_used, "seat"),
+            row(PLAN_LANE, plan_status, plan_used, "monthly"),
+            row(team_id, team_status, team_used, "seat"),
             *extra,
         ]
     }
@@ -229,16 +237,13 @@ def _bind(monkeypatch, bindings, *, required=False, valid=True):
 def _bound_rows(*, plan_used=100.0, plan_status="ok", team_used=6.3, team_status="ok"):
     """Two bound rows: the plan seat and the independently-bound team-b seat."""
 
-    def row(lane_id, status, used, label):
-        meters = [] if used is None else [{"label": label, "used_pct": used}]
-        return {"id": lane_id, "kind": "mimo", "status": status, "meters": meters}
-
-    return {
-        "lanes": [
-            row(PLAN_LANE, plan_status, plan_used, "monthly"),
-            row("mimo:team-b", team_status, team_used, "seat"),
-        ]
-    }
+    return _sibling_snapshot(
+        plan_used=plan_used,
+        plan_status=plan_status,
+        team_used=team_used,
+        team_status=team_status,
+        team_id="mimo:team-b",
+    )
 
 
 def test_bound_bearer_reads_its_own_meter_not_a_sibling(monkeypatch):

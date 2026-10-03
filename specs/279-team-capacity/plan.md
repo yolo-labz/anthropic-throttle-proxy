@@ -42,3 +42,7 @@ This changes backoff classification, not admission policy or account selection.
 Rollback is one revert PR. The full suite passed **1,627 tests**. The protected
 Astra seat is independently reviewing this MiMo-authored slice; no approval is
 asserted before that receipt arrives.
+
+CI's clone ratchet caught a duplicated row factory in the new fixture. The
+fixture now reuses the existing sibling-snapshot helper with optional lane
+identity/status arguments; defaults and production code are unchanged.
