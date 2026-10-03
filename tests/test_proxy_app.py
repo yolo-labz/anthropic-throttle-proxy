@@ -573,9 +573,7 @@ async def test_post_messages_streams_and_mints_bearer(client: TestClient) -> Non
     assert config.bearer_state[bid]["clients"] == {}
 
 
-async def test_expiry_burst_makes_exactly_one_half_open_b_attempt(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
-) -> None:
+def _probe_accounts(monkeypatch, tmp_path):
     cred_a = tmp_path / "a.json"
     cred_b = tmp_path / "b.json"
     raw_a = "sk-ant-oat01-PROBE-A"
@@ -589,6 +587,13 @@ async def test_expiry_burst_makes_exactly_one_half_open_b_attempt(
     monkeypatch.setattr(config, "QUEUE_MODE", "off")
     monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(tmp_path / "retry-after.json"))
     monkeypatch.setattr(limiter, "_retry_after_state", None)
+    return raw_a, raw_b
+
+
+async def test_expiry_burst_makes_exactly_one_half_open_b_attempt(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    raw_a, raw_b = _probe_accounts(monkeypatch, tmp_path)
 
     bid_a = proxy._bearer_id({"Authorization": f"Bearer {raw_a}"})
     bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
@@ -2430,3 +2435,85 @@ async def test_health_publishes_the_running_build(client: TestClient) -> None:
     # /nix/store path, which is exactly the string ExecStart carries.
     assert body["build"] == __build__
     assert body["build"].endswith("anthropic_throttle_proxy")
+
+
+def _bound_probe_accounts(monkeypatch, tmp_path, meter_rows, team_status):
+    from anthropic_throttle_proxy import lanes
+
+    credentials = _probe_accounts(monkeypatch, tmp_path)
+    monkeypatch.setattr(config, "METER_BINDINGS", {"A": "mimo:plan", "B": "mimo:team-b"})
+    monkeypatch.setattr(config, "METER_BINDING_REQUIRED", True)
+    monkeypatch.setattr(config, "METER_BINDINGS_VALID", True)
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": meter_rows("exhausted", team_status)})
+    return credentials
+
+
+@pytest.mark.parametrize("queue_wait, second_status", [(1.0, 200), (0.02, 503), (0.0, 503)])
+async def test_meter_refused_a_parks_on_fresh_b_probe_then_routes_b(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    meter_rows,
+    queue_wait,
+    second_status,
+) -> None:
+    """Spec 293 regression (live incident PID 2774380, 18:05:56-18:06:04 BRT:
+    23 A-local meter 503s while the fresh B cold probe was held, none after it
+    succeeded). With A's meter exhausted and B fresh-but-mid-probe, a second
+    A-auth request must park on the existing bounded alternate-probe wait and
+    route to B after the probe releases — not terminal-refuse with the local
+    meter 503 — and A must never reach upstream.
+    """
+    raw_a, raw_b = _bound_probe_accounts(monkeypatch, tmp_path, meter_rows, "ok")
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", queue_wait)
+
+    bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
+    lim_b = await proxy._get_bearer_limiter(bid_b, "off", 6)
+    # B is fresh but cold: its window is armed and just expired, so the first
+    # dispatch on it becomes the held half-open probe.
+    lim_b.note_retry_after(116_212)
+    monkeypatch.setattr(lim_b, "_retry_after_until", time.time() - 1)
+
+    probe_state = client.probe_state
+    body = {"model": "claude-opus-4-8", "max_tokens": 1024, "messages": []}
+    headers_a = {"Authorization": f"Bearer {raw_a}", "X-Stub-Mode": "probe-block-headers"}
+    first = asyncio.create_task(client.post("/v1/messages", headers=headers_a, json=body))
+    await asyncio.wait_for(probe_state["b_started"].wait(), timeout=1)
+
+    second = asyncio.create_task(client.post("/v1/messages", headers=headers_a, json=body))
+    try:
+        await asyncio.sleep(0.05)
+        assert second.done() is (second_status == 503)
+    finally:
+        probe_state["release_b_headers"].set()
+        responses = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+    assert [response.status for response in responses] == [200, second_status]
+    await asyncio.gather(*(response.read() for response in responses))
+    refusal = responses[1].headers.get("x-throttle-meter-refusal")
+    assert refusal == ("1" if second_status == 503 else None)
+
+    # Only B can spend; the second dispatch occurs only after a bounded wake.
+    assert probe_state["attempts"] == {f"Bearer {raw_b}": 2 if second_status == 200 else 1}
+    assert lim_b.retry_probe_inflight() is False, "probe lease must not leak"
+
+
+async def test_all_meters_refused_stays_bounded_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path, meter_rows
+) -> None:
+    """The spec 293 wait only substitutes for a FRESH alternate. When every
+    bound meter is exhausted the gate must still answer the bounded local
+    refusal (503 + retry-after), with zero upstream spend and no borrowing.
+    """
+    raw_a, raw_b = _bound_probe_accounts(monkeypatch, tmp_path, meter_rows, "exhausted")
+
+    body = {"model": "claude-opus-4-8", "max_tokens": 1024, "messages": []}
+    headers_a = {"Authorization": f"Bearer {raw_a}"}
+    response = await asyncio.wait_for(
+        client.post("/v1/messages", headers=headers_a, json=body), timeout=5
+    )
+    await response.read()
+    assert response.status == 503
+    assert response.headers.get("x-throttle-meter-refusal") == "1"
+    assert response.headers.get("retry-after")
+    attempts = client.probe_state["attempts"]
+    assert attempts == {}, "a refused meter must never spend upstream"
