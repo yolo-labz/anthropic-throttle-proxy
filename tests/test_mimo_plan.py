@@ -258,14 +258,14 @@ def test_b_seat_row_is_independent_of_owner_and_plan():
         plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b(total=2000, used=500)
     )
     ids = [lane["id"] for lane in result["lanes"]]
-    assert ids == ["mimo:plan", "mimo:team-owner", "mimo:team-seat-b"]
+    assert ids == ["mimo:plan", "mimo:team-owner", "mimo:team-b"]
     meters = {lane["id"]: lane["meters"][0] for lane in result["lanes"]}
     # Explicit synthetic counters per seat; nothing is ever summed or replaced.
     assert (meters["mimo:team-owner"]["allowance"], meters["mimo:team-owner"]["current"]) == (
         1000,
         250,
     )
-    assert (meters["mimo:team-seat-b"]["allowance"], meters["mimo:team-seat-b"]["current"]) == (
+    assert (meters["mimo:team-b"]["allowance"], meters["mimo:team-b"]["current"]) == (
         2000,
         500,
     )
@@ -277,12 +277,16 @@ def test_b_seat_absent_keeps_the_spec_281_shape():
     assert [lane["id"] for lane in result["lanes"]] == ["mimo:plan", "mimo:team-owner"]
 
 
+def _assert_unknown_b_preserves_owner(result):
+    b_row = result["lanes"][2]
+    assert b_row["id"] == "mimo:team-b" and b_row["status"] == "unknown"
+    assert "meters" not in b_row
+    assert result["lanes"][1]["status"] == "ok"
+
+
 def test_b_seat_failed_read_still_writes_a_fresh_fail_closed_row():
     result = team_report(plan_detail(), plan_usage(), team_sample(), NOW, None)
-    b_row = result["lanes"][2]
-    assert b_row["id"] == "mimo:team-seat-b" and b_row["status"] == "unknown"
-    assert "meters" not in b_row
-    assert result["lanes"][1]["status"] == "ok"  # owner row unaffected
+    _assert_unknown_b_preserves_owner(result)
 
 
 @pytest.mark.parametrize(
@@ -296,7 +300,7 @@ def test_b_seat_failed_read_still_writes_a_fresh_fail_closed_row():
 )
 def test_b_seat_fail_closed_payloads(overrides, reason):
     row = team_seat_b_lane(team_sample_b(**overrides), NOW)
-    assert row["id"] == "mimo:team-seat-b" and row["kind"] == "mimo"
+    assert row["id"] == "mimo:team-b" and row["kind"] == "mimo"
     assert row["status"] == "unknown" and "meters" not in row
     assert reason in row["reason"]
 
@@ -316,13 +320,248 @@ def test_b_seat_leaks_no_identifiers():
     assert "seat-b-identifier-must-not-leak" not in dump
 
 
+def _set_probe_browser(monkeypatch, attach):
+    monkeypatch.setitem(
+        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=attach))
+    )
+    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+
+
+def _emit_base_readings(capture, identity="expected"):
+    for path, body in {
+        "/api/v1/tokenPlan/detail": plan_detail(),
+        "/api/v1/tokenPlan/usage": plan_usage(),
+        "/api/v1/userProfile": {"code": 0, "data": {"userId": identity}},
+    }.items():
+        capture(
+            SimpleNamespace(
+                url="https://platform.xiaomimimo.com" + path,
+                status=200,
+                json=lambda body=body: body,
+            )
+        )
+
+
+def _run_probe_with_b(
+    monkeypatch,
+    capsys,
+    *,
+    team_b,
+    b_response,
+    b_identity="expected-b",
+    b_unavailable=False,
+    owner_elapsed=0,
+    b_elapsed=0,
+):
+    """Drive main() with a synthetic page; b_response is a payload or an Exception."""
+    calls = []
+    active = []
+    clock = [0.0]
+    if owner_elapsed or b_elapsed:
+        monkeypatch.setattr(_probe["time"], "monotonic", lambda: clock[0])
+
+    def advance_b(timeout_ms):
+        clock[0] += min(b_elapsed, timeout_ms / 1000)
+        if b_elapsed > timeout_ms / 1000:
+            raise TimeoutError("synthetic bounded slow browser")
+
+    class Page:
+        def __init__(self, name):
+            self.name = name
+            self.profile_reads = 0
+
+        def on(self, event, callback):
+            self.capture = callback
+
+        def goto(self, *args, **kwargs):
+            if self.name != "xiaomi":
+                advance_b(kwargs["timeout"])
+                return
+            clock[0] += owner_elapsed
+            _emit_base_readings(self.capture)
+
+        def evaluate(self, script, args):
+            path, timeout_ms = args
+            assert 0 < timeout_ms <= 15000
+            calls.append((self.name, path))
+            if self.name == "xiaomi-mimo2":
+                advance_b(timeout_ms)
+                if path == "/api/v1/userProfile":
+                    identity = (
+                        b_identity[self.profile_reads]
+                        if isinstance(b_identity, tuple)
+                        else b_identity
+                    )
+                    self.profile_reads += 1
+                    return {"code": 0, "data": {"userId": identity}}
+                if isinstance(b_response, Exception):
+                    raise b_response
+                return b_response
+            assert "synthetic-b" not in path, "B quota must never use the owner browser"
+            return team_sample()
+
+    @contextmanager
+    def attach(name, *, start_if_down, timeout_ms):
+        assert start_if_down is False and 0 < timeout_ms <= 20000
+        if name == "xiaomi-mimo2" and b_unavailable:
+            raise RuntimeError("B profile unavailable")
+        assert not active, "synchronous browser contexts must not be nested"
+        active.append(name)
+        try:
+            yield None, None, None, Page(name)
+        finally:
+            active.pop()
+
+    _set_probe_browser(monkeypatch, attach)
+    monkeypatch.setenv("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", "expected-b")
+    if team_b is None:
+        monkeypatch.delenv("MIMO_TEAM_B_PROJECT_ID", raising=False)
+    else:
+        monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", team_b)
+    assert _probe["main"]() == 0
+    return calls, json.loads(capsys.readouterr().out)
+
+
+def test_probe_team_b_is_off_by_default(monkeypatch, capsys):
+    calls, result = _run_probe_with_b(monkeypatch, capsys, team_b=None, b_response=None)
+    assert calls == [("xiaomi", "/api/v1/project/synthetic-project/teamTokenPlan/my/seat")]
+    assert [lane["id"] for lane in result["lanes"]] == ["mimo:plan", "mimo:team-owner"]
+
+
+def test_probe_team_b_emits_own_row_when_configured(monkeypatch, capsys):
+    calls, result = _run_probe_with_b(
+        monkeypatch, capsys, team_b="synthetic-b", b_response=team_sample_b(total=2000, used=500)
+    )
+    assert calls == [
+        ("xiaomi", "/api/v1/project/synthetic-project/teamTokenPlan/my/seat"),
+        ("xiaomi-mimo2", "/api/v1/userProfile"),
+        ("xiaomi-mimo2", "/api/v1/project/synthetic-b/teamTokenPlan/my/seat"),
+        ("xiaomi-mimo2", "/api/v1/userProfile"),
+    ]
+    ids = [lane["id"] for lane in result["lanes"]]
+    assert ids == ["mimo:plan", "mimo:team-owner", "mimo:team-b"]
+    meters = {lane["id"]: lane["meters"][0] for lane in result["lanes"]}
+    # Explicit synthetic counters per seat; seats are never summed.
+    assert (meters["mimo:team-b"]["allowance"], meters["mimo:team-b"]["current"]) == (2000, 500)
+    assert meters["mimo:team-owner"]["allowance"] == 1000
+
+
+@pytest.mark.parametrize("owner_elapsed,b_elapsed", [(76, 0), (55, 10), (50, 16)])
+def test_probe_slow_b_preserves_owner_within_shared_budget(
+    monkeypatch, capsys, owner_elapsed, b_elapsed
+):
+    calls, result = _run_probe_with_b(
+        monkeypatch,
+        capsys,
+        team_b="synthetic-b",
+        b_response=team_sample_b(),
+        owner_elapsed=owner_elapsed,
+        b_elapsed=b_elapsed,
+    )
+    _assert_unknown_b_preserves_owner(result)
+    assert not any("synthetic-b" in path for _, path in calls)
+
+
+def test_probe_team_b_failed_read_still_writes_fail_closed_row(monkeypatch, capsys):
+    _, result = _run_probe_with_b(
+        monkeypatch, capsys, team_b="synthetic-b", b_response=RuntimeError("session closed")
+    )
+    _assert_unknown_b_preserves_owner(result)
+
+
+@pytest.mark.parametrize("b_identity", ["expected", "unexpected-account"])
+def test_probe_wrong_b_identity_never_reads_seat_or_borrows_owner(monkeypatch, capsys, b_identity):
+    calls, result = _run_probe_with_b(
+        monkeypatch,
+        capsys,
+        team_b="synthetic-b",
+        b_response=team_sample_b(),
+        b_identity=b_identity,
+    )
+    assert calls[-1] == ("xiaomi-mimo2", "/api/v1/userProfile")
+    assert not any("synthetic-b" in path for _, path in calls)
+    _assert_unknown_b_preserves_owner(result)
+
+
+def test_probe_unavailable_b_profile_is_unknown_without_starting_browser(monkeypatch, capsys):
+    calls, result = _run_probe_with_b(
+        monkeypatch, capsys, team_b="synthetic-b", b_response=team_sample_b(), b_unavailable=True
+    )
+    assert calls == [("xiaomi", "/api/v1/project/synthetic-project/teamTokenPlan/my/seat")]
+    assert result["lanes"][2]["status"] == "unknown"
+    assert "meters" not in result["lanes"][2]
+
+
+def test_probe_b_identity_change_discards_healthy_seat(monkeypatch, capsys):
+    _, result = _run_probe_with_b(
+        monkeypatch,
+        capsys,
+        team_b="synthetic-b",
+        b_response=team_sample_b(),
+        b_identity=("expected-b", "expected"),
+    )
+    _assert_unknown_b_preserves_owner(result)
+
+
+@pytest.mark.parametrize("expected_b", [None, "expected"])
+def test_probe_team_b_requires_independent_expected_identity(monkeypatch, expected_b):
+    def forbidden(*args, **kwargs):
+        pytest.fail("unbound Team B reached a browser")
+
+    _set_probe_browser(monkeypatch, forbidden)
+    monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", "synthetic-b")
+    if expected_b is None:
+        monkeypatch.delenv("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", raising=False)
+    else:
+        monkeypatch.setenv("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", expected_b)
+    with pytest.raises(ValueError, match="independent expected account"):
+        _probe["main"]()
+
+
+def test_probe_team_b_unassigned_seat_is_not_capacity(monkeypatch, capsys):
+    _, result = _run_probe_with_b(
+        monkeypatch,
+        capsys,
+        team_b="synthetic-b",
+        b_response=team_sample_b(seat_status="PENDING", total=2000, used=0),
+    )
+    b_row = result["lanes"][2]
+    assert b_row["id"] == "mimo:team-b" and b_row["status"] == "unknown"
+    assert "meters" not in b_row and "not usable capacity" in b_row["reason"]
+
+
+def test_probe_team_b_requires_team_configuration(monkeypatch):
+    # Review fix: B-without-Team is rejected BEFORE the browser — the same
+    # rule the wrapper enforces. A configured lane is never silently dropped.
+    def forbidden(*args, **kwargs):
+        pytest.fail("misconfigured team B reached the browser")
+
+    _set_probe_browser(monkeypatch, forbidden)
+    monkeypatch.delenv("MIMO_TEAM_PROJECT_ID", raising=False)
+    monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", "synthetic-b")
+    with pytest.raises(ValueError, match="requires team"):
+        _probe["main"]()
+
+
+@pytest.mark.parametrize("project", ["../escape", "a/b", "a?x=1", "a#fragment", "x" * 129])
+def test_probe_rejects_team_b_project_path_before_attaching(monkeypatch, project):
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid team B project reached the browser")
+
+    _set_probe_browser(monkeypatch, forbidden)
+    monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", project)
+    with pytest.raises(ValueError):
+        _probe["main"]()
+
+
 def test_view_renders_b_seat_row_with_distinct_identity(tmp_path, monkeypatch):
     combined = team_report(plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b())
     view = _write_mimo_report(tmp_path, monkeypatch, combined["lanes"])
     rows = {row["id"]: row for row in view["lanes"]}
-    assert set(rows) == {"mimo:plan", "mimo:team-owner", "mimo:team-seat-b"}
-    assert rows["mimo:team-seat-b"]["identity"] == "MiMo Team B"
-    assert rows["mimo:team-seat-b"]["status"] == "ok"
+    assert set(rows) == {"mimo:plan", "mimo:team-owner", "mimo:team-b"}
+    assert rows["mimo:team-b"]["identity"] == "MiMo Team B"
+    assert rows["mimo:team-b"]["status"] == "ok"
 
 
 def test_view_absent_b_seat_row_preserves_owner_shape(tmp_path, monkeypatch):
@@ -337,7 +576,7 @@ def test_view_ambiguous_b_seat_rows_fail_closed(tmp_path, monkeypatch):
     view = _write_mimo_report(
         tmp_path, monkeypatch, [combined["lanes"][0], combined["lanes"][1], b_row, b_row]
     )
-    rows = [row for row in view["lanes"] if row["id"] == "mimo:team-seat-b"]
+    rows = [row for row in view["lanes"] if row["id"] == "mimo:team-b"]
     assert len(rows) == 1 and rows[0]["status"] == "unknown"
     assert "ambiguous" in rows[0]["reason"]
 
@@ -346,9 +585,9 @@ def test_view_b_seat_failure_replaces_the_healthy_meter(tmp_path, monkeypatch):
     fresh = team_report(plan_detail(), plan_usage(), team_sample(), NOW, team_sample_b())["lanes"]
     failed = team_report(plan_detail(), plan_usage(), team_sample(), NOW, None)["lanes"]
     view = _write_mimo_report(tmp_path, monkeypatch, fresh)
-    assert [r for r in view["lanes"] if r["id"] == "mimo:team-seat-b"][0]["status"] == "ok"
+    assert [r for r in view["lanes"] if r["id"] == "mimo:team-b"][0]["status"] == "ok"
     view = _write_mimo_report(tmp_path, monkeypatch, failed)
-    rows = [row for row in view["lanes"] if row["id"] == "mimo:team-seat-b"]
+    rows = [row for row in view["lanes"] if row["id"] == "mimo:team-b"]
     assert rows[0]["status"] == "unknown" and not rows[0]["meters"]
 
 
@@ -424,10 +663,7 @@ def test_probe_rejects_project_path_before_attaching(monkeypatch, project):
     def forbidden(*args, **kwargs):
         pytest.fail("invalid project reached the browser")
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=forbidden))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    _set_probe_browser(monkeypatch, forbidden)
     monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", project)
     with pytest.raises(ValueError):
         _probe["main"]()
@@ -443,23 +679,11 @@ def test_probe_explicit_team_read_requires_verified_identity(monkeypatch, capsys
 
         def goto(self, *args, **kwargs):
             # Navigation never emits the Team-seat response.
-            for path, body in {
-                "/api/v1/tokenPlan/detail": plan_detail(),
-                "/api/v1/tokenPlan/usage": plan_usage(),
-                "/api/v1/userProfile": {
-                    "code": 0,
-                    "data": {"userId": "expected" if identity_matches else "other"},
-                },
-            }.items():
-                self.capture(
-                    SimpleNamespace(
-                        url="https://platform.xiaomimimo.com" + path,
-                        status=200,
-                        json=lambda body=body: body,
-                    )
-                )
+            _emit_base_readings(self.capture, "expected" if identity_matches else "other")
 
-        def evaluate(self, script, path):
+        def evaluate(self, script, args):
+            path, timeout_ms = args
+            assert 0 < timeout_ms <= 15000
             calls.append(path)
             assert "AbortController" in script
             return team_sample()
@@ -468,11 +692,7 @@ def test_probe_explicit_team_read_requires_verified_identity(monkeypatch, capsys
     def attach(*args, **kwargs):
         yield None, None, None, Page()
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=attach))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
-    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+    _set_probe_browser(monkeypatch, attach)
     if not identity_matches:
         with pytest.raises(ValueError, match="identity"):
             _probe["main"]()

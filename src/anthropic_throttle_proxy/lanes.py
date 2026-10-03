@@ -82,10 +82,10 @@ _MIMO_PLAN_LANE_ID = "mimo:plan"
 # seat is not usable capacity; the probe fails both closed instead of minting
 # counters.
 _MIMO_TEAM_LANE_ID = "mimo:team-owner"
-# The B seat's lane id (second Team seat, per-assigned-seat catalog): its own
-# independent allowance, the same fail-closed rules, never summed with the
-# owner seat or the individual plan row.
-_MIMO_TEAM_B_LANE_ID = "mimo:team-seat-b"
+# The Team B seat's lane id (second Team seat, per-assigned-seat catalog): its
+# own independent allowance, the same fail-closed rules, never summed with the
+# owner seat or the individual plan row. Spelling follows spec 279 G2.
+_MIMO_TEAM_B_LANE_ID = "mimo:team-b"
 
 _cache: tuple[float, dict[str, Any]] | None = None
 
@@ -392,10 +392,10 @@ def _lane_identity(kind: str, lane_id: str, provider: str) -> str:
         # Distinct display identity (spec 281): the team seat row and the
         # individual plan row share a provider but not an allowance.
         return f"{provider} Team"
-    if kind == "mimo" and suffix.startswith("team-seat-"):
-        # Same discipline for every further Team seat: mimo:team-seat-b renders
+    if kind == "mimo" and suffix.startswith("team-"):
+        # Same discipline for every further Team seat: mimo:team-b renders
         # "MiMo Team B", distinct from the owner row and never merged with it.
-        return f"{provider} Team {suffix.removeprefix('team-seat-').upper()}"
+        return f"{provider} Team {suffix.removeprefix('team-').upper()}"
     return provider
 
 
