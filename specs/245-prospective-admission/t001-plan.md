@@ -41,3 +41,12 @@ T002 needs the account/model ledger and durable debt; T003 must cover every
 real dispatch, retry and probe; T004 needs truthful refusal/provenance; T005
 requires one full day of observe-only calibration; T006 needs bounded strict
 acceptance. Neither this helper nor merged contract PR266 satisfies those.
+
+## Measured review follow-up — 03/10/2026
+
+Sonar identified account_request cognitive complexity 23 (limit15); coverage
+92.4% and duplication0% already passed. Separate endpoint/shape validation from
+accounting without changing bounds or estimator behavior. Cross-family review
+of the OpenAI boundary corrections also found permissive tool definitions;
+restrict definitions to explicit named function schemas, with five refusal
+fixtures. The focused slice now has46 passing tests. No runtime caller added.

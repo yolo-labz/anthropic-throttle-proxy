@@ -198,3 +198,18 @@ def test_overflowing_json_number_cannot_be_counted_as_finite_input():
         b'{"model":"mimo-v2.6-pro","messages":[{"role":"user","content":"x"}],"temperature":1e999}'
     )
     assert account_request(body, MODEL_DEFAULTS) is None
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        {},
+        {"type": "image_generation"},
+        {"type": "function", "function": "invalid"},
+        {"type": "function", "function": {"name": "", "parameters": {}}},
+        {"type": "function", "function": {"name": "f", "parameters": []}},
+    ],
+)
+def test_unsupported_or_malformed_tool_definition_refuses(tool):
+    body = _body([{"role": "user", "content": "hi"}], extra={"tools": [tool]})
+    assert account_request(body, MODEL_DEFAULTS) is None

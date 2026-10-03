@@ -92,6 +92,41 @@ def _input_payload_bytes(obj: dict) -> int | None:
         return None
 
 
+def _function_tool_ok(tool: object) -> bool:
+    """Accept only explicit text function definitions, not provider-hosted tools."""
+    if not isinstance(tool, dict) or tool.get("type") != "function":
+        return False
+    function = tool.get("function")
+    return (
+        isinstance(function, dict)
+        and isinstance(function.get("name"), str)
+        and bool(function["name"])
+        and isinstance(function.get("parameters"), dict)
+    )
+
+
+def _request_shape_ok(obj: dict) -> bool:
+    """Keep supported endpoint and text/tool shape checks together."""
+    # An image URL's bytes cannot bound image tokens. Other endpoint/output
+    # formats require their own validated accounting before this can accept them.
+    if any(key in obj for key in ("input", "audio", "max_completion_tokens", "max_output_tokens")):
+        return False
+    if "modalities" in obj and obj["modalities"] != ["text"]:
+        return False
+    if "system" in obj and not _text_content_ok(obj["system"]):
+        return False
+    if "tools" in obj and not (
+        isinstance(obj["tools"], list) and all(_function_tool_ok(tool) for tool in obj["tools"])
+    ):
+        return False
+    messages = obj.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return False
+    if not all(isinstance(message, dict) and _message_shape_ok(message) for message in messages):
+        return False
+    return True
+
+
 def account_request(body: bytes, model_defaults: Mapping[str, int]) -> TokenAccounting | None:
     """Validated final input tokens + output bound, or None to refuse reservation.
 
@@ -107,22 +142,7 @@ def account_request(body: bytes, model_defaults: Mapping[str, int]) -> TokenAcco
         return None
     if not isinstance(obj, dict):
         return None
-    # An image URL's bytes cannot bound image tokens. Other endpoint/output
-    # formats require their own validated accounting before this can accept them.
-    if any(key in obj for key in ("input", "audio", "max_completion_tokens", "max_output_tokens")):
-        return None
-    if "modalities" in obj and obj["modalities"] != ["text"]:
-        return None
-    if "system" in obj and not _text_content_ok(obj["system"]):
-        return None
-    if "tools" in obj and not (
-        isinstance(obj["tools"], list) and all(isinstance(tool, dict) for tool in obj["tools"])
-    ):
-        return None
-    messages = obj.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return None
-    if not all(isinstance(message, dict) and _message_shape_ok(message) for message in messages):
+    if not _request_shape_ok(obj):
         return None
     model = obj.get("model")
     if not isinstance(model, str) or not model:
