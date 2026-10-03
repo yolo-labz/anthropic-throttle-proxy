@@ -4689,6 +4689,7 @@ async def _pre_dispatch_gate(
     wait_alternate: _WaitAlternate,
     reroute: _Reroute,
     wait_reval: _WaitReval,
+    meter_wait_bounded: bool,
 ) -> tuple[FairBearerLimiter | None, str, dict[str, str], web.Response | None, str]:
     """The pre-dispatch admission gate: Retry-After, then half-open probe ownership.
 
@@ -4699,13 +4700,15 @@ async def _pre_dispatch_gate(
     queue_mode, hard_max = _effective_admission(bid)
     limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
     if not _meter_binding_allows(bid):
-        # Same binding as the admission verdict (one predicate): a meter-refused
-        # scoped seat must not dispatch new work. The routing pass already
-        # preferred any fresh sibling; reaching here means there is none, so
-        # refuse honestly and bounded instead of passing the caller's key
-        # through. Only finish the probe when THIS request owns its lease.
+        # A fresh sibling may be temporarily unselectable while its cold probe
+        # runs. Reuse the bounded alternate-probe wait before refusing this
+        # credential; never dispatch it using a sibling's meter. Release only
+        # the probe lease owned by this request.
         if probe_lease["bid"] == bid:
             finish_probe(success=False)
+        if meter_wait_bounded and await wait_alternate():
+            new_bid, new_headers = reroute()
+            return limiter, new_bid, new_headers, None, "reroute"
         return limiter, bid, headers, _meter_refusal_response(bid, path), "answer"
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if (
@@ -5122,6 +5125,7 @@ async def handler(request: web.Request) -> web.StreamResponse:
             wait_alternate=wait_for_alternate_probe,
             reroute=reroute_after_revalidation,
             wait_reval=wait_for_revalidation,
+            meter_wait_bounded=wait_deadline is not None,
         )
         if action == "answer":
             assert response is not None
