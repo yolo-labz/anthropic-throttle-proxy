@@ -316,6 +316,14 @@ def test_b_seat_leaks_no_identifiers():
     assert "seat-b-identifier-must-not-leak" not in dump
 
 
+def _set_probe_browser(monkeypatch, attach):
+    monkeypatch.setitem(
+        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=attach))
+    )
+    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+
+
 def _run_probe_with_b(
     monkeypatch, capsys, *, team_b, b_response, b_identity="expected-b", b_unavailable=False
 ):
@@ -370,11 +378,7 @@ def _run_probe_with_b(
             raise RuntimeError("B profile unavailable")
         yield None, None, None, Page(name)
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=attach))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
-    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+    _set_probe_browser(monkeypatch, attach)
     monkeypatch.setenv("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", "expected-b")
     if team_b is None:
         monkeypatch.delenv("MIMO_TEAM_B_PROJECT_ID", raising=False)
@@ -461,11 +465,7 @@ def test_probe_team_b_requires_independent_expected_identity(monkeypatch, expect
     def forbidden(*args, **kwargs):
         pytest.fail("unbound Team B reached a browser")
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=forbidden))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
-    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+    _set_probe_browser(monkeypatch, forbidden)
     monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", "synthetic-b")
     if expected_b is None:
         monkeypatch.delenv("MIMO_TEAM_B_EXPECTED_ACCOUNT_ID", raising=False)
@@ -493,10 +493,7 @@ def test_probe_team_b_requires_team_configuration(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("misconfigured team B reached the browser")
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=forbidden))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    _set_probe_browser(monkeypatch, forbidden)
     monkeypatch.delenv("MIMO_TEAM_PROJECT_ID", raising=False)
     monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", "synthetic-b")
     with pytest.raises(ValueError, match="requires team"):
@@ -508,11 +505,7 @@ def test_probe_rejects_team_b_project_path_before_attaching(monkeypatch, project
     def forbidden(*args, **kwargs):
         pytest.fail("invalid team B project reached the browser")
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=forbidden))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
-    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+    _set_probe_browser(monkeypatch, forbidden)
     monkeypatch.setenv("MIMO_TEAM_B_PROJECT_ID", project)
     with pytest.raises(ValueError):
         _probe["main"]()
@@ -626,10 +619,7 @@ def test_probe_rejects_project_path_before_attaching(monkeypatch, project):
     def forbidden(*args, **kwargs):
         pytest.fail("invalid project reached the browser")
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=forbidden))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
+    _set_probe_browser(monkeypatch, forbidden)
     monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", project)
     with pytest.raises(ValueError):
         _probe["main"]()
@@ -670,11 +660,7 @@ def test_probe_explicit_team_read_requires_verified_identity(monkeypatch, capsys
     def attach(*args, **kwargs):
         yield None, None, None, Page()
 
-    monkeypatch.setitem(
-        sys.modules, "lib", SimpleNamespace(interactive=SimpleNamespace(attach=attach))
-    )
-    monkeypatch.setenv("MIMO_EXPECTED_ACCOUNT_ID", "expected")
-    monkeypatch.setenv("MIMO_TEAM_PROJECT_ID", "synthetic-project")
+    _set_probe_browser(monkeypatch, attach)
     if not identity_matches:
         with pytest.raises(ValueError, match="identity"):
             _probe["main"]()
