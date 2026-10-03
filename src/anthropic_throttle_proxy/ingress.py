@@ -31,7 +31,7 @@ import aiohttp
 from aiohttp import web
 from prometheus_client import CollectorRegistry, Counter, generate_latest
 
-from . import routing
+from . import provider_registry, routing
 from .routing import (
     Lane,
     LaneState,
@@ -190,6 +190,40 @@ _SPILL_ON_429_ROLES: Final[frozenset[str]] = frozenset({"generate", "code"})
 # --- S3: lane registry + gauge polling --------------------------------------
 # The three-lane fleet (Spec 093). Built once at import from env-overridable URLs.
 LANES: dict[str, Lane] = default_lanes()
+
+# THRTL-19: opt-in, removal-only policy. Unknown initial policy fails closed;
+# None alone means disabled. Reload never rebuilds LANES or clears session pins.
+PROVIDER_REGISTRY_PATH: Final[str] = os.environ.get("INGRESS_PROVIDER_REGISTRY", "").strip()
+_registry_lanes: frozenset[str] | None = frozenset() if PROVIDER_REGISTRY_PATH else None
+_registry_error: str | None = "not-loaded" if PROVIDER_REGISTRY_PATH else None
+
+
+async def _reload_provider_registry() -> None:
+    global _registry_lanes, _registry_error
+    if not PROVIDER_REGISTRY_PATH:
+        return
+    try:
+        candidate = await asyncio.to_thread(
+            provider_registry.load, PROVIDER_REGISTRY_PATH, frozenset(LANES)
+        )
+    except (OSError, ValueError):
+        # Keep last-good policy, not last-good *health*. No path/content in the
+        # diagnostic, and a failed first read leaves the initial empty policy.
+        _registry_error = "registry-unreadable-or-invalid"
+        return
+    _registry_lanes, _registry_error = candidate, None
+
+
+def _effective_chain(role: str) -> tuple[str, ...]:
+    chain = routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED)
+    if _registry_lanes is None:
+        return chain
+    return tuple(lane_id for lane_id in chain if lane_id in _registry_lanes)
+
+
+def _select_open_lane(role: str) -> str | None:
+    return select_lane(role, lane_state, chains={role: _effective_chain(role)})
+
 
 # Per-lane cached gauge verdict, updated by ``_lane_health_loop``. Read by
 # ``select_lane`` (pure) on each forward. A lane missing from here is treated as
@@ -604,7 +638,7 @@ def _policy_refusal(role: str, required_mode: str) -> web.Response:
     capacity, and must not enter AIMD/retry as pushback.
     """
     now = time.time()
-    chain = routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED)
+    chain = _effective_chain(role)
     chain_states = [st for lid in chain if lid in LANES for st in [lane_state.get(lid)] if st]
     fresh_states = [st for st in chain_states if _evidence_is_fresh(st, now)]
     stale_any = len(fresh_states) != len(chain_states)
@@ -847,12 +881,15 @@ async def _select_constrained_lane(
     selectable; a rejected candidate is marked tried so no later pass re-probes
     or serves it.
     """
-    for candidate in routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED):
+    for candidate in _effective_chain(role):
         lane = LANES.get(candidate)
         if lane is None or candidate in tried:
             continue
         await _probe_lane_health(session, lane)
-        if _mode_is_usable_eligible(lane_state.get(candidate)):
+        # A reload can revoke membership while the fresh probe is awaiting I/O.
+        if candidate in _effective_chain(role) and _mode_is_usable_eligible(
+            lane_state.get(candidate)
+        ):
             return candidate
         tried.add(candidate)
     return None
@@ -867,6 +904,8 @@ def _pinned_lane_choice(role: str, sess_key: str, tried: set[str]) -> str | None
     """
     pinned = _session_lane.get(sess_key)
     if pinned is None or pinned in tried:
+        return None
+    if _registry_lanes is not None and pinned not in _effective_chain(role):
         return None
     if not (lane_state.get(pinned) or LaneState(False, 0)).open:
         return None
@@ -888,7 +927,7 @@ def _select_lane_once(
         lane_id = _pinned_lane_choice(role, sess_key, tried)
         used_pin = True
     if lane_id is None:
-        lane_id = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+        lane_id = _select_open_lane(role)
         if lane_id is not None and lane_id in tried:
             lane_id = None
         elif lane_id is not None and sess_key is not None:
@@ -911,6 +950,15 @@ async def _next_lane(
     ``_select_lane_once``. A selected id missing from the registry is a 503 like
     any other dead end.
     """
+    pinned = _session_lane.get(sess_key) if sess_key is not None else None
+    if _registry_lanes is not None and pinned is not None and pinned not in _effective_chain(role):
+        # A registry edit is not permission to migrate an existing session to
+        # another provider. Hold its next turn; the already-open stream stays.
+        return (
+            None,
+            web.json_response({"error": "ingress-session-lane-not-registered"}, status=403),
+            used_pin,
+        )
     if required_mode is not None:
         lane_id = await _select_constrained_lane(session, role, tried)
     else:
@@ -1050,10 +1098,9 @@ def _has_spill_target(role: str, tried: set[str], required_mode: str | None) -> 
     """
     if required_mode is not None:
         return any(
-            candidate in LANES and candidate not in tried
-            for candidate in routing.effective_chain(role, routing.GENERATE_OVERFLOW_ENABLED)
+            candidate in LANES and candidate not in tried for candidate in _effective_chain(role)
         )
-    next_lane = select_lane(role, lane_state, overflow=routing.GENERATE_OVERFLOW_ENABLED)
+    next_lane = _select_open_lane(role)
     return next_lane is not None and next_lane not in tried
 
 
@@ -1084,6 +1131,8 @@ def _no_lane_response(role: str, required_mode: str | None, held_reason: str) ->
     """
     if required_mode is not None:
         return _policy_refusal(role, required_mode)
+    if _registry_lanes is not None and not _effective_chain(role):
+        return web.json_response({"error": "ingress-no-registered-lane", "role": role}, status=503)
     if role == "generate" and not routing.GENERATE_OVERFLOW_ENABLED:
         return web.json_response(
             {"error": "ingress-generate-held", "reason": held_reason}, status=503
@@ -1312,6 +1361,17 @@ async def _health(_request: web.Request) -> web.Response:
             "port": INGRESS_PORT,
             "served": _served,
             "uptime_s": round(time.time() - _start_time, 1),
+            **(
+                {
+                    "provider_registry": {
+                        "enabled": True,
+                        "lanes": sorted(_registry_lanes),
+                        "error": _registry_error,
+                    }
+                }
+                if _registry_lanes is not None
+                else {}
+            ),
             # ADR-6a §2.2 capability declaration. ``credential_mode: true`` + a
             # known contract tells a consumer this proxy enforces+attests;
             # absence (old proxy) must be treated as unsupported. r1/C6:
@@ -1396,6 +1456,7 @@ async def _lane_health_context(app: web.Application):
     lets an operator pin ``lane_state`` manually and keeps the test-suite
     deterministic (it sets ``lane_state`` directly instead of racing the loop).
     """
+    await _reload_provider_registry()
     if LANE_HEALTH_INTERVAL_S <= 0:
         yield
         return
@@ -1416,6 +1477,7 @@ async def _lane_health_loop(session: aiohttp.ClientSession) -> None:
         # Never let the poll loop die — health is load-bearing and a transient
         # error in one cycle must not stop future probes.
         with contextlib.suppress(Exception):
+            await _reload_provider_registry()
             await _poll_lanes_once(session)
 
 
