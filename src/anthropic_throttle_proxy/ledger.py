@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import math
 import os
 import tempfile
@@ -41,6 +42,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+_LOG = logging.getLogger(__name__)
 WINDOW_S = 60.0
 
 
@@ -261,7 +263,9 @@ class LedgerPool:
             try:
                 self._load()
             except FileNotFoundError:
-                pass  # Explicit cold start; permission/corruption errors propagate.
+                _LOG.warning(
+                    "Reservation snapshot missing: explicit cold start with no restored debt"
+                )
 
     def ledger_for(self, key: tuple[str, str, str]) -> LaneLedger:
         if not isinstance(key, tuple) or not _valid_key(key):

@@ -157,3 +157,7 @@ Source provenance is MiMo original plus OpenAI repair and Mac validation.
 Repository CI and any concrete review findings remain publication checks;
 these local results do not claim an independent review approval. Rollback is
 one revert PR because this standalone module has no production import.
+
+CI initially rejected a silent missing-file cold start. It now emits a warning
+that no debt was restored; permission and corruption failures still propagate.
+The existing cold-start and persistence acceptance cases remain green.
