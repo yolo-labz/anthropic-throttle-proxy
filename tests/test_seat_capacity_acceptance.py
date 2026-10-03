@@ -860,3 +860,30 @@ async def test_bound_stale_and_spent_seats_refuse_new_scoped_dispatch(
     assert lim_a.max_concurrent == lim_b.max_concurrent == 2
     assert dict(pool.upstream.count) == {}  # nothing reached upstream
     assert pool.upstream.order == []
+
+
+async def test_queued_request_rechecks_meter_before_spending(pool, monkeypatch, meter_rows):
+    rows = meter_rows("ok", "exhausted")
+    monkeypatch.setattr(config, "METER_BINDINGS", {"A": "mimo:plan", "B": "mimo:team-b"})
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": rows})
+    lim = await _open_seat(pool, "A", live=1)
+    held = asyncio.create_task(_post(pool.client, tag="held", hold=True, token=pool.tokens["A"]))
+    await pool.upstream.wait_arrived("held")
+    queued = asyncio.create_task(_post(pool.client, tag="queued", token=pool.tokens["A"]))
+    await _wait_for_limiter_queued(lim, 1)
+    rows[:] = meter_rows("unknown", "exhausted")
+    pool.upstream.let_go("held")
+    assert (await asyncio.wait_for(held, 5))[0] == 200
+    status, body = await asyncio.wait_for(queued, 5)
+    assert status == 503 and b"local policy" in body
+    assert pool.upstream.order == [("A", "held")]
+    await _settle()
+    assert lim.max_concurrent == 1
+    assert lim.snapshot()["inflight"] == lim.snapshot()["queued_total"] == 0
+
+
+async def test_synthetic_recheck_does_not_spend_a_refused_meter(pool, monkeypatch, meter_rows):
+    monkeypatch.setattr(config, "METER_BINDINGS", {"A": "mimo:plan"})
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": meter_rows()})
+    await proxy._credential_recheck_one(pool.bids["A"], pool.tokens["A"])
+    assert pool.upstream.order == []

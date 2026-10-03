@@ -717,6 +717,7 @@ class _Attempt:
         # exhausted 529/queue-timeout hold (terminal synthetic 503) does not
         # AIMD-shrink the bearer (invariants 7 + 9; Codex panel BLOCKER).
         self.aimd_owned = False
+        self.local_meter_refused = False
 
 
 # Client-side disconnects we must NOT retry upstream (the client gave up).
@@ -2063,6 +2064,18 @@ async def _try_forward(
     ``(None, exc)`` on an upstream error so the caller can decide whether to
     retry. Client-side disconnects propagate as exceptions to the caller.
     """
+    bid = _bearer_id(headers)
+    if not _meter_binding_allows(bid):
+        # Recheck after queue waits and before every ordinary/direct retry.
+        # Internal provenance prevents this local503 becoming provider feedback.
+        response = _meter_refusal_response(bid, request.path.lstrip("/"))
+        attempt.local_meter_refused = True
+        attempt.aimd_owned = True
+        attempt.final_status = response.status
+        attempt.response = response
+        attempt.meta = None
+        attempt.captured = None
+        return response, None
     response, status, captured, exc, meta = await _forward_once(
         request, headers, body, url, client_timeout, retryable_statuses
     )
@@ -2092,6 +2105,8 @@ def _maybe_fast_fail_throttle_direct(
     attempt: _Attempt,
 ) -> web.Response | None:
     """Return a fast-fail 429/401 for a throttle status on the direct-fallback path."""
+    if attempt.local_meter_refused:
+        return None
     if not (bid and not response.prepared and attempt.final_status in THROTTLE_STATUSES):
         return None
     pause, _ = _pushback_pause(attempt.meta, bid)
@@ -2994,6 +3009,19 @@ async def _keepalive_one_attempt(
     ``_keepalive_attempt_verdict``. A client disconnect ends the hold with 499; a
     network error is logged and retried after a brief pause.
     """
+    if not _meter_binding_allows(bid):
+        # HTTP200 is already committed: stop our emitter, send one terminal
+        # SSE error and EOF; never prepare a second HTTP response or retry.
+        await cancel_keepalive()
+        await _emit_sse_error_terminal(
+            sse_resp, "local policy: seat quota meter exhausted or unreadable"
+        )
+        M_KEEPALIVE_HOLDS.labels(outcome="errored").inc()
+        attempt.final_status = 503
+        attempt.response = sse_resp
+        attempt.meta = None
+        attempt.captured = None
+        return sse_resp
     # Stamp the remaining budget on central-bound requests.
     send_headers: dict = dict(headers)
     if via == "central" and wait_deadline is not None:
@@ -3307,7 +3335,7 @@ async def _forward_or_recover(
     except _CLIENT_DISCONNECT_EXC as cexc:
         return _record_disconnect(path, "first", cexc, attempt), False
     if exc is None:
-        return response, True
+        return response, not attempt.local_meter_refused
     return (
         await _forward_recover_from_error(
             request, headers, body, path, via, url, client_timeout, response, exc, attempt, bid
@@ -5237,6 +5265,10 @@ def _touch_credential_check(bid: str) -> None:
 
 async def _credential_recheck_one(bid: str, token: str) -> None:
     """One synthetic ``max_tokens: 1`` message on a quarantined account's own token."""
+    if not _meter_binding_allows(bid):
+        # Keep quarantine and normal probe cadence; no synthetic quota spend.
+        _touch_credential_check(bid)
+        return
     url = config.UPSTREAM.rstrip("/") + MESSAGES_PATH
     timeout = aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT)
     headers = {

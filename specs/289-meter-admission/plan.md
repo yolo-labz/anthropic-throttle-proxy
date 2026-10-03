@@ -33,10 +33,26 @@ retain their existing behavior. No credential parser, model or account changes.
 
 This is a meter policy at request admission and route selection, not a token
 reservation system or guarantee against external spending/vendor429. Already
-committed streams retain their session. A separate read-only audit is tracing
-retry/probe/queued-dispatch seams; any further protection must preserve terminal
-stream semantics. Prospective accounting remains Plane THRTL-18/spec245.
+committed streams retain their session. The read-only dispatch audit found a real recheck gap after queue waits and
+on retries. The same predicate now runs for each ordinary/direct retry, each
+held-stream retry and every synthetic credential probe. Local provenance
+prevents refusal from entering provider retry/AIMD handling. A committed stream
+cancels its keepalive emitter and emits one valid terminal SSE error and EOF. Prospective accounting remains Plane THRTL-18/spec245.
 
 pK authored the initial predicate, wiring and endpoint/fake-upstream tests.
 Independent Mac review fixed required-mode fail-open and local429 classification
 before publication. Runtime has not been activated by this worktree.
+
+## Final dispatch regression — 03/10/2026
+
+Five new local-upstream fixtures cover meter loss while queued, pushback retry,
+central-to-direct retry, an already-committed SSE hold, and a synthetic probe.
+All pass; full suite1,576 passes, Ruff lint/format passes. The held request
+finishes200 while its now-refused queued sibling returns503 without spending
+or leaking a lease. Retry fixtures spend exactly once; the stream emits one
+error event and drains its hold count. Initial test assertion used a string
+against bytes and was corrected; this was a test type error, not a hidden green.
+
+These checks occur at proxy dispatch boundaries, not an atomic vendor quota
+transaction. External consumption and usage between cached meter samples
+remain limitations; no promise of zero vendor429 is made.

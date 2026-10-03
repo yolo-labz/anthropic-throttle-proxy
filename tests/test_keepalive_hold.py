@@ -1201,3 +1201,47 @@ async def test_hold_retry_classifies_entitlement_vs_budget(
     finally:
         await test_client.close()
         await upstream_server.close()
+
+
+@pytest.mark.parametrize("mode", ["stream", "pushback", "direct"])
+async def test_meter_loss_stops_retry_without_corrupting_response(monkeypatch, mode):
+    available = True
+    calls = 0
+
+    async def messages(request):
+        nonlocal available, calls
+        await request.read()
+        calls += 1
+        available = False
+        return web.Response(status={"stream": 529, "pushback": 503, "direct": 500}[mode])
+
+    upstream = web.Application()
+    upstream.router.add_post("/v1/messages", messages)
+    client, server = await _make_client_with_upstream(
+        monkeypatch, upstream, rate_pushback_retries=2
+    )
+    monkeypatch.setattr(proxy, "_meter_binding_allows", lambda bid, now=None: available)
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 0.0)
+    monkeypatch.setattr(config, "CONCURRENCY_COOLDOWN_S", 0.0)
+    if mode == "direct":
+        monkeypatch.setattr(config, "CENTRAL_URL", str(server.make_url("")).rstrip("/"))
+        config.state["central_status"] = "up"
+    try:
+        response = await client.post(
+            "/v1/messages",
+            json={"model": "fixture", "stream": mode == "stream"},
+            headers={"Authorization": "Bearer synthetic-retry-meter"},
+        )
+        raw = await asyncio.wait_for(response.read(), 2)
+        assert calls == 1
+        if mode == "stream":
+            assert response.status == 200
+            assert raw.count(b"event: error") == 1 and b"local policy" in raw
+            assert config.state["keepalive_holds_active"] == 0
+        else:
+            assert response.status == 503
+            assert response.headers["x-throttle-meter-refusal"] == "1"
+            assert b"local policy" in raw
+    finally:
+        await client.close()
+        await server.close()
