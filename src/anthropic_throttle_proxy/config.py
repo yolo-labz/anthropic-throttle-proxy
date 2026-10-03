@@ -175,6 +175,60 @@ CONCURRENCY_COOLDOWN_S = max(0.0, float(os.environ.get("THROTTLE_CONCURRENCY_COO
 # back to the budget classification (23/09/2026 — headerless MiMo 429s at ~6%
 # of a monthly allowance each bought a 30 s synthetic hold + a cap collapse).
 PLAN_METER_LANE = os.environ.get("THROTTLE_PLAN_METER_LANE", "").strip()
+
+# Account-bound meter binding (spec 279 seat-b plan; contract coordinated with
+# pF/pJ): an explicit, validated LABEL -> lane-id mapping for seats whose quota
+# lives in the lanes report. Entries are `LABEL=lane-id` pairs (comma
+# separated); the LABEL:path credential parser and its labels are untouched —
+# the lane id lives HERE, never in the credential spec. No suffix/hash
+# inference. Validation is COMPLETE and deterministic: any malformed entry
+# invalidates the WHOLE mapping and the gate refuses every scoped decision —
+# a bad entry must never vanish into feature-off. Feature is off ONLY when
+# both knobs are genuinely off and no malformed entry was seen.
+
+
+def _parse_meter_bindings(raw: str) -> tuple[dict[str, str], bool]:
+    """``(mapping, valid)`` for THROTTLE_METER_BINDINGS.
+
+    Malformed = no equals sign, empty label, a lane id that is not
+    ``<namespace>:<name>`` of alphanumerics/``_``/``-``, or a duplicate label.
+    """
+    out: dict[str, str] = {}
+    if not raw.strip():
+        return out, True
+    valid = True
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            valid = False
+            continue
+        label, sep, lane = entry.partition("=")
+        label, lane = label.strip(), lane.strip()
+        parts = lane.split(":")
+        lane_ok = (
+            len(parts) == 2
+            and all(parts)
+            and all(part.replace("_", "").replace("-", "").isalnum() for part in parts)
+        )
+        if not sep or not label or not lane_ok or label in out:
+            valid = False
+            continue
+        out[label] = lane
+    return out, valid
+
+
+METER_BINDINGS, METER_BINDINGS_VALID = _parse_meter_bindings(
+    os.environ.get("THROTTLE_METER_BINDINGS", "")
+)
+
+# Required mode covers every bearer in this configured service instance,
+# including missing labels/bindings. Other instances remain unchanged by default.
+METER_BINDING_REQUIRED = os.environ.get("THROTTLE_METER_BINDING_REQUIRED", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 PLAN_PRESSURE_PERCENT = max(0.0, float(os.environ.get("THROTTLE_PLAN_PRESSURE_PERCENT", "80")))
 AIMD_RAMP_AFTER = int(os.environ.get("THROTTLE_AIMD_RAMP_AFTER", "10"))
 # Adaptive ramp (PR #53, 06/06/2026 stall incident): the live cap recovers via

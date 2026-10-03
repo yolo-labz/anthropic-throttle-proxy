@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 
 import pytest
 
-from anthropic_throttle_proxy import config, proxy
+from anthropic_throttle_proxy import accounts, config, lanes, proxy
 
 
 @pytest.fixture(autouse=True)
@@ -280,6 +281,86 @@ async def test_one_roomy_bearer_keeps_lane_parking_hint_false():
     assert sat["measured"] is True, sat
     assert sat["free"] == 4, sat
     assert sat["all_usable_bearers_would_park"] is False, sat
+
+
+# ── account-bound meter binding (293): the 2/2 false-open ──────────────
+#
+# Observed symptom (:8773, 03/10): GET /__throttle/admission answered
+# allow=true with the literal `2/2 bearers serving` beside a FRESH two-row
+# meter report showing both MiMo rows exhausted. "Serving" must mean "may be
+# served now": a seat whose bound quota row is spent (or unreadable) claims no
+# eligible capacity. Binding is the explicit validated label->meter mapping
+# (pF/pJ contract), resolved through the existing bearer-to-label metadata —
+# no suffix/hash inference, and one seat never borrows another row's quota.
+
+
+def _bound_bearers(tmp_path, monkeypatch, rows, *, bindings=None, required=False):
+    """Two real static-key seats bound to meter rows, both with fresh windows."""
+    tokens = {"plan": "tp-" + uuid.uuid4().hex, "team-b": "tp-" + uuid.uuid4().hex}
+    files = {}
+    for label, token in tokens.items():
+        path = tmp_path / f"{label}.key"
+        path.write_text(token + "\n", encoding="utf-8")
+        files[label] = path
+    accounts._cache.clear()
+    monkeypatch.setattr(
+        config, "ACCOUNT_CRED_PATHS", f"plan:{files['plan']},team-b:{files['team-b']}"
+    )
+    monkeypatch.setattr(
+        config,
+        "METER_BINDINGS",
+        bindings if bindings is not None else {"plan": "mimo:plan", "team-b": "mimo:team-b"},
+    )
+    monkeypatch.setattr(config, "METER_BINDING_REQUIRED", required)
+    monkeypatch.setattr(lanes, "view", lambda now: {"lanes": rows})
+    bids = {label: accounts._token_bearer_id(token) for label, token in tokens.items()}
+    for bid in bids.values():
+        config.bearer_state[bid] = {"unified": _unified()}
+        config.bearer_limiters[bid] = _Snap(max_concurrent=2, inflight=0, queued_total=0)
+    return bids
+
+
+@pytest.mark.parametrize(
+    "owner,secondary,serving",
+    [("exhausted", "exhausted", 0), ("exhausted", "ok", 1), ("stale", "unknown", 0)],
+)
+async def test_scoped_meter_controls_actual_admission(
+    tmp_path, monkeypatch, meter_rows, owner, secondary, serving
+):
+    _bound_bearers(tmp_path, monkeypatch, meter_rows(owner, secondary))
+    body = await _get()
+    assert body["allow"] is (serving > 0), body
+    assert body["serving"] == serving and body["total"] == 2, body
+    assert body["reason"] == f"{serving}/2 bearers serving", body
+
+
+async def test_no_bindings_keeps_unrelated_providers_unchanged(tmp_path, monkeypatch, meter_rows):
+    _bound_bearers(tmp_path, monkeypatch, meter_rows("exhausted", "exhausted"), bindings={})
+    body = await _get()
+    assert body["allow"] is True and body["serving"] == 2
+
+
+@pytest.mark.parametrize("case", ["empty", "unknown", "missing", "unmapped", "malformed"])
+async def test_required_meter_configuration_never_fails_open(
+    tmp_path, monkeypatch, meter_rows, case
+):
+    bindings = {} if case == "empty" else {"plan": "mimo:plan"}
+    rows = [] if case == "missing" else meter_rows("ok", "ok")
+    _bound_bearers(tmp_path, monkeypatch, rows, bindings=bindings, required=True)
+    if case == "unknown":
+        monkeypatch.setattr(accounts, "bearer_labels", lambda: {})
+    if case == "malformed":
+        monkeypatch.setattr(config, "METER_BINDINGS_VALID", False)
+    body = await _get()
+    assert body["serving"] == (1 if case == "unmapped" else 0), body
+
+
+@pytest.mark.parametrize(
+    "raw", ["garbage", "A=mimo:team-b,garbage", "A=", ",", "A=mimo:x,", "A=mimo:x,A=mimo:y"]
+)
+def test_malformed_mapping_never_disappears_into_feature_off(raw):
+    _bindings, valid = config._parse_meter_bindings(raw)
+    assert valid is False
 
 
 async def test_saturation_ignores_an_unusable_bearer_s_idle_slots():

@@ -1314,6 +1314,11 @@ def _bearer_routing_retry_after(bid: str, *, allow_retry_probe: bool) -> float |
     # elect a dead account. That election is what spent 40 client turns on 403s.
     if _bearer_credential_dead(bid):
         return None
+    if not _meter_binding_allows(bid):
+        # Account-bound meter refusal: this seat's bound quota row is spent,
+        # stale or unreadable — no new scoped dispatch, and it claims no
+        # eligible capacity (spec 279 seat-b plan).
+        return None
     retry_after_remaining = _bearer_retry_after_remaining(bid)
     if _limiter.retry_probe_required(bid) and (
         _limiter.retry_probe_inflight(bid)
@@ -3472,6 +3477,36 @@ async def _pushback_retry_step(
     return None
 
 
+def _meter_binding_allows(bid: str, now: float | None = None) -> bool:
+    """Apply only this credential's fresh meter to admission and route selection."""
+    if not config.METER_BINDINGS_VALID:
+        return False
+    bindings = config.METER_BINDINGS
+    if not bindings:
+        return not config.METER_BINDING_REQUIRED
+    from . import accounts
+
+    label = accounts.bearer_labels().get(bid)
+    lane_id = bindings.get(label)
+    if lane_id is None:
+        return not config.METER_BINDING_REQUIRED
+    if not lane_id:
+        return False
+    used = _lanes.plan_meter_used_percent(lane_id, time.time() if now is None else now)
+    return used is not None and 0.0 <= used < 100.0
+
+
+def _meter_refusal_response(bid: str, path: str) -> web.Response:
+    """Honest bounded refusal for a meter-refused scoped seat (fail closed)."""
+    retry_after_s = max(1, int(config.QUEUE_TIMEOUT_RETRY_AFTER_S))
+    log(f"meter-binding-refusal bid={bid} path=/{path} retry_after={retry_after_s}")
+    return web.Response(
+        status=503,
+        headers={"retry-after": str(retry_after_s), "x-throttle-meter-refusal": "1"},
+        text="local policy: seat quota meter is exhausted or unreadable; refusing new dispatch\n",
+    )
+
+
 def _plan_lane_has_headroom(now: float | None = None) -> bool:
     """True when THIS instance's plan meter is fresh and below the pressure line.
 
@@ -4593,6 +4628,15 @@ async def _pre_dispatch_gate(
     """
     queue_mode, hard_max = _effective_admission(bid)
     limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+    if not _meter_binding_allows(bid):
+        # Same binding as the admission verdict (one predicate): a meter-refused
+        # scoped seat must not dispatch new work. The routing pass already
+        # preferred any fresh sibling; reaching here means there is none, so
+        # refuse honestly and bounded instead of passing the caller's key
+        # through. Only finish the probe when THIS request owns its lease.
+        if probe_lease["bid"] == bid:
+            finish_probe(success=False)
+        return limiter, bid, headers, _meter_refusal_response(bid, path), "answer"
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if (
         _retry_after_blocks_path(path)
@@ -5796,7 +5840,9 @@ async def admission(_request: web.Request) -> web.Response:
     # is quarantined. Use the same live+restored accessor as account routing;
     # otherwise a restart resurrects an org-dead bearer in admission only.
     usable = {
-        bid: _bearer_usable(view, now) and not _bearer_credential_dead(bid)
+        bid: _bearer_usable(view, now)
+        and not _bearer_credential_dead(bid)
+        and _meter_binding_allows(bid, now)
         for bid, view in bearers.items()
     }
     serving = [bid for bid, ok in usable.items() if ok]
