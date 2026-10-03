@@ -34,7 +34,12 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
     if type(plan.get("expired")) is not bool or not isinstance(plan.get("planName"), str):
         raise ValueError("plan state missing")
     reset = datetime.strptime(plan["currentPeriodEnd"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
-    if reset <= now or plan["expired"]:
+    # A fully-consumed meter REFUSES regardless of what the calendar says: the
+    # observed individual plan reported usedPercent 100.04 with a future reset
+    # and the row still read "ok" (receipt 02/10 23:44 BRT). Classify the
+    # source truthfully so no consumer has to re-derive it; the team seat row
+    # already applies the same used >= total rule.
+    if reset <= now or plan["expired"] or used >= limit:
         status = "exhausted"
     else:
         status = "ok"

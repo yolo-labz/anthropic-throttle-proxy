@@ -379,3 +379,34 @@ def test_probe_explicit_team_read_requires_verified_identity(monkeypatch, capsys
         result = json.loads(capsys.readouterr().out)
         assert result["lanes"][1]["id"] == "mimo:team-owner"
         assert result["lanes"][1]["meters"][0]["current"] == 250
+
+
+# --- 290: exhaustion classification + stale/unknown capacity fail-closed -----
+
+
+def test_report_full_meter_exhausted_regardless_of_reset():
+    # Receipt 02/10 23:44 BRT: the live individual plan rendered "ok" at
+    # 100.04% with a future reset. A full meter REFUSES — the source row must
+    # say so (used >= limit), matching the team seat rule.
+    assert sample(82_000_000_000)["lanes"][0]["status"] == "exhausted"
+    assert sample(82_000_000_001)["lanes"][0]["status"] == "exhausted"
+    assert sample(81_999_999_999)["lanes"][0]["status"] == "ok"
+
+
+@pytest.mark.parametrize(
+    "row,klass",
+    [
+        ({"status": "stale", "meters": [{"pct": 50}]}, "stale"),
+        ({"status": "unknown", "meters": [{"pct": 50}]}, "unknown"),
+        ({"status": "exhausted", "meters": []}, "exhausted"),
+        ({"status": "ok", "meters": [{"pct": 50}]}, "usable"),
+        ({"status": "ok", "meters": []}, "unknown"),
+        ({"status": "ok", "meters": [{"pct": 100}]}, "exhausted"),
+    ],
+)
+def test_capacity_fail_closed_for_stale_and_unknown(row, klass):
+    # Stale/unknown readings never imply usable capacity; a usable claim needs
+    # positive measured evidence, and a full meter refuses even an "ok" verdict.
+    from anthropic_throttle_proxy.ui.presentation import row_capacity_class
+
+    assert row_capacity_class(row) == klass
