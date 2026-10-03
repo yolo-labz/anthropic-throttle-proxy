@@ -82,6 +82,10 @@ _MIMO_PLAN_LANE_ID = "mimo:plan"
 # seat is not usable capacity; the probe fails both closed instead of minting
 # counters.
 _MIMO_TEAM_LANE_ID = "mimo:team-owner"
+# The B seat's lane id (second Team seat, per-assigned-seat catalog): its own
+# independent allowance, the same fail-closed rules, never summed with the
+# owner seat or the individual plan row.
+_MIMO_TEAM_B_LANE_ID = "mimo:team-seat-b"
 
 _cache: tuple[float, dict[str, Any]] | None = None
 
@@ -388,6 +392,10 @@ def _lane_identity(kind: str, lane_id: str, provider: str) -> str:
         # Distinct display identity (spec 281): the team seat row and the
         # individual plan row share a provider but not an allowance.
         return f"{provider} Team"
+    if kind == "mimo" and suffix.startswith("team-seat-"):
+        # Same discipline for every further Team seat: mimo:team-seat-b renders
+        # "MiMo Team B", distinct from the owner row and never merged with it.
+        return f"{provider} Team {suffix.removeprefix('team-seat-').upper()}"
     return provider
 
 
@@ -632,15 +640,38 @@ def view(now: float) -> dict[str, Any]:
                     now,
                 )
             ]
+        # B seat rows (per-assigned-seat catalog) beside the owner row: zero
+        # rows keeps the spec-281 shape, one renders its own independent
+        # allowance, more than one is ambiguous and fails closed. Never summed
+        # with any sibling row, and a failed B read replaces the healthy meter.
+        team_b_rows = [
+            lane
+            for lane in mimo["lanes"]
+            if lane["id"] == _MIMO_TEAM_B_LANE_ID and lane["kind"] == "mimo"
+        ]
+        if len(team_b_rows) > 1:
+            team_b_rows = [
+                _normalize(
+                    {
+                        "id": _MIMO_TEAM_B_LANE_ID,
+                        "kind": "mimo",
+                        "status": "unknown",
+                        "reason": "MiMo team B report ambiguous",
+                    },
+                    False,
+                    now,
+                )
+            ]
         snapshot = {
             **snapshot,
             "lanes": [
                 lane
                 for lane in snapshot["lanes"]
-                if lane["id"] not in {_MIMO_PLAN_LANE_ID, _MIMO_TEAM_LANE_ID}
+                if lane["id"] not in {_MIMO_PLAN_LANE_ID, _MIMO_TEAM_LANE_ID, _MIMO_TEAM_B_LANE_ID}
             ]
             + plan_rows
-            + team_rows,
+            + team_rows
+            + team_b_rows,
         }
     _cache = (now, snapshot)
     return snapshot
