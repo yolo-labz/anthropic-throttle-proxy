@@ -16,8 +16,9 @@ readout, measured on :8773 04/10/2026).
 
 from __future__ import annotations
 
-from anthropic_throttle_proxy import history
+from anthropic_throttle_proxy import history, proxy
 from anthropic_throttle_proxy.ratelimit import _parse_sse_usage
+from anthropic_throttle_proxy.ui import signals
 
 
 def setup_function(_fn) -> None:
@@ -93,14 +94,24 @@ def test_mixed_blocks_conserve_the_sum():
     assert usage["input"] + usage["cache_read"] == 881_000
 
 
-def test_record_usage_sum_conserves_through_the_chain():
-    """The exact expression record_usage feeds history (proxy.py:4095, a
-    RESERVED file this contract does not edit) carries conservation through:
-    input + cache_read + cache_creation == prompt_tokens + cache_creation."""
-    usage = _parse_sse_usage(_openai_buf(880_000, 873_000, 95))
-    in_ = usage["input"] + usage["cache_read"] + usage["cache_creation"]
-    assert in_ == 880_000 + usage["cache_creation"]
-    history.observe_tokens(out=usage["output"], in_=in_)
+def test_record_usage_feeds_conserved_total_through_the_real_chain():
+    """REAL chain: proxy._record_usage -> history -> gauge.
+
+    proxy.py is a RESERVED file (unedited — contract 304); this calls the
+    existing ``_record_usage`` exactly as the request path does, with captured
+    OpenAI usage, and asserts the conserved chain end to end: the 10 s bucket
+    carries the TOTAL prompt-side 880000 tokens (7000 fresh + 873000 cache,
+    == prompt_tokens) and the gauge reads 88000/s — the truthfully-labelled
+    total (in+cache) display. (The pre-acceptance version summed usage by hand
+    and called observe_tokens directly — it never crossed _record_usage.)
+    """
+    captured = bytearray(
+        b'data: {"usage":{"prompt_tokens":880000,"completion_tokens":95,'
+        b'"prompt_tokens_details":{"cached_tokens":873000}}}\n\n'
+    )
+    proxy._record_usage("synthetic-model", "synthetic-model", captured, "v1/messages")
     point = history.record(queued=0, inflight=0, cap=1)
-    assert point.tok_in == 880_000
+    assert point.tok_in == 880000
     assert point.tok_out == 95
+    gauge = signals.tps_gauge()
+    assert gauge.tok_in_now == 88000.0
