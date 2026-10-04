@@ -198,11 +198,23 @@ def remote_tps(snapshot: object) -> TpsGauge | None:
     if not isinstance(buckets, list) or len(buckets) > 360:
         return None
     for pair in buckets:
-        if not isinstance(pair, list) or len(pair) not in (2, 3):
+        if not isinstance(pair, list) or len(pair) != 2:
             return None
         if any(type(v) is not int or not 0 <= v <= 2**53 for v in pair):
             return None
-    return tps_gauge(buckets)
+    # Additive fresh sidecar: absent/invalid = fresh UNKNOWN (legacy two-column
+    # siblings stay first-class); present = measured subset, 0 meaningful.
+    raw_fresh = snapshot.get("tokens_fresh")
+    fresh: list[int] | None = None
+    if (
+        isinstance(raw_fresh, list)
+        and len(raw_fresh) == len(buckets)
+        and all(type(v) is int and 0 <= v <= 2**53 for v in raw_fresh)
+    ):
+        fresh = raw_fresh
+    if fresh is None:
+        return tps_gauge(buckets)
+    return tps_gauge([[pair[0], pair[1], f] for pair, f in zip(buckets, fresh, strict=True)])
 
 
 def tps_gauge(token_buckets: list | None = None) -> TpsGauge:

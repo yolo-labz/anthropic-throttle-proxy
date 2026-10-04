@@ -146,20 +146,28 @@ def test_gauge_input_label_is_truthful_about_total():
 
 def test_gauge_fresh_is_separate_and_unknown_for_two_field_snapshots():
     """Fresh sits BESIDE the conserved total (never replacing it) and is
-    honestly unknown — not a measured zero — for pre-fresh 2-field
-    sibling snapshots."""
+    honestly unknown — not a measured zero — for legacy two-column sibling
+    snapshots without the additive sidecar."""
     gauge = signals.tps_gauge([[95, 880000, 7000]])
     assert gauge.tok_in_now == 88000.0
     assert gauge.tok_in_fresh == 700.0
     gauge = signals.tps_gauge([[95, 880000]])
     assert gauge.tok_in_now == 88000.0
     assert gauge.tok_in_fresh is None
-    remote = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000, 7000]]}
-    assert signals.remote_tps(remote).tok_in_fresh == 700.0
-    remote2 = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000]]}
-    assert signals.remote_tps(remote2).tok_in_fresh is None
-    garbage = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000, 7000, 1]]}
-    assert signals.remote_tps(garbage) is None
+    base = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000]]}
+    with_sidecar = {**base, "tokens_fresh": [7000]}
+    assert signals.remote_tps(with_sidecar).tok_in_fresh == 700.0
+    assert signals.remote_tps(base).tok_in_fresh is None  # legacy sibling
+    # Sidecar must be a measured series of the same length, else fresh is
+    # UNKNOWN — the total side still renders first-class.
+    bad_sidecar = {**base, "tokens_fresh": ["x"]}
+    bad_gauge = signals.remote_tps(bad_sidecar)
+    assert bad_gauge.tok_in_now == 88000.0
+    assert bad_gauge.tok_in_fresh is None
+    short_sidecar = {**base, "tokens_fresh": []}
+    assert signals.remote_tps(short_sidecar).tok_in_fresh is None
+    # The published bucket schema is strict two-column.
+    assert signals.remote_tps({**base, "tokens": [[95, 880000, 7000]]}) is None
 
 
 def test_gauge_fresh_label_renders_only_when_measured():

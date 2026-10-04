@@ -6355,7 +6355,11 @@ async def health(_request: web.Request) -> web.Response:
     if _request is not None and _request.query.get("telemetry") == "1":
         body["throughput"] = {
             "bucket_seconds": _history.RESOLUTION_S,
-            "tokens": [[p.tok_out, p.tok_in, p.tok_in_fresh] for p in _history.series()],
+            "tokens": [[p.tok_out, p.tok_in] for p in _history.series()],
+            # Additive sidecar keeps the published two-column buckets
+            # schema-compatible: absent = fresh unknown (legacy sibling);
+            # present (incl. 0) = measured fresh subset of tok_in.
+            "tokens_fresh": [p.tok_in_fresh for p in _history.series()],
         }
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
