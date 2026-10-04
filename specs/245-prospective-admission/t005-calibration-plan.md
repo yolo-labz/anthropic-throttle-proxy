@@ -80,6 +80,12 @@ without altering admission, retry, timeout, response bytes or ledger debt.
   inspected. Local bearer status and subscription capacity are separate scopes.
   No `/ui` poll or provider request was initiated by that research.
 
+## Source landing
+
+PR #306 merged as `8acd16183114e2352e3d6ceba276c72231432c64` after all nine
+hosted checks passed on `ff0cae317782a9cc67c5d1d94c7f8dacb1595a4f`. GitHub's
+merge receipt returned `state=MERGED`; no deployment accompanied the merge.
+
 No T005 one-day observation or T006 strict activation is claimed by this slice.
 Source metrics only; root separately owns observe configuration. Historical
 pH/pK attribution remains unknown; no attribution is inferred from outcomes.

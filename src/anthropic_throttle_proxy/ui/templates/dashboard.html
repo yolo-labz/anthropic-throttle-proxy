@@ -44,7 +44,9 @@
      the mechanism to an operator who had come here to read a number. #}
   <main>
     <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML"
-             hx-vals='{"rev": "{{ asset_v }}", "local": "{{ 'true' if show_local | default(true) else 'false' }}"}'>
+             hx-vals='{{ {"rev": asset_v,
+                          "local": "true" if show_local | default(true) else "false",
+                          "workload": workload_label | default("")} | tojson }}'>
       {% include "partials/stats.html" %}
     </section>
 
