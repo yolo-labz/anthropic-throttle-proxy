@@ -245,6 +245,33 @@ Version/path-backed facts (installed `@earendil-works/pi-ai` under
 No source prerequisite needed (no new worktree assigned; accepted source not
 reopened). pJ coordinated with sanitized accepted heads at fresh boundary.
 
+## 1540 MIMO-STREAM REHEARSAL — hypothesis + slice record
+
+- **Unproved assumption being closed:** the 310 rehearsal exercised the
+  **Anthropic SDK**; actual MiMo rides **`openai-completions.js:186/195-197`**
+  (native `retryProviderRequest`, OpenAI SDK `maxRetries: 0`). No stream-path
+  MiMo acceptance may be inferred from the shared helper.
+- **Hypothesis:** the accepted hold-fetch correctly gates the actual
+  OpenAI-compatible provider retry and preserves its terminal SSE/tool/usage/
+  cancel semantics.
+- **Slice assigned to pK** (fresh done/blank boundary): worktree
+  **311-mimo-stream-rehearsal** (base `e8c8fa5`, nonoverlapping) — NEW
+  `clients/transport-fetch-hold/mimo-rehearsal.mjs` (+ necessary README only);
+  **reuse accepted hold-fetch unchanged**; invoke the INSTALLED native
+  openai-completions provider stream with synthetic local model/context/key and
+  real `options.fetch`; no copied retry/SSE implementations. Loopback: first
+  500 -> gate held before same-call native second attempt -> zero wire until
+  resume -> valid streamed terminal/tool/usage; already-admitted stream
+  preserves bytes/terminal under closure; cancellation/slow-upload/uncertain-
+  send negatives must NOT invent completion; substantive nonzero falsifier.
+  Admitted bounded tests + normal PR + exact-head CI + review + merge; retain
+  lineage. No live traffic/credentials/native registry/loader/billing/
+  model-seat changes/new helpers/Astra.
+- **Scope guards:** this closes a precise unproved actual transport-path
+  assumption (not cosmetic churn); Xiaomi/quota/window semantics and honest
+  unknowns preserved; LoopConductor busy untouched; **pJ owns live swap**.
+  Mechanism acceptance remains synthetic-scope only.
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
