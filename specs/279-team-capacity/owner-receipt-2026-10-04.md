@@ -324,6 +324,38 @@ seats/Astra. pK busy input untouched — consume at natural boundary.
   busy owns loader/old-drain contract. No busy-pane/Astra/seat touches; no
   private packet to MiMo.
 
+## 1650 LOADED-BARRIER — compact producer census (Pi 0.99.1, read-only)
+
+Source: `pi-coding-agent@0.99.1` at `_npx/78709cf4b2f1011c` (+ nested
+`pi-ai`). No private bindings; no loader/runtime edits.
+
+| Producer | Exact path/line | Transport path | Coverage vs accepted fetch seam | Unknowns |
+|---|---|---|---|---|
+| main | `dist/core/sdk.js:245-255` streamFn → `modelRuntime.streamSimple(model, ctx, buildRequestOptions(:185-197))` | `openai-completions.js:186` createClient(+`options.fetch`) / `:195-197` retryProviderRequest(maxRetries0) | covered **iff fetch supplied** — core sets neither fetch nor client | **who supplies `options.fetch` at runtime = loader authority** |
+| warm | `sdk.js:180` `new CacheWarmer`; `:258` `cacheWarmer.start({model, context, options: requestOptions})` | same requestOptions → same transport | = main | cache-warming-mode setting interplay |
+| compaction/summary | `dist/core/compaction/compaction.js:477-529` region + `branch-summarization.js` (stream/modelRuntime-family symbols live there; compaction.js itself has none) | modelRuntime family (entry symbol unconfirmed) | inherits main **if** it passes fetch-bearing options | **exact compaction request entry symbol UNKNOWN** |
+| task/subagent | **bundle-only** (`dist/bundle/chunks/*`; no `dist/core` task module) | per-agent streamFn (inherited) | = main | **exact bundle location UNKNOWN** |
+| virtual/redirect | `dist/core/model-runtime.js`, `model-registry.js`, `agent-session-services.js`, `agent-session.js` | maps to target transport | inherits target | extension redirects vs registry mapping precedence UNKNOWN |
+| relay (redirected) | `sdk.js:201` documents redirect non-repeatability | same streamFn | = main | none material |
+| `options.client` bypass | `pi-ai/…/api/anthropic-messages.js:363` `client = options.client` (skips createClient/fetch) | anthropic SDK path only | **BYPASS — uncovered** | **who supplies `options.client` in production UNKNOWN** (core does not) |
+| pre-header | `applyAuth` in `dist/bundle/chunks/chunk-W2DOMZSC.js` + `chunk-7JGR3GZN.js` (verifier cites 438-444: await transformHeaders then STRIP before provider.stream) | once per provider call | cannot gate per attempt | none |
+| already-dispatched | in-flight work | — | none (no retroactive control) | boundary semantics = Loop authority |
+
+**Native supported loading entry points (unchanged):** `pi.registerProvider()`
+(async factory awaited at startup; immediate post-load), `unregisterProvider`,
+`registerVirtualModel`, extension reload boundary
+(`examples/extensions/reload-runtime.ts`). **Bootstrap bridge = LoopConductor's**
+(facts: Nix helper `bootstrap --apply` exits **11** before preflight; steady
+cannot use absent old `admitted_holds`).
+
+**Minimal producer-gap contract for the loader closure:** (1) define the
+`options.fetch` injection locus so coverage is complete by construction; (2)
+forbid/override `options.client` on gated paths; (3) close the three UNKNOWNs
+(compaction entry symbol; task/subagent bundle locus; redirect-vs-registry
+precedence) against the loaded runtime; (4) pre-header/already-dispatched
+semantics per 1535. **strict OFF and paired clock NULL retained; source
+rehearsal is not live acceptance.**
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
