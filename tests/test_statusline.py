@@ -64,6 +64,9 @@ _HEALTH_TOP_LEVEL = frozenset(
         "queued",
         "served",
         "keepalive_holds_active",
+        # Additive (04/10/2026): gate state — affirmative observable closure, so
+        # producers/observers never infer it from zero counts.
+        "admission_closed",
         # Additive (04/10/2026): requests past the admission gate but not yet
         # counted queued/inflight (e.g. still uploading). The quiesce->drain
         # predicate reads this, so it belongs in the pinned health schema.

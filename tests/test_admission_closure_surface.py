@@ -1,10 +1,11 @@
-"""Admission-closure surface: the authoritative verdict honors the quiesce gate.
+"""Admission-closure surface: the authoritative verdict reflects the quiesce gate.
 
-The `/__throttle/admission` verdict is what the routing/ingress/limiter dispatch
-layers consult before admitting work, so folding the gate into it blocks NEW
-requests at request level (keepalive/pipelined/relayed arrivals) while admitted
-streams continue — and `admission_closed` in health makes closure affirmatively
-observable (never inferred from zero counts).
+The HANDLER gate (PR #298) ENFORCES closure at request level. This slice folds
+the flag into the `/__throttle/admission` verdict — which the ingress endpoint
+reader, routing URLs and the shared limiter predicate consume — so those
+consumers REFLECT closure; they are NOT universal producer coverage. Health
+publishes `admission_closed`, making closure affirmatively observable (never
+inferred from zero counts).
 
 Reuses the shared `meter_rows` fixture (conftest) and `test_admission._bound_bearers`;
 handlers invoked directly (`main()` owns route registration). Pure logic only.
@@ -14,9 +15,28 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from test_admission import _bound_bearers
 
 from anthropic_throttle_proxy import config, proxy
+
+
+@pytest.fixture(autouse=True)
+def _isolate_state():
+    """Process-global registries leak across modules; isolate IN and OUT
+    (the trusted-display projection counts the visible bearer set)."""
+    saved_state = dict(config.bearer_state)
+    saved_limiters = dict(config.bearer_limiters)
+    saved_closed = proxy._admission_closed
+    config.bearer_state.clear()
+    config.bearer_limiters.clear()
+    proxy._admission_closed = False
+    yield
+    config.bearer_state.clear()
+    config.bearer_state.update(saved_state)
+    config.bearer_limiters.clear()
+    config.bearer_limiters.update(saved_limiters)
+    proxy._admission_closed = saved_closed
 
 
 def _open_gate() -> None:

@@ -6215,10 +6215,11 @@ async def admission(_request: web.Request) -> web.Response:
     allow = bool(lane_open and serving and not _admission_closed)
     state_name, reason = _admission_verdict(allow, bearers, serving, lane_open, lane_detail)
     if _admission_closed:
-        # Quiesced: this verdict is the authority the routing/ingress/limiter
-        # dispatch layers consult, so closing it blocks NEW requests at request
-        # level (keepalive/pipelined/relayed arrivals) while admitted streams
-        # finish. Distinct state — never inferred from zero counts.
+        # Quiesced: the HANDLER gate (PR #298) ENFORCES closure at request level;
+        # this verdict only REFLECTS it for the consumers that already read
+        # `/__throttle/admission` (the ingress endpoint reader, routing URLs and
+        # the shared limiter predicate) — those are NOT universal producer
+        # coverage. Distinct state — never inferred from zero counts.
         state_name, reason = (
             "quiesced",
             "admission quiesced (POST /__throttle/quiesce); existing work continues",

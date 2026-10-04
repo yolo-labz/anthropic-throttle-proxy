@@ -21,6 +21,7 @@ from aiohttp import web
 from test_keepalive_hold import _make_client_with_upstream
 
 from anthropic_throttle_proxy import config, proxy
+from anthropic_throttle_proxy.ui import routes as ui_routes
 
 _BODY = json.dumps({"model": "claude-opus-4-8", "max_tokens": 16, "messages": []}).encode()
 _HEADERS = {"Content-Type": "application/json", "Authorization": "Bearer test-quiesce"}
@@ -49,6 +50,18 @@ async def _scenario(monkeypatch, upstream_url: str | None = None):
     up_app.router.add_route("*", "/{prefix:.*}v1/messages", upstream.messages)
     up_app.router.add_route("*", "/v1/messages", upstream.messages)
     up_app.router.add_route("*", "/{path:.*}", upstream.messages)
+    # Register the real control routes exactly as main() does, via the harness's
+    # attach_ui seam (no harness duplication): closure/resume are exercised as
+    # ACTUAL control HTTP POSTs.
+    real_attach = ui_routes.attach_ui
+
+    def attach_with_control(app):
+        real_attach(app)
+        app.router.add_post("/__throttle/quiesce", proxy.quiesce)
+        app.router.add_post("/__throttle/resume", proxy.resume)
+        app.router.add_get("/__throttle/admission", proxy.admission)
+
+    monkeypatch.setattr("test_keepalive_hold.attach_ui", attach_with_control)
     client, up_server = await _make_client_with_upstream(monkeypatch, up_app)
     if upstream_url is not None:
         monkeypatch.setattr(config, "UPSTREAM", upstream_url)
@@ -186,6 +199,108 @@ async def test_request_in_the_quiesce_gap_is_refused_and_inflight_completes(monk
 
         opened = await proxy.resume(None)
         assert json.loads(opened.body)["admission"] == "open"
+        ok = await client.post("/v1/messages", data=_BODY, headers=_HEADERS)
+        await ok.read()
+        assert ok.status == 200
+        assert upstream.hits == 2
+
+
+async def test_pipelined_arrival_on_live_connection_refused_while_stream_held(monkeypatch):
+    """REAL-HTTP barrier falsifier (CLOSURE-2640/ROOT-1315).
+
+    Same persistent TCP connection: an admitted request's response is held
+    upstream; during the barrier a pipelined arrival on that live connection
+    must be refused at request level (503 marker) with ZERO new upstream
+    dispatch. Closure/resume go through actual control HTTP POSTs; a cancelled
+    slow upload releases its admission hold exactly once; resume is the
+    negative control (traffic flows again).
+    """
+    async with _scenario(monkeypatch) as (client, upstream):
+        upstream.release.clear()
+        url = client.make_url("/")
+        reader, writer = await asyncio.open_connection(str(url.host), url.port)
+
+        def request() -> bytes:
+            return (
+                b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer test-quiesce\r\n"
+                b"Content-Type: application/json\r\nContent-Length: "
+                + str(len(_BODY)).encode()
+                + b"\r\n\r\n"
+                + _BODY
+            )
+
+        async def read_response():
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+            status = head.split(b"\r\n", 1)[0]
+            length = 0
+            for line in head.split(b"\r\n"):
+                if line.lower().startswith(b"content-length:"):
+                    length = int(line.split(b":", 1)[1].strip())
+            if b"transfer-encoding: chunked" in head.lower():
+                # The proxy streams responses back; consume the chunked frame
+                # so the next response starts at a clean boundary.
+                while True:
+                    size_line = await asyncio.wait_for(reader.readuntil(b"\r\n"), timeout=5)
+                    size = int(size_line.strip() or b"0", 16)
+                    await asyncio.wait_for(reader.readexactly(size + 2), timeout=5)
+                    if size == 0:
+                        break
+            elif length:
+                await asyncio.wait_for(reader.readexactly(length), timeout=5)
+            return status, head.lower(), b""
+
+        try:
+            writer.write(request())
+            await writer.drain()
+            for _ in range(50):
+                await asyncio.sleep(0.01)
+                if upstream.entered.is_set() and config.state["admitted_holds"] == 1:
+                    break
+            assert upstream.entered.is_set() and upstream.hits == 1
+
+            closed = await client.post("/__throttle/quiesce")
+            assert (await closed.json())["admission"] == "closed"
+
+            # Pipelined arrival on the SAME live connection during the barrier.
+            writer.write(request())
+            await writer.drain()
+            assert upstream.hits == 1, "barrier bytes must not dispatch upstream"
+
+            upstream.release.set()
+            status1, _head1, _body1 = await read_response()
+            assert b"200" in status1
+            status2, head2, _body2 = await read_response()
+            assert b"503" in status2
+            assert b"x-throttle-admission-closed: 1" in head2
+            assert upstream.hits == 1, "the refused arrival never dispatches"
+        finally:
+            writer.close()
+
+        # Reopen first: the exactly-once release semantics apply to ADMITTED
+        # requests, which only exist while the gate is open.
+        opened = await client.post("/__throttle/resume")
+        assert (await opened.json())["admission"] == "open"
+
+        # Cancellation releases the admission hold EXACTLY once.
+        for _ in range(2):
+            stall = asyncio.Event()
+            task = asyncio.create_task(
+                client.post("/v1/messages", data=_stalled_body(stall), headers=_HEADERS)
+            )
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                if config.state["admitted_holds"] == 1:
+                    break
+            assert config.state["admitted_holds"] == 1
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            await _settle()
+            assert config.state["admitted_holds"] == 0, "release must happen exactly once"
+
+        # Negative control: traffic flows normally after resume.
         ok = await client.post("/v1/messages", data=_BODY, headers=_HEADERS)
         await ok.read()
         assert ok.status == 200
