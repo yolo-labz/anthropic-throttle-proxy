@@ -20,6 +20,7 @@ from . import config, prospective_runtime
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
+from .prospective_calibration import calibration_attempt
 from .prospective_refusal import strip_incoming_provenance
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 from .routing import fit_chat_completions_body, normalize_text_content_blocks
@@ -451,35 +452,43 @@ async def _forward_once(
         # caller catches it OUTSIDE, before provider retry/AIMD handling — and
         # transport exceptions below are never translated into local policy.
         async with _prospective_reservation(request, body) as permit:
-            if permit is not None:
-                permit.handoff()
-            try:
-                async with session.request(
-                    request.method,
-                    url,
-                    headers=headers,
-                    data=body,
-                    allow_redirects=False,
-                ) as upstream:
-                    if retryable_statuses and upstream.status in retryable_statuses:
-                        payload = await upstream.read()
-                        return (
-                            None,
-                            upstream.status,
-                            bytearray(payload[: 1024 * 1024]),
-                            RetryableStatusError(
-                                f"retryable upstream status {upstream.status}",
-                                proxy_served=config.MARKER_HEADER in upstream.headers,
-                            ),
-                            _extract_ratelimit(upstream.headers),
+            with calibration_attempt(permit) as calibration:
+                if permit is not None:
+                    permit.handoff()
+                try:
+                    async with session.request(
+                        request.method,
+                        url,
+                        headers=headers,
+                        data=body,
+                        allow_redirects=False,
+                    ) as upstream:
+                        if retryable_statuses and upstream.status in retryable_statuses:
+                            payload = await upstream.read()
+                            calibration.response(
+                                payload[: 1024 * 1024],
+                                upstream.status,
+                                upstream.headers,
+                                request.path,
+                            )
+                            return (
+                                None,
+                                upstream.status,
+                                bytearray(payload[: 1024 * 1024]),
+                                RetryableStatusError(
+                                    f"retryable upstream status {upstream.status}",
+                                    proxy_served=config.MARKER_HEADER in upstream.headers,
+                                ),
+                                _extract_ratelimit(upstream.headers),
+                            )
+                        result = await _stream_response(request, upstream)
+                        calibration.response(
+                            result[2], upstream.status, upstream.headers, request.path, result[3]
                         )
-                    return await _stream_response(request, upstream)
-            except aiohttp.ClientConnectionResetError:
-                # Raised by StreamResponse.write/write_eof when the Claude client
-                # closes its local socket while we are streaming. Let proxy.handler
-                # record this as a client disconnect; treating it as an upstream or
-                # central failure wastes a retry and can push the local proxy into
-                # direct fallback under load.
-                raise
-            except (TimeoutError, aiohttp.ClientError) as exc:
-                return None, None, None, exc, None
+                        return result
+                except aiohttp.ClientConnectionResetError:
+                    # Keep client disconnects distinct from retryable upstream errors.
+                    raise
+                except (TimeoutError, aiohttp.ClientError) as exc:
+                    calibration.transport_error()
+                    return None, None, None, exc, None

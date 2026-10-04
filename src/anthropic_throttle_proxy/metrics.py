@@ -78,6 +78,25 @@ M_PROSPECTIVE_OBSERVATIONS = Counter(
     ["outcome"],
     registry=REGISTRY,
 )
+M_CALIBRATION_SAMPLES = Counter(
+    "anthropic_prospective_calibration_samples_total",
+    "Observe attempt usage quality and independent terminal outcome; no content labels.",
+    ["scope", "outcome", "terminal"],
+    registry=REGISTRY,
+)
+M_CALIBRATION_TOKENS = Counter(
+    "anthropic_prospective_calibration_tokens_total",
+    "Paired comparable samples only; output_bound is a ceiling, not a prediction.",
+    ["scope", "kind"],
+    registry=REGISTRY,
+)
+M_CALIBRATION_INPUT_RATIO = Histogram(
+    "anthropic_prospective_calibration_input_ratio",
+    "Reported full input / estimated input, comparable single-scope observe attempts only.",
+    ["scope"],
+    buckets=(0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 8.0),
+    registry=REGISTRY,
+)
 M_TOKENS = Counter(
     "anthropic_tokens_total",
     "Tokens parsed from Anthropic SSE usage blocks.",

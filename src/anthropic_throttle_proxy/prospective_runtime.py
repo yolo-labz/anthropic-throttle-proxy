@@ -25,6 +25,7 @@ from .ledger import _pos_int, _valid_time
 from .metrics import M_PROSPECTIVE_OBSERVATIONS, M_PROSPECTIVE_REFUSALS
 from .prospective import account_request
 from .prospective_admission import BudgetRefused, OwnerUnavailable, PersistenceOwner, Scope
+from .prospective_calibration import CalibrationAttempt
 from .prospective_refusal import ProspectiveRefusal, RefusalReason
 from .prospective_scope import ScopeResolver, UnknownScope
 
@@ -52,7 +53,8 @@ class LocalProspectiveRefusal(Exception):
 class DispatchPermit:
     """A context-bound synchronous marker, not evidence of wire delivery."""
 
-    def __init__(self, action: Callable[[], None]) -> None:
+    def __init__(self, action: Callable[[], None], calibration=None) -> None:
+        self.calibration = calibration
         self._action = action
         self._active = True
         self._used = False
@@ -62,6 +64,8 @@ class DispatchPermit:
             raise ValueError("dispatch permit already used or context exited")
         self._action()
         self._used = True
+        if self.calibration is not None:
+            self.calibration.sent = True
 
 
 class _OffPermit:
@@ -212,6 +216,7 @@ class ProspectiveRuntime(_OffRuntime):
 
     @asynccontextmanager
     async def _reserve(self, selected, body):
+        calibration = None
         try:
             prepared = self._prepare(selected, body)
         except LocalProspectiveRefusal as exc:
@@ -224,7 +229,10 @@ class ProspectiveRuntime(_OffRuntime):
                     yield permit
                 return
             action = partial(self._enqueue_observation, *prepared)
-        permit = DispatchPermit(action)
+            calibration = CalibrationAttempt(
+                self._policy.budget_label, prepared[1], single_scope=len(self._scopes) == 1
+            )
+        permit = DispatchPermit(action, calibration)
         try:
             yield permit
         finally:
