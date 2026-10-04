@@ -157,6 +157,9 @@ class TpsGauge(NamedTuple):
     peak_marker: tuple[float, float, float, float]  # small radial line at peak
     spark: Spark  # tokens/s trace, same treatment as the four signals
     tok_in_now: float  # trailing-window input tokens/s (input + cache reads)
+    tok_in_fresh: float | None  # trailing-window FRESH input tokens/s (cache
+    # excluded). None = not measured (e.g. 2-field sibling snapshots) — never
+    # rendered as a measured zero.
     seen: bool  # False until the ring holds a bucket with any token traffic
 
 
@@ -199,22 +202,38 @@ def remote_tps(snapshot: object) -> TpsGauge | None:
             return None
         if any(type(v) is not int or not 0 <= v <= 2**53 for v in pair):
             return None
-    return tps_gauge(buckets)
+    # Additive fresh sidecar: absent/invalid = fresh UNKNOWN (legacy two-column
+    # siblings stay first-class); present = measured subset, 0 meaningful.
+    raw_fresh = snapshot.get("tokens_fresh")
+    fresh: list[int] | None = None
+    if (
+        isinstance(raw_fresh, list)
+        and len(raw_fresh) == len(buckets)
+        and all(type(v) is int and 0 <= v <= 2**53 for v in raw_fresh)
+    ):
+        fresh = raw_fresh
+    if fresh is None:
+        return tps_gauge(buckets)
+    return tps_gauge([[pair[0], pair[1], f] for pair, f in zip(buckets, fresh, strict=True)])
 
 
 def tps_gauge(token_buckets: list | None = None) -> TpsGauge:
     """Build the gauge from local history or validated sibling token buckets."""
     buckets = token_buckets
     if buckets is None:
-        buckets = [(p.tok_out, p.tok_in) for p in _history.series()]
+        buckets = [(p.tok_out, p.tok_in, p.tok_in_fresh) for p in _history.series()]
     rates = [p[0] / _history.RESOLUTION_S for p in buckets]
     in_rates = [p[1] / _history.RESOLUTION_S for p in buckets]
+    fresh_rates = [p[2] / _history.RESOLUTION_S for p in buckets if len(p) > 2]
     # Windowed mean over the last N closed buckets: token usage lands at
     # completion, so a single 10 s bucket is a lumpy estimator. Mean of the
     # trailing 60 s is what the number claims to be (“current” = last minute).
     n = min(_TPS_WINDOW_BUCKETS, len(rates))
     value = (sum(rates[-n:]) / n) if n else 0.0
     tok_in_now = (sum(in_rates[-n:]) / n) if n else 0.0
+    # Fresh is a SEPARATE figure beside the total, never a replacement for it:
+    # measured only when every bucket carried it (304 follow-up).
+    tok_in_fresh = (sum(fresh_rates[-n:]) / n) if n and len(fresh_rates) == len(buckets) else None
     peak = max(rates) if rates else 0.0
     scale = _nice_scale(peak, _TPS_FLOOR)
     frac = min(1.0, value / scale) if scale else 0.0
@@ -240,6 +259,7 @@ def tps_gauge(token_buckets: list | None = None) -> TpsGauge:
         peak_marker=(round(mx1, 1), round(my1, 1), round(mx2, 1), round(my2, 1)),
         spark=sparkline(_fold(rates, peaks=True)),
         tok_in_now=tok_in_now,
+        tok_in_fresh=tok_in_fresh,
         seen=any(p[0] > 0 for p in buckets),
     )
 

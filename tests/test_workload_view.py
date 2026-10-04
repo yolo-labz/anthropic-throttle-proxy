@@ -119,8 +119,26 @@ async def test_health_exports_real_token_history(monkeypatch):
         import json
 
         snapshot = json.loads(response.text)["throughput"]
-        assert snapshot == {"bucket_seconds": 10, "tokens": [[1200, 3000]]}
+        # Schema-compatible export (strengthened, not weakened): the published
+        # two-column buckets stay exactly as contracted, and the measured fresh
+        # side arrives as an ADDITIVE sidecar — 0 here is a measured zero.
+        assert snapshot == {
+            "bucket_seconds": 10,
+            "tokens": [[1200, 3000]],
+            "tokens_fresh": [0],
+        }
         gauge = signals.remote_tps(snapshot)
         assert gauge.value == 120
+        assert gauge.tok_in_now == 300.0
+        assert gauge.tok_in_fresh == 0.0  # measured zero survives the round trip
+        # Legacy SIBLING two-column coverage: no sidecar -> fresh UNKNOWN, and
+        # the total side keeps working first-class.
+        legacy = {"bucket_seconds": 10, "tokens": [[1200, 3000]]}
+        legacy_gauge = signals.remote_tps(legacy)
+        assert legacy_gauge.value == 120
+        assert legacy_gauge.tok_in_fresh is None
+        # The published bucket schema is strict: in-bucket third columns are
+        # not a shape this contract accepts.
+        assert signals.remote_tps({"bucket_seconds": 10, "tokens": [[1200, 3000, 0]]}) is None
     finally:
         history.reset()

@@ -4100,6 +4100,7 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
+            fresh=usage["input"],
         )
     except Exception as ue:
         log(f"usage-parse-error path=/{path}: {ue!r}")
@@ -6360,6 +6361,10 @@ async def health(_request: web.Request) -> web.Response:
         body["throughput"] = {
             "bucket_seconds": _history.RESOLUTION_S,
             "tokens": [[p.tok_out, p.tok_in] for p in _history.series()],
+            # Additive sidecar keeps the published two-column buckets
+            # schema-compatible: absent = fresh unknown (legacy sibling);
+            # present (incl. 0) = measured fresh subset of tok_in.
+            "tokens_fresh": [p.tok_in_fresh for p in _history.series()],
         }
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 

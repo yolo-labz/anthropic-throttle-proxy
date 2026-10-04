@@ -139,7 +139,7 @@
         {% if tps.spark.points %}<polyline points="{{ tps.spark.points }}" />{% endif %}
       </svg>
     </div>
-    <span class="tps-foot">{% if tps.seen %}accounted at completion · in+cache {{ '%.1f'|format(tps.tok_in_now) }}/s (prompt-side total, cache included){% else %}waiting for accounted output; not a measured zero{% endif %}</span>
+    <span class="tps-foot">{% if tps.seen %}accounted at completion · in+cache {{ '%.1f'|format(tps.tok_in_now) }}/s (prompt-side total, cache included){% if tps.tok_in_fresh is not none %} · fresh {{ '%.1f'|format(tps.tok_in_fresh) }}/s{% endif %}{% else %}waiting for accounted output; not a measured zero{% endif %}</span>
   </div>
 </section>
 {% elif workload_label | default(false) %}

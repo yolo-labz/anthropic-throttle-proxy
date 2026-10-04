@@ -63,6 +63,10 @@ class Point(NamedTuple):
     # older callers and tests valid.
     tok_out: int = 0
     tok_in: int = 0
+    # Fresh (uncached) subset of tok_in, measured locally alongside it. Keeps
+    # the TOTAL tok_in meaning untouched; the gauge may show the fresh rate as
+    # a second, separately-labelled figure (304 follow-up).
+    tok_in_fresh: int = 0
 
 
 _ring: deque[Point] = deque(maxlen=POINTS)
@@ -71,6 +75,7 @@ _served = 0
 _errors = 0
 _tok_out = 0
 _tok_in = 0
+_tok_in_fresh = 0
 # Bounded on purpose: an unbounded list would grow without limit if the
 # sampler task never starts (an app that attaches the routes but never runs
 # on_startup) or dies, and `record()` sorts it on the event loop. 4096
@@ -102,20 +107,23 @@ def observe(status: int | None, duration: float) -> None:
     _durations.append(duration)
 
 
-def observe_tokens(out: int = 0, in_: int = 0) -> None:
+def observe_tokens(out: int = 0, in_: int = 0, fresh: int = 0) -> None:
     """Account parsed usage tokens into the open bucket (O(1), never raises).
 
     Called from the request path's usage bookkeeping, so the same contract as
     :func:`observe`: a dashboard nicety must not be able to fail a request.
+    ``in_`` stays the TOTAL accounted input side (fresh + cache reads + cache
+    writes); ``fresh`` is its uncached subset when the caller knows it.
     """
-    global _tok_out, _tok_in
+    global _tok_out, _tok_in, _tok_in_fresh
     _tok_out += out
     _tok_in += in_
+    _tok_in_fresh += fresh
 
 
 def record(queued: int, inflight: int, cap: int, now: float | None = None) -> Point:
     """Close the open bucket with the current gauge readings and ring it."""
-    global _served, _errors, _tok_out, _tok_in
+    global _served, _errors, _tok_out, _tok_in, _tok_in_fresh
     if now is None:
         now = time.time()
     ds = sorted(_durations)
@@ -130,12 +138,14 @@ def record(queued: int, inflight: int, cap: int, now: float | None = None) -> Po
         p95=_quantile(ds, 0.95),
         tok_out=_tok_out,
         tok_in=_tok_in,
+        tok_in_fresh=_tok_in_fresh,
     )
     _ring.append(point)
     _served = 0
     _errors = 0
     _tok_out = 0
     _tok_in = 0
+    _tok_in_fresh = 0
     _durations.clear()
     return point
 
