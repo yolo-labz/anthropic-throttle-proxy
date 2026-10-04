@@ -356,6 +356,49 @@ precedence) against the loaded runtime; (4) pre-header/already-dispatched
 semantics per 1535. **strict OFF and paired clock NULL retained; source
 rehearsal is not live acceptance.**
 
+## 1659 CENSUS-CLOSE — machine contract for the two UNKNOWNs (line-evidenced)
+
+```yaml
+compaction_entry:
+  symbol: completeSummarization
+  location: pi-coding-agent@0.99.1 dist/core/compaction/compaction.js:477
+  role: "Shared choke point for every compaction/branch-summary summarization call"
+  dispatch: >-
+    produce = streamFn ? (await streamFn(model, context, requestOptions)).result()
+                       : completeSimple(model, context, requestOptions)
+  options: "{...options, cacheRetention:'none', sessionId: options.sessionId ?? uuidv7()}"
+  retry_layers:
+    - retryAssistantCall(produce, retry, signal, callbacks)   # whole-call retry ABOVE transport
+    - retryProviderRequest inside the transport               # per physical attempt
+  coverage: >-
+    fetch-seam covers every physical attempt of each produce() iff the
+    caller-supplied options carry the injected fetch (options pass through)
+  residual: none material
+
+task_subagent_injection:
+  locus: createAgent family (core factories)
+  evidence:
+    - dist/core/agent-session-runtime.js:311,316   # createAgent* export
+    - dist/core/agent-session-services.js:6,129-130 # import + `return createAgent…`
+    - dist/main.js:22-23,593,668                   # session wiring call sites
+  stream_entry: every subagent session's streamFn -> modelRuntime.streamSimple -> transport
+  coverage: same as main (fetch-seam per physical attempt when injected)
+  residual: >-
+    UNKNOWN — the task tool's own invoke site is bundle-only
+    (dist/bundle/chunks/*, minified); no readable dist/core task module.
+    Failed assertion: `grep -rln subagent dist --include=*.js | grep -v bundle`
+    returns empty outside bundle. Retained honestly per contract.
+```
+
+Scope honored: read-only installed source only; no real payloads/credentials/
+private config; no main/foreignWIP mutation; no source implementation, seats/
+models/CI, or native reload. Registry/virtual relay precedence + loader/
+controller + all-producer closure remain **LoopConductor (fleet-coordination
+109)** — not duplicated here. Notes2245 `adcbe858` left untouched (no vault
+churn). **Remaining dependency for Loop:** resolve the task-tool bundle invoke
+at loader closure against the loaded runtime; pJ retains sole service swap/
+rollback. **strict OFF, clock NULL.**
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
