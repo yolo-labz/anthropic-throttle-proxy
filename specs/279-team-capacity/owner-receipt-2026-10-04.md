@@ -272,6 +272,36 @@ reopened). pJ coordinated with sanitized accepted heads at fresh boundary.
   unknowns preserved; LoopConductor busy untouched; **pJ owns live swap**.
   Mechanism acceptance remains synthetic-scope only.
 
+## 1558 RETRY-REVIEW — finding + required distinctions (delivery pending pK boundary)
+
+**Finding (pK 311 WIP, scenario 3c):** `maxRetries=1` observes TWO
+server-accepted requests destroyed with NO completion — that proves **honest
+error termination under configured retries**, NOT the original Xiaomi
+criterion **"never retry uncertain sends"**. Separately, `provider-retry.js:
+75-76` defaults `maxRetries 0`, but **deployed seat settings are NOT attested
+by that default** — source default ≠ configured behavior ≠ runtime acceptance
+(three distinct layers; keep separate in all wording).
+
+**Correction packet for pK at its natural idle/blank boundary (busy now —
+input untouched):**
+1. NEW conservative **uncertain/pre-header send** case at `maxRetries: 0`:
+   assert **EXACTLY ONE** actual server-accepted request and **no done**.
+2. NEW genuinely **post-header/partial-SSE disconnect**, synchronized AFTER the
+   client sees a delta: **no retry, no invented done**.
+3. RETAIN the positive same-call 500/hold/retry fixture with its **explicit
+   `maxRetries: 1`** as a separate labeled scenario.
+4. PRESERVE the optional-retry TWO-send counterexample as an **unmet
+   policy/binding gate** (useful as the honest-termination witness) — never
+   present it as the uncertain-send criterion.
+5. **Wording rule:** broad retry-correctness claims are blocked until these
+   distinctions are reconciled in the PR; 311 CI can accept only the claimed
+   bounded mechanics. Source/default/configured vs runtime acceptance stay
+   separated; useful-client/quota/24h goals stay OPEN.
+
+**Scope guards:** no live retry/provider/model/registry/billing settings
+changes; no copied retry/SSE code; raw seat config/bindings stay OpenAI; no new
+seats/Astra. pK busy input untouched — consume at natural boundary.
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
