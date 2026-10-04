@@ -18,9 +18,9 @@ import json
 from contextlib import asynccontextmanager
 
 from aiohttp import web
+from test_keepalive_hold import _make_client_with_upstream
 
 from anthropic_throttle_proxy import config, proxy
-from test_keepalive_hold import _make_client_with_upstream
 
 _BODY = json.dumps({"model": "claude-opus-4-8", "max_tokens": 16, "messages": []}).encode()
 _HEADERS = {"Content-Type": "application/json", "Authorization": "Bearer test-quiesce"}
@@ -81,6 +81,12 @@ def _drained() -> bool:
     )
 
 
+async def _settle():
+    """Let the server-side guaranteed finally unwind before asserting."""
+    for _ in range(20):
+        await asyncio.sleep(0)
+
+
 async def _stalled_request(client, stall: asyncio.Event):
     """Start a body-stalled request and let it reach the false-zero window."""
     task = asyncio.create_task(
@@ -117,6 +123,7 @@ async def test_slow_upload_past_gate_counts_until_completion(monkeypatch):
         response = await asyncio.wait_for(task, timeout=5)
         await response.read()
         assert response.status == 200
+        await _settle()
         assert config.state["admitted_holds"] == 0
         assert _drained()
 
@@ -144,6 +151,7 @@ async def test_error_path_releases_admission_hold(monkeypatch):
         response = await client.post("/v1/messages", data=_BODY, headers=_HEADERS)
         await response.read()
         assert response.status >= 400
+        await _settle()
         assert config.state["admitted_holds"] == 0, "error path must release the hold"
         assert _drained()
 
@@ -192,7 +200,7 @@ async def test_quiesce_keeps_control_surfaces_answerable(monkeypatch):
         assert "admitted_holds" in (await health.json())
         admission = await proxy.admission(None)
         assert admission.status == 200
-        refused = await _refused(client)
+        await _refused(client)
         assert config.state["admitted_holds"] == 0, "refused requests are never counted"
         assert upstream.hits == 0
 
