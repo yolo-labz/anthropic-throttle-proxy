@@ -51,27 +51,35 @@ node clients/transport-fetch-hold/rehearsal.mjs            # exit 0 = all pass
 node clients/transport-fetch-hold/rehearsal.mjs --selftest-fail   # exit 1
 ```
 
-## MiMo stream rehearsal (311) — the REAL OpenAI-compatible path
+## MiMo stream rehearsal (311/312) — the REAL OpenAI-compatible path
 
 `mimo-rehearsal.mjs` — hypothesis test: the accepted fetch-hold gates the
 REAL provider retry of the **OpenAI-compatible stream path** (the actual MiMo
-route) and preserves terminal SSE / tool / usage / cancel semantics. The 310
-rehearsal exercised the **Anthropic SDK only** — stream-path acceptance is NOT
-inferred from a shared helper. This run invokes the **native installed**
-openai-completions provider (`pi-ai/dist/api/openai-completions.js` —
-`options.fetch` seam at `:186`, native `retryProviderRequest` around
+route) and preserves terminal SSE / tool / usage / cancel semantics under the
+ORIGINAL **no-uncertain-retry** policy. The 310 rehearsal exercised the
+**Anthropic SDK only** — stream-path acceptance is NOT inferred from a shared
+helper. This run invokes the **native installed** openai-completions provider
+(`pi-ai/dist/api/openai-completions.js` — `options.fetch` seam at `:186`,
+native `retryProviderRequest` around
 `client.chat.completions.create(...).withResponse()` at `:195-197`) with local
 synthetic model/context/key and the REAL `options.fetch`; `hold-fetch.mjs` is
-reused **unchanged**. Lineage: 308 (prototype) → 310 (race/retry/leak fixes) →
-311 (MiMo stream path).
+reused **unchanged**. Lineage: 308 → 310 → 311 → 312 (retry-policy
+correction; owner/head retained on every PR).
+
+**Layers (separated in every statement):** SOURCE / DEFAULT / CONFIGURED —
+what this file proves on synthetic loopback with explicit per-scenario retry
+configuration. RUNTIME config / census / client / day — **not covered here,
+no claim**.
 
 | # | Check |
 |---|-------|
-| 1 | first 500 → gate held BEFORE the native 2nd attempt of the SAME call → zero wire until resume → `toolUse` terminal with valid tool + usage |
+| 1 | positive fixture, **EXPLICIT `maxRetries: 1`**: 500 → gate held BEFORE the native 2nd attempt of the SAME call → zero wire until resume → `toolUse` terminal with valid tool + usage |
 | 2 | already-admitted stream preserves bytes + terminal under closure (identical to open-gate baseline) |
 | 3a | cancellation under hold does not invent completion (`aborted` error terminal) |
 | 3b | slow upload closed before upload — zero bytes, no completion possible |
-| 3c | uncertain send (every attempt dies mid-stream) does not invent completion — honest `error` |
+| 3c | **pre-header uncertainty, `maxRetries: 0`**: EXACTLY one server-accepted request, no retry, no done |
+| 3d | **post-header partial-SSE disconnect after the client SEES a delta**, `maxRetries: 0`: no retry, no invented done, honest `error` |
+| 4 | **COUNTEREXAMPLE — POLICY FAILURE (labeled):** with optional retry (`maxRetries: 1`) a pre-header uncertain send becomes a TWO-send `done`. This FAILS the original no-uncertain-retry policy and is **NOT accepted client behavior**; it is reproduced and labeled so it can never be mistaken for one. |
 | — | substantive falsifier with exit nonzero (`--selftest-fail`, real terminal observed under an inverted expectation) |
 
 ```sh
@@ -79,9 +87,10 @@ node clients/transport-fetch-hold/mimo-rehearsal.mjs            # exit 0
 node clients/transport-fetch-hold/mimo-rehearsal.mjs --selftest-fail   # exit 1
 ```
 
-Xiaomi quota/window semantics are UNTOUCHED: this is transport-level only.
-The hold gates sends; it never reads or writes quota, windows or meters, and
-every unknown (unmapped seats, unreadable windows) stays unknown.
+Xiaomi quota/window semantics are UNTOUCHED: this is transport-level only
+(SOURCE-layer). The hold gates sends; it never reads or writes quota, windows
+or meters, and every unknown (unmapped seats, unreadable windows) stays
+unknown.
 
 ## What it is NOT (explicit)
 
