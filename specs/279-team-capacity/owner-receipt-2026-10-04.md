@@ -213,6 +213,38 @@ migration before any new turn. **Strict OFF until real paired 24h.**
   coordination feature branch — NOT new normal-PR acceptance. Canonical domain
   note **2245** owns lesson delivery.
 
+## 1535 RECONCILIATION — producer paths × accepted fetch primitive (Pi 0.99.1, public read-only)
+
+Version/path-backed facts (installed `@earendil-works/pi-ai` under
+`pi-coding-agent@0.99.1`, `_npx/78709cf4b2f1011c`):
+
+| Producer path | Transport (exact) | `options.fetch` coverage | `options.client` bypass | Physical-retry locus |
+|---|---|---|---|---|
+| main generation | `api/openai-completions.js:186` (MiMo) / `api/anthropic-messages.js:380` | covered **iff fetch supplied** (core `sdk.js:185-197` `buildRequestOptions` sets NEITHER `client` nor `fetch`) | **openai-completions: none** (only `options?.fetch`); **anthropic-messages:363 BYPASS** (`client = options.client`) | `retryProviderRequest` (provider-retry.js:75 `for(;;)`) around `create(..., {maxRetries:0})` — openai-completions.js:195-197 / anthropic-messages.js:391-394 |
+| warm (`cacheWarmer.start`) | same streamFn/requestOptions (sdk.js:~246) | same as main | same | same |
+| compaction/summary | own routing ids, same streamFn | same as main | same | same |
+| task/subagent | per-agent `streamFn` instances | same as main | same | same |
+| virtual/model-redirected | `modelRuntime` mapping to target transport | inherits target | inherits target | target's |
+| relay (extension-redirected) | same streamFn | same as main | same | same |
+| pre-header work | `Models.applyAuth` awaits+strips `transformHeaders` BEFORE `provider.stream` (once per provider call) | n/a | n/a | headers cannot gate per attempt |
+| already-dispatched work | in-flight attempts are past any gate | gate closes BEFORE dispatch; no retroactive control | — | — |
+
+**Minimal missing authority inputs for LoopConductor (consumable):**
+1. **Injection locus for `options.fetch`** — core never sets it; the loader must
+   define where the hold wrapper enters EVERY producer's request options (all
+   rows above) so coverage is complete by construction.
+2. **`options.client` policy** — `anthropic-messages.js:363` accepts a prebuilt
+   client and bypasses the fetch seam entirely; authority must forbid/override
+   `options.client` on gated paths (or gate at the client factory).
+3. **All-producer census against the LOADED runtime** (confirm P1-P6 classes
+   from `native-transport-contract.md` plus any loader-internal producers).
+4. **Already-dispatched boundary semantics** — define gate-close behavior for
+   work whose headers are already transformed (applyAuth ran) but not yet
+   dispatched vs already dispatched (no retroactive control exists).
+
+No source prerequisite needed (no new worktree assigned; accepted source not
+reopened). pJ coordinated with sanitized accepted heads at fresh boundary.
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
