@@ -51,6 +51,38 @@ node clients/transport-fetch-hold/rehearsal.mjs            # exit 0 = all pass
 node clients/transport-fetch-hold/rehearsal.mjs --selftest-fail   # exit 1
 ```
 
+## MiMo stream rehearsal (311) — the REAL OpenAI-compatible path
+
+`mimo-rehearsal.mjs` — hypothesis test: the accepted fetch-hold gates the
+REAL provider retry of the **OpenAI-compatible stream path** (the actual MiMo
+route) and preserves terminal SSE / tool / usage / cancel semantics. The 310
+rehearsal exercised the **Anthropic SDK only** — stream-path acceptance is NOT
+inferred from a shared helper. This run invokes the **native installed**
+openai-completions provider (`pi-ai/dist/api/openai-completions.js` —
+`options.fetch` seam at `:186`, native `retryProviderRequest` around
+`client.chat.completions.create(...).withResponse()` at `:195-197`) with local
+synthetic model/context/key and the REAL `options.fetch`; `hold-fetch.mjs` is
+reused **unchanged**. Lineage: 308 (prototype) → 310 (race/retry/leak fixes) →
+311 (MiMo stream path).
+
+| # | Check |
+|---|-------|
+| 1 | first 500 → gate held BEFORE the native 2nd attempt of the SAME call → zero wire until resume → `toolUse` terminal with valid tool + usage |
+| 2 | already-admitted stream preserves bytes + terminal under closure (identical to open-gate baseline) |
+| 3a | cancellation under hold does not invent completion (`aborted` error terminal) |
+| 3b | slow upload closed before upload — zero bytes, no completion possible |
+| 3c | uncertain send (every attempt dies mid-stream) does not invent completion — honest `error` |
+| — | substantive falsifier with exit nonzero (`--selftest-fail`, real terminal observed under an inverted expectation) |
+
+```sh
+node clients/transport-fetch-hold/mimo-rehearsal.mjs            # exit 0
+node clients/transport-fetch-hold/mimo-rehearsal.mjs --selftest-fail   # exit 1
+```
+
+Xiaomi quota/window semantics are UNTOUCHED: this is transport-level only.
+The hold gates sends; it never reads or writes quota, windows or meters, and
+every unknown (unmapped seats, unreadable windows) stays unknown.
+
 ## What it is NOT (explicit)
 
 - It does NOT reimplement retry, SSE or streaming — the built-in transport
