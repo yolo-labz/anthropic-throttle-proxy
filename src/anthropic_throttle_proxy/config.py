@@ -572,6 +572,12 @@ state: dict[str, object] = {
     # holds_total counter only moves when a hold ENDS, so an operator watching a
     # saturation window has no way to see the holds that are still open.
     "keepalive_holds_active": 0,
+    # Requests that PASSED the admission gate but are not yet counted
+    # queued/inflight (e.g. still uploading their body). Incremented
+    # synchronously at handler entry, decremented in the handler's guaranteed
+    # per-attempt finally — so close-and-drain can never observe zero while an
+    # admitted request exists, and cancel/error paths release exactly once.
+    "admitted_holds": 0,
     "client_disconnects": 0,
     "upstream_retries": 0,
     "central_status": "unknown",
