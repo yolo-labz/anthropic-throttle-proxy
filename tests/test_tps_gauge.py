@@ -10,6 +10,8 @@ lanes recorded ZERO tokens forever — measured live on :8766 on 29/09/2026.
 
 from __future__ import annotations
 
+import pathlib
+
 from anthropic_throttle_proxy import history
 from anthropic_throttle_proxy.ratelimit import _parse_sse_usage
 from anthropic_throttle_proxy.ui import signals
@@ -29,11 +31,17 @@ def test_parse_openai_usage_with_nested_details():
         b"data: [DONE]\n"
     )
     assert _parse_sse_usage(buf) == {
-        "input": 14,
+        # Contract 304: prompt_tokens is INCLUSIVE of cached_tokens, so the
+        # normalized kinds are disjoint and conserve it (5 + 9 == 14). The
+        # pre-contract assertion pinned input=14 AND cache_read=9 — the
+        # double count behind the dashboard's broken input readout.
+        "input": 5,
         "output": 24,
         "cache_read": 9,
         "cache_creation": 0,
     }
+    usage = _parse_sse_usage(buf)
+    assert usage["input"] + usage["cache_read"] == 14
 
 
 def test_parse_anthropic_usage_still_sums_start_and_delta():
@@ -103,6 +111,37 @@ def test_gauge_counts_only_output_tokens():
     g = signals.tps_gauge()
     assert g.value == 10.0  # 100 tok / 10 s
     assert g.tok_in_now == 900.0  # 9000 tok / 10 s
+
+
+def test_gauge_input_readout_is_total_prompt_side_and_conserved():
+    """Chain proof parser -> record_usage sum -> history -> gauge.
+
+    record_usage (proxy.py:4095 — RESERVED, not edited by contract 304) feeds
+    ``in_ = input + cache_read + cache_creation``. After conservation that sum
+    is the TOTAL prompt-side accounted rate, and the gauge must keep that
+    meaning: the contract forbids swapping total-vs-fresh to shrink a number.
+    """
+    usage = _parse_sse_usage(
+        b'data: {"usage":{"prompt_tokens":880000,"completion_tokens":95,'
+        b'"prompt_tokens_details":{"cached_tokens":873000}}}\n\n'
+    )
+    in_ = usage["input"] + usage["cache_read"] + usage["cache_creation"]
+    history.observe_tokens(out=usage["output"], in_=in_)
+    history.record(queued=0, inflight=0, cap=1)
+    gauge = signals.tps_gauge()
+    # TOTAL incl. cache — the honest meaning the label must carry.
+    assert gauge.tok_in_now == in_ / history.RESOLUTION_S
+    assert gauge.tok_in_now == 88000.0
+
+
+def test_gauge_input_label_is_truthful_about_total():
+    """The readout counts input + cache reads + cache writes; the stats.html
+    label portion says so. A bare 'input X/s' lies by omission (304)."""
+    template = (
+        pathlib.Path(signals.__file__).parents[1] / "ui" / "templates" / "partials" / "stats.html"
+    ).read_text()
+    assert "in+cache" in template
+    assert "· input {{" not in template
 
 
 def test_nice_scale_uses_round_numbers():
