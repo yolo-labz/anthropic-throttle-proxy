@@ -144,6 +144,33 @@ def test_gauge_input_label_is_truthful_about_total():
     assert "· input {{" not in template
 
 
+def test_gauge_fresh_is_separate_and_unknown_for_two_field_snapshots():
+    """Fresh sits BESIDE the conserved total (never replacing it) and is
+    honestly unknown — not a measured zero — for pre-fresh 2-field
+    sibling snapshots."""
+    gauge = signals.tps_gauge([[95, 880000, 7000]])
+    assert gauge.tok_in_now == 88000.0
+    assert gauge.tok_in_fresh == 700.0
+    gauge = signals.tps_gauge([[95, 880000]])
+    assert gauge.tok_in_now == 88000.0
+    assert gauge.tok_in_fresh is None
+    remote = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000, 7000]]}
+    assert signals.remote_tps(remote).tok_in_fresh == 700.0
+    remote2 = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000]]}
+    assert signals.remote_tps(remote2).tok_in_fresh is None
+    garbage = {"bucket_seconds": history.RESOLUTION_S, "tokens": [[95, 880000, 7000, 1]]}
+    assert signals.remote_tps(garbage) is None
+
+
+def test_gauge_fresh_label_renders_only_when_measured():
+    """stats.html shows the fresh clause only for a measured figure."""
+    template = (
+        pathlib.Path(signals.__file__).parents[1] / "ui" / "templates" / "partials" / "stats.html"
+    ).read_text()
+    assert "fresh {{" in template
+    assert "tok_in_fresh is not none" in template
+
+
 def test_nice_scale_uses_round_numbers():
     assert signals._nice_scale(0, 100) == 100
     assert signals._nice_scale(73, 100) == 100

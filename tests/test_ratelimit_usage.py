@@ -148,6 +148,10 @@ def test_gauge_source_pair_is_truthful_across_usage_shapes(shape, prompt, cached
     assert point.tok_in == counted, shape
     gauge = signals.tps_gauge()
     assert gauge.tok_in_now == counted / history.RESOLUTION_S, shape
+    # Fresh is a SEPARATE, separately-labelled figure — never a swap of the
+    # total meaning — and conserves the uncached subset.
+    assert point.tok_in_fresh == prompt - cached, shape
+    assert gauge.tok_in_fresh == (prompt - cached) / history.RESOLUTION_S, shape
     # The label names exactly the counted side (total prompt-side incl. cache).
     template = (
         pathlib.Path(signals.__file__).parents[1] / "ui" / "templates" / "partials" / "stats.html"

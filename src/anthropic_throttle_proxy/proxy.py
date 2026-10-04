@@ -4095,6 +4095,7 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
+            fresh=usage["input"],
         )
     except Exception as ue:
         log(f"usage-parse-error path=/{path}: {ue!r}")
@@ -6354,7 +6355,7 @@ async def health(_request: web.Request) -> web.Response:
     if _request is not None and _request.query.get("telemetry") == "1":
         body["throughput"] = {
             "bucket_seconds": _history.RESOLUTION_S,
-            "tokens": [[p.tok_out, p.tok_in] for p in _history.series()],
+            "tokens": [[p.tok_out, p.tok_in, p.tok_in_fresh] for p in _history.series()],
         }
     return web.json_response(body, status=200 if upstream_egress_ok else 503)
 
