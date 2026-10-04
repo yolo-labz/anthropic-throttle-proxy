@@ -302,6 +302,28 @@ input untouched):**
 changes; no copied retry/SSE code; raw seat config/bindings stay OpenAI; no new
 seats/Astra. pK busy input untouched — consume at natural boundary.
 
+## 1605 BOUNDARY — 311 merged + 1558 packet delivered ONCE
+
+- **PR311 MERGED** squash **`96a8536b`** (tested head **`805037e6…`**, 9 green) —
+  MiMo stream-path fetch-hold rehearsal. Lineage retained.
+- **1558 correction delivered ONCE to pK** at the verified done1435/blank
+  boundary → **"working verified"**. Fresh nonoverlapping worktree
+  **312-retry-policy-fix** (base `96a8536b`): pre-header uncertainty at
+  `maxRetries 0` (exactly ONE accepted request, no done) + post-header/
+  partial-SSE disconnect synced AFTER client delta (no retry, no invented
+  done) + explicit `maxRetries 1` positive fixture retained separately +
+  TWO-send counterexample labeled as FAILING the original no-uncertain-retry
+  policy (never accepted useful-client behavior). Scope: mimo-rehearsal +
+  README only; wrapper unchanged; no copied retry/SSE; no live
+  config/model/provider/registry/billing/loader changes.
+- **Corrected revert instruction (recorded):** revert path for the accepted
+  squash is **`git revert 96a8536b` via a normal revert PR**; preserve the
+  original feature commits — never force cleanup.
+- Layer separation in all wording: source/default/configured vs actual runtime
+  config/census/client/day. pJ working on installed-CLI startup proof; Loop
+  busy owns loader/old-drain contract. No busy-pane/Astra/seat touches; no
+  private packet to MiMo.
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
