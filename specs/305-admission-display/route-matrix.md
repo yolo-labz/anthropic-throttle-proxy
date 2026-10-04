@@ -1,35 +1,44 @@
 # 305 — intended client/ingress route matrix (source-only)
 
-Derived from the code at this exact head only — no live routing claims, no
-provider evidence. Companion to `contract.md`; the admission display for every
-route below is the **existing local admission predicate** (`bearer_usable` ∧
-¬`credential_dead` ∧ `meter_binding_allows`) and nothing else.
+Derived from the code at this exact head only. **This matrix (and the project
+receipt) is the ONLY place a client-path fact may live** — the runtime display
+never carries it: `ui/routes.py` has no "client path not accepted" state, no
+verdict for it, and no parameter to accept one. The display's sole new source
+is the existing local admission predicate (`bearer_usable` ∧
+¬`credential_dead` ∧ `meter_binding_allows`) feeding the EXISTING status
+vocabulary.
 
-## Routes
+## Routes — honest distinction
 
-| # | Caller | Route | Downstream | Bearer class | Display trust facts |
-|---|--------|-------|-----------|--------------|---------------------|
-| C1 | mimo-desktop seats (real clients) | `POST /v1/chat/completions` on the MiMo proxy | MiMo Token Plan / Team seats (`tp-…` static keys) | meter-bound (`mimo:plan`, `mimo:team-owner`, `mimo:team-b`) | binding + local admission are LOCAL evidence only; client-path acceptance needs a real message (`credential.ok: True`) or an explicit sanitized-map `True` |
-| C2 | claude-code / Anthropic SDK | `POST /v1/messages` on the Anthropic proxy | Anthropic OAuth / api-key accounts | unbound (meter binding absent) | `ok: False` verdicts stay CRIT `refused/disabled` and are never revived by admission; `ok: True` (real message reopen) is client acceptance |
-| I1 | ingress (spec 093) | role chains `generate`/`judge`/`bulk`/`code` over `anthropic, deepseek, kimi, glm, codex` | per-lane proxies | per-lane | registry policy is removal-only (`provider_registry.load`); local verdicts remain per-proxy ("· local proxy view"), never fleet-wide |
-| X1 | control reads | `GET /ui`, `/__throttle/health`, `/__throttle/admission` | none (local) | n/a | render path performs no network I/O; verdicts are counts + fixed phrases, never account evidence |
+| # | Caller | Route | Ingress? | Downstream | Notes |
+|---|--------|-------|----------|-----------|-------|
+| C1 | mimo-desktop seats (real clients) | `POST /v1/chat/completions` **directly on the MiMo proxy** | **no — direct route** | MiMo Token Plan / Team seats (`tp-…` static keys) | No spec-093 ingress is in this path; the proxy is the whole route. Local admission here is local capacity only. |
+| C2 | claude-code / Anthropic SDK | `POST /v1/messages` **directly on the Anthropic proxy** | **no — direct route** | Anthropic OAuth / api-key accounts | `ok:False` verdicts render `CRIT refused/disabled`; positive admission never revives them. |
+| I1 | ingress (spec 093) | role chains `generate`/`judge`/`bulk`/`code` over `anthropic, deepseek, kimi, glm, codex` | **yes — ingress** | per-lane proxies | Registry policy is removal-only (`provider_registry.load`). The ingress's verdicts are its own; a proxy's status strip never claims to speak for the ingress or the fleet. |
+| X1 | control reads | `GET /ui`, `/__throttle/health`, `/__throttle/admission` | no | none (local) | Render path performs no network I/O beyond the display's pre-existing collection. |
 
-## Display semantics (worst-wins order)
+## Display semantics (unchanged vocabulary, worst-wins)
 
-1. **`CRIT · N of M bearers refused/disabled — inference unavailable on those
-   lanes`** — a credential verdict with `ok is False`, or an explicit
-   admission `False`. Never revived by any other reading.
-2. **`NOT-ACCEPTED · N of M bearers locally admitted — client path not
-   accepted`** — meter-bound + locally admitted, with no client-path
-   acceptance evidence (Conta B today). Never the unevidenced wording.
-3. **`THROTTLED` / `PACING`** — pacing signals, named in the detail suffixes
-   even when 1–2 win the headline.
-4. **`UNKNOWN · capacity unknown — no auth/permission evidence …`** — no
-   positive evidence at all (finding 11 preserved).
-5. **`HEALTHY · all N bearers clear`** — positive acceptance evidence only.
+1. `CRIT · N of M bearers refused/disabled — inference unavailable on those
+   lanes` — `ok is False` or admission `False`. Never revived.
+2. `THROTTLED` / `PACING` — pacing signals.
+3. `UNKNOWN · capacity unknown — no auth/permission evidence …` — no positive
+   evidence at all.
+4. `HEALTHY · all N bearers clear` — positive evidence (credential `ok: True`
+   or positive local admission, keeping its existing local meaning).
 
-## Unaccepted-client acceptance source (future)
+## Count scope (true scope)
 
-Route C1's real-client acceptance will arrive through the sanitized map
-(`client_paths=`), supplied by the trusted live side; until then absence is
-explicitly "not accepted", never healthy and never unknown.
+`N of M` counts the **visible bearer set** this page renders (the display-
+filtered list), and the strip suffixes `· local proxy view`. It is never a
+fleet-wide or native-subscription count.
+
+## Project receipt fact (static, never runtime)
+
+Per the project receipt, account B currently has a real meter binding and
+positive local admission, while its real-client path is **not accepted**.
+That fact lives in this matrix and the receipt only; the runtime display
+renders B through the existing local admission meaning above, with no
+invented verdict and no B-unknown regression. When the project receipt
+records acceptance, only the receipt/matrix change — no runtime state is
+required or accepted for it.

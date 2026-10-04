@@ -186,9 +186,7 @@ def _capability_splits(
     bearers: list[dict],
     credential_verdicts: dict[str, dict] | None,
     admission: dict[str, object] | None,
-    client_paths: dict[str, bool] | None = None,
-    bindings: dict[str, bool] | None = None,
-) -> tuple[list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str]]:
     """Split bearers into ``(refused, unevidenced)`` capability buckets.
 
     ``refused``: explicit refusal evidence — a collected credential verdict
@@ -202,7 +200,6 @@ def _capability_splits(
     here fetches, fabricates or infers policy outcomes.
     """
     refused: list[str] = []
-    unaccepted: list[str] = []
     unevidenced: list[str] = []
     for b in bearers:
         bid = str(b.get("bearer_id") or "?")
@@ -212,26 +209,36 @@ def _capability_splits(
         else:
             cred = b.get("credential")
         admitted = admission.get(bid) if admission is not None else None
-        accepted = (client_paths or {}).get(bid) is True
         # An explicit False refusal keeps priority over every other reading.
         if _credential_refusal(cred) is not None or admitted is False:
             refused.append(bid)
-        # Acceptance evidence is a real message reopening the account, or an
-        # explicit True from the sanitized map — never local admission alone.
-        elif (isinstance(cred, dict) and cred.get("ok") is True) or accepted:
-            continue
-        # Local admission is positive LOCAL evidence but never client-path
-        # acceptance (305 contract: never fabricate health). Conta B renders
-        # here — bound and locally admitted, client path not accepted — and
-        # must never fall back to the unevidenced B-unknown wording. A bearer
-        # with no meter binding keeps the legacy admission reading.
-        elif admitted is True and (bindings or {}).get(bid) is True:
-            unaccepted.append(bid)
-        elif admitted is True:
+        # Only an EXPLICIT True is capacity evidence. An empty dict, an
+        # ok:None verdict, a truthy non-boolean, or a missing admission all
+        # leave the lane unevidenced — manufacturing HEALTHY out of those was
+        # exactly the failure mode under correction.
+        elif (isinstance(cred, dict) and cred.get("ok") is True) or admitted is True:
             continue
         else:
             unevidenced.append(bid)
-    return refused, unaccepted, unevidenced
+    return refused, unevidenced
+
+
+def _local_admission_map(bearers: list[dict], now: float) -> dict[str, bool]:
+    """The EXISTING local admission predicate, per visible bearer (305).
+
+    Exactly the three factors ``admission()`` composes — nothing new is
+    invented here: positive local admission keeps its existing local meaning,
+    a real refusal still wins, and this map performs no network I/O (the
+    render path never scans providers).
+    """
+    return {
+        b["bearer_id"]: (
+            _proxy._bearer_usable(b, now)
+            and not _proxy._bearer_credential_dead(b["bearer_id"])
+            and _proxy._meter_binding_allows(b["bearer_id"], now)
+        )
+        for b in bearers
+    }
 
 
 def _idle_status(now: float) -> dict[str, object]:
@@ -300,29 +307,6 @@ def _refusal_detail(
     return "crit", "CRIT", detail
 
 
-def _unaccepted_detail(
-    bearers: list[dict], unaccepted: list[str], throttled: list[str], pacing: list[str]
-) -> tuple[str, str, str]:
-    """305: local admission is NOT client-path acceptance.
-
-    Positive local evidence (binding + the existing local admission predicate)
-    exists while no real client path has been accepted — the strip says
-    exactly that. Never HEALTHY (no fabricated health) and never the
-    unevidenced wording (no stale B-unknown snapshots). The remaining pacing
-    signals are still named so the headline does not hide them.
-    """
-    plural = "s" if len(bearers) != 1 else ""
-    detail = (
-        f"{len(unaccepted)} of {len(bearers)} bearer{plural} locally admitted"
-        " — client path not accepted"
-    )
-    if throttled:
-        detail += f"; {len(throttled)} throttled"
-    if pacing:
-        detail += f"; {len(pacing)} pacing"
-    return "idle", "NOT-ACCEPTED", detail
-
-
 def _unknown_capacity_detail(bearers: list[dict], unevidenced: list[str]) -> tuple[str, str, str]:
     """Finding 11: missing credential/admission evidence is not health.
 
@@ -365,8 +349,6 @@ def _compute_status(
     *,
     credential_verdicts: dict[str, dict] | None = None,
     admission: dict[str, object] | None = None,
-    client_paths: dict[str, bool] | None = None,
-    bindings: dict[str, bool] | None = None,
 ) -> dict[str, object]:
     """Derive one LOCAL verdict from the live snapshot (drives the status strip).
 
@@ -392,16 +374,10 @@ def _compute_status(
         return _idle_status(now)
 
     throttled, pacing, binding = _bucket_bearers(bearers, now)
-    refused, unaccepted, unevidenced = _capability_splits(
-        bearers, credential_verdicts, admission, client_paths, bindings
-    )
+    refused, unevidenced = _capability_splits(bearers, credential_verdicts, admission)
     level, verdict, detail = _fleet_verdict(len(bearers), len(throttled), len(pacing))
     if refused:
         level, verdict, detail = _refusal_detail(bearers, refused, throttled, pacing)
-    elif unaccepted:
-        # Worst-wins extended (305): a real refusal still outranks this, and
-        # the line names the pacing signals so nothing hides behind it.
-        level, verdict, detail = _unaccepted_detail(bearers, unaccepted, throttled, pacing)
     elif level == "healthy" and unevidenced:
         level, verdict, detail = _unknown_capacity_detail(bearers, unevidenced)
     bound = _binding_block(binding) if binding is not None else None
@@ -1146,24 +1122,11 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
         _proxy.QUEUE_MODE,
         now,
         credential_verdicts={b["bearer_id"]: b.get("credential") for b in bearers},
-        # 305: the admission display reads the EXISTING local admission
-        # predicate only — the same three factors ``admission()`` composes.
-        # No provider/HTTP scan happens here; a bearer without acceptance
-        # evidence renders "client path not accepted", never fabricated health.
-        admission={
-            b["bearer_id"]: (
-                _proxy._bearer_usable(b, now)
-                and not _proxy._bearer_credential_dead(b["bearer_id"])
-                and _proxy._meter_binding_allows(b["bearer_id"], now)
-            )
-            for b in bearers
-        },
-        # Sanitized binding facts (meter binding only — never credential or
-        # account evidence): a bound seat's local admission is not client
-        # acceptance and must render exactly that.
-        bindings={
-            b["bearer_id"]: _proxy._meter_bound_lane(b["bearer_id"]) is not None for b in bearers
-        },
+        # 305: the only new source — the EXISTING local admission predicate,
+        # computed in-process at the real call site. No provider/HTTP scan on
+        # the render path, and positive admission keeps its existing local
+        # meaning (it is never converted into UNKNOWN or non-healthy).
+        admission=_local_admission_map(bearers, now),
     )
     central_url = _proxy.CENTRAL_URL or "(direct)"
     providers = _build_providers(
