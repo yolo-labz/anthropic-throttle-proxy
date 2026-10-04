@@ -498,9 +498,17 @@ def _parse_sse_usage(buf: bytes) -> dict[str, int]:
         totals["cache_creation"] += int(usage_obj.get("cache_creation_input_tokens") or 0)
         # OpenAI-compatible field names (z.ai GLM Coding Plan, MiMo Token
         # Plan). reasoning_tokens live inside completion_tokens already.
-        totals["input"] += int(usage_obj.get("prompt_tokens") or 0)
-        totals["output"] += int(usage_obj.get("completion_tokens") or 0)
+        # prompt_tokens is INCLUSIVE of prompt_tokens_details.cached_tokens,
+        # so the normalized kinds are DISJOINT and CONSERVE it: input +
+        # cache_read == prompt_tokens, clamped on inconsistent payloads
+        # (cached > prompt) so nothing is double counted or silently dropped
+        # (contract specs/304-openai-conservation).
+        prompt = max(0, int(usage_obj.get("prompt_tokens") or 0))
+        cached = 0
         details = usage_obj.get("prompt_tokens_details")
         if isinstance(details, dict):
-            totals["cache_read"] += int(details.get("cached_tokens") or 0)
+            cached = min(max(0, int(details.get("cached_tokens") or 0)), prompt)
+        totals["input"] += prompt - cached
+        totals["cache_read"] += cached
+        totals["output"] += int(usage_obj.get("completion_tokens") or 0)
     return totals
