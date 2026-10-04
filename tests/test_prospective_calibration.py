@@ -237,14 +237,13 @@ class Request(dict):
         set_selected_dispatch(self, SELECTED)
 
 
-@pytest.fixture
-async def runtime(tmp_path):
+def make_runtime(tmp_path, endpoint=ENDPOINT, mode="observe"):
     budgets = Budgets(1, 1000)
     resolver = ScopeResolver(
         [
             {
                 "source": SELECTED.credential_source,
-                "endpoint": ENDPOINT,
+                "endpoint": endpoint,
                 "alias": KEY[2],
                 "upstream": KEY[0],
                 "account": KEY[1],
@@ -253,11 +252,11 @@ async def runtime(tmp_path):
             }
         ],
         sources=[SELECTED.credential_source],
-        endpoints=[ENDPOINT],
+        endpoints=[endpoint],
         models=[KEY[2]],
     )
-    runtime = ProspectiveRuntime(
-        mode="observe",
+    return ProspectiveRuntime(
+        mode=mode,
         resolver=resolver,
         scopes=[Scope(KEY, budgets, str(tmp_path / "ledger.json"), True)],
         max_pending=2,
@@ -265,6 +264,11 @@ async def runtime(tmp_path):
         budget_label="fixture-public",
         retry_after_s=1,
     )
+
+
+@pytest.fixture
+async def runtime(tmp_path):
+    runtime = make_runtime(tmp_path)
     await runtime.start()
     try:
         yield runtime
@@ -347,3 +351,148 @@ async def test_real_observe_permit_pairs_each_attempt_without_scope_leaks(
         ENDPOINT.encode(),
     ):
         assert private not in exported
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"total_tokens": 36},
+        {"total_tokens": True},
+        {"prompt_cache_hit_tokens": 5},
+        {"prompt_cache_miss_tokens": 25},
+        {"prompt_cache_hit_tokens": 5, "prompt_cache_miss_tokens": 30},
+        {"prompt_cache_hit_tokens": -1, "prompt_cache_miss_tokens": 31},
+        {
+            "prompt_cache_hit_tokens": 5,
+            "prompt_cache_miss_tokens": 25,
+            "prompt_tokens_details": {"cached_tokens": 6},
+        },
+        {"prompt_tokens_details": []},
+        {"completion_tokens_details": {"reasoning_tokens": 6}},
+    ],
+)
+def test_conflicting_chat_totals_never_pair(registry, extra):
+    complete(chat({"prompt_tokens": 30, "completion_tokens": 5} | extra))
+    assert sample(registry, "malformed_usage", "eof_with_finish") == 1
+    assert paired(registry, "reported_input") is None
+
+
+def test_json_response_and_cache_partition_preserve_full_input(registry):
+    usage = {
+        "prompt_tokens": 30,
+        "completion_tokens": 5,
+        "total_tokens": 35,
+        "prompt_cache_hit_tokens": 5,
+        "prompt_cache_miss_tokens": 25,
+        "prompt_tokens_details": {"cached_tokens": 5},
+    }
+    body = json.dumps({"choices": [{"finish_reason": "stop"}], "usage": usage}).encode()
+    complete(body, headers=CIMultiDict({"Content-Type": "application/json; charset=utf-8"}))
+    assert paired(registry, "reported_input") == 30
+    assert sample(registry, "comparable", "eof_with_finish") == 1
+
+
+@pytest.mark.parametrize("body", [frame({"error": {}}), frame({"type": "error"})])
+def test_sse_error_cannot_become_a_pair_after_valid_usage(registry, body):
+    complete(VALID + body)
+    assert sample(registry, "malformed_usage", "eof_with_finish") == 1
+    assert paired(registry, "reported_input") is None
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_upstream_refusal_never_pairs_even_with_complete_counts(registry, status):
+    complete(status=status)
+    assert sample(registry, "upstream_error", "eof_with_finish") == 1
+    assert paired(registry, "reported_input") is None
+
+
+def test_unsupported_and_malformed_envelopes_are_unverified(registry):
+    complete(path="/v1/responses")
+    assert sample(registry, "unsupported_protocol", "eof_unverified") == 1
+    complete(headers=CIMultiDict({"Content-Type": "text/plain"}))
+    complete(b"[]", headers=CIMultiDict({"Content-Type": "application/json"}))
+    complete(b"data: \xff\n\n")
+    assert sample(registry, "malformed_usage", "eof_unverified") == 3
+
+
+def test_metric_failure_never_changes_transport_result(registry, monkeypatch):
+    def fail(_self):
+        raise RuntimeError("metric unavailable")
+
+    monkeypatch.setattr(calibration.CalibrationAttempt, "_record", fail)
+    complete()
+    exc = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError) as caught:
+        attempt = calibration.CalibrationAttempt("fixture-public", COST, True)
+        attempt.sent = True
+        with attempt:
+            raise exc
+    assert caught.value is exc
+
+
+@pytest.mark.parametrize("sse", [False, True])
+@pytest.mark.parametrize("mode", ["off", "observe", "strict"])
+async def test_real_loopback_wire_and_metrics_surface(registry, tmp_path, sse, mode):
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    wires = []
+
+    async def origin(request):
+        wires.append(await request.read())
+        return web.Response(body=VALID, headers=HEADERS)
+
+    origin_app = web.Application()
+    origin_app.router.add_post(PATH, origin)
+    async with TestServer(origin_app) as upstream:
+        endpoint = str(upstream.make_url("/")).rstrip("/")
+        runtime = make_runtime(tmp_path, endpoint, mode)
+        await runtime.start()
+
+        async def relay(request):
+            set_selected_dispatch(
+                request, SelectedDispatch(SELECTED.credential_source, endpoint, "direct", False)
+            )
+            args = (
+                request,
+                {},
+                await request.read(),
+                endpoint + PATH,
+                aiohttp.ClientTimeout(total=2),
+            )
+            if sse:
+                response = web.StreamResponse(headers=HEADERS)
+                await response.prepare(request)
+                status, _, captured, error = await proxy._forward_once_into_sse(
+                    *args, sse_resp=response
+                )
+                assert status == 200 and captured == VALID and error is None
+                await response.write_eof()
+                return response
+            response, status, captured, error, _ = await forwarding._forward_once(*args)
+            assert status == 200 and captured == VALID and error is None
+            return response
+
+        async def metrics(_request):
+            return web.Response(body=generate_latest(registry), content_type="text/plain")
+
+        app = web.Application()
+        app[RUNTIME_KEY] = runtime
+        app.router.add_post(PATH, relay)
+        app.router.add_get("/metrics", metrics)
+        try:
+            async with TestClient(TestServer(app)) as client:
+                response = await client.post(PATH, data=BODY)
+                assert response.status == 200
+                assert await response.read() == VALID
+                if mode == "observe":
+                    await asyncio.gather(*tuple(runtime._observing))
+                response = await client.get("/metrics")
+                surface = await response.text()
+                assert response.status == 200
+                assert ('outcome="comparable"' in surface) == (mode == "observe")
+                assert wires == [BODY]
+                for private in ("private-model", "private-prompt", "private-account", endpoint):
+                    assert private not in surface
+        finally:
+            await runtime.aclose()

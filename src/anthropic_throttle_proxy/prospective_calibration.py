@@ -80,6 +80,9 @@ class _Usage:
         if any(name in usage for name in ("input_tokens", "output_tokens")):
             raise ValueError("mixed usage vocabulary")
         self._update(usage, ("prompt_tokens", "completion_tokens"))
+        if "total_tokens" in usage and _integer(usage["total_tokens"]) != sum(self.counts.values()):
+            raise ValueError("inconsistent total")
+        self._chat_cache(usage)
         for detail, subset, total in (
             ("prompt_tokens_details", "cached_tokens", "prompt_tokens"),
             ("completion_tokens_details", "reasoning_tokens", "completion_tokens"),
@@ -91,6 +94,19 @@ class _Usage:
                 raise ValueError("invalid token details")
             if subset in details and _integer(details[subset]) > self.counts.get(total, -1):
                 raise ValueError("subset exceeds total")
+
+    def _chat_cache(self, usage):
+        hit, miss = "prompt_cache_hit_tokens", "prompt_cache_miss_tokens"
+        if hit not in usage and miss not in usage:
+            return
+        if hit not in usage or miss not in usage:
+            raise ValueError("incomplete cache partition")
+        cached, fresh = _integer(usage[hit]), _integer(usage[miss])
+        if cached + fresh != self.counts.get("prompt_tokens"):
+            raise ValueError("cache partition does not conserve input")
+        detail = usage.get("prompt_tokens_details")
+        if isinstance(detail, dict) and detail.get("cached_tokens", cached) != cached:
+            raise ValueError("conflicting cache counts")
 
     def chat(self, obj):
         choices = obj.get("choices", [])
@@ -121,7 +137,9 @@ class _Usage:
             self.stopped = True
         usage = obj.get("usage")
         if usage is not None:
-            if not isinstance(usage, dict) or "prompt_tokens" in usage:
+            if not isinstance(usage, dict) or any(
+                name in usage for name in ("prompt_tokens", "completion_tokens")
+            ):
                 raise ValueError("invalid message usage")
             self._update(
                 usage,
@@ -135,6 +153,8 @@ class _Usage:
 
     def consume(self, obj):
         try:
+            if "error" in obj or obj.get("type") == "error":
+                raise ValueError("error envelope")
             if self.protocol == "chat":
                 self.chat(obj)
             else:

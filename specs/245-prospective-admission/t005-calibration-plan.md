@@ -42,20 +42,32 @@ without altering admission, retry, timeout, response bytes or ledger debt.
 
 - [x] Add bounded paired helper, metrics and observe permit context.
 - [x] Wire normal and prepared-SSE attempts with exactly-once completion.
-- [ ] Synthetic checks: absent/zero, cache semantics, cumulative duplicates,
+- [x] Synthetic checks: absent/zero, cache semantics, cumulative duplicates,
       malformed/conflicting values, real finish vs empty/missing finish,
       cap/truncation/encoding, cancellation/transport failures, retry isolation,
       single public scope labels and off byte/metric parity.
-- [ ] Focused admitted desktop lint/tests only if available; coordinator runs
-      full suites/build/coverage and publication acceptance.
+- [x] Focused admitted desktop lint/tests only; full suites/build/coverage run
+      in hosted CI. Public PR and live acceptance remain separate gates.
 
 ## Delivery checkpoint — 04/10/2026
 
 - Preserved seven-file WIP resumed; no existing PR for this branch.
-- Focused checks: 74 passed (calibration, runtime, prospective forwarding), 1.28s.
-- Ruff formatting repaired; test import ordering repaired with Ruff.
-- Current main has seven newer commits through `953cb83`; integration and renewed
-  focused acceptance are still pending. Full tests/quality gates remain CI-owned.
+- Checkpoint `a634c48` preserved the WIP after 74 focused tests passed.
+- Merged current main through `953cb83` without conflicts; no source changes to
+  other owners' UI, legacy usage/gauge parser, or admission-closure slice.
+- Renewed focused acceptance: 132 passed, 13 existing warnings, 13.51s
+  (`test_prospective_calibration`, `test_prospective_runtime`,
+  `test_prospective_forwarding`, `test_forwarding_paths`, `test_tps_gauge`).
+  Ruff check and format-check passed on all six touched Python files.
+- Six actual loopback wire checks cover normal and prepared-SSE forwarding in
+  off/observe/strict: response bytes and upstream request bytes unchanged; the
+  HTTP metrics surface publishes pairs only in observe. No external egress.
+  The first off-mode test attempt failed because the fixture accessed observe
+  state which correctly does not exist in off; the fixture now drains only observe.
+- Alternate cache-hit/miss partitions must conserve full prompt input and agree
+  with cached-token details; conflicting totals and in-band SSE errors never pair.
+- Full tests/quality gates and public PR completion remain pending. No deployed
+  UI or provider-health success is inferred from the synthetic HTTP checks.
 - UI/session research remains diagnostic, not a live fix: both previously sampled
   static CSS endpoints returned the same bytes; no existing browser session was
   inspected. Local bearer status and subscription capacity are separate scopes.
