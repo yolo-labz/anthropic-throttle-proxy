@@ -29,9 +29,49 @@ vocabulary.
 
 ## Count scope (true scope)
 
-`N of M` counts the **visible bearer set** this page renders (the display-
-filtered list), and the strip suffixes `· local proxy view`. It is never a
-fleet-wide or native-subscription count.
+`N of M` counts the bearer set this proxy's status projection actually
+tracks — `bearer_state` minus the `_anon` bypass slot, exactly the list
+`_compute_status` receives — and the strip suffixes `· local proxy view`.
+Display hiding (hidden families) filters RENDER only and never the status
+counts. It is never a fleet-wide or native-subscription count.
+
+## Direct MiMo client-path acceptance — named artifacts & conditions
+
+What an end-to-end acceptance of route C1 requires, named exactly. Until
+ALL conditions hold in ONE receipt, account B stays `client-path-unaccepted`
+as the receipt/matrix fact above — no runtime display state represents or
+accepts it before or after.
+
+**Named artifacts** (protected/project lanes; none of this ever enters
+runtime state or public output):
+
+1. `client-path-acceptance receipt` — the project receipt for route C1,
+   owned by the protected lane (pF), recording the acceptance attempt.
+2. The sanitized account-map entry for B — labels and booleans only; never
+   tokens, emails, account ids or meter-binding lane ids.
+3. This matrix's C1 row — updated with the acceptance date and the receipt
+   reference in the same change (docs-only).
+
+**Named conditions** (all must hold together in that receipt):
+
+- **C1.1** a REAL mimo-desktop client request traverses route C1 end to
+  end (direct: client → MiMo proxy → upstream) — not a probe, not a
+  synthetic message, not an ingress or relay path;
+- **C1.2** the upstream answer is a genuine completion delivered to that
+  client (HTTP 200 with a real completion body) — never a local synthetic
+  response;
+- **C1.3** the request runs on the seat bound in the sanitized map (the B
+  seat), recorded under its sanitized label only;
+- **C1.4** the attempt falls inside the window the project receipt names —
+  the receipt owns the window; this matrix invents no duration;
+- **C1.5** acceptance is never inferred from local admission, served
+  counters, meters or provider-registry membership — those remain local
+  facts with local meaning only.
+
+**After acceptance:** the ONLY change is the receipt plus this matrix. No
+runtime parameter, verdict or state in `ui/routes.py` accepts, carries or
+represents client-path acceptance (pinned by
+`tests/test_admission_display_trusted.py`).
 
 ## Project receipt fact (static, never runtime)
 
