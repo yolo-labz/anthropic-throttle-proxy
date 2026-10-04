@@ -5159,6 +5159,10 @@ async def handler(request: web.Request) -> web.StreamResponse:
     module-level helpers.
     """
     handler_start = time.time()
+    if _admission_closed:
+        # Quiesced window: refuse before reading the body or touching any
+        # limiter/queue state — existing work is already past this line.
+        return _admission_closed_response()
     path = request.match_info.get("path", "")
     headers = _forward_headers(request)
     bid = _bearer_id(request.headers)
@@ -6092,6 +6096,47 @@ def _admission_verdict(
     return "capped", f"0/{len(bearers)} bearers serving"
 
 
+# --- admission quiesce gate (race-free close-admission before a swap) ---
+# Process-local and synchronous on the event loop: once quiesce() returns, EVERY
+# subsequent handler entry refuses BEFORE any queue/limiter/body interaction, so
+# an idle-gate observation can only converge (no new admits) and the SIGTERM
+# window never cuts admitted work. Deliberately NOT an EDITABLE_KNOB: it must
+# never persist across a restart (a fresh process is OPEN — exactly the rollback
+# semantics) and must not reach overrides.json. The /__throttle/* routes stay
+# live while closed so drain polling and reopen keep working.
+_admission_closed = False
+
+
+def _admission_closed_response() -> web.Response:
+    """Bounded refusal for the closed-admission window: new work is not admitted."""
+    retry_after_s = max(1, int(config.QUEUE_TIMEOUT_RETRY_AFTER_S))
+    log(f"admission-closed-refusal retry_after={retry_after_s}")
+    return web.Response(
+        status=503,
+        headers={"retry-after": str(retry_after_s), "x-throttle-admission-closed": "1"},
+        text="local policy: admission is quiesced; not accepting new work\n",
+    )
+
+
+async def quiesce(_request: web.Request) -> web.Response:
+    """POST /__throttle/quiesce — close NEW admission atomically.
+
+    Work already past the gate keeps running to completion; after this returns,
+    no request can enter the admission path until resume. This is the
+    close-admission step that makes a subsequent drain convergent.
+    """
+    global _admission_closed
+    _admission_closed = True
+    return web.json_response({"admission": "closed"})
+
+
+async def resume(_request: web.Request) -> web.Response:
+    """POST /__throttle/resume — reopen admission (also the rollback path)."""
+    global _admission_closed
+    _admission_closed = False
+    return web.json_response({"admission": "open"})
+
+
 async def admission(_request: web.Request) -> web.Response:
     """GET /__throttle/admission — the authoritative "may a request be served now?".
 
@@ -6699,6 +6744,8 @@ def main() -> None:
     app.router.add_get("/", root_probe)
     app.router.add_get("/__throttle/health", health)
     app.router.add_get("/__throttle/admission", admission)
+    app.router.add_post("/__throttle/quiesce", quiesce)
+    app.router.add_post("/__throttle/resume", resume)
     # Registered with the other infrastructure probes, ABOVE the catch-all, so
     # it never consumes a bearer slot and never reaches upstream (FR-002).
     app.router.add_get("/__throttle/statusline", statusline)
