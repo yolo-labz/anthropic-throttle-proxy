@@ -223,6 +223,24 @@ def _capability_splits(
     return refused, unevidenced
 
 
+def _local_admission_map(bearers: list[dict], now: float) -> dict[str, bool]:
+    """The EXISTING local admission predicate, per visible bearer (305).
+
+    Exactly the three factors ``admission()`` composes — nothing new is
+    invented here: positive local admission keeps its existing local meaning,
+    a real refusal still wins, and this map performs no network I/O (the
+    render path never scans providers).
+    """
+    return {
+        b["bearer_id"]: (
+            _proxy._bearer_usable(b, now)
+            and not _proxy._bearer_credential_dead(b["bearer_id"])
+            and _proxy._meter_binding_allows(b["bearer_id"], now)
+        )
+        for b in bearers
+    }
+
+
 def _idle_status(now: float) -> dict[str, object]:
     """The no-bearers verdict: IDLE with the reason a client has not arrived."""
     return {
@@ -1104,6 +1122,11 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
         _proxy.QUEUE_MODE,
         now,
         credential_verdicts={b["bearer_id"]: b.get("credential") for b in bearers},
+        # 305: the only new source — the EXISTING local admission predicate,
+        # computed in-process at the real call site. No provider/HTTP scan on
+        # the render path, and positive admission keeps its existing local
+        # meaning (it is never converted into UNKNOWN or non-healthy).
+        admission=_local_admission_map(bearers, now),
     )
     central_url = _proxy.CENTRAL_URL or "(direct)"
     providers = _build_providers(
