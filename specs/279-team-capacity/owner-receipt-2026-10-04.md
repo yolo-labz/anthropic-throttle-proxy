@@ -40,7 +40,8 @@ call. Off-host acceptance path allowed.
 
 | Time | Owner | Base -> Head | Test command/result | PR state | Next dependency |
 |---|---|---|---|---|---|
-| 13:0x | pJ | `305-admission-closure-surface` (in flight; hooks caught dup fixture/lint — fixing) | (4 targeted planned) | **no PR published yet** | my independent scope/caller review + green/review-clean squash merge at pJ's empty-input boundary |
+| 13:0x | pJ | PR305 `305-admission-closure-surface` head **`4ab391b6`** — scope ok (`proxy.py +11/-1`, `tests/test_admission_closure_surface.py +87/-0`) | checks: **ruff+pytest FAILURE, scan FAILURE**; 7 others SUCCESS | OPEN MERGEABLE — **red; pJ fixing (dup fixture/lint)** | detailed caller review + green/review-clean squash merge when eligible (pool down this window: diff review deferred one beat) |
+| 13:2x | coordinator | docs delta **`e84e995` -> `b9c217a`** (owner receipt + THRTL plan) | hooks PASS | pushed (279-team-capacity) | save-state current per operator order |
 | 11:4x | pK PR304 | head **`dce00540684be13f2fa4b33a75b0c2145ea6c921`** (root-reviewed; tests-only `tests/test_admission_display_trusted.py`; render/index+stats_partial real under socket/urllib/aiohttp tripwires; collector stubbed explicitly) | **9/9 SUCCESS** (incl. scan) | **MERGED by this seat** — squash **`953cb838d87d22a8ef31008cbbc15c54ffe95bf5`** (exact-head verified; review COMMENTED only; no duplicate merger) | none (tests-only) |
 | 11:2x | pK | `c9e4c9b` -> 307-render-purity-pin | superseded by PR304 delivery | MERGED via 304 | — |
 | ROOT | pH PR302 | `273a5b39` -> `f2e95befe…` | 19 targeted; 9/9 | MERGED (gauge fixtures; real-chain conservation retained; no duplicates added) | — |
@@ -81,6 +82,49 @@ independent scope/caller review against the trace above + normal GREEN/
 review-clean squash merge at pJ's natural empty-input boundary — no duplicate
 edits while pJ works; no duplicate merger. Xiaomi/rate allocation goals
 retained; private binding stays OpenAI lane; pF/pM Astra holds at p5.
+
+## SOURCE-RECONCILIATION (THROTTLER-1315) — 04/10 13:5x BRT
+
+### Public delivery handoff fact for pJ (PR305 — hands off while pJ works)
+
+Hosted CI for PR305 checked **`refs/pull/305/merge` = `27413eb`** (combining
+head `4ab391b6` with main **`953cb838`**), but the local 305 base **`c9e4c9be`
+lacks the PR304 real-render test**. Before reproducing that missing test,
+**normal NON-FORCE base reconciliation is required** (merge/update-branch main
+into 305 first). pJ reclaimed 305 source custody and is valid-working —
+this seat keeps hands off 305 paths; deliver this note to pJ at its next safe
+idle boundary. (Also: earlier "picker held operator drafts" episode noted;
+no more prompt-file staging for pJ.)
+
+### Open source pair — overlap + merge ordering (both touch `proxy.py` usage sites)
+
+| PR | Head (current) | Files | Owner/custody | CI state |
+|---|---|---|---|---|
+| **307 fresh-gauge** — `feat(ui): separate fresh input rate beside the conserved total` | `64108a11` | `history.py +13/-3`, `proxy.py +2/-1`, `ui/signals.py +10/-2`, `stats.html +1/-1`, `test_ratelimit_usage.py +4`, `test_tps_gauge.py +27` | pH: repair + normal merge custody (hosted failure `test_health_exports_real_token_history` expects 2 fields vs measured local-fresh third 0; 1 failed/1989 passed) | red (pH repairing) |
+| **306 paired-usage** — `feat(prospective): pair observe usage per attempt` | `ff0cae31` (directive head `d1485d0e` superseded by pM fix) | `prospective_calibration.py +292` (new), `forwarding.py +40/-31`, `metrics.py +19`, `prospective_runtime.py +10/-2`, `proxy.py +29/-24`, `test_prospective_calibration.py +498`, `t005-calibration-plan.md +85` | pM (old-Astra/current fix in progress; **no new Astra turn**; preserve work until existing p5 migration) | ruff+pytest green; **Sonar scan FAILED (quality gate)** at `d1485d0e` — new-coverage/new-violations class on the 292-line module (S3776 precedent #282); pM repairing at `ff0cae31` |
+
+**Merge-ordering recommendation (recorded for the merge shepherd):** land **307
+FIRST** once pH's repair is green — its proxy delta is +2/-1 (additive
+fresh-rate beside the conserved total; no meaning switch) and it is otherwise
+unblocked. Then **306 rebases/updates onto the merged main** — its larger
+per-attempt-pairing refactor (+29/-24 in proxy.py) absorbs the tiny fresh-rate
+change at the same usage sites. Preserve both invariants across the rebase:
+**total/fresh meaning** (total remains the conserved total; fresh is a
+separate labelled rate) and **per-attempt pairing** (each retry's usage pairs
+with its own attempt context, never cross-attempt). Deep semantic diff review
+of both resumes next window (job pool down at review time; scopes above are
+from GitHub readback).
+
+### Other heads (unchanged)
+
+- Nix2640 exact **`89b16625`** — native CI pending; **no cosmetic pushes**.
+- Live **6ac** unchanged (PID 3873577 ungated; 85s/535s); no supported old gate.
+- Authority contract fact (LoopConductor `home:w2N:p5`, busy untouched): native
+  Pi `onPayload`+headers run **before SDK retry**, so the transport barrier must
+  cover **physical attempts / all producers**.
+- Acceptance classes stay distinct: SOURCE (merged/pending PRs) · LIVE
+  (unaccepted) · CLIENT (B unaccepted; C1 receipt + private owner) · 24h
+  paired (ABSENT — strict OFF).
 
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
