@@ -307,3 +307,61 @@ async def test_real_render_call_sites_perform_no_network_io(monkeypatch):
     strip = await routes.stats_partial(request)
     assert strip.status == 200
     assert b"local proxy view" in strip.body  # the status strip really rendered
+
+
+@pytest.mark.parametrize("new_workload", ["fixture-next", ""])
+async def test_existing_page_reloads_when_only_workload_changes(monkeypatch, new_workload):
+    import json
+    from html import unescape
+    from html.parser import HTMLParser
+
+    class Stats(HTMLParser):
+        values = None
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if attrs.get("id") == "stats":
+                self.values = json.loads(attrs["hx-vals"])
+
+    _fake_collection(monkeypatch)
+    _poison_network(monkeypatch)
+    monkeypatch.setattr(routes._proxy, "bearer_state", {})
+    monkeypatch.setattr(routes._proxy, "bearer_limiters", {})
+    config = fleet_ui_config.load()
+    old_workload = "fixture 'old' & <scope>"
+    config["defaults"].update(show_primary=False, workload=old_workload)
+    monkeypatch.setattr(fleet_ui_config, "load", lambda: config)
+    app = web.Application()
+    routes.attach_ui(app)  # no background tasks started
+    request = SimpleNamespace(app=app, config_dict=app, query={}, get=lambda *args: None)
+    page = await routes.index(request)
+    assert page.status == 200
+    assert old_workload + " workload" in unescape(page.text)
+    parsed = Stats()
+    parsed.feed(page.text)
+    assert parsed.values["local"] == "false"
+    assert parsed.values.get("workload") == old_workload
+    request.query = parsed.values
+    same = await routes.stats_partial(request)
+    assert "HX-Refresh" not in same.headers
+
+    config["defaults"]["workload"] = new_workload
+    changed = await routes.stats_partial(request)
+    assert changed.status == 200
+    assert changed.headers.get("HX-Refresh") == "true"
+    # A full render installs the new header and polling values, ending reloads.
+    fresh_page = await routes.index(request)
+    assert old_workload + " workload" not in unescape(fresh_page.text)
+    if new_workload:
+        assert new_workload + " workload" in unescape(fresh_page.text)
+    parsed = Stats()
+    parsed.feed(fresh_page.text)
+    assert parsed.values["workload"] == new_workload
+    assert parsed.values["local"] == "false"
+    request.query = parsed.values
+    current = await routes.stats_partial(request)
+    assert "HX-Refresh" not in current.headers
+    # Legacy clients lacking the field retain the existing bare-GET contract.
+    del request.query["workload"]
+    bare = await routes.stats_partial(request)
+    assert "HX-Refresh" not in bare.headers

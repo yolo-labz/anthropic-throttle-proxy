@@ -1215,7 +1215,7 @@ async def stats_partial(
     keeps the OLD stylesheet, header, settings panel and footer while receiving
     markup rendered by the new build — and toggling ``show_primary`` leaves the
     same tab with a projection whose surrounding page no longer matches it. The
-    panel carries the revision and the display mode it was rendered with
+    panel carries the revision, display mode and workload it was rendered with
     (``hx-vals`` on ``#stats``, set once per page load, so every tab answers
     with its OWN values), and when either stops matching the server asks htmx
     for a full reload. Without this the attributes were inert: they described
@@ -1229,12 +1229,15 @@ async def stats_partial(
     )
     page_rev = request.query.get("rev")
     page_local = request.query.get("local")
+    page_workload = request.query.get("workload")
     local_now = "true" if view.get("show_local", True) else "false"
     # An absent value is a client that never declared one (a direct GET of
     # /ui/stats, a curl probe) — it has nothing to be stale against, so it is
     # never told to reload.
-    if (page_rev is not None and page_rev != _ASSET_V) or (
-        page_local is not None and page_local != local_now
+    if (
+        (page_rev is not None and page_rev != _ASSET_V)
+        or (page_local is not None and page_local != local_now)
+        or (page_workload is not None and page_workload != view.get("workload_label", ""))
     ):
         response.headers["HX-Refresh"] = "true"
     return response
