@@ -156,6 +156,31 @@ Client proof/private binding stays OpenAI; pF/pM current Astra finish then Sol
 migration before any new turn. **Strict OFF until real paired 24h.**
 **Notes2220 MERGED `ddc02173`** (lessons; root owns the consolidated note).
 
+## SUPPORTED-FETCH-REHEARSAL (1437) — seam + dependency record
+
+- **Supported seam (exact):** `options.fetch` — `anthropic-messages.js:379`
+  passes it into `createClient`; `:393` retries `client.beta.messages.create`
+  with SDK `maxRetries: 0` inside `retryProviderRequest`'s per-attempt
+  callback. A reusable fetch-level hold rides this seam and gates EVERY
+  physical attempt without retry/SSE reimplementation or ID changes.
+  **Header placement RESOLVED:** `Models.applyAuth` 438-444 awaits
+  `transformHeaders` then STRIPS before `provider.stream` — headers are
+  once-per-provider-call, outside physical retry (contract doc `1547aee`).
+- **Rehearsal assigned to pK** (fresh done/blank boundary verified):
+  worktree **308-fetch-hold-rehearsal** (base `beca493`), one bounded
+  source-only prototype + 8-point loopback verification with real installed
+  SDK (first attempt allowed; close before internal retry; zero wire sends
+  until resume; slow body closed pre-upload; held cancel releases; admitted
+  SSE preserved; resume negative control; failure exits nonzero). Synthetic
+  key/payload only; no provider traffic; no native provider registration or
+  live extension loading. Nonoverlapping new dir (no pJ/305/306/307/Loop paths).
+- **Remaining dependency for busy LoopConductor `home:w2N:p5` (NOT prompted,
+  WIP untouched):** safe loader acceptance for the fetch wrapper (when/how the
+  extension-side loader may install it through the accepted reload boundary)
+  and the **all-producer census** (P1-P6 classes enumerated in
+  `native-transport-contract.md`) must be confirmed against the loaded runtime.
+  Source rehearsal alone authorizes NO live-gate/client/24h claim.
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
