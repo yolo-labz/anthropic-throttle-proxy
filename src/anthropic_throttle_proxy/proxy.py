@@ -2774,6 +2774,7 @@ async def _forward_once_into_sse(
     retry).
     """
     from .pacing import _pace_dispatch
+    from .prospective_calibration import calibration_attempt
     from .prospective_refusal import strip_incoming_provenance
     from .prospective_runtime import get_runtime, get_selected_dispatch
     from .ratelimit import _extract_ratelimit
@@ -2797,30 +2798,34 @@ async def _forward_once_into_sse(
         # misread as a network error) and is classified by the caller before
         # any provider retry/AIMD handling.
         async with runtime.reserve(selected, body) as permit:
-            permit.handoff()
-            try:
-                async with session.request(
-                    request.method, url, headers=headers, data=body, allow_redirects=False
-                ) as upstream:
-                    meta = _extract_ratelimit(upstream.headers)
-                    # Throttle / error status: return body as captured, no piping.
-                    if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
-                        status, meta, captured = await _capture_throttle_upstream(upstream, meta)
-                        return status, meta, captured, None
-                    # 2xx: stop the keepalive emitter BEFORE the first body byte
-                    # so it can never interleave a `: keepalive` comment into the
-                    # real SSE frames, then pipe chunks into the prepared sse_resp.
-                    captured = await _pipe_sse_upstream(
-                        request, upstream, sse_resp, cancel_keepalive
-                    )
-                    return upstream.status, meta, captured, None
-            except (TimeoutError, aiohttp.ClientError) as exc:
-                if isinstance(exc, aiohttp.ClientConnectionResetError):
-                    # A reset mid-relay is the client's problem, not a stall to
-                    # report as a local failure: fall through to the outer
-                    # handler, which re-raises it.
-                    raise
-                return -1, None, None, exc
+            with calibration_attempt(permit) as calibration:
+                permit.handoff()
+                try:
+                    async with session.request(
+                        request.method, url, headers=headers, data=body, allow_redirects=False
+                    ) as upstream:
+                        meta = _extract_ratelimit(upstream.headers)
+                        # Throttle / error status: capture, without inventing completion.
+                        if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
+                            status, meta, captured = await _capture_throttle_upstream(
+                                upstream, meta
+                            )
+                            calibration.response(captured, status, upstream.headers, request.path)
+                            return status, meta, captured, None
+                        # The pipe still cancels keepalive BEFORE the first body byte.
+                        captured = await _pipe_sse_upstream(
+                            request, upstream, sse_resp, cancel_keepalive
+                        )
+                        calibration.response(
+                            captured, upstream.status, upstream.headers, request.path
+                        )
+                        return upstream.status, meta, captured, None
+                except (TimeoutError, aiohttp.ClientError) as exc:
+                    calibration.transport_error()
+                    if isinstance(exc, aiohttp.ClientConnectionResetError):
+                        # Client disconnect retains its original exception and policy.
+                        raise
+                    return -1, None, None, exc
 
 
 async def _keepalive_hold_and_retry(
