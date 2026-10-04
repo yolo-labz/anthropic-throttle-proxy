@@ -17,9 +17,13 @@ that evidence stays in the protected lane. Synthetic fixtures only.
 
 from __future__ import annotations
 
+import socket
+import urllib.request
 from types import SimpleNamespace
 
 import aiohttp
+import pytest
+from aiohttp import web
 
 from anthropic_throttle_proxy import fleet_ui_config
 from anthropic_throttle_proxy.ui import routes
@@ -110,8 +114,11 @@ def _seed_bearers(monkeypatch, *bids: str) -> None:
                     "queue_enabled": True,
                     "priority_inflight": 0,
                     "max_concurrent": 2,
+                    "hard_max": 2,
                     "inflight": 0,
                     "queued_total": 0,
+                    "queued_per_client": {},
+                    "retry_after_remaining": 0.0,
                 }
             ),
         )
@@ -234,3 +241,69 @@ async def test_real_call_site_uses_the_existing_local_admission_predicate(monkey
     result = await routes._collect_view()
     assert result["status"]["level"] == "crit"
     assert "refused/disabled" in result["status"]["detail"]
+
+
+def _poison_network(monkeypatch) -> None:
+    """Tripwires for every network primitive the render path could reach.
+
+    Each raises loudly — a dead poison would make the purity pin vacuous, so
+    ``test_render_purity_tripwires_are_live`` proves the wires are live. This
+    is a NEGATIVE property pin: it invents no client success, it only proves
+    the render path cannot reach out (matrix claim X1).
+    """
+
+    def boom(*args, **kwargs):
+        raise AssertionError("render path touched the network")
+
+    async def aboom(*args, **kwargs):
+        raise AssertionError("render path touched the network")
+
+    monkeypatch.setattr(socket, "create_connection", boom)
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", boom)
+    monkeypatch.setattr(aiohttp.ClientSession, "_request", aboom)
+
+
+def test_render_purity_tripwires_are_live(monkeypatch):
+    """RED-capable guard: with the poison in place every primitive must fail
+    loudly. Remove ``_poison_network`` and this test goes red — which is what
+    keeps the render purity pin honest."""
+    _poison_network(monkeypatch)
+    with pytest.raises(AssertionError, match="render path touched the network"):
+        socket.create_connection(("127.0.0.1", 1))
+    with pytest.raises(AssertionError, match="render path touched the network"):
+        urllib.request.urlopen("http://127.0.0.1:1/")
+    with pytest.raises(AssertionError, match="render path touched the network"):
+        urllib.request.OpenerDirector().open("http://127.0.0.1:1/")
+
+
+async def test_render_purity_tripwire_catches_aiohttp(monkeypatch):
+    """The async primitive trips too (kept separate: it needs the loop)."""
+    _poison_network(monkeypatch)
+    with pytest.raises(AssertionError, match="render path touched the network"):
+        await aiohttp.ClientSession._request(SimpleNamespace(), "GET", "http://127.0.0.1:1/")
+
+
+async def test_real_render_call_sites_perform_no_network_io(monkeypatch):
+    """X1 executable pin: the REAL render call sites — the full page
+    (``index``) and the status strip (``stats_partial``) — touch ZERO network
+    primitives. The only allowance is the display's pre-existing collection,
+    faked here exactly as the claim states; everything else in the render
+    path (collection orchestration, jinja rendering, response assembly) runs
+    for real under live tripwires."""
+    _fake_collection(monkeypatch)
+    _seed_bearers(monkeypatch, "07c7ae8a")
+    _poison_network(monkeypatch)
+    app = web.Application()
+    routes.attach_ui(app)
+    request = SimpleNamespace(
+        app=app, config_dict=app, query={}, get=lambda key, default=None: None
+    )
+
+    page = await routes.index(request)
+    assert page.status == 200
+    assert b"<html" in page.body.lower()
+
+    strip = await routes.stats_partial(request)
+    assert strip.status == 200
+    assert b"local proxy view" in strip.body  # the status strip really rendered
