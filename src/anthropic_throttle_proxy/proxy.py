@@ -6212,8 +6212,17 @@ async def admission(_request: web.Request) -> web.Response:
 
     # `capped` means no bearer can serve the next token — the only conclusive
     # stop. The verdict itself lives in `_admission_verdict`.
-    allow = bool(lane_open and serving)
+    allow = bool(lane_open and serving and not _admission_closed)
     state_name, reason = _admission_verdict(allow, bearers, serving, lane_open, lane_detail)
+    if _admission_closed:
+        # Quiesced: this verdict is the authority the routing/ingress/limiter
+        # dispatch layers consult, so closing it blocks NEW requests at request
+        # level (keepalive/pipelined/relayed arrivals) while admitted streams
+        # finish. Distinct state — never inferred from zero counts.
+        state_name, reason = (
+            "quiesced",
+            "admission quiesced (POST /__throttle/quiesce); existing work continues",
+        )
 
     # When nothing can serve, say WHEN — the soonest a paused bearer is due
     # back. A consumer that knows this can wait instead of refusing outright,
@@ -6302,6 +6311,7 @@ async def health(_request: web.Request) -> web.Response:
         # counter here (spec 092 T003).
         "keepalive_holds_active": state["keepalive_holds_active"],
         "admitted_holds": state.get("admitted_holds", 0),
+        "admission_closed": bool(_admission_closed),
         "client_disconnects": state["client_disconnects"],
         "upstream_retries": state["upstream_retries"],
         "max_concurrent": config.MAX_CONCURRENT,
