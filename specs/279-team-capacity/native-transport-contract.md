@@ -42,9 +42,18 @@ Source root: `~/.cache/pi-npx/0.99.1/_npx/78709cf4b2f1011c/node_modules/
   read as forbidding implementation replacement, then **no supported interface
   exists** — the enforcement must stay provider-side (the proxy's local
   admission gate, which already covers all producers).
-- **Placement caveat to verify executably:** whether `transformHeaders` is
-  evaluated inside the per-attempt create call (SDK-internal) or pre-evaluated
-  outside — the falsifier below settles it.
+- **Header placement RESOLVED (independent verification 14:38):**
+  `Models.applyAuth` (438-444) AWAITS `transformHeaders` and then STRIPS it
+  before `provider.stream` — headers are conclusively **once-per-provider
+  call, outside physical retry** (falsifier #5 settled: the per-attempt
+  counter would show 1 per provider call).
+- **THE supported seam for a per-attempt hold is `options.fetch`:**
+  `anthropic-messages.js:379` passes `options.fetch` into `createClient`;
+  `:393` retries `client.beta.messages.create(...)` with SDK `maxRetries: 0`
+  under `retryProviderRequest`. An enforcing fetch-level wrapper rides this
+  seam and gates EVERY physical attempt WITHOUT reimplementing retry/SSE and
+  without changing provider/model/billing IDs — preferred over provider
+  registration.
 
 ## Producer classes / coverage markers (enumeration only)
 
@@ -74,9 +83,10 @@ Every class converges on `modelRuntime.streamSimple` → provider transport →
 4. **Cancel:** (a) abort while held → no physical attempt, no leaked timer;
    (b) abort mid-fetch after gate release → the attempt is counted as physical
    but cancellation propagates cleanly (no false closure claim).
-5. **Header-placement probe:** per-attempt counter in `before_provider_headers`
-   during a 3-attempt run — settles whether transformHeaders is per-attempt or
-   once-per-call in this build.
+5. **Header-placement probe — SETTLED** (14:38): `transformHeaders` is
+   once-per-provider-call (`Models.applyAuth` awaits then strips before
+   `provider.stream`); the counter would read 1 per provider call. The fetch
+   wrapper seam is the correct per-attempt locus.
 6. **Warm/compaction parity:** P3/P4 requests go through the same gate as P1.
 
 ## Accepted reload boundary
