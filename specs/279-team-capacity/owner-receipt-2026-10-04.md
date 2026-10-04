@@ -126,6 +126,36 @@ from GitHub readback).
   (unaccepted) · CLIENT (B unaccepted; C1 receipt + private owner) · 24h
   paired (ABSENT — strict OFF).
 
+## SOURCE-COHERENCE (THROTTLER-1405) at merged head `beca493e` — 04/10 14:1x BRT
+
+**Actual merged order (supersedes earlier plan; no duplicate merges):**
+1. **306** `8acd16183114e2352e3d6ceba276c72231432c64` (head `ff0cae317`) — 2040 tests, 9 green — 13:50
+2. **307** `ee3778aa2e57d1c54797a549cff950855b4b4e34` (head `27b23ef5`) — 2042 tests, 9 green — 14:01
+3. **305** `beca493e8bb23c818c3a725a8ae2153ac1037e1a` (head `766a6027`) — 2045 tests, 9 green, 4 files, 0 threads — 14:05 (portfolio-throttler normal merge)
+
+**Final coherence review at `beca493e` (source-only; hosted evidence read):**
+| Property | Verdict | Evidence |
+|---|---|---|
+| proxy usage sites retain fresh-input accounting + paired-per-attempt collector | **COHERENT** | `history.observe_tokens(out, in_, fresh)` (110-121) carries the fresh subset; `prospective_calibration.py` = "Observe-only numeric pairing; no content exports, ledger access or policy" with duplicate-key-safe parsing (`_unique_object`); 306 paired-per-attempt + 307 fresh additive merged in order 306→307 with tests rising 2040→2042→2045 |
+| total conserved | **COHERENT** | `history.py:67-69` "TOTAL tok_in meaning untouched"; `in_` = fresh + cache reads + cache writes; fresh is the uncached subset — additive only |
+| sibling-unknown preserved | **COHERENT** | `lanes.py:15` "UNKNOWN IS NOT HEALTHY… reports unknown with a reason"; staleness→unknown (174) unchanged by the pair |
+| render no new network | **COHERENT** | PR304's tripwire tests (socket/urllib/aiohttp, root-reviewed on real index/stats_partial call sites) survive all three merges; 305's 4 files did not touch the display tests |
+| real HTTP closure/refusal/control/cancel source-accepted | **COHERENT** | `tests/test_admission_closure_surface.py`: `proxy._admission_closed` state, `test_health_reports_admission_closed_state` publishes `admission_closed` affirmatively; 305 merged clean (0 threads, 2045 green) |
+
+**pJ record (coordinate at natural boundary):** pJ valid MiMo resumed minimal
+coherent additive candidate reconcile/build/normal CI (**no full host build**)
+because the current `a18` package lacks 306/307. Nix2640 current **`89b`**
+native CI pending; necessary functional pin may change head but **no cosmetic
+reset**. pJ used a **forbidden `-f` flag during fixup**; published `4ab`
+ancestor `766` preserved; future ordinary push/no-force corrected at idle
+boundary.
+
+**Other:** Live 6ac unchanged; **all-producer request barrier still needed**
+(Pi native `onPayload`+headers run before SDK retry). Loop p5 busy untouched.
+Client proof/private binding stays OpenAI; pF/pM current Astra finish then Sol
+migration before any new turn. **Strict OFF until real paired 24h.**
+**Notes2220 MERGED `ddc02173`** (lessons; root owns the consolidated note).
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
