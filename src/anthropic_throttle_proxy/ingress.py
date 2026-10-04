@@ -32,7 +32,6 @@ from aiohttp import web
 from prometheus_client import CollectorRegistry, Counter, generate_latest
 
 from . import provider_registry, routing
-from .config import MARKER_HEADER as SIBLING_MARKER_HEADER
 from .prospective_refusal import (
     PROVENANCE_BUDGET_HEADER,
     PROVENANCE_CLASS_HEADER,
@@ -1111,11 +1110,7 @@ async def _send_upstream(
 
 def _queue_timeout_503(upstream: aiohttp.ClientResponse) -> bool:
     """A sibling proxy lane's own queue-wait timeout, stamped on its 503."""
-    return (
-        upstream.status == 503
-        and SIBLING_MARKER_HEADER in upstream.headers
-        and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
-    )
+    return upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
 
 
 def _entitlement_refusal(upstream: aiohttp.ClientResponse) -> bool:
@@ -1128,7 +1123,6 @@ def _entitlement_refusal(upstream: aiohttp.ClientResponse) -> bool:
     """
     return (
         upstream.status == 429
-        and SIBLING_MARKER_HEADER in upstream.headers
         and upstream.headers.get(ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
     )
 
