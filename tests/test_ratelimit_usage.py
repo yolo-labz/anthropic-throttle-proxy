@@ -16,6 +16,10 @@ readout, measured on :8773 04/10/2026).
 
 from __future__ import annotations
 
+import pathlib
+
+import pytest
+
 from anthropic_throttle_proxy import history, proxy
 from anthropic_throttle_proxy.ratelimit import _parse_sse_usage
 from anthropic_throttle_proxy.ui import signals
@@ -115,3 +119,38 @@ def test_record_usage_feeds_conserved_total_through_the_real_chain():
     assert point.tok_out == 95
     gauge = signals.tps_gauge()
     assert gauge.tok_in_now == 88000.0
+
+
+@pytest.mark.parametrize(
+    "shape,prompt,cached,completion",
+    [
+        ("cache-heavy", 880_000, 873_000, 95),  # the live :8773 shape
+        ("fresh-only", 1_000, 0, 7),
+        ("mixed", 120_000, 60_000, 30),
+    ],
+)
+def test_gauge_source_pair_is_truthful_across_usage_shapes(shape, prompt, cached, completion):
+    """Calibration-READY pair proof — no measured calibration claimed here.
+
+    Across representative OpenAI usage shapes the gauge's displayed number
+    and its label describe the SAME counted side, through the real chain
+    parser -> _record_usage -> history -> gauge (proxy.py reserved, unedited):
+    the value is the conserved TOTAL prompt-side rate (input + cache reads +
+    cache writes == prompt_tokens) and the label names exactly that side.
+    No vendor limits and no new gauge meaning are invented.
+    """
+    captured = bytearray(_openai_buf(prompt, cached, completion))
+    proxy._record_usage("synthetic-model", "synthetic-model", captured, "v1/messages")
+    usage = _parse_sse_usage(bytes(captured))
+    counted = usage["input"] + usage["cache_read"] + usage["cache_creation"]
+    assert counted == prompt, shape  # conservation: disjoint kinds, prompt preserved
+    point = history.record(queued=0, inflight=0, cap=1)
+    assert point.tok_in == counted, shape
+    gauge = signals.tps_gauge()
+    assert gauge.tok_in_now == counted / history.RESOLUTION_S, shape
+    # The label names exactly the counted side (total prompt-side incl. cache).
+    template = (
+        pathlib.Path(signals.__file__).parents[1] / "ui" / "templates" / "partials" / "stats.html"
+    ).read_text()
+    assert "in+cache" in template and "cache included" in template
+    assert "· input {{" not in template
