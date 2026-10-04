@@ -238,9 +238,9 @@ class CalibrationAttempt:
         if not 200 <= status < 300:
             self._outcome, self._counts = "upstream_error", None
 
-    def __exit__(self, exc_type, exc, traceback):
+    def __exit__(self, exc_type, exc, traceback) -> None:
         if self._done or not self.sent:
-            return False
+            return
         self._done = True
         if exc_type is not None:
             self._terminal = (
@@ -254,8 +254,7 @@ class CalibrationAttempt:
         except Exception:
             # Instrumentation must not turn a completed response into a retry
             # or mask the original transport/cancellation exception. No payload log.
-            return False
-        return False
+            return
 
     def _record(self):
         M_CALIBRATION_SAMPLES.labels(

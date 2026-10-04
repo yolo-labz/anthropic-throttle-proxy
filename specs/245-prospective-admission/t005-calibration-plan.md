@@ -66,8 +66,15 @@ without altering admission, retry, timeout, response bytes or ledger debt.
   state which correctly does not exist in off; the fixture now drains only observe.
 - Alternate cache-hit/miss partitions must conserve full prompt input and agree
   with cached-token details; conflicting totals and in-band SSE errors never pair.
-- Full tests/quality gates and public PR completion remain pending. No deployed
-  UI or provider-health success is inferred from the synthetic HTTP checks.
+- Published PR #306, head `d1485d0`: hosted full suite **2,040 passed**, 153
+  warnings, 83.74s. All eight non-Sonar checks passed. Public GitHub HTML returned
+  HTTP 200 and the expected title; PR completion remains pending.
+- Sonar exact-head analysis `54ca62d0-6280-4f63-8ab5-791fe6ff4ddd` measured 93.5%
+  new-code coverage, 0% new duplication, one issue: S3516 on the always-false
+  `CalibrationAttempt.__exit__`. Use the void context-exit contract (`None`), which
+  likewise never suppresses exceptions, rather than returning a redundant boolean.
+  Renewed hosted validation is required; no rule suppression or threshold change.
+- No deployed UI or provider-health success is inferred from synthetic HTTP checks.
 - UI/session research remains diagnostic, not a live fix: both previously sampled
   static CSS endpoints returned the same bytes; no existing browser session was
   inspected. Local bearer status and subscription capacity are separate scopes.
