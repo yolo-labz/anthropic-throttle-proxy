@@ -32,7 +32,15 @@ from aiohttp import web
 from prometheus_client import CollectorRegistry, Counter, generate_latest
 
 from . import provider_registry, routing
-from .prospective_refusal import local_refusal_response, strip_incoming_provenance
+from .config import MARKER_HEADER as SIBLING_MARKER_HEADER
+from .prospective_refusal import (
+    PROVENANCE_BUDGET_HEADER,
+    PROVENANCE_CLASS_HEADER,
+    PROVENANCE_REASON_HEADER,
+    PROVENANCE_SOURCE_HEADER,
+    local_refusal_response,
+    strip_incoming_provenance,
+)
 from .routing import (
     Lane,
     LaneState,
@@ -375,6 +383,18 @@ _INGRESS_ONLY_HEADERS: Final[frozenset[str]] = frozenset(
 # a lane/provider cannot forge the receipt; the ingress authors the truth.
 _RESERVED_CREDENTIAL_RESPONSE_HEADERS: Final[frozenset[str]] = frozenset(
     {CREDENTIAL_MODE_HEADER, CREDENTIAL_MODE_REASON_HEADER}
+)
+# Local refusal provenance is authored by this fleet's proxy tiers, never by a
+# lane/provider (audit 04/10): strip from ANY upstream response so a raw
+# upstream can never present its refusal as a locally-minted verdict.
+# Same truth-authoring rule as the credential headers above.
+_RESERVED_LOCAL_PROVENANCE_HEADERS: Final[frozenset[str]] = frozenset(
+    {
+        PROVENANCE_SOURCE_HEADER,
+        PROVENANCE_CLASS_HEADER,
+        PROVENANCE_BUDGET_HEADER,
+        PROVENANCE_REASON_HEADER,
+    }
 )
 
 
@@ -1091,7 +1111,11 @@ async def _send_upstream(
 
 def _queue_timeout_503(upstream: aiohttp.ClientResponse) -> bool:
     """A sibling proxy lane's own queue-wait timeout, stamped on its 503."""
-    return upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
+    return (
+        upstream.status == 503
+        and SIBLING_MARKER_HEADER in upstream.headers
+        and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
+    )
 
 
 def _entitlement_refusal(upstream: aiohttp.ClientResponse) -> bool:
@@ -1104,6 +1128,7 @@ def _entitlement_refusal(upstream: aiohttp.ClientResponse) -> bool:
     """
     return (
         upstream.status == 429
+        and SIBLING_MARKER_HEADER in upstream.headers
         and upstream.headers.get(ENTITLEMENT_REFUSAL_HEADER, "").strip() == "1"
     )
 
@@ -1245,6 +1270,7 @@ async def _relay_response(
             for k, v in upstream.headers.items()
             if k.lower() not in _HOP_BY_HOP
             and k.lower() not in _RESERVED_CREDENTIAL_RESPONSE_HEADERS
+            and k.lower() not in _RESERVED_LOCAL_PROVENANCE_HEADERS
         }
         if _prospective_bridge().get_runtime(request).mode != "off":
             out_headers = strip_incoming_provenance(out_headers)

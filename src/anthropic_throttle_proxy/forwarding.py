@@ -20,7 +20,13 @@ from . import config, prospective_runtime
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
-from .prospective_refusal import strip_incoming_provenance
+from .prospective_refusal import (
+    PROVENANCE_BUDGET_HEADER,
+    PROVENANCE_CLASS_HEADER,
+    PROVENANCE_REASON_HEADER,
+    PROVENANCE_SOURCE_HEADER,
+    strip_incoming_provenance,
+)
 from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
 from .routing import fit_chat_completions_body, normalize_text_content_blocks
 
@@ -293,6 +299,34 @@ def note_upstream_auth(status: int, body: bytes | None = None) -> None:
         config.state["upstream_auth_last_check"] = time.time()
 
 
+def _untrusted_response_drop_headers(upstream_headers) -> set[str]:
+    """Header names to strip from a RAW upstream response before relaying.
+
+    Only a sibling proxy tier (marker-stamped) may assert the queue-timeout
+    contract, the entitlement verdict, or LOCAL refusal provenance. A raw
+    upstream 429/503 carrying those headers verbatim would (a) exempt REAL
+    pushback from pushback-retry and AIMD shrink (Codex MAJOR on PR #83), (b)
+    forge an entitlement verdict (Codex second pass, blocking finding 2 — with
+    local→central account routing the SIBLING's verdict is authoritative and a
+    raw upstream cannot have one), and (c) present its own refusal as a
+    locally-minted prospective verdict (audit 04/10). A double-spoof (marker +
+    stamp) is the same accepted trust boundary as the PR #81 marker itself.
+    """
+    drop = set(config.HOP_HEADERS)
+    if config.MARKER_HEADER not in upstream_headers:
+        drop |= {
+            config.QUEUE_TIMEOUT_HEADER,
+            config.ENTITLEMENT_REFUSAL_HEADER,
+        }
+        drop |= {
+            PROVENANCE_SOURCE_HEADER,
+            PROVENANCE_CLASS_HEADER,
+            PROVENANCE_BUDGET_HEADER,
+            PROVENANCE_REASON_HEADER,
+        }
+    return drop
+
+
 async def _stream_response(request: web.Request, upstream: aiohttp.ClientResponse) -> ForwardResult:
     """Stream an open upstream response back to the client, capturing usage.
 
@@ -300,27 +334,7 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     ``usage`` block after the client finishes reading — the usage block lives
     in the final few KB of any claude response, even for long generations.
     """
-    drop_headers = config.HOP_HEADERS
-    if config.MARKER_HEADER not in upstream.headers:
-        # Only a sibling proxy tier (marker-stamped) may assert the
-        # queue-timeout contract. A raw upstream 429/503 carrying the header
-        # verbatim would exempt REAL pushback from pushback-retry and AIMD
-        # shrink (Codex MAJOR on PR #83). A double-spoof (marker + stamp) is
-        # the same accepted trust boundary as the PR #81 marker itself.
-        #
-        # The entitlement stamp rides the SAME boundary, and for a sharper
-        # reason (Codex second pass, blocking finding 2): with local→central
-        # account routing, CENTRAL chose the account that actually reached
-        # Anthropic, so central's bearer, cache, and unified windows are the
-        # authoritative evidence. The local tier's `bearer_state` may be keyed
-        # to a different account entirely, so re-deriving locally could label a
-        # genuine budget 429 as an entitlement refusal (skipping a shrink the
-        # walled account needs) or the reverse. Relay a sibling tier's verdict;
-        # strip and re-derive only for a RAW upstream, which cannot have one.
-        drop_headers = config.HOP_HEADERS | {
-            config.QUEUE_TIMEOUT_HEADER,
-            config.ENTITLEMENT_REFUSAL_HEADER,
-        }
+    drop_headers = _untrusted_response_drop_headers(upstream.headers)
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
     if prospective_runtime.get_runtime(request).mode != "off":
         # Enabled strict supports direct transport only. No upstream header,
