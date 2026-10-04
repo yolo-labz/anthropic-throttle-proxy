@@ -45,15 +45,12 @@ def test_ingress_predicates_trust_configured_lane_stamps():
     # without a marker. Pinned here so nobody re-applies the raw-upstream
     # marker rule to the lane predicates (raw providers never reach ingress).
 
-
     class _Upstream:
         def __init__(self, status, headers):
             self.status = status
             self.headers = headers
 
-    assert ingress._queue_timeout_503(
-        _Upstream(503, {"x-anthropic-throttle-queue-timeout": "1"})
-    )
+    assert ingress._queue_timeout_503(_Upstream(503, {"x-anthropic-throttle-queue-timeout": "1"}))
     assert ingress._entitlement_refusal(
         _Upstream(429, {"x-anthropic-throttle-oauth-entitlement": "1"})
     )
