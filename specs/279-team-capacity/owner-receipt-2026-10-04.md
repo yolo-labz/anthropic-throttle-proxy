@@ -181,6 +181,38 @@ migration before any new turn. **Strict OFF until real paired 24h.**
   `native-transport-contract.md`) must be confirmed against the loaded runtime.
   Source rehearsal alone authorizes NO live-gate/client/24h claim.
 
+## 309 REHEARSAL MERGED + CONCRETE DEFECTS (1505) — 04/10 15:0x
+
+- **PR309** `d47da000` -> MERGED `bdd918bc` (9 green, verified). **Inert source
+  remains NOT live-barrier-accepted.** Independent source-check 732992 at `d47`
+  found three concrete defects (mechanism acceptance WITHHELD until fixed):
+  1. **held/reheld microtask race** — `gate.hold(); call=gate.fetch();
+     gate.resume(); gate.hold(); await call` => `gateHeld=true`,
+     `innerFetchCalls=1`, OS exit 31: `gatedFetch` never rechecks `held` after
+     its wait resolves; the call proceeds while re-held.
+  2. **Named retry is not physical retry** — the rehearsal calls
+     `client.beta.messages.create(...,{maxRetries:0})` twice separately; real
+     same-call physical retry must run through the builtin Pi 0.99.1
+     `retryProviderRequest` (SDK maxRetries 0) against synthetic loopback:
+     first 500 allowed -> close gate before the actual native retry -> zero
+     second wire dispatch until resume -> retry completes.
+  3. **AbortSignal listener leak** — resumed waiters never remove the listener;
+     cleanup needed for both held and resumed paths.
+- **Fix assigned to pK** (fresh done/blank boundary): worktree
+  **310-gatedfetch-race-fix** (base `bdd918b`, nonoverlapping). Scope: the 3
+  defects + deterministic resume/immediate-rehold negative regression +
+  aborted held/resumed waiter cleanup + existing slowbody/SSE/resume checks +
+  failure-exit proof without vacuous forced-throw acceptance. Preserve
+  admitted SSE + cancellation; never change IDs/billing/provider registry/
+  live loader; no retry/SSE reimplementation. Normal exact-head PR (tests+
+  hooks+CI+review+merge). **Mechanism acceptance withheld until these pass.**
+- **pJ:** Nix2640 head **`89d5`** pending native CI; installed HTTP **5/5 +
+  fault3 accepted**; no duplicate runtime edits from this seat.
+- **LoopConductor loader/all-producer census:** busy, untouched.
+- **Publication note:** subsequent 279-doc commits are the published
+  coordination feature branch — NOT new normal-PR acceptance. Canonical domain
+  note **2245** owns lesson delivery.
+
 **Source vs live vs client — verified statement:**
 - **SOURCE: ACCEPTED** — PR299/301/302/303/304 landed with executed targeted tests + hosted CI; gauge chain conservation real (PR299) + label truthful (PR302) + display contract (PR301) + named client requirements (PR303) + render purity pinned (PR304).
 - **LIVE: UNACCEPTED** — no provider/runtime claim made by this seat.
