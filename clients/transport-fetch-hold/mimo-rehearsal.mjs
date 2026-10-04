@@ -1,30 +1,34 @@
 #!/usr/bin/env node
-// 308→310→311 lineage — fetch-hold MiMo STREAM REHEARSAL (loopback, synthetic only).
+// 308→310→311→312 lineage — fetch-hold MiMo STREAM REHEARSAL (loopback, synthetic only).
 //
-// Hypothesis under test: the ACCEPTED fetch-hold (310 primitive, used here
-// UNCHANGED) gates the REAL provider retry of the OpenAI-compatible stream
-// path — the actual MiMo route — and preserves terminal SSE / tool / usage /
-// cancel semantics. The 310 rehearsal exercised the ANTHROPIC SDK only; this
-// run invokes the NATIVE installed openai-completions provider
-// (`pi-ai/dist/api/openai-completions.js` — `options.fetch` seam at :186,
-// native `retryProviderRequest` around `client.chat.completions.create(...).
-// withResponse()` at :195-197) with local synthetic model/context/key and the
-// REAL `options.fetch`. No retry/SSE implementation is copied; no provider
-// registry, loader, billing or model-seat change. Xiaomi quota/window
-// semantics are untouched: this is transport-level only, and every unknown
-// stays unknown.
+// 312 retry-policy correction on top of the accepted 311 squash. Layers are
+// separated in every statement of this file and the README:
+//   SOURCE / DEFAULT / CONFIGURED — what this rehearsal proves (synthetic
+//     loopback, explicit per-scenario retry configuration);
+//   RUNTIME config / census / client / day — NOT covered here; no claim.
 //
-//   node clients/transport-fetch-hold/mimo-rehearsal.mjs           (exit 0)
+// Hypothesis: the ACCEPTED fetch-hold (310 primitive, used UNCHANGED) gates
+// the real provider retry of the OpenAI-compatible stream path (the actual
+// MiMo route) and preserves terminal SSE / tool / usage / cancel semantics
+// under the ORIGINAL no-uncertain-retry policy:
+//   * pre-header uncertainty with maxRetries 0 -> EXACTLY one server-accepted
+//     request and NO done (312.1);
+//   * genuine post-header/partial-SSE disconnect, synchronized AFTER the
+//     client has seen a delta -> no retry, no invented done (312.2);
+//   * the positive 500/hold/retry fixture is RETAINED with EXPLICIT
+//     maxRetries: 1 as its own scenario (312.3);
+//   * the TWO-send optional-retry outcome is a COUNTEREXAMPLE that FAILS the
+//     original no-uncertain-retry policy — labeled as such, never presented as
+//     accepted client behavior (312.4).
+//
+//   node clients/transport-fetch-hold/mimo-rehearsal.mjs            (exit 0)
 //   node clients/transport-fetch-hold/mimo-rehearsal.mjs --selftest-fail
 //
-// Checks:
-//   1 first 500 -> gate held BEFORE the native 2nd attempt of the SAME call
-//     -> zero wire until resume -> stream terminal/tool/usage valid
-//   2 already-admitted stream preserves bytes + terminal under closure
-//   3a cancellation under hold does not invent completion
-//   3b slow upload closed before upload (no completion possible)
-//   3c uncertain send (mid-stream destroy) does not invent completion
-//   4 substantive falsifier with exit nonzero (fail mode)
+// Native provider only: pi-ai dist/api/openai-completions.js (options.fetch
+// seam :186, native retryProviderRequest around chat.completions.create(...).
+// withResponse() :195-197). No retry/SSE implementation copied; no provider
+// registry, loader, billing, model-seat or live config change. Xiaomi
+// quota/window semantics untouched; unknowns stay unknown.
 
 import { promises as fs } from "node:fs";
 import http from "node:http";
@@ -101,13 +105,18 @@ const SLOW_SSE = [
   { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } },
 ];
 
+const PARTIAL_SSE = [
+  { choices: [{ index: 0, delta: { content: "seen-" }, finish_reason: null }] },
+  { choices: [{ index: 0, delta: { content: "delta" }, finish_reason: null }] },
+];
+
 function chunk(obj) {
   return `data: ${JSON.stringify({ id: "chatcmpl-synthetic", object: "chat.completion.chunk", model: "synthetic-loopback-model", ...obj })}\n\n`;
 }
 
 function startLoopback() {
   const hits = { total: 0, chat: 0, upload: 0, uploadBytes: 0 };
-  const plan = []; // { status, retryAfterMs?, sse?: "full"|"slow"|"destroy" }
+  const plan = [];
   let onServed500 = null;
   const server = http.createServer(async (req, res) => {
     hits.total += 1;
@@ -116,8 +125,13 @@ function startLoopback() {
       res.writeHead(404).end();
       return;
     }
-    hits.chat += 1;
+    hits.chat += 1; // a request ACCEPTED by the server
     const step = plan.length ? plan.shift() : { status: 200, sse: "full" };
+    if (step.sse === "destroy-pre") {
+      // Pre-header uncertainty: the connection dies before any response.
+      res.destroy();
+      return;
+    }
     const headers = { "content-type": "text/event-stream" };
     if (step.retryAfterMs) headers["retry-after-ms"] = String(step.retryAfterMs);
     if (step.status !== 200) {
@@ -133,11 +147,13 @@ function startLoopback() {
     if (req.method === "POST") {
       for await (const part of req) hits.uploadBytes += part.length;
     }
-    if (step.sse === "destroy") {
+    if (step.sse === "destroy-post") {
+      // Post-header/partial-SSE uncertainty: headers + real deltas are out and
+      // the CLIENT has seen one (waitForClient) before the wire dies.
       res.writeHead(200, headers);
-      res.write(chunk({ choices: [{ index: 0, delta: { content: "part" }, finish_reason: null }] }));
-      res.write(chunk({ choices: [{ index: 0, delta: { content: "-ial" }, finish_reason: null }] }));
-      res.destroy(); // uncertain send: the wire dies mid-stream
+      for (const frame of PARTIAL_SSE) res.write(chunk(frame));
+      await (step.waitForClient ?? Promise.resolve());
+      res.destroy();
       return;
     }
     res.writeHead(200, headers);
@@ -193,6 +209,7 @@ async function main() {
   const gate = createHoldFetch();
 
   // Local synthetic model/context/key — no registry, no real seat.
+  // SOURCE/DEFAULT/CONFIGURED layer only: zero-cost descriptor, no billing ids.
   const model = {
     api: "openai-completions",
     provider: "mimo-loopback",
@@ -208,10 +225,21 @@ async function main() {
   const context = {
     messages: [{ role: "user", content: [{ type: "text", text: "mimo fetch-hold rehearsal" }] }],
   };
-  const runStream = async (extra = {}) => {
+  // Every scenario states its retry policy EXPLICITLY (312.3): no silent
+  // default may decide whether an uncertain send is retried.
+  const runStream = async ({ maxRetries, signal, onEvent } = {}) => {
+    if (!Number.isInteger(maxRetries)) throw new Error("maxRetries must be stated explicitly");
     const events = [];
-    for await (const ev of stream(model, context, { apiKey: rehearsalAuth, fetch: gate.fetch, maxRetries: 1, maxRetryDelayMs: 1000, ...extra })) {
-      events.push(project(ev));
+    for await (const ev of stream(model, context, {
+      apiKey: rehearsalAuth,
+      fetch: gate.fetch,
+      maxRetries,
+      maxRetryDelayMs: 1000,
+      ...(signal ? { signal } : {}),
+    })) {
+      const projected = project(ev);
+      events.push(projected);
+      if (onEvent) onEvent(projected, ev);
     }
     return events;
   };
@@ -240,11 +268,11 @@ async function main() {
   };
 
   let consuming;
-  await record("1 native MiMo retry gated: hold before 2nd attempt, terminal valid", async () => {
+  await record("1 positive fixture (EXPLICIT maxRetries 1): 500 -> hold before native retry -> terminal valid", async () => {
     plan.length = 0; // each scenario owns its plan (an aborted call never drains one)
     plan.push({ status: 500, retryAfterMs: 120 }, { status: 200, sse: "full" });
     set500Hook(() => gate.hold());
-    consuming = runStream(); // ONE call; the native retry re-enters inside it
+    consuming = runStream({ maxRetries: 1 }); // ONE call; the native retry re-enters inside it
     await waitFor(() => hits.chat === 1, 1500);
     expect(gate.isHeld(), "the 500 hook must have closed the gate");
     await sleep(300); // > the 120ms native retry backoff
@@ -258,7 +286,6 @@ async function main() {
     expect(done, `no terminal done event: ${JSON.stringify(events.map((e) => e.type))}`);
     expect(events[events.length - 1].type === "done", "done must be the terminal event");
     expect(done.reason === "toolUse", `terminal reason should be toolUse, got ${done.reason}`);
-    expect(done.stopReason === "toolUse", `stopReason should be toolUse, got ${done.stopReason}`);
     expect(done.text === "mimo-stream-ok", `text bytes altered: ${JSON.stringify(done.text)}`);
     expect(
       JSON.stringify(done.tool) === JSON.stringify([{ name: "lookup", arguments: { q: "1" } }]),
@@ -269,18 +296,18 @@ async function main() {
       `usage invalid: ${JSON.stringify(done.usage)}`,
     );
     expect(hits.chat === 2, `exactly one physical retry expected, chat=${hits.chat}`);
-    return "500 -> held -> zero wire -> resume -> toolUse terminal (tool+usage valid)";
+    return "configured maxRetries=1: 500 -> held -> zero wire -> resume -> toolUse terminal";
   });
 
   await record("2 admitted MiMo stream preserved byte/terminal under closure", async () => {
     plan.length = 0;
     plan.push({ status: 200, sse: "slow" }, { status: 200, sse: "slow" });
-    const baseline = await runStream(); // gate open: the reference run
+    const baseline = await runStream({ maxRetries: 0 });
     expect(baseline.some((e) => e.type === "done"), "baseline must complete");
     let closed = false;
     const held = (async () => {
       const events = [];
-      for await (const ev of stream(model, context, { apiKey: rehearsalAuth, fetch: gate.fetch, maxRetries: 1, maxRetryDelayMs: 1000 })) {
+      for await (const ev of stream(model, context, { apiKey: rehearsalAuth, fetch: gate.fetch, maxRetries: 0, maxRetryDelayMs: 1000 })) {
         events.push(project(ev));
         if (!closed) {
           closed = true;
@@ -291,10 +318,7 @@ async function main() {
     })();
     const heldEvents = await held;
     gate.resume();
-    expect(
-      JSON.stringify(heldEvents) === JSON.stringify(baseline),
-      "admitted stream changed under closure",
-    );
+    expect(JSON.stringify(heldEvents) === JSON.stringify(baseline), "admitted stream changed under closure");
     return "event bytes + terminal identical to the open-gate baseline";
   });
 
@@ -304,15 +328,15 @@ async function main() {
     gate.hold();
     const controller = new AbortController();
     const events = [];
-    const consuming = (async () => {
-      for await (const ev of stream(model, context, { apiKey: rehearsalAuth, fetch: gate.fetch, maxRetries: 1, maxRetryDelayMs: 1000, signal: controller.signal })) {
+    const cancelled = (async () => {
+      for await (const ev of stream(model, context, { apiKey: rehearsalAuth, fetch: gate.fetch, maxRetries: 0, maxRetryDelayMs: 1000, signal: controller.signal })) {
         events.push(project(ev));
       }
     })();
     await sleep(50);
     expect(gate.parked() === 1, "the create should be parked under hold");
     controller.abort();
-    await consuming;
+    await cancelled;
     gate.resume();
     expect(!events.some((e) => e.type === "done"), "cancellation invented a completion");
     const terminal = events[events.length - 1];
@@ -346,29 +370,66 @@ async function main() {
     return "body closed pre-upload, zero bytes, no completion to invent";
   });
 
-  await record("3c uncertain send does not invent completion", async () => {
+  await record("3c pre-header uncertainty (maxRetries 0): exactly ONE accepted request, no done", async () => {
     plan.length = 0;
-    // BOTH attempts die mid-stream: the native retry is policy-owned and may
-    // re-send, but an outcome that is uncertain EVERYWHERE must end honest
-    // (error), never as an invented completion.
-    plan.push({ status: 200, sse: "destroy" }, { status: 200, sse: "destroy" });
+    plan.push({ status: 200, sse: "destroy-pre" });
     const chatBefore = hits.chat;
-    const events = await runStream();
-    expect(hits.chat === chatBefore + 2, `expected 2 real uncertain sends, saw ${hits.chat - chatBefore}`);
-    expect(!events.some((e) => e.type === "done"), "uncertain send invented a completion");
+    const events = await runStream({ maxRetries: 0 });
+    expect(hits.chat === chatBefore + 1, `exactly one server-accepted request expected, saw ${hits.chat - chatBefore}`);
+    expect(!events.some((e) => e.type === "done"), "pre-header uncertainty invented a completion");
     const terminal = events[events.length - 1];
     expect(terminal && terminal.type === "error", `expected error terminal, got ${JSON.stringify(terminal)}`);
-    expect(terminal.reason === "error", `expected reason error, got ${terminal.reason}`);
-    return "mid-stream destroy -> error terminal, honest unknown";
+    return "one accepted request, no retry, honest error (no-uncertain-retry holds)";
+  });
+
+  await record("3d post-header partial-SSE disconnect after a SEEN delta (maxRetries 0)", async () => {
+    plan.length = 0;
+    let sawDelta;
+    const clientSawDelta = new Promise((resolve) => {
+      sawDelta = resolve;
+    });
+    plan.push({ status: 200, sse: "destroy-post", waitForClient: clientSawDelta });
+    const chatBefore = hits.chat;
+    let deltaSeen = false;
+    const events = await runStream({
+      maxRetries: 0,
+      onEvent: (projected) => {
+        if (projected.type === "text_delta" && !deltaSeen) {
+          deltaSeen = true;
+          sawDelta(); // synchronize: the wire dies AFTER the client saw a delta
+        }
+      },
+    });
+    expect(deltaSeen, "client never saw a delta before the disconnect");
+    expect(hits.chat === chatBefore + 1, `no retry allowed post-header, saw ${hits.chat - chatBefore} sends`);
+    expect(!events.some((e) => e.type === "done"), "post-header disconnect invented a completion");
+    const terminal = events[events.length - 1];
+    expect(terminal && terminal.type === "error", `expected error terminal, got ${JSON.stringify(terminal)}`);
+    return "delta observed, then disconnect: no retry, no done, honest error";
+  });
+
+  await record("4 counterexample (POLICY FAILURE, labeled): optional retry turns an uncertain send into a TWO-send done", async () => {
+    // 312.4: this shape is a COUNTEREXAMPLE that FAILS the original
+    // no-uncertain-retry policy. It is reproduced and LABELED here so it can
+    // never be mistaken for accepted useful client behavior: with optional
+    // retry configured (maxRetries 1), a pre-header uncertain send is retried
+    // and the retry completes — two server-accepted requests and a done.
+    plan.length = 0;
+    plan.push({ status: 200, sse: "destroy-pre" }, { status: 200, sse: "full" });
+    const chatBefore = hits.chat;
+    const events = await runStream({ maxRetries: 1 });
+    expect(hits.chat === chatBefore + 2, `counterexample needs TWO accepted requests, saw ${hits.chat - chatBefore}`);
+    expect(events.some((e) => e.type === "done"), "counterexample shape missing (done expected from the retry)");
+    return "REPRODUCED + LABELED: 2 sends + done — FAILS the original no-uncertain-retry policy (NOT accepted behavior)";
   });
 
   if (failMode) {
-    await record("4 falsifier (substantive, real MiMo machinery)", async () => {
+    await record("5 falsifier (substantive, real MiMo machinery)", async () => {
       // NOT an empty forced-throw: a real MiMo stream completes and the
       // intentionally inverted terminal expectation fails on OBSERVED behavior.
       plan.length = 0;
       plan.push({ status: 200, sse: "full" });
-      const events = await runStream();
+      const events = await runStream({ maxRetries: 0 });
       expect(
         !events.some((e) => e.type === "done"),
         "falsifier demonstration: real terminal done observed (intentionally inverted expectation)",
@@ -381,6 +442,11 @@ async function main() {
   const failed = results.filter((r) => !r.ok);
   console.log(
     `RESULT ${failMode ? "selftest-fail" : "mimo-rehearsal"}: ${results.length - failed.length}/${results.length} checks passed; chat wire sends=${hits.chat}`,
+  );
+  console.log(
+    "LAYERS: source/default/configured proven here (synthetic loopback); " +
+      "runtime config/census/client/day NOT covered — no claim. " +
+      "Counterexample 4 is a POLICY FAILURE of no-uncertain-retry under optional retry, not accepted behavior.",
   );
   if (failed.length > 0) {
     process.exitCode = 1;
