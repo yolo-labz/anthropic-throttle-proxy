@@ -123,6 +123,24 @@ def test_text_token_meets_wcag_aa_on_every_surface(token: str, surface: str):
     )
 
 
+def test_throughput_caption_contrast_on_its_panel() -> None:
+    """Gate the real caption/surface pair, not only the palette's text-token list."""
+    css = _CSS.read_text(encoding="utf-8")
+    tokens = []
+    for selector, property_name in ((".tps-foot", "color"), (".tps-panel", "background")):
+        rule = re.search(rf"(?m)^\s*{re.escape(selector)}\s*\{{([^}}]*)\}}", css, re.S)
+        assert rule, f"missing gauge rule: {selector}"
+        value = re.search(rf"\b{property_name}\s*:\s*var\((--[\w-]+)\)", rule.group(1))
+        assert value, f"{selector} must declare a token-based {property_name}"
+        tokens.append(value.group(1))
+    decls = _declarations()
+    foreground, background = (_resolve(token, decls) for token in tokens)
+    ratio = contrast_ratio(foreground, background)
+    assert ratio >= AA_NORMAL_TEXT, (
+        f".tps-foot on .tps-panel: {ratio:.4f}:1 < {AA_NORMAL_TEXT}:1 ({tokens[0]} on {tokens[1]})"
+    )
+
+
 def _composite(top: str, alpha: float, backdrop: str) -> str:
     """Flatten ``color-mix(in srgb, top alpha%, transparent)`` over a backdrop.
 

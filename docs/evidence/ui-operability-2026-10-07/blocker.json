@@ -1,0 +1,24 @@
+{
+  "scope": "Preparation and read-only evidence only; no frontend implementation or live acceptance",
+  "recorded_local": "07/10/2026 17:48 BRT",
+  "base": "66ad9dc9df82887bccc90572ae0d84dadf5df5fe",
+  "gauge_pr": {"number": 316, "state": "MERGED"},
+  "impeccable": {
+    "skill_version": "4.5.0",
+    "engine_probe": "impeccable-engine 0.1.11",
+    "engine_sha256": "0221607e1f535af937ea267c347b1f90233b85dc2563cbd2eeefdf42e0e5c594",
+    "context_runs": 1,
+    "detect": "Not run: no frontend edits; required once after implementation"
+  },
+  "admission_attempts": [
+    {"command": "uv sync --frozen --group delivery", "exit": 75, "result": "pressure-high; cause=io; memory-full=0c; io-full=1190c"},
+    {"command": "uv sync --frozen --group delivery", "exit": 1, "result": "Unit desktop-job-slot.service was already loaded or has a fragment file"},
+    {"command": "uv sync --frozen --group delivery && check_source_navigation.py --phase before", "exit": 75, "result": "pressure-high; cause=io; memory-full=0c; io-full=1096c"}
+  ],
+  "desktop_pressure": {"io_full_avg10_percent": 10.96, "memory_full_avg10_percent": 0.0},
+  "server_inventory_only": {"io_full_avg10_percent": 8.32, "heavy_execution": false},
+  "browser": "Not executed; no screenshots generated",
+  "tests_lint": "Not executed",
+  "pr": "Not created",
+  "deployment": "Not attempted; outside frontend ownership"
+}
