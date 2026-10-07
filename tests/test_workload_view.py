@@ -1,6 +1,5 @@
 """The dashboard must not substitute its disabled primary for a busy sibling."""
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -26,13 +25,11 @@ def workload(monkeypatch):
             }
         ),
     }
-    monkeypatch.setattr(
-        routes._accounts, "refresh_endpoint", lambda now: asyncio.sleep(0, result={})
-    )
+    monkeypatch.setattr(routes._accounts, "_endpoint_cache", {})
     monkeypatch.setattr(routes._accounts, "account_view", lambda *args: [])
     monkeypatch.setattr(routes, "_publish_account_gauges", lambda *args: None)
-    monkeypatch.setattr(routes._fleet, "refresh", lambda now: asyncio.sleep(0, result=[row]))
-    monkeypatch.setattr(routes._copilot, "refresh", lambda now: asyncio.sleep(0, result=[]))
+    monkeypatch.setattr(routes, "_cached_fleet", lambda now: [row])
+    monkeypatch.setattr(routes, "_cached_copilot", lambda now: [])
     monkeypatch.setattr(routes._lanes, "view", lambda now: {"lanes": [], "registry": []})
     monkeypatch.setattr(
         fleet_ui_config,

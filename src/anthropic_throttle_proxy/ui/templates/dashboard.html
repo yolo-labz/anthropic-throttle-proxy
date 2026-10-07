@@ -43,7 +43,17 @@
      (CLAUDE.md invariant 6). The paragraph that used to sit here explained
      the mechanism to an operator who had come here to read a number. #}
   <main>
-    <section id="stats" hx-get="/ui/stats" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML"
+    {% if workload_choices | default([]) %}
+    <nav class="workload-picker" aria-label="Throughput source (display only)">
+      <span>Throughput source:</span>
+      <a href="/ui?source=local"{% if not workload_label | default('') %} aria-current="page"{% endif %}>local</a>
+      {% for name in workload_choices %}
+      <a href="/ui?source={{ name | urlencode }}"{% if workload_label | default('') == name %} aria-current="page"{% endif %}>{{ name }}</a>
+      {% endfor %}
+      <span class="muted">display only · not inference routing</span>
+    </nav>
+    {% endif %}
+    <section id="stats" hx-get="/ui/stats{% if source_choice | default(none) is not none %}?source={{ source_choice | urlencode }}{% endif %}" hx-trigger="load, every 2s" hx-target="#stats" hx-swap="innerHTML"
              hx-vals='{{ {"rev": asset_v,
                           "local": "true" if show_local | default(true) else "false",
                           "workload": workload_label | default("")} | tojson }}'>

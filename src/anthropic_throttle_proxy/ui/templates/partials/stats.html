@@ -104,7 +104,7 @@
 <section class="tps-panel" aria-label="Output tokens per second over the last minute">
   <div class="tps-dial" data-seen="{{ 'true' if tps.seen else 'false' }}">
     <svg class="tps-arc" viewBox="0 0 220 120" role="img"
-         aria-label="{% if tps.seen %}Output {{ '%.0f'|format(tps.value) }} tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, hourly peak {{ '%.0f'|format(tps.peak) }}{% else %}Output throughput not yet measured{% endif %}">
+         aria-label="{% if tps.seen %}{{ '%.0f'|format(tps.value) }} output tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, peak 10-second bucket {{ '%.0f'|format(tps.peak) }}{% elif tps.stale %}Output throughput unknown: sample stale{% else %}Output throughput unknown: not yet measured{% endif %}">
       <defs>
         <linearGradient id="tps-fill" x1="0" y1="0" x2="1" y2="0">
           <stop class="tps-stop-a" offset="0" />
@@ -113,16 +113,19 @@
       </defs>
       {# Background sweep #}
       <path class="tps-track" d="M 20 108 A 90 90 0 0 1 200 108" />
-      {# Value sweep — dasharray does the proportional fill (no JS) #}
+      {# No rounded zero-length arc for unknown data: it draws a zero-like dot. #}
+      {% if tps.seen %}
       <path class="tps-value" d="M 20 108 A 90 90 0 0 1 200 108"
             stroke-dasharray="{{ '%.1f'|format(tps.frac * tps.arc_len) }} {{ '%.1f'|format(tps.arc_len + 2) }}" />
+      {% endif %}
       {# Ticks at 0 / 25 / 50 / 75 / 100 % #}
       {% for t in tps.ticks %}
       <line class="tps-tick" x1="{{ t[0] }}" y1="{{ t[1] }}" x2="{{ t[2] }}" y2="{{ t[3] }}" />
       {% endfor %}
-      {# Peak marker — where the hour's best minute sits on the same arc #}
+      {% if tps.seen %}
       <line class="tps-peak" x1="{{ tps.peak_marker[0] }}" y1="{{ tps.peak_marker[1] }}"
             x2="{{ tps.peak_marker[2] }}" y2="{{ tps.peak_marker[3] }}" />
+      {% endif %}
     </svg>
     <div class="tps-readout">
       <span class="tps-num">{{ '%.0f'|format(tps.value) if tps.seen else '—' }}</span>
@@ -132,14 +135,17 @@
   <div class="tps-side">
     <span class="gauge-label">{{ workload_label | default('local') }} output throughput</span>
     <div class="gauge-row">
-      <span class="tps-detail">last {{ '%.0f'|format(tps.window_s) }}s · peak <b>{{ '%.0f'|format(tps.peak) }}</b> · scale {{ '%.0f'|format(tps.scale) }}</span>
+      {% if tps.seen %}
+      <span class="tps-detail">last {{ '%.0f'|format(tps.window_s) }}s · 10s peak <b>{{ '%.0f'|format(tps.peak) }}</b> · scale {{ '%.0f'|format(tps.scale) }} tokens/s</span>
       <svg class="spark" viewBox="0 0 {{ tps.spark.width }} {{ tps.spark.height }}" preserveAspectRatio="none" role="img"
-           aria-label="Tokens per second over the last hour, peak {{ '%.0f'|format(tps.spark.peak) }}">
+           aria-label="Accounted output tokens per second history, peak {{ '%.0f'|format(tps.spark.peak) }}">
         <line class="spark-base" x1="0" y1="{{ tps.spark.height }}" x2="{{ tps.spark.width }}" y2="{{ tps.spark.height }}" />
         {% if tps.spark.points %}<polyline points="{{ tps.spark.points }}" />{% endif %}
       </svg>
+      {% endif %}
     </div>
-    <span class="tps-foot">{% if tps.seen %}accounted at completion · in+cache {{ '%.1f'|format(tps.tok_in_now) }}/s (prompt-side total, cache included){% if tps.tok_in_fresh is not none %} · fresh {{ '%.1f'|format(tps.tok_in_fresh) }}/s{% endif %}{% else %}waiting for accounted output; not a measured zero{% endif %}</span>
+    <span class="tps-foot">{% if tps.seen %}accounted at completion · in+cache {{ '%.1f'|format(tps.tok_in_now) }}/s (prompt-side total, cache included){% if tps.tok_in_fresh is not none %} · fresh {{ '%.1f'|format(tps.tok_in_fresh) }}/s{% endif %}{% elif tps.stale %}throughput sample stale; not a current reading{% else %}waiting for accounted output; not a measured zero{% endif %}</span>
+    <span class="tps-foot">Accounted throughput · not a subscription quota{% if tps.sample_age_s is not none %} · sample {{ '%.0f'|format(tps.sample_age_s) }}s old{% endif %}</span>
   </div>
 </section>
 {% elif workload_label | default(false) %}
@@ -309,7 +315,7 @@
                   <i class="{% if m.rejected or m.pct >= 90 %}crit{% elif m.pct >= 75 %}warn{% endif %}" style="width: {{ mpct }}%"></i>
                   <u aria-hidden="true" title="90% — the line the warn threshold sits on"></u>
                 </span>
-                <span class="pct">{{ "%.0f" | format(m.pct) }}%</span>
+                <span class="pct" title="Used percentage of this reported quota window; not tokens per second">{{ "%.0f" | format(m.pct) }}%<span class="sr-only"> used of {{ m.label }} quota</span></span>
                 {# The state tag and the countdown are DIFFERENT facts, so they
                    are not an if/elif chain: a rejected meter — the one row
                    where "when does this come back" is the only question the

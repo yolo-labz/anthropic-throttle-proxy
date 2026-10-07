@@ -74,6 +74,8 @@ def _asset_version(
         # This module's own code re-renders the page without touching either
         # directory above — include it or the revision can miss the change.
         h.update((view or Path(__file__)).read_bytes())
+        for module in ("signals.py", "presentation.py"):
+            h.update((_HERE / module).read_bytes())
     return h.hexdigest()[:12]
 
 
@@ -1036,7 +1038,44 @@ def _name_next_usable(bound: dict, subscriptions: list[dict]) -> None:
         bound["next_usable_unknown"] = True
 
 
-async def _collect_view(*, project: bool = True) -> dict[str, object]:
+def _cached_fleet(now: float) -> list[dict]:
+    """Snapshot only; a cold/stale sibling is unknown, never local telemetry."""
+    rows = []
+    for name, url in _fleet.parse_spec(_config.FLEET_HEALTH_URLS):
+        fetched, cached = _fleet._cache.get(url, (0.0, {}))
+        fresh = 0 <= now - fetched <= 3 * _fleet.TTL_S
+        row = {"name": name, "url": url, **cached, "age_s": max(0, now - fetched)}
+        if not cached or not fresh:
+            row.update(
+                ok=False, err="sibling sample stale" if cached else "awaiting sibling sample"
+            )
+        rows.append(row)
+    return rows
+
+
+def _cached_copilot(now: float) -> list[dict]:
+    rows: list[dict] = []
+    if not _config.COPILOT_TOKEN:
+        return rows
+    for org in _copilot.parse_orgs(_config.COPILOT_ORGS):
+        cached = _copilot._cache_hit(org, now)
+        rows.append({"org": org, **(cached or {"ok": False, "err": "awaiting billing sample"})})
+    return rows
+
+
+def _display_config(source: str | None) -> dict:
+    ui_cfg = _fleet_ui_config.load()
+    if source is None:
+        return ui_cfg
+    # Per-tab display choice only; never publish shared settings or route inference.
+    ui_cfg = {**ui_cfg, "defaults": {**ui_cfg.get("defaults", {}), "workload": source}}
+    if source == "local":
+        ui_cfg["defaults"].pop("workload", None)
+        ui_cfg["defaults"]["show_primary"] = True
+    return ui_cfg
+
+
+async def _collect_view(*, project: bool = True, source: str | None = None) -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template.
 
     ``project=False`` returns the UNFILTERED view, before
@@ -1048,11 +1087,9 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
     hiding the button never disabled the endpoint).
     """
     cs = _proxy.state["central_status"]
-    ui_cfg = _fleet_ui_config.load()
-    # Review major: hiding a family is a DISPLAY choice (apply_display below
-    # filters the render). Collection, endpoint refresh and gauge publication
-    # run regardless — a presentation toggle must not freeze Prometheus
-    # series or the email cache while stale values stay published.
+    ui_cfg = _display_config(source if project else None)
+    # Collection runs in the background regardless of display hiding. A GET
+    # must never acquire a collector lock or wait on an upstream network call.
     labels = _accounts.bearer_labels()
     now = time.time()
     bearers = []
@@ -1097,7 +1134,7 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
             }
         )
     # Telemetry is collected regardless of display hiding (see above).
-    endpoint = await _accounts.refresh_endpoint(now)
+    endpoint = _accounts._endpoint_cache
     accounts_view = _accounts.account_view(bearers, now, endpoint)
     # Same identity scheme as the subscriptions table: email first.
     email_by_bid = {
@@ -1112,11 +1149,8 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
     # return_exceptions: a future regression in one panel must never blank the
     # other panels or the bearer table — coerce any exception to an empty list
     # (panel hides) rather than a 500.
-    fleet_raw, copilot_raw = await asyncio.gather(
-        _fleet.refresh(now), _copilot.refresh(now), return_exceptions=True
-    )
-    fleet_view = fleet_raw if isinstance(fleet_raw, list) else []
-    copilot_view = copilot_raw if isinstance(copilot_raw, list) else []
+    fleet_view = _cached_fleet(now)
+    copilot_view = _cached_copilot(now)
     status = _compute_status(
         bearers,
         _proxy.QUEUE_MODE,
@@ -1156,7 +1190,9 @@ async def _collect_view(*, project: bool = True) -> dict[str, object]:
         "config_count": len(knobs),
         "override_count": sum(k.get("override") is True for k in knobs),
         "signals": _signals.collect(),
-        "tps": _signals.tps_gauge(),
+        "tps": _signals.tps_gauge(now=now),
+        "source_choice": source,
+        "workload_choices": [row["name"] for row in fleet_view],
         "subscriptions": subscriptions,
         "fleet_ui_config_error": ui_cfg.get("config_error"),
         "identity": identity,
@@ -1202,7 +1238,9 @@ async def index(
 ) -> web.Response:
     """GET /ui — render the full HTMX dashboard page."""
     return aiohttp_jinja2.render_template(
-        "dashboard.html", request, {**await _collect_view(), "asset_v": _ASSET_V}
+        "dashboard.html",
+        request,
+        {**await _collect_view(source=request.query.get("source")), "asset_v": _ASSET_V},
     )
 
 
@@ -1221,7 +1259,7 @@ async def stats_partial(
     for a full reload. Without this the attributes were inert: they described
     the divergence and nothing acted on it (cross-family review, 18/09/2026).
     """
-    view = await _collect_view()
+    view = await _collect_view(source=request.query.get("source"))
     response = aiohttp_jinja2.render_template(
         "partials/stats.html",
         request,
@@ -1306,8 +1344,8 @@ async def config_reset(request: web.Request) -> web.Response:
 
 # Background cadence for the account-endpoint refresher: keeps /metrics
 # gauges + the email cache warm with NO dashboard viewer. 300s matches the
-# polling guidance the usage endpoint tolerates comfortably (its own TTL
-# inside refresh_endpoint additionally dedupes against dashboard renders).
+# polling guidance the usage endpoint tolerates comfortably. Rendering reads
+# the endpoint cache only; it never changes this collection cadence.
 _REFRESH_INTERVAL_S = 300.0
 
 
@@ -1328,15 +1366,32 @@ async def _account_refresh_loop() -> None:
         await asyncio.sleep(_REFRESH_INTERVAL_S)
 
 
+async def _panel_refresh_loop() -> None:
+    """Bounded, TTL-gated collectors independent of GET /ui and /ui/stats."""
+    while True:
+        now = time.time()
+        results = await asyncio.gather(
+            _fleet.refresh(now), _copilot.refresh(now), return_exceptions=True
+        )
+        if any(isinstance(result, Exception) for result in results):
+            logging.getLogger(__name__).warning(
+                "dashboard collector failed; cached readings age out"
+            )
+        await asyncio.sleep(_fleet.TTL_S)
+
+
 async def _start_account_refresher(
     app: web.Application,
 ) -> None:
     if _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
         app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
+    if _config.FLEET_HEALTH_URLS or _config.COPILOT_ORGS:
+        app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
 
 
 async def _stop_account_refresher(app: web.Application) -> None:
     await _cancel(app.get("_account_refresher"))
+    await _cancel(app.get("_panel_refresher"))
 
 
 async def _cancel(task: asyncio.Task | None) -> None:

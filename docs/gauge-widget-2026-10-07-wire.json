@@ -1,0 +1,22 @@
+{
+  "scope": "Deployed baseline read-only GETs, not branch activation or browser acceptance",
+  "observed_local": "07/10/2026 16:50 BRT",
+  "gauges": [
+    {
+      "port": 8765,
+      "http_status": 200,
+      "elapsed_ms": 34.0,
+      "arc_label": "Output throughput not yet measured",
+      "value": "\u2014"
+    },
+    {
+      "port": 8773,
+      "http_status": 200,
+      "elapsed_ms": 9.7,
+      "arc_label": "Output throughput not yet measured",
+      "value": "\u2014"
+    }
+  ],
+  "branch_regression": "Real aiohttp TestServer/Jinja handlers; tests/test_gauge_routes.py; see current-head CI",
+  "browser": "not executed: admitted heavy lane pressure-high; tests/check_gauge_wire.py remains runnable"
+}

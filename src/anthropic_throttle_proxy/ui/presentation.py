@@ -155,6 +155,8 @@ def apply_workload(view: dict, config: dict, fleet: list[dict]) -> None:
         view[key] = row.get(key, 0)
     view["holds"] = row.get("keepalive_holds_active", 0)
     view["tps"] = signals.remote_tps(row.get("throughput"))
+    if view["tps"] is not None:
+        view["tps"] = view["tps"]._replace(sample_age_s=row.get("age_s"))
     refused = row.get("upstream_auth_ok") is False
     view["status"] = {
         "level": "warn" if refused else "idle",
