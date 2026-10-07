@@ -102,9 +102,49 @@ Source PR **#319**, initial head `0add715ab1e59d5e48ada15194c99ada2e8314e2`:
   header; Cloudflare public data API returned 403. Credentials stayed in memory,
   never command arguments/output. No Actions/#315 change or unrelated restart.
 
-New source head must pass its own normal CI and required scan before merge or
-scoped activation. Local heavy/browser/package admission remains I/O-blocked;
-CI does not substitute for actual imported-build/browser acceptance. Durable
-producer timer is coordinated with pN; one successful probe is not ongoing
-collection/persistence. Central revision/deployment is separate from this
-one-service slice and is not claimed accepted.
+## Verified source landing and scoped runtime blocker — 07/10/2026 18:23 BRT
+
+- Corrected head `b3059ebf7504a567b521403cdbf1a1501c8ba793`: all required
+  checks PASS; CI **37687632981**, **2,095 passed**, 155 warnings in 85.91s.
+  Required scan **37687632972** names that exact SCM revision and PASS.
+- Historical corrected analysis `f7270078-db56-4ec6-a31a-17e8d5d9e7f7` is bound
+  to b3059eb by `project_analyses/search`; analysis-id gate is OK, zero new
+  violations, 93.6% new coverage, 0.0% duplication. Receipt:
+  `specs/318-desktop-quota-report/sonar-corrected-analysis.json`.
+- Coordinator normal-squash merged protected #319 at 18:16:29 BRT as
+  **1969bdcbf54b5e477ca7362184470becd1ecf5ef**. `gh pr view` confirms MERGED;
+  zero review threads. Copilot's quota-only comment is not an approval.
+- #320 contrast fix also verified MERGED (`4aedd3fc0ac00f1c5e7a0cb3a3a5593216061231`),
+  all actual required checks PASS. Standalone NixOS-2683 targets that combined
+  exact protected source for the one-service UI delivery.
+- Source rollback: one normal revert PR for `1969bdcb`; current-runtime rollback
+  retains exact `90-throttler-7236d96.conf` content in
+  `specs/318-desktop-quota-report/rollback-90-throttler.conf`.
+
+**Not deployed.** Heavy package attempts did not start: occupied shared user
+slot (18:19/18:21), recovery/reopen-pending (18:20), memory budget refusal
+(18:22, MemAvailable 24,836,708 KiB <24 GiB), then I/O pressure refusal despite
+memory recovery (18:23, I/O full 16.34%). No local small-lane build/test/browser
+fallback, no remote unallocated build, no unit/cgroup limit changes. Local
+browser acceptance and final targeted check remain unexecuted; full acceptance
+above is remote CI, not a live UI result.
+
+NixOS-2683 holds the exact-source pin with temporary **uncommitted** `lib.fakeHash`
+only for the standard fixed-output mismatch procedure. It is not a measured
+hash, committed pin, delivered package or usable build. Producer service/timer
+and persistent UI override templates are retained there with explicit package
+placeholders; none is activated. pN's dirty/source worktree and ten iPad clients
+are untouched. Nix main remains unprotected; no autonomous Nix merge, full
+system switch, reboot or bridge credential adoption is implied.
+
+Live `:8765` still imports old `jmak9s5...`, has no Desktop row/source picker,
+upstream still closed loopback sink, original PID retained. Real dated producer
+sample **93.1% weekly remaining** at 18:10 is not continuously fresh: timer is
+not installed yet; consumer would correctly stale it after 600s. Scoped
+activation still requires an admitted exact package build, rooted rollback,
+immediate idle checks, full persisted/effective/imported chain comparison and
+actual `/ui`/browser receipt. Central `GIT_REV` read-only receipt:
+`e16d15900f73e9f82c1714738368f5db3f21cfd0`, running; no central restart/delivery.
+
+New artifacts after #319 landing are maintained in isolated
+`anthropic-throttle-proxy-322-ui-runtime-receipts`, not by editing shared main.

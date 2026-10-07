@@ -1,0 +1,47 @@
+{
+  "source_head": "b3059ebf7504a567b521403cdbf1a1501c8ba793",
+  "scan_run": 37687632972,
+  "analysis": {
+    "key": "f7270078-db56-4ec6-a31a-17e8d5d9e7f7",
+    "date": "2026-10-07T21:14:38+0000",
+    "events": [],
+    "projectVersion": "not provided",
+    "manualNewCodePeriodBaseline": false,
+    "revision": "b3059ebf7504a567b521403cdbf1a1501c8ba793",
+    "detectedCI": "Github Actions"
+  },
+  "gate": {
+    "projectStatus": {
+      "status": "OK",
+      "conditions": [
+        {
+          "status": "OK",
+          "metricKey": "new_coverage",
+          "comparator": "LT",
+          "errorThreshold": "80",
+          "actualValue": "93.6"
+        },
+        {
+          "status": "OK",
+          "metricKey": "new_duplicated_lines_density",
+          "comparator": "GT",
+          "errorThreshold": "3",
+          "actualValue": "0.0"
+        },
+        {
+          "status": "OK",
+          "metricKey": "new_violations",
+          "comparator": "GT",
+          "errorThreshold": "0",
+          "actualValue": "0"
+        }
+      ],
+      "ignoredConditions": false,
+      "period": {
+        "mode": "PREVIOUS_VERSION",
+        "date": "2026-05-22T02:08:28+0000"
+      },
+      "caycStatus": "compliant"
+    }
+  }
+}
