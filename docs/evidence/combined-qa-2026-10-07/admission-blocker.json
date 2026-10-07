@@ -1,0 +1,15 @@
+{
+  "scope": "independent combined QA; preserve all prior failure/refusal history",
+  "pre_execution_refusals": [
+    {"stage": "legacy repaired AX first attempt", "checkpoint_brt": "07/10/2026 19:43", "exit": 1, "reason": "Failed to start transient service unit: Unit desktop-job-slot.service was already loaded or has a fragment file.", "executed": false},
+    {"stage": "candidate reader first attempt", "checkpoint_brt": "07/10/2026 19:55", "exit": 1, "reason": "Failed to start transient service unit: Unit desktop-job-slot.service was already loaded or has a fragment file.", "executed": false},
+    {"stage": "candidate combined browser after 20:07 metadata", "exit": 1, "reason": "Failed to start transient service unit: Unit desktop-job-slot.service was already loaded or has a fragment file.", "executed": false},
+    {"stage": "subsequent control metadata/format/delivery probes", "exit": 74, "caller_deadline_seconds": 25, "reason": "desktop-job-run: small pool unavailable (deadline); nothing executed; wait included in caller timeout", "executed": false}
+  ],
+  "subsequent_verified_executions": [
+    "legacy-source-ax/receipt.json and legacy-deployed-ax/receipt.json completed in one admitted heavy job",
+    "candidate-arithmetic.json: 16 real-reader/synthetic-journal cases passed; candidate-pytest.txt: 2 passed in 0.06s"
+  ],
+  "not_accepted": ["candidate combined browser", "immutable merged combined source", "combined deployed build/UI", "new 327 normal hooks/current-head CI"],
+  "safety": "No in-job admission wait, slot manipulation, small-lane render, provider fallback, new agents, inference, auth/device or deployment mutation. All deliverables live in repository/vault; no scratch-only evidence."
+}

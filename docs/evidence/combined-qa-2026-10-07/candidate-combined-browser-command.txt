@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-327-combined-qa/tests/check_combined_browser.py", line 272, in <module>
+    asyncio.run(live(args.out, args.deployed_build) if args.deployed_build else source(args.out))
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/notroot/.local/share/uv/python/cpython-3.13.8-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/notroot/.local/share/uv/python/cpython-3.13.8-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/notroot/.local/share/uv/python/cpython-3.13.8-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-327-combined-qa/tests/check_combined_browser.py", line 126, in source
+    assert "Combined output throughput" in side and "60s" in side
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

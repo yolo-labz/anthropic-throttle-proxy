@@ -14,6 +14,7 @@ import json
 import os
 import re
 from dataclasses import replace
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -250,6 +251,31 @@ async def deployed(out, expected_build):
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
+@contextmanager
+def render_app(now, row, forbidden):
+    """One isolated render guard shared by legacy and combined browser acceptance."""
+    with (
+        patch.object(output_usage, "_cache", client_fixture()),
+        patch.object(output_usage, "refresh", forbidden),
+        patch.object(routes._config, "FLEET_HEALTH_URLS", "mimo:http://example.test/health"),
+        patch.object(routes._config, "COPILOT_TOKEN", ""),
+        patch.object(routes._fleet, "_cache", {"http://example.test/health": (now, row)}),
+        patch.object(routes._accounts, "account_view", lambda *args: []),
+        patch.object(routes._accounts, "bearer_labels", lambda: {}),
+        patch.object(routes._accounts, "refresh_endpoint", forbidden),
+        patch.object(routes._fleet, "refresh", forbidden),
+        patch.object(routes._copilot, "refresh", forbidden),
+        patch.object(aiohttp.ClientSession, "_request", forbidden),
+        patch.object(routes._proxy, "bearer_state", {}),
+        patch.object(fleet_ui_config, "load", lambda: {"subscriptions": [], "defaults": {}}),
+    ):
+        app = web.Application()
+        routes.attach_ui(app)
+        app.on_startup.clear()
+        app.on_cleanup.clear()
+        yield app
+
+
 async def main(out=OUT, live=True):
     from playwright.async_api import async_playwright
 
@@ -295,25 +321,8 @@ async def main(out=OUT, live=True):
             providers=("codex-a", "zai"),
         )
 
-    with (
-        patch.object(output_usage, "_cache", client_fixture()),
-        patch.object(output_usage, "refresh", forbidden),
-        patch.object(routes._config, "FLEET_HEALTH_URLS", "mimo:http://example.test/health"),
-        patch.object(routes._config, "COPILOT_TOKEN", ""),
-        patch.object(routes._fleet, "_cache", {"http://example.test/health": (now, row)}),
-        patch.object(routes._accounts, "account_view", lambda *args: []),
-        patch.object(routes._accounts, "bearer_labels", lambda: {}),
-        patch.object(routes._accounts, "refresh_endpoint", forbidden),
-        patch.object(routes._fleet, "refresh", forbidden),
-        patch.object(routes._copilot, "refresh", forbidden),
-        patch.object(aiohttp.ClientSession, "_request", forbidden),
-        patch.object(routes._proxy, "bearer_state", {}),
-        patch.object(fleet_ui_config, "load", lambda: {"subscriptions": [], "defaults": {}}),
-    ):
-        app = web.Application()
-        routes.attach_ui(app)
-        app.on_startup.clear()
-        app.on_cleanup.clear()
+    with render_app(now, row, forbidden) as app:
+        
         async with TestServer(app) as server, async_playwright() as playwright:
             browser = await launch(playwright)
             try:

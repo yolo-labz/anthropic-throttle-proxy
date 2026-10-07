@@ -1,0 +1,105 @@
+{
+  "duplicates": [
+    {
+      "firstFile": {
+        "end": 96,
+        "endLoc": {
+          "column": 10,
+          "line": 96,
+          "position": 3901
+        },
+        "name": "",
+        "start": 87,
+        "startLoc": {
+          "column": 95,
+          "line": 87,
+          "position": 3301
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 10,
+      "secondFile": {
+        "end": 296,
+        "endLoc": {
+          "column": 6,
+          "line": 296,
+          "position": 14983
+        },
+        "name": "",
+        "start": 287,
+        "startLoc": {
+          "column": 86,
+          "line": 287,
+          "position": 14419
+        }
+      },
+      "tokens": 129
+    },
+    {
+      "firstFile": {
+        "end": 104,
+        "endLoc": {
+          "column": 20,
+          "line": 104,
+          "position": 4275
+        },
+        "name": "",
+        "start": 98,
+        "startLoc": {
+          "column": 12,
+          "line": 98,
+          "position": 3992
+        }
+      },
+      "format": "python",
+      "fragment": "",
+      "lines": 7,
+      "secondFile": {
+        "end": 303,
+        "endLoc": {
+          "column": 16,
+          "line": 303,
+          "position": 15251
+        },
+        "name": "",
+        "start": 297,
+        "startLoc": {
+          "column": 8,
+          "line": 297,
+          "position": 14992
+        }
+      },
+      "tokens": 51
+    }
+  ],
+  "statistics": {
+    "detectionDate": "2026-10-07T23:16:31.263Z",
+    "formats": {
+      "python": {
+        "clones": 2,
+        "duplicatedLines": 15,
+        "duplicatedTokens": 180,
+        "lines": 766,
+        "newClones": 0,
+        "newDuplicatedLines": 0,
+        "percentage": 1.95822454308094,
+        "percentageTokens": 2.8015564202334633,
+        "sources": 2,
+        "tokens": 6425
+      }
+    },
+    "total": {
+      "clones": 2,
+      "duplicatedLines": 15,
+      "duplicatedTokens": 180,
+      "lines": 766,
+      "newClones": 0,
+      "newDuplicatedLines": 0,
+      "percentage": 1.95822454308094,
+      "percentageTokens": 2.8015564202334633,
+      "sources": 2,
+      "tokens": 6425
+    }
+  }
+}
