@@ -1,0 +1,8 @@
+{
+  "scope": "Source fingerprints of admitted browser/pytest candidate; not runtime/deployed provenance",
+  "source_head": "08dd9674673615139ac415e35d2babb08471b9c3",
+  "files": {
+    "src/anthropic_throttle_proxy/ui/static/style.css": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+    "tests/check_gauge_wire.py": "ae04bd882c495fdfd349e8b6827028e2c77f6271ed8dce2c052bc016284bbb81"
+  }
+}

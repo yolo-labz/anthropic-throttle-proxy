@@ -1,0 +1,49 @@
+── code-slop gate ─────────────────────────────
+aislop : score 100 · 0 error(s) · 0 warning(s)
+jscpd  : 0.22397200349956256% duplication · 17 clone(s) · 128 line(s)
+ratchet: 0 relevant · 0 inherited · 0 regression(s)
+───────────────────────────────────────────────
+✓ PASS — no code-slop over threshold.
+── alignment gate ─────────────────────────────
+scanned: 1 changed code file(s) · 0 error(s) · 0 warning(s)
+───────────────────────────────────────────────
+✓ PASS — no completion-theater or scope violations over threshold.
+│  No config files with names ["lefthook" ".lefthook" ".config/lefthook"] have been found in "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry"
+[323-ui-scroll-geometry 08dd967] fix(ui): contain hidden quota annotations
+ 39 files changed, 9612 insertions(+), 6 deletions(-)
+ create mode 100644 docs/UI-GEOMETRY-2026-10-07.md
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/browser.txt
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/receipt.json
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-error-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-error-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-measured-1366.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-measured-1366.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-measured-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-measured-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-returned-sibling-1366.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-returned-sibling-1366.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-returned-sibling-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-returned-sibling-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-stale-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-stale-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-unknown-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/after/synthetic-unknown-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/browser.txt
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/receipt.json
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-error-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-error-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-measured-1366.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-measured-1366.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-measured-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-measured-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-stale-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-stale-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-unknown-390.html
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/before/synthetic-unknown-390.png
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/full-pytest.txt
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/impeccable-detect.json
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/ruff.txt
+ create mode 100644 docs/evidence/ui-geometry-2026-10-07/targeted.txt
+ create mode 100644 specs/323-ui-scroll-geometry/plan.md
+ create mode 100644 specs/323-ui-scroll-geometry/spec.md
+ create mode 100644 specs/323-ui-scroll-geometry/tasks.md

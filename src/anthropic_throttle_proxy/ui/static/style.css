@@ -420,6 +420,8 @@ h2.sub { font-size: var(--fs-body); }
    inside a shell cell the width is already meaningful, so the panel claims it
    and the payload column absorbs it. */
 .bearers-wrap {
+  /* Keep absolute screen-reader annotations inside this scroll container. */
+  position: relative;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   background: var(--panel);

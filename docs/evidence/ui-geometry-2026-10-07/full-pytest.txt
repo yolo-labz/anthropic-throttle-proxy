@@ -1,0 +1,104 @@
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [ 10%]
+........................................................................ [ 13%]
+........................................................................ [ 17%]
+........................................................................ [ 20%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 41%]
+........................................................................ [ 44%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+........................................................................ [ 54%]
+........................................................................ [ 58%]
+........................................................................ [ 61%]
+........................................................................ [ 65%]
+........................................................................ [ 68%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 79%]
+........................................................................ [ 82%]
+........................................................................ [ 85%]
+........................................................................ [ 89%]
+........................................................................ [ 92%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+........                                                                 [100%]
+=============================== warnings summary ===============================
+tests/test_accounts.py::test_ui_stats_renders_accounts_panel
+tests/test_accounts.py::test_ui_stats_renders_identity_banner
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/routes.py:1387: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
+
+tests/test_accounts.py: 3 warnings
+tests/test_admission_quiesce.py: 7 warnings
+tests/test_forwarding_paths.py: 13 warnings
+tests/test_keepalive_hold.py: 25 warnings
+tests/test_prospective_handler_live.py: 4 warnings
+tests/test_proxy_app.py: 81 warnings
+tests/test_ui_binding.py: 1 warning
+tests/test_ui_truth.py: 1 warning
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/routes.py:1439: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["_history_sampler"] = asyncio.create_task(_history_sample_loop())
+
+tests/test_admission_quiesce.py::test_slow_upload_past_gate_counts_until_completion
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/prospective_runtime.py:346: NotAppKeyWarning: It is recommended to use web.RequestKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#request-s-storage
+    request[_SELECTED_KEY] = selected
+
+tests/test_admission_quiesce.py::test_slow_upload_past_gate_counts_until_completion
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/forwarding.py:62: NotAppKeyWarning: It is recommended to use web.RequestKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#request-s-storage
+    request[_SUCCESS_HEADERS_CALLBACK_KEY] = callback
+
+tests/test_gauge_routes.py::test_background_partial_failure_retries_and_tasks_cancel
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/routes.py:1389: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
+
+tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
+tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-321-ui-qa-delivery/.venv/lib/python3.13/site-packages/aiohttp/web_urldispatcher.py:192: DeprecationWarning: Bare functions are deprecated, use async ones
+    warnings.warn(
+
+tests/test_prospective_forwarding_live.py::test_concurrent_budget_denial_sends_no_extra_upstream
+tests/test_prospective_forwarding_live.py::test_upstream_429_retains_debt_and_next_refuses_locally
+tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[strict]
+tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[off]
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/test_prospective_forwarding_live.py:121: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["upstream_url"] = endpoint + "/messages"
+
+tests/test_prospective_forwarding_live.py::test_concurrent_budget_denial_sends_no_extra_upstream
+tests/test_prospective_forwarding_live.py::test_upstream_429_retains_debt_and_next_refuses_locally
+tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[strict]
+tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[off]
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/test_prospective_forwarding_live.py:122: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["endpoint"] = endpoint
+
+tests/test_prospective_forwarding_live.py::test_default_off_identical_status_and_body
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/test_prospective_forwarding_live.py:186: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["endpoint"] = endpoint
+
+tests/test_prospective_forwarding_live.py::test_default_off_identical_status_and_body
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/test_prospective_forwarding_live.py:187: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["upstream_url"] = endpoint + "/messages"
+
+tests/test_prospective_handler_live.py::test_strict_local_refusal_typed_503_zero_upstream[exhausted]
+tests/test_prospective_handler_live.py::test_strict_local_refusal_typed_503_zero_upstream[unsupported]
+tests/test_prospective_handler_live.py::test_default_off_positive_control_passthrough
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/test_prospective_handler_live.py:73: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["upstream"] = upstream
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+2096 passed, 155 warnings in 91.94s (0:01:31)

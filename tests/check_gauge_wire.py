@@ -51,6 +51,16 @@ async def capture(page, out, name):
       const ids = [...document.querySelectorAll('[id]')].map(e => e.id);
       return {
         width: innerWidth, content: document.documentElement.scrollWidth,
+        scroll_regions: [...document.querySelectorAll('.bearers-wrap')].map(e => ({
+          id: e.id, width: e.clientWidth, content: e.scrollWidth,
+          position: getComputedStyle(e).position, overflowX: getComputedStyle(e).overflowX,
+          positioned: [...e.querySelectorAll('*')]
+            .filter(child => getComputedStyle(child).position === 'absolute')
+            .map(child => ({tag: child.tagName, cls: child.getAttribute('class'),
+              right: child.getBoundingClientRect().right,
+              containing_block: child.offsetParent?.id || child.offsetParent?.tagName,
+              contained: e.contains(child.offsetParent), clip: getComputedStyle(child).clip}))
+        })),
         duplicate_ids: ids.filter((id, i) => ids.indexOf(id) !== i),
         main_landmarks: document.querySelectorAll('main').length,
         h1_count: document.querySelectorAll('h1').length,
@@ -76,6 +86,24 @@ async def capture(page, out, name):
 
 async def forbidden(*args, **kwargs):
     raise AssertionError("render attempted network I/O")
+
+
+async def check_keyboard_scroll(page):
+    region = page.locator("#subs-scroll")
+    assert await region.evaluate("e => e.scrollWidth > e.clientWidth"), "fixture must scroll"
+    assert await region.evaluate("e => getComputedStyle(e).overflowX === 'auto'")
+    await region.evaluate("e => { e.scrollLeft = 0; }")
+    await region.focus()
+    await page.keyboard.press("ArrowRight")
+    await page.wait_for_function("document.querySelector('#subs-scroll').scrollLeft > 0")
+    result = await region.evaluate("""e => ({
+      width: e.clientWidth, content: e.scrollWidth, scrolled: e.scrollLeft,
+      focused: document.activeElement === e,
+      document_width: document.documentElement.scrollWidth, viewport: innerWidth
+    })""")
+    assert result["focused"], result
+    await region.evaluate("e => { e.scrollLeft = 0; }")
+    return result
 
 
 async def main(out=OUT, live=True):
@@ -202,6 +230,7 @@ async def main(out=OUT, live=True):
                     "boxShadow: getComputedStyle(e).boxShadow})"
                 )
                 receipt["synthetic_viewports"] = []
+                receipt["state_viewports"] = []
                 for width in (1366, 390):
                     await page.set_viewport_size({"width": width, "height": 844})
                     dims = await capture(page, out, f"synthetic-measured-{width}")
@@ -212,6 +241,8 @@ async def main(out=OUT, live=True):
                         findings.append({"kind": "structural_a11y_or_clip", "viewport": dims})
                     if dims["main_landmarks"] != 1 or dims["h1_count"] != 1:
                         findings.append({"kind": "landmarks", "viewport": dims})
+                    if width == 390:
+                        receipt["keyboard_scroll"] = await check_keyboard_scroll(page)
                 url = "http://example.test/health"
                 routes._fleet._cache[url] = (now - 60, row)
                 await page.wait_for_function(
@@ -223,7 +254,7 @@ async def main(out=OUT, live=True):
                     "cache_age_s": 60,
                     "display": await page.locator(".tps-panel").inner_text(),
                 }
-                await capture(page, out, "synthetic-stale-390")
+                receipt["state_viewports"].append(await capture(page, out, "synthetic-stale-390"))
                 async with page.expect_response(lambda response: "/ui/stats" in response.url):
                     routes._fleet._cache[url] = (routes.time.time(), row)
                     row["ok"] = False
@@ -234,7 +265,7 @@ async def main(out=OUT, live=True):
                 assert await page.locator(".tps-value").count() == 0
                 measured["failure_refresh"] = await page.locator(".tps-panel").inner_text()
                 receipt["branch_measured"] = measured
-                await capture(page, out, "synthetic-error-390")
+                receipt["state_viewports"].append(await capture(page, out, "synthetic-error-390"))
                 # Exercise a real native link by keyboard, not page.goto selection.
                 await page.locator('.workload-picker a[href="/ui?source=local"]').focus()
                 await page.keyboard.press("Enter")
@@ -246,7 +277,7 @@ async def main(out=OUT, live=True):
                 }
                 assert "unknown" in unknown["arc_label"]
                 receipt["branch_unknown"] = unknown
-                await capture(page, out, "synthetic-unknown-390")
+                receipt["state_viewports"].append(await capture(page, out, "synthetic-unknown-390"))
                 await page.locator('.workload-picker a[href="/ui?source=mimo"]').tap()
                 await page.wait_for_url("**/ui?source=mimo")
                 receipt["narrow_touch"] = "synthetic Chromium touch: native source link"
@@ -266,13 +297,27 @@ async def main(out=OUT, live=True):
                 viewports = []
                 for width in (1366, 390):
                     await page.set_viewport_size({"width": width, "height": 844})
-                    dims = await page.evaluate(
-                        "({width: innerWidth, content: document.documentElement.scrollWidth})"
-                    )
+                    dims = await capture(page, out, f"synthetic-returned-sibling-{width}")
                     viewports.append(dims)
                     if dims["content"] > dims["width"]:
                         findings.append({"kind": "unknown_view_overflow", "viewport": dims})
                 receipt["viewports"] = viewports
+                for dims in receipt["state_viewports"]:
+                    if dims["content"] > dims["width"]:
+                        findings.append({"kind": "state_page_overflow", "viewport": dims})
+                for dims in (
+                    *receipt["synthetic_viewports"],
+                    *receipt["state_viewports"],
+                    *viewports,
+                ):
+                    escaped = [
+                        child
+                        for region in dims["scroll_regions"]
+                        for child in region["positioned"]
+                        if child["cls"] == "sr-only" and not child["contained"]
+                    ]
+                    if escaped:
+                        findings.append({"kind": "escaped_annotation", "children": escaped})
                 receipt["findings"] = findings
                 receipt["checks_executed"] = True
                 assert not findings, findings
