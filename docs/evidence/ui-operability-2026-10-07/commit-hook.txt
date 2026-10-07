@@ -1,0 +1,22 @@
+── code-slop gate ─────────────────────────────
+aislop : score 100 · 0 error(s) · 0 warning(s)
+jscpd  : 0.22715173025732033% duplication · 17 clone(s) · 128 line(s)
+ratchet: 0 relevant · 0 inherited · 0 regression(s)
+───────────────────────────────────────────────
+✓ PASS — no code-slop over threshold.
+── alignment gate ─────────────────────────────
+scanned: 1 changed code file(s) · 0 error(s) · 0 warning(s)
+───────────────────────────────────────────────
+✓ PASS — no completion-theater or scope violations over threshold.
+│  No config files with names ["lefthook" ".lefthook" ".config/lefthook"] have been found in "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-317-ui-operability"
+[317-ui-operability f41c277] fix(ui): restore gauge caption contrast
+ 11 files changed, 171 insertions(+), 1 deletion(-)
+ create mode 100644 docs/UI-OPERABILITY-2026-10-07.md
+ create mode 100644 docs/evidence/ui-operability-2026-10-07/blocker.json
+ create mode 100644 docs/evidence/ui-operability-2026-10-07/contrast-source-after.txt
+ create mode 100644 docs/evidence/ui-operability-2026-10-07/contrast-source-before.txt
+ create mode 100644 docs/evidence/ui-operability-2026-10-07/impeccable-detect.json
+ create mode 100644 docs/evidence/ui-operability-2026-10-07/ruff.txt
+ create mode 100644 specs/317-ui-operability/plan.md
+ create mode 100644 specs/317-ui-operability/spec.md
+ create mode 100644 specs/317-ui-operability/tasks.md
