@@ -139,6 +139,40 @@ all failures and nonzero exit, but collects later checks instead of stopping at
 the first layout error. One remaining confirmation attempt at 18:11 was refused
 because the shared heavy slot was running since 18:09:42; no unadmitted fallback.
 
+## Bounded confirmation — 18:21 BRT
+
+Exactly one remaining browser pass ran after #319/#320 source landed. Branch
+`42f9ba8` includes runtime squash **1969bdcb** and caption squash **4aedd3fc**.
+Targeted local tests: **104 passed**, one warning, 1.67 seconds. Browser job:
+15.75-second wall time, 10.96 CPU seconds, **620 MiB** peak; no further polishing
+or browser loop. Screenshot/DOM/receipt: `confirmation/` in the evidence folder.
+
+- **PASS, synthetic workload + real read-only lane report:** HTMX source remains
+  `mimo`, gauge 120 tokens/s, selected native detail checkbox retained; focused
+  `subs-scroll` survives polling with computed 2px visible outline/box-shadow.
+- **PASS:** stale 60-second sibling and failed sibling show throughput unavailable
+  without a numeric sweep; local cold history says unknown/“—”; keyboard Enter
+  selects local and Chromium-synthesized touch selects the sibling link.
+- **PASS:** structural landmark/control-name/ID checks; no gauge text clipping;
+  **zero page/console errors**, **zero unexpected browser network requests**.
+  Cached route rendering cannot invoke collectors or `ClientSession._request`.
+- **FAIL retained:** 390px workload document width **473px** after both sibling
+  changes; final error/sibling view measured **1391px at 1366px**, **473px at 390px**.
+  The final receipt's historical key `unknown_view_overflow` actually describes
+  the returned **failed sibling** page after the touch link, not the local unknown
+  page. Raw widths/screenshots are preserved; no renamed result hides a failure.
+- Overflow census found **no outside-table bounding box beyond the viewport**;
+  scroll-region descendants were intentionally excluded. This falsifies the
+  earlier outside-capacity-metadata attribution. Root cause is **unverified**;
+  overflow propagation from the scroll region remains a candidate, not a shipped
+  fix. Do not patch the picker/gauge purely by symptom similarity.
+- The old **live** page still fits both widths. Running package remains `jmak9s5h…`,
+  so none of the changed-source checks is a post-deployment pass. Central revision
+  was not verified or activated by QA. Runtime owner still owns that transition.
+
+The check exits **1**, after exercising all checks, because the recorded layout
+findings remain. No runtime/template/CSS fix or acceptance waiver was made.
+
 ## Execution evidence and exact blockers
 
 - Initial heavy browser smoke: refused before execution, **exit 75**,
