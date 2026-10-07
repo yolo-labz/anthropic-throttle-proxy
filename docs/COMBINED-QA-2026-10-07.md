@@ -182,6 +182,23 @@ QA fetched/merged that parent; backend/CSS diff versus it empty. This new source
 hash must still be re-run/bound, and QA normal updated head must earn its own
 required CI before safe merge. No all-green/live claim from source-only CI.
 
+## Exact c16 source acceptance completed (not deployed)
+
+An admitted bounded job completed at **20:46 BRT** on unchanged c16 source:
+**17 independent accounting cases PASS**, reader SHA-256
+`4872db12cf6ea500fc39299f605d0a8651290677c96f14df06b07d8e92736464`;
+**full pytest 2,140 passed** (290 existing warnings, 93.74s); separate visible
+combined and legacy/shared-guard browser receipts completed=true, no console/
+unexpected network and legacy findings=[]. Full AX and 1366/390 geometry held;
+visible dial with30/60s and all stale/error/unknown/idle fixtures passed. No raw
+journal or runtime patches. Successful receipts under `source-c16-*` are separate
+from all earlier failures/refusals. Actual executable source acceptance finished.
+
+At20:46 QA **77b1530 all REQUIRED checks pass**, source#327 c16 all REQUIRED
+pass but still OPEN, runtime still95ll5i712. This report/receipt delta will advance
+QA head and earn fresh exact-head CI; do not reuse77b checks. Accepted-main/
+normal merge and pV deployed combined acceptance remain separate unfinished gates.
+
 ## Pending runtime and reversal
 
 pV alone activates the exact accepted immutable combined build. QA must bind the
