@@ -153,5 +153,12 @@ def cached(*, now: float | None = None) -> Snapshot:
             reason="client accounting cache stale",
         )
     if _cache.last_event_at is not None:
-        return replace(_cache, gauge=_cache.gauge._replace(sample_age_s=now - _cache.last_event_at))
+        age = now - _cache.last_event_at
+        if age > EVENT_STALE_S:
+            return replace(
+                _cache,
+                gauge=_cache.gauge._replace(seen=False, stale=True, sample_age_s=age),
+                reason="client completion evidence stale",
+            )
+        return replace(_cache, gauge=_cache.gauge._replace(sample_age_s=age))
     return _cache

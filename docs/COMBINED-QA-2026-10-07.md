@@ -126,6 +126,21 @@ accepted main and normal merge. pT source#327 current head3a39879 was still
 OPEN/BLOCKED on real required CI at20:28; neither source nor runtime is accepted
 from historical green.
 
+## Current stacked QA source dependency
+
+Normal QA draft **PR#328 / 7c1ea73** was pushed at **20:30 BRT** (different from
+pT source PR#327). That exact head's required Ruff+pytest and slop passed;
+required scan still pending at20:32. No source/live acceptance inferred from it.
+
+pT advanced source#327 to **da08c3318310dc7bc64300af44221d65428ac491** (completion
+age expires inside an otherwise fresh cache). At **20:33**, QA fetched/merged
+that source parent without modifying its backend/CSS bytes; source diff against
+the fetched parent is empty. Added an independent case: completion119s→121s must
+expire with only2s cache age. This is a new **17th** case pending execution, not
+part of the earlier16-case pass. Current immutable parent full/browser/helper
+execution remains admission-blocked; the helper's normal CI regression now
+runs as the third pytest case. Parent and QA current-head CI remain real gates.
+
 ## Independent observational reference (not acceptance)
 
 A bounded 2 MiB read at **19:49:07 BRT** observed 92 completion events and 89,813

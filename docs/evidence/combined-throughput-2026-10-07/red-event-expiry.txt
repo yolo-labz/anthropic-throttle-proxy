@@ -1,0 +1,22 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+______ test_render_expires_completion_evidence_even_while_cache_is_fresh _______
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/6149cc4545878d1b.3377108.9cdf96523c16/pytest-of-notroot/pytest-8/test_render_expires_completion0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x76add3405810>
+
+    def test_render_expires_completion_evidence_even_while_cache_is_fresh(tmp_path, monkeypatch):
+        path = journal(tmp_path / "usage.jsonl", [event(881, 123)])
+        result = output_usage.read_usage(path, now=NOW)
+        assert result.gauge.seen  # verified idle interval, last evidence 119s old
+        monkeypatch.setattr(output_usage, "_cache", result)
+        projected = output_usage.cached(now=NOW + 2)
+>       assert not projected.gauge.seen
+E       AssertionError: assert not True
+E        +  where True = TpsGauge(value=0.0, peak=0.0, scale=100.0, frac=0.0, peak_frac=0.0, arc_len=282.7433388230814, window_s=60.0, ticks=[(....0', peak=1.0, width=96.0, height=20.0), tok_in_now=0.0, tok_in_fresh=None, seen=True, sample_age_s=121.0, stale=False).seen
+E        +    where TpsGauge(value=0.0, peak=0.0, scale=100.0, frac=0.0, peak_frac=0.0, arc_len=282.7433388230814, window_s=60.0, ticks=[(....0', peak=1.0, width=96.0, height=20.0), tok_in_now=0.0, tok_in_fresh=None, seen=True, sample_age_s=121.0, stale=False) = Snapshot(gauge=TpsGauge(value=0.0, peak=0.0, scale=100.0, frac=0.0, peak_frac=0.0, arc_len=282.7433388230814, window_s...e=False), sampled_at=1000.0, reason='', output_tokens=0, providers=(), identity=(66305, 62394458), last_event_at=881.0).gauge
+
+tests/test_output_usage.py:228: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_output_usage.py::test_render_expires_completion_evidence_even_while_cache_is_fresh
+1 failed in 0.10s

@@ -219,6 +219,33 @@ def test_default_clock_is_used_without_refreshing_the_cached_sample(tmp_path, mo
     assert output_usage.cached().sampled_at == NOW
 
 
+def test_render_expires_completion_evidence_even_while_cache_is_fresh(tmp_path, monkeypatch):
+    path = journal(tmp_path / "usage.jsonl", [event(881, 123)])
+    result = output_usage.read_usage(path, now=NOW)
+    assert result.gauge.seen  # verified idle interval, last evidence 119s old
+    monkeypatch.setattr(output_usage, "_cache", result)
+    projected = output_usage.cached(now=NOW + 2)
+    assert not projected.gauge.seen
+    assert projected.gauge.stale
+    assert projected.gauge.sample_age_s == 121
+    assert projected.sampled_at == NOW
+    assert "completion evidence stale" in projected.reason
+
+
+async def test_missing_journal_refresh_invalidates_a_previous_healthy_snapshot(
+    tmp_path, monkeypatch
+):
+    path = ready(tmp_path / "usage.jsonl")
+    monkeypatch.setenv("THROTTLE_PI_USAGE_PATH", str(path))
+    await output_usage.refresh(now=NOW)
+    assert output_usage.cached(now=NOW).gauge.seen
+    path.unlink()
+    await output_usage.refresh(now=NOW)
+    result = output_usage.cached(now=NOW)
+    assert not result.gauge.seen
+    assert "unavailable" in result.reason
+
+
 def test_fresh_mtime_does_not_refresh_old_completion_evidence(tmp_path):
     path = journal(tmp_path / "usage.jsonl", [event(700, 123)])
     path.touch()

@@ -13,7 +13,7 @@ def test_independent_completion_window():
 
 
 async def test_independent_cache_projection_and_replacement():
-    assert len(await cache_checks()) == 2
+    assert len(await cache_checks()) == 3
 
 
 def test_shared_render_guard_preserves_accounting_fixture(monkeypatch):

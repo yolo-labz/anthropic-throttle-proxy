@@ -7,6 +7,7 @@ No raw operational journal is read.
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import tempfile
@@ -157,12 +158,24 @@ async def cache_checks():
             path.unlink()
             await output_usage.refresh(now=NOW)
             assert not output_usage.cached(now=NOW).gauge.seen, "missing journal remains healthy"
-    return ["cache-only fixed-age projection / stale16s", "refresh replaces and invalidates source"]
+            write_rows(path, [event(180, 1), event(119, 1)])
+            await output_usage.refresh(now=NOW)
+            assert output_usage.cached(now=NOW).gauge.seen
+            expired = output_usage.cached(now=NOW + 2)
+            assert expired.gauge.stale and not expired.gauge.seen, "completion aged past120s"
+    return [
+        "cache-only fixed-age projection / stale16s",
+        "refresh replaces and invalidates source",
+        "completion119s ->121s expires even within2s of cache refresh",
+    ]
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
+    from anthropic_throttle_proxy import output_usage
+
     result = checks()
     result["passed"].extend(asyncio.run(cache_checks()))
+    result["reader_sha256"] = hashlib.sha256(Path(output_usage.__file__).read_bytes()).hexdigest()
     print(json.dumps(result, indent=2))
