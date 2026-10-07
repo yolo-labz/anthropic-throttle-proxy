@@ -22,8 +22,10 @@ At **17:46 BRT**, read-only `/ui`, `/ui/stats`, `/__throttle/health` returned HT
 
 `/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy`
 
-- Desktop effective/persisted ExecStart both name that package; receipt includes
-  persistent symlink and drop-in paths without environment secrets.
+- Desktop effective ExecStart and final persistent drop-in name that package;
+  receipt includes persistent symlink/drop-in chain without environment secrets.
+  Runtime owner separately found an older base HM unit masked by the persistent
+  incident drop-in; base unit alone is not the running build proof.
 - Actual gauge: **“Output throughput not yet measured”**, numeric **“—”**.
   No source-picker links; HTMX polls `/ui/stats` without per-tab source selection.
 - Health exposes **no `throughput` payload** on these old builds. Neither served
@@ -57,6 +59,11 @@ reset epoch. Monthly Token Plan credits/seat credits are different units/windows
 no allowance, billing, throughput or pace should be inferred from weekly percent.
 At baseline capture that producer/reader and frontend work were still uncommitted
 in their own worktrees; no latest-runtime or frontend acceptance is claimed.
+The runtime owner's allowlisted producer receipt at **17:52 BRT** reports
+**93.3% weekly remaining / 6.7% used**, `limitId=weekly`, `unit=percent`, reset epoch
+1791844029. Its producer maps the bridge's `percent` to remaining, not used.
+That observed producer report is not yet a deployed `/ui` row or continuous
+sampling proof; no raw credential-bearing API payload was copied.
 
 ## Minimal runnable check
 
@@ -109,8 +116,18 @@ provider-network accounting require separate evidence. Tests do not prove them.
 
 ## Delivery and deployment
 
-Normal hooks/PR/CI are the source delivery path; exact-head CI receipt will be
-recorded here. Runtime owner must land/activate its exact revision first. Re-read
+PR **#318**: https://github.com/yolo-labz/anthropic-throttle-proxy/pull/318.
+Normal hooks passed (code-slop/alignment); no hook bypass. On exact source head
+`53578a21cc50eeca2fda61321a971cdc28e365f9`, CI run **37685735402** completed
+successfully at **17:57 BRT**: Ruff checks plus **2,064 passed**, 155 warnings,
+84.28 seconds. The sanitizer regression was executed there. This is source
+acceptance only; the browser script is not a pytest test and did not run in CI.
+At that observation required `scan` was still pending; no merge claim. A detached
+normal CI waiter tracks #318 (an initial wrong-number #319 waiter was immediately
+cancelled without changes or merge intent). Later doc-only heads need their own
+green checks; historical green is not substituted for current head.
+
+Runtime owner must land/activate its exact revision first. Re-read
 running import path, persisted/effective unit, configured report shape and served
 UI asset/source digests, then perform admitted post-deploy browser checks. A green
 source PR alone cannot close this runtime/browser gate.

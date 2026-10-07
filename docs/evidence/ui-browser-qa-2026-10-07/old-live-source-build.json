@@ -6,7 +6,12 @@
     "reason": "pressure-high: cause=io memory-full=0c io-full=1125c; exit 75",
     "offhost": "Nix.Server automation-pod-pool and automation-pod-mcp inactive since 05/10/2026; no allocated fallback started",
     "confirmation": "NOT RUN: Unit desktop-job-slot.service already loaded; exit 1",
-    "slot_observed": "active/running since 07/10/2026 17:43:15 BRT; CPUQuota=4s, MemoryMax=4294967296"
+    "slot_observed": "active/running since 07/10/2026 17:43:15 BRT; CPUQuota=4s, MemoryMax=4294967296",
+    "later_refusals": [
+      "exit 75 reopen-pending: 23 seconds below-threshold recovery remaining",
+      "exit 1 desktop-job-slot.service already loaded",
+      "exit 75 pressure-high: cause=io memory-full=0c io-full=1453c"
+    ]
   },
   "live": {
     "8765": {
