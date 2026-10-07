@@ -1,0 +1,11 @@
+{
+  "observed_at": "07/10/2026 20:00:01 BRT",
+  "collector": "output_usage.read_usage()",
+  "scope": "local Pi completion journal only; non-Pi and other hosts unmeasured; not deployed UI acceptance",
+  "output_tokens": 53464,
+  "window_s": 60,
+  "tokens_per_second": 891.0666666666667,
+  "provider_labels_in_window": ["codex-a", "codex-b", "codex-c", "openai-codex", "zai"],
+  "raw_rows_retained": false,
+  "note": "Allowlisted stdout checkpoint, not a fixed target. Current reader source changes and deployment require their own acceptance."
+}

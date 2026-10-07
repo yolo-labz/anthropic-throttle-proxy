@@ -61,9 +61,11 @@ def _isolate_lane_report(monkeypatch, tmp_path_factory):
     """
     absent = tmp_path_factory.mktemp("lanes") / "absent.json"
     monkeypatch.setenv("THROTTLE_LANES_FILE", str(absent))
+    monkeypatch.setenv("THROTTLE_PI_USAGE_PATH", str(absent.with_name("absent-usage.jsonl")))
     monkeypatch.delenv("THROTTLE_MIMO_DESKTOP_REPORT", raising=False)
-    from anthropic_throttle_proxy import lanes
+    from anthropic_throttle_proxy import lanes, output_usage
 
+    monkeypatch.setattr(output_usage, "_cache", None)
     lanes._cache = None
     yield
     lanes._cache = None

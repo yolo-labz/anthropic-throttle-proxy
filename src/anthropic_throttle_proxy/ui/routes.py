@@ -37,6 +37,7 @@ from .. import fleet_ui_config as _fleet_ui_config
 from .. import history as _history
 from .. import lanes as _lanes
 from .. import metrics as _metrics
+from .. import output_usage as _output_usage
 
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
@@ -76,6 +77,7 @@ def _asset_version(
         h.update((view or Path(__file__)).read_bytes())
         for module in ("signals.py", "presentation.py"):
             h.update((_HERE / module).read_bytes())
+        h.update((_HERE.parent / "output_usage.py").read_bytes())
     return h.hexdigest()[:12]
 
 
@@ -1228,6 +1230,10 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
         return view
     projected = apply_display(view, ui_cfg)
     apply_workload(projected, ui_cfg, fleet_view)
+    # One client journal includes direct and proxied Pi turns. Never add the
+    # overlapping proxy counters or narrow this dial with the workload picker.
+    projected["output_accounting"] = _output_usage.cached(now=now)
+    projected["tps"] = projected["output_accounting"].gauge
     attach_provider_capacity(projected.get("providers") or [], projected.get("subscriptions") or [])
     projected["summary"] = capacity_summary(projected)
     return projected
@@ -1371,7 +1377,10 @@ async def _panel_refresh_loop() -> None:
     while True:
         now = time.time()
         results = await asyncio.gather(
-            _fleet.refresh(now), _copilot.refresh(now), return_exceptions=True
+            _fleet.refresh(now),
+            _copilot.refresh(now),
+            _output_usage.refresh(),
+            return_exceptions=True,
         )
         if any(isinstance(result, Exception) for result in results):
             logging.getLogger(__name__).warning(
@@ -1385,8 +1394,7 @@ async def _start_account_refresher(
 ) -> None:
     if _accounts.parse_spec(_config.ACCOUNT_CRED_PATHS):
         app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
-    if _config.FLEET_HEALTH_URLS or _config.COPILOT_ORGS:
-        app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
+    app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
 
 
 async def _stop_account_refresher(app: web.Application) -> None:

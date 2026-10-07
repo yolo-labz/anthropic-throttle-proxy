@@ -1,16 +1,22 @@
 """The dashboard must not substitute its disabled primary for a busy sibling."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 from ui_render import render_stats
 
-from anthropic_throttle_proxy import fleet, fleet_ui_config, history
+from anthropic_throttle_proxy import fleet, fleet_ui_config, history, output_usage
 from anthropic_throttle_proxy.ui import routes, signals
 
 
 @pytest.fixture
 def workload(monkeypatch):
+    now = datetime.now(UTC).timestamp()
+    snapshot = output_usage.Snapshot(
+        signals.tps_gauge([[300, 0]] * 6), now, output_tokens=1800, providers=("codex-a", "zai")
+    )
+    monkeypatch.setattr(output_usage, "_cache", snapshot)
     row = {
         "name": "mimo",
         **fleet._parse_health(
@@ -46,32 +52,31 @@ async def test_selected_workload_replaces_local_zero_and_refusal(workload):
     view = await routes._collect_view()
     assert view["inflight"] == 12
     assert view["served"] == 5000
-    assert view["tps"].value == 120
-    assert view["tps"].tok_in_now == 300
+    assert view["tps"].value == 30
     assert view["show_local"] is False
     assert view["signals"] == []  # never show the idle primary's golden signals
     assert view["bearers"] == []
     assert view["summary"]["live"]["inflight"] == 12
     assert view["status"]["verdict"] == "MIMO WORKLOAD"
     html = render_stats(**view)
-    assert "mimo output throughput" in html
-    assert '<span class="tps-num">120</span>' in html
+    assert "Combined output throughput" in html
+    assert '<span class="tps-num">30</span>' in html
     raw = await routes._collect_view(project=False)
     assert "workload_label" not in raw  # display policy cannot rewrite raw readers
 
 
-async def test_old_runtime_is_unmeasured_not_local_zero(workload):
+async def test_old_proxy_runtime_does_not_replace_client_accounting(workload):
     workload.pop("throughput", None)
     view = await routes._collect_view()
-    assert view["tps"] is None
-    assert view["summary"]["throughput"] is None
-    assert "throughput unavailable" in render_stats(**view)
+    assert view["tps"].value == 30
+    assert view["summary"]["throughput"] is not None
+    assert "Combined output throughput" in render_stats(**view)
 
 
 async def test_unreachable_workload_never_falls_back_to_primary(workload):
     workload.update(ok=False, status=0)
     view = await routes._collect_view()
-    assert view["tps"] is None
+    assert view["tps"].value == 30
     assert view["summary"]["live"] is None
     assert view["status"]["verdict"] == "WORKLOAD UNKNOWN"
 
@@ -91,8 +96,8 @@ async def test_unreachable_workload_never_falls_back_to_primary(workload):
 async def test_bad_telemetry_is_not_a_render_error(workload, snapshot):
     workload["throughput"] = snapshot
     view = await routes._collect_view()
-    assert view["tps"] is None
-    assert "throughput unavailable" in render_stats(**view)
+    assert view["tps"].value == 30
+    assert "Combined output throughput" in render_stats(**view)
 
 
 def test_workload_config_survives_loading(tmp_path):

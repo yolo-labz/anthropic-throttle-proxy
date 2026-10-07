@@ -1,0 +1,832 @@
+{
+  "scope": "live GETs + synthetic workload/real read-only lane-report snapshot; not deployed",
+  "source_sha256": {
+    "routes.py": "f5739abfbd4b56b46ca2474be910219b33aba5df1315c09283a7cb08808cbb4d",
+    "presentation.py": "4ba93b22753e8f4451a4d72e8937f6d75ea627c5b2cd49c0b4503ff1d7faee47",
+    "signals.py": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0",
+    "__init__.py": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7",
+    "templates/dashboard.html": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9",
+    "static/style.css": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+    "templates/partials/config.html": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
+    "templates/partials/stats.html": "d16380b9fd7e8b800c9363c7367a98920ea59b56611cc42167f6337dbbf6ca2e"
+  },
+  "live": [],
+  "browser": "152.0.7977.82",
+  "branch_measured": {
+    "value": "30",
+    "accounting_domain": "single synthetic client journal; proxy copy excluded",
+    "polls": 2,
+    "all_polls_keep_source": true,
+    "focus_after_poll": "subs-scroll",
+    "focus_style": {
+      "outline": "rgb(148, 226, 213) solid 2px",
+      "boxShadow": "rgb(148, 226, 213) 0px 0px 0px 2px"
+    },
+    "failure_refresh": "30\nTOKENS/S\nCOMBINED OUTPUT THROUGHPUT\nlast 60s \u00b7 10s peak 30 \u00b7 scale 100 tokens/s\nexact output / 60 wall-clock seconds \u00b7 accounted at completion\nPartial coverage \u00b7 Pi on this host only \u00b7 2 provider labels in window \u00b7 non-Pi / other hosts unmeasured\nAccounted throughput \u00b7 not a subscription quota"
+  },
+  "synthetic_viewports": [
+    {
+      "width": 1366,
+      "content": 1366,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 946,
+          "content": 946,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 566.4375,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 566.4375,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 377,
+          "content": 377,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    },
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    }
+  ],
+  "state_viewports": [
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    },
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    },
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    },
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.875,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 29.1875,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    }
+  ],
+  "keyboard_scroll": {
+    "width": 366,
+    "content": 480,
+    "scrolled": 3,
+    "focused": true,
+    "document_width": 390,
+    "viewport": 390
+  },
+  "synthetic_stale": {
+    "cache_age_s": 60,
+    "display": "30\nTOKENS/S\nCOMBINED OUTPUT THROUGHPUT\nlast 60s \u00b7 10s peak 30 \u00b7 scale 100 tokens/s\nexact output / 60 wall-clock seconds \u00b7 accounted at completion\nPartial coverage \u00b7 Pi on this host only \u00b7 2 provider labels in window \u00b7 non-Pi / other hosts unmeasured\nAccounted throughput \u00b7 not a subscription quota"
+  },
+  "branch_unknown": {
+    "arc_label": "Output throughput unknown: not yet measured; combined Pi on this host, partial fleet coverage",
+    "value": "\u2014"
+  },
+  "narrow_touch": "synthetic Chromium touch: native source link",
+  "unexpected_requests": [],
+  "console_errors": [],
+  "render_network_guard": "ClientSession._request and collectors raise",
+  "viewports": [
+    {
+      "width": 1366,
+      "content": 1366,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 946,
+          "content": 946,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 566.4375,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 566.4375,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 377,
+          "content": 377,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    },
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.0625,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 30.0625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    }
+  ],
+  "findings": [],
+  "checks_executed": true,
+  "completed": true
+}

@@ -1,0 +1,10 @@
+........................................................................ [ 93%]
+.....                                                                    [100%]
+=============================== warnings summary ===============================
+tests/test_gauge_routes.py::test_background_partial_failure_retries_and_tasks_cancel
+  /home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-326-combined-throughput/src/anthropic_throttle_proxy/ui/routes.py:1397: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+  https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+    app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+77 passed, 1 warning in 2.22s

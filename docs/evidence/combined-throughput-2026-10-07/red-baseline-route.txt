@@ -1,0 +1,22 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_routes_are_network_free_and_select_the_requested_sibling _________
+
+ui = (<aiohttp.test_utils.TestClient object at 0x7b815bc692b0>, {'inflight': 2, 'max_concurrent': 4, 'ok': True, 'queued': 1, ...}, [])
+
+    async def test_routes_are_network_free_and_select_the_requested_sibling(ui):
+        client, _, calls = ui
+        response = await client.get("/ui?source=mimo")
+        html = await response.text()
+        assert response.status == 200
+        assert calls == []
+        gauge = Gauge()
+        gauge.feed(html)
+        assert gauge.poll == "/ui/stats?source=mimo"
+>       assert '<span class="tps-num">30</span>' in html
+E       assert '<span class="tps-num">30</span>' in '<!DOCTYPE html>\n<html lang="en" data-theme="catppuccin-mocha">\n<head>\n  <meta charset="UTF-8">\n  <meta name="view...-labz/anthropic-throttle-proxy" target="_blank" rel="noopener">github</a>\n  </footer>\n  </div>\n  \n</body>\n</html>'
+
+tests/test_gauge_routes.py:125: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gauge_routes.py::test_routes_are_network_free_and_select_the_requested_sibling
+1 failed in 0.26s
