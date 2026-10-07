@@ -93,7 +93,7 @@ no deletion/force-push. No ruleset/permissions/secrets were changed.
 
 - `ruff check src tests scripts/check-sonar-report.py`: **PASS**; format **PASS**.
 - `actionlint .github/workflows/sonar.yml`: **PASS**.
-- Planted missing/bad report tests: **23 passed**; CLI failures exit 1 and emit no
+- Planted missing/bad report tests: **25 passed**; CLI failures exit 1 and emit no
   receipt, including wrong revision and dirty checkout. DTD and NaN inputs fail.
 - Checker mypy 2.1.0: **exit 0**. Existing report-only source mypy: **137 errors**
   across 15 modules, exit 1; retained verbatim, not suppressed or repaired here.
@@ -101,7 +101,7 @@ no deletion/force-push. No ruleset/permissions/secrets were changed.
   91.51% Python coverage was **rejected** by the new inventory check: four
   unimported spec tools were missing. Native `include_namespace_packages=true`
   repairs collection; regenerated XML from the old dataset does not prove that
-  repair. A fresh complete candidate run/CI receipt is required below.
+  repair. Actual first PR scan below proves complete namespace collection.
 - Initial staged slop: score **100**, 0 errors/warnings; jscpd whole-snapshot
   0.2278%, 17 clones/128 lines; ratchet **0 relevant / 0 regressions**, exit 0.
   Alignment **0 errors/warnings**, exit 0. This is not a whole-repo zero-clone claim.
@@ -110,6 +110,27 @@ no deletion/force-push. No ruleset/permissions/secrets were changed.
   `Unit desktop-job-slot.service was already loaded or has a fragment file`;
   read-only `systemctl show` returned inactive/dead, MainPID=0. No unit reset,
   cleanup or shell admission-wait loop was used. Fresh rerun goes to existing CI.
+
+### First actual PR scan and protocol regression
+
+PR [#315](https://github.com/yolo-labz/anthropic-throttle-proxy/pull/315), code head
+`9da2aa8ba1040103fb5921394ed2dd84ae820151`: CI
+[37674868147](https://github.com/yolo-labz/anthropic-throttle-proxy/actions/runs/37674868147)
+ran **2,072 tests successfully**, collected **42 Python source files**, with
+**8,083 / 9,091 covered lines = 88.9121%**. The native namespace option works.
+The check correctly stayed red when report validation failed; no empty receipt
+or green skip was manufactured. Raw XML is retained as `ci-first-coverage.xml.gz`
+with its digest and failure details in `ci-first-coverage-summary.json`.
+
+Root cause of that decoder failure: coverage.py 7.14's `xmlreport.rate` emits
+**four significant digits** (`0.8891`), while the first checker compared it to
+an unrounded fraction with an incorrectly tight tolerance. Compare the exact
+producer-format value instead; tests cover valid `2/3 -> 0.6667` and forged
+`0.6668`. This changes **no coverage threshold** and is backed by the actual
+report/producer implementation, not symptom similarity. Fresh follow-up CI is
+required for this corrected code; first-head CI is not final-head approval.
+Slop/alignment, Ruff/full pytest, OSV and throwaway Docker build passed at the
+first PR head; mypy job is green **report-only**, not type-clean.
 
 ## Findings outside this slice / precise follow-ups
 
@@ -132,6 +153,8 @@ no deletion/force-push. No ruleset/permissions/secrets were changed.
 - Ruff currently gates src/tests plus this new checker, not every legacy tool;
   remaining scripts/client harness lint/type/coverage need their own slices.
   No exclusions or suppressions were added to make these gaps disappear.
+- Sonar navigation reports version EOL **08/06/2026**. Assess a separately
+  authorized server upgrade; no instance deployment/change in this slice.
 - `throttler-sonar-gate-green` ledger diagnosis is stale (implementing since
   24/09/2026 despite measured OK). Verdict attempt recorded with actual SHA/gate;
   its public-URL oracle still needs transport repair. No false verified status.

@@ -97,7 +97,8 @@ def inspect_coverage(
     ):
         raise ValueError("coverage summary does not match line entries")
     rate = float(document.attrib["line-rate"])
-    if not math.isfinite(rate) or abs(rate - covered / valid) > 0.00001:
+    # coverage.py emits four significant digits, not an unrounded fraction.
+    if not math.isfinite(rate) or rate != float(f"{covered / valid:.4g}"):
         raise ValueError("coverage rate does not match line entries")
     return {"python_files": len(seen), "lines_valid": valid, "lines_covered": covered}
 

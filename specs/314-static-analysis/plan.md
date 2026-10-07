@@ -40,14 +40,18 @@ metrics, not all repository code; helpers and the Pi client are absent.
 ## Tasks / acceptance
 
 - [x] Read canonical references; inspect live read-only Dokku/GitHub/Sonar.
-- [x] Implement checker, red-capable tests and integration diff (23 tests pass).
+- [x] Implement checker, red-capable tests and integration diff (25 tests pass).
 - [ ] Obtain fresh complete-namespace coverage and exact-head PR checks.
 - [x] Document inventory, scopes, measured baseline, findings and authorization.
 
 Initial admitted full run passed 2,072 tests but its incomplete coverage inventory
 was rejected. Native namespace discovery is enabled; stale dataset regeneration
 is not acceptance. Heavy admission subsequently refused even with the unit dead;
-no unit cleanup/restart is authorized. Use existing CI for the fresh rerun.
+no unit cleanup/restart is authorized. Existing CI collected all 42 Python files,
+2,072 tests passed and 88.9121% coverage at 9da2aa8, then failed validation because
+coverage.py rounds its XML rate to four significant digits. Decoder now checks
+that exact producer format, with valid/forged rounding regressions. Follow-up CI
+must verify the corrected head; no threshold relaxation or fabricated receipt.
 - [ ] Open ordinary PR. Actions changes require operator merge authorization;
       no self-merge, ruleset changes or production deploys in this workstream.
 

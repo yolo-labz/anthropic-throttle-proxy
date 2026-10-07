@@ -61,6 +61,25 @@ def test_bad_report_is_red(coverage_case, before, after):
         CHECKER["inspect_coverage"](report, root, inventory, start)
 
 
+@pytest.mark.parametrize("rate", ["0.6667", "0.6668"])
+def test_coverage_py_four_significant_digits(coverage_case, rate):
+    report, root, inventory, start, xml = coverage_case
+    (root / "module.py").write_text("a = 1\nb = 2\nc = 3\n")
+    xml = xml.replace('lines-valid="1"', 'lines-valid="3"')
+    xml = xml.replace('lines-covered="1"', 'lines-covered="2"')
+    xml = xml.replace('line-rate="1"', f'line-rate="{rate}"')
+    xml = xml.replace(
+        '<line number="1" hits="1"/>',
+        '<line number="1" hits="1"/><line number="2" hits="1"/><line number="3" hits="0"/>',
+    )
+    report.write_text(xml)
+    if rate == "0.6668":
+        with pytest.raises(ValueError, match="rate"):
+            CHECKER["inspect_coverage"](report, root, inventory, start)
+    else:
+        assert CHECKER["inspect_coverage"](report, root, inventory, start)["lines_covered"] == 2
+
+
 def test_stale_report_is_red(coverage_case):
     report, root, inventory, start, _ = coverage_case
     with pytest.raises(ValueError, match="stale"):
