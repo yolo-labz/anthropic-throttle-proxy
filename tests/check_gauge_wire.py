@@ -13,8 +13,8 @@ import hashlib
 import json
 import os
 import re
-from datetime import UTC, datetime
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -264,9 +264,8 @@ async def main(out=OUT, live=True):
         for p in Path(routes.__file__).parent.rglob("*")
         if p.suffix in {".html", ".css", ".py"}
     }
-    receipt["source_sha256"]["../output_usage.py"] = hashlib.sha256(
-        Path(output_usage.__file__).read_bytes()
-    ).hexdigest()
+    reader_bytes = await asyncio.to_thread(Path(output_usage.__file__).read_bytes)
+    receipt["source_sha256"]["../output_usage.py"] = hashlib.sha256(reader_bytes).hexdigest()
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
         live_rows = []
         for port in (8765, 8773) if live else ():

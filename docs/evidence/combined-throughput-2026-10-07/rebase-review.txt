@@ -1,0 +1,17 @@
+diff --git a/home/notroot/.local/share/mergiraf/merges/check_gauge_wire.py_0vNDng6j/line_based.py b/home/notroot/.local/share/mergiraf/merges/check_gauge_wire.py_0vNDng6j/fully_structured.py
+index ac94081..fac0137 100644
+--- a/home/notroot/.local/share/mergiraf/merges/check_gauge_wire.py_0vNDng6j/line_based.py
++++ b/home/notroot/.local/share/mergiraf/merges/check_gauge_wire.py_0vNDng6j/fully_structured.py
+@@ -13,12 +13,8 @@ import hashlib
+ import json
+ import os
+ import re
+-<<<<<<< HEAD
+ from datetime import UTC, datetime
+-||||||| parent of 4676ce8 (feat(ui): combine accounted output throughput)
+-=======
+ from dataclasses import replace
+->>>>>>> 4676ce8 (feat(ui): combine accounted output throughput)
+ from pathlib import Path
+ from unittest.mock import patch
+ 
