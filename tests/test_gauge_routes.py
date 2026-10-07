@@ -66,6 +66,34 @@ async def ui(monkeypatch):
     history.reset()
 
 
+async def test_desktop_producer_renders_independent_weekly_remaining(ui, tmp_path, monkeypatch):
+    from anthropic_throttle_proxy import desktop_report
+
+    client, _, calls = ui
+    path = tmp_path / "desktop.json"
+    desktop_report.publish(
+        path,
+        desktop_report.report(
+            {"percent": 93.6, "resetAt": 3000}, datetime.fromtimestamp(1000, UTC)
+        ),
+    )
+    monkeypatch.setenv("THROTTLE_MIMO_DESKTOP_REPORT", str(path))
+    for route in ("/ui", "/ui/stats?source=mimo"):
+        response = await client.get(route)
+        assert response.status == 200
+        html = await response.text()
+        desktop = html.split('data-subscription-id="mimo:desktop-subscription"')[1].split("</tr>")[
+            0
+        ]
+        assert "MiMo Desktop" in desktop
+        assert "93.6% left" in desktop
+        assert "weekly" in desktop
+        assert "sampled" in desktop
+        assert "credits left" not in desktop
+        assert "6%" in desktop
+    assert calls == []
+
+
 async def test_routes_are_network_free_and_select_the_requested_sibling(ui):
     client, _, calls = ui
     response = await client.get("/ui?source=mimo")

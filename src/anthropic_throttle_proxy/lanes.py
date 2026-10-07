@@ -388,6 +388,8 @@ def _lane_identity(kind: str, lane_id: str, provider: str) -> str:
         return f"{provider} {suffix.upper()}"
     if kind == "copilot":
         return f"{provider} {suffix}"
+    if kind == "mimo" and suffix == "desktop-subscription":
+        return f"{provider} Desktop"
     if kind == "mimo" and suffix == "team-owner":
         # Distinct display identity (spec 281): the team seat row and the
         # individual plan row share a provider but not an allowance.
@@ -549,6 +551,83 @@ def _read(now: float, path: str | None = None) -> dict[str, Any]:
     }
 
 
+def _desktop_row(path: str, now: float) -> dict[str, Any]:
+    """Independent weekly-percent contract; never consume Token Plan credits."""
+    unknown = {
+        "id": "mimo:desktop-subscription",
+        "kind": "mimo",
+        "plan": "Desktop subscription · weekly quota",
+        "status": "unknown",
+        "reason": "Desktop weekly report missing, invalid or unavailable",
+    }
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return _normalize(unknown, False, now)
+    if not isinstance(raw, dict) or type(raw.get("schema")) is not int or raw["schema"] != 1:
+        return _normalize(unknown, False, now)
+    interval, age, error = _sample_clock(raw, now)
+    sources = raw.get("lanes")
+    if (
+        error
+        or age is None
+        or interval is None
+        or not isinstance(sources, list)
+        or len(sources) != 1
+    ):
+        return _normalize(unknown, False, now)
+    source = sources[0]
+    if (
+        not isinstance(source, dict)
+        or source.get("id") != unknown["id"]
+        or source.get("kind") != "mimo"
+        or source.get("status") not in ("ok", "exhausted")
+    ):
+        return _normalize(unknown, False, now)
+    meters = source.get("meters")
+    if not isinstance(meters, list) or len(meters) != 1 or not isinstance(meters[0], dict):
+        return _normalize(unknown, False, now)
+    meter = meters[0]
+    remaining, used = _pct(meter.get("remainingPercent")), _pct(meter.get("usedPercent"))
+    if (
+        meter.get("limitId") != "weekly"
+        or meter.get("unit") != "percent"
+        or remaining is None
+        or used is None
+        or not 0 <= remaining <= 100
+        or not math.isclose(used + remaining, 100.0, abs_tol=1e-6)
+    ):
+        return _normalize(unknown, False, now)
+    # Only measured percent/reset leave this trust boundary. No allowance,
+    # money, window duration or producer-provided arbitrary labels/notes.
+    stale = age > interval * _STALE_INTERVALS
+    observed = datetime.fromtimestamp(now - age, UTC).strftime("%d/%m/%Y %H:%M UTC")
+    status = "ok" if remaining > 0 else "exhausted"
+    if stale:
+        status = "stale"
+    row = _normalize(
+        {
+            **unknown,
+            "status": status,
+            "reason": (
+                f"{'last sample' if stale else 'sampled'} {observed} · not Token Plan credits"
+            ),
+            "meters": [
+                {
+                    "limitId": "weekly",
+                    "usedPercent": used,
+                    "resetsAt": _epoch(meter.get("resetsAt")),
+                }
+            ],
+        },
+        stale,
+        now,
+    )
+    row["meters"][0]["note"] = f"{remaining:g}% weekly remaining"
+    row["meters"][0]["remaining"] = f"{remaining:g}%"
+    return row
+
+
 def plan_meter_used_percent(lane_id: str, now: float) -> float | None:
     """Binding used-% of a plan lane's fullest meter, or None without fresh evidence.
 
@@ -672,6 +751,15 @@ def view(now: float) -> dict[str, Any]:
             + plan_rows
             + team_rows
             + team_b_rows,
+        }
+    desktop_path = os.environ.get("THROTTLE_MIMO_DESKTOP_REPORT", "").strip()
+    if desktop_path:
+        snapshot = {
+            **snapshot,
+            "lanes": [
+                lane for lane in snapshot["lanes"] if lane["id"] != "mimo:desktop-subscription"
+            ]
+            + [_desktop_row(desktop_path, now)],
         }
     _cache = (now, snapshot)
     return snapshot
