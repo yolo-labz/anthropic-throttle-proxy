@@ -150,6 +150,38 @@ coverage. See `live-journal-reference.json`. This is an aggregate checkpoint onl
 not a constant speed, the pT reader, streamed counts, synthetic inference, or proof
 of the live UI's combined semantics.
 
+## Latest exact-head gate / admission checkpoint
+
+At **20:35 BRT**, QA **draft#328 / 65440d8** was clean and pushed through normal
+hooks; source diff versus fetched pT/da08c33 empty. Source#327 exact da08c33
+Ruff+pytest/slop passed; required scan pending. QA654 current required tests/slop/
+scan pending; old7c1ea73 green is historical. GitHub API verified hosted runners
+executing coverage/scanner, not a stuck vm103 pool. Live still95ll5i712.
+Subsequent metadata probe was refused before execution, exit75:
+`MemAvailable=24951268kB below 24GiB` (also prior exit74 control deadlines).
+No fallback, ignored gate, in-job waits or pressure stress. Follow-through remains
+blocked on actual required CI, admitted final packet and pV activation; all
+successful/failed/refused checkpoints are distinct. No all-green assertion.
+
+## Admitted expiry/helper/visible-gauge checks and source gate
+
+At **20:39 BRT**, admitted own locked environment ran **17 independent cases
+PASS**, reader `7d2ccc07…` (da08c33), and **8 pytest passes** (three oracle/helper
+cases plus sanitizer checks). Actual browser with gauge scrolled into view
+completed normally in `source-da08-gauge-visible-browser/`: both widths, full AX,
+selection/polls, guards and all states. The 390px dial PNG was visually inspected:
+30 tokens/s, common60, completion/partial local-Pi scope, unobscured dial/footnotes.
+This is source/synthetic acceptance, not live UI. Earlier failed instrumentation,
+focused-table visual limitation and refusals remain unchanged.
+
+QA654 required scan subsequently FAILED on upstream parent's real quality gate,
+not runner/admission or skipped tests; sanitized scanner failure summary retained.
+pT fixed those source findings in **c16a91c012cf302fe5ad6e3b744e157c42b87ad2**.
+At **20:41**, exact source#327 c16a91c **all three REQUIRED checks passed**.
+QA fetched/merged that parent; backend/CSS diff versus it empty. This new source
+hash must still be re-run/bound, and QA normal updated head must earn its own
+required CI before safe merge. No all-green/live claim from source-only CI.
+
 ## Pending runtime and reversal
 
 pV alone activates the exact accepted immutable combined build. QA must bind the

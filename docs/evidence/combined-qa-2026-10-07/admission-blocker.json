@@ -10,6 +10,9 @@
     "legacy-source-ax/receipt.json and legacy-deployed-ax/receipt.json completed in one admitted heavy job",
     "candidate-arithmetic.json: 16 real-reader/synthetic-journal cases passed; candidate-pytest.txt: 2 passed in 0.06s"
   ],
-  "not_accepted": ["candidate combined browser", "immutable merged combined source", "combined deployed build/UI", "new 327 normal hooks/current-head CI"],
+  "historical_not_accepted_at_initial_capture": ["candidate combined browser", "immutable merged combined source", "combined deployed build/UI", "new 327 normal hooks/current-head CI"],
+  "subsequent_progress": "Repaired candidate combined browser completed at20:25; normal hooks and QA draftPR328/head65440d8 pushed. Immutable parent da08c33 plus17th case/final visual remains unexecuted locally; current required CI pending at20:35. Old deployed build remains95ll5i712.",
+  "latest_pre_execution_refusal": {"exit":75,"reason":"admission refused [budget-exceeded]: MemAvailable=24951268kB below 24GiB","executed":false},
+  "remaining_acceptance": ["immutable parent/helper/17th case execution", "exact source+QA current-head required CI", "final gauge-visible visual packet", "pV exact combined deployed build/UI"],
   "safety": "No in-job admission wait, slot manipulation, small-lane render, provider fallback, new agents, inference, auth/device or deployment mutation. All deliverables live in repository/vault; no scratch-only evidence."
 }

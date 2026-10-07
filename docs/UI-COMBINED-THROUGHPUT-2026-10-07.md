@@ -32,6 +32,12 @@ Source PR **#327** initially opened at `742fafd22553501017e485824534fd5da930034c
 
 Final trace found a narrow freshness gap: a 119s-old completion could age past its 120s bound while the 15s cache still appeared fresh. Hypothesis: render-time completion-age validation, without I/O or refreshing sampled_at, closes that gap. Exact old-reader red preserved (`red-event-expiry.txt`: 121s still seen=True); new regression passes. Deleting the journal on the next refresh also invalidates a previous healthy snapshot. Admitted final packet **2,137 full PASS**, reader100% lines, Ruff PASS and matching `browser-event-expiry` full-AX/HTMX/focus/geometry PASS with reader SHA-256 `7d2ccc07a36c7f881c84fbc2e9030d6dd9695d242ce37df6c25ec36114264d53`. These supersede earlier 2,135-test/fingerprint source acceptance, not runtime/live acceptance. No telemetry suppression or threshold relaxation.
 
+## Required quality repair — not yet accepted
+
+Historical 3a39879 gate ERROR was bound CE0919a4c2→analysisdea8dd03→that SCM: coverage93.6/duplication0 pass; complexity17>15 and two dataclass return-type issues. Exact da08c33 scan run37702817772 subsequently bound CEe57bad44→analysis685648ee→da08c33: **ERROR**, four actual issues (same complexity and three `replace` returns), with CI coverage **2,137 PASS**. Both failure receipts/logs retained. These are real required failures, not an advisory approval issue.
+
+Repair keeps the immutable Snapshot/dataclass API: move positive/capped read-bound validation into existing `_read_tail` and explicitly type `dataclasses.replace` results with `typing.cast(Snapshot, ...)`. No guard lost, no runtime behavior or metric/exclusion/threshold change. The patch is currently source-only; its targeted/full/browser requests were admission-refused (loaded shared unit, then MemAvailable24,025,056kB below24GiB). No repair pass, merge or deployment is claimed until actual acceptance and its exact historical analysis exist.
+
 ## Outstanding delivery
 
-Exact final receipt-head required CI and historical Sonar binding remain. Protected safe merge is not claimed yet. Runtime pV and independent QA pW retain activation/live acceptance custody; their old selected-gauge acceptance is not acceptance of this source. Reversal after merge is one ordinary revert PR of its squash; no runtime deployment happened here.
+Admitted repair checks and exact superseding-head required CI/historical Sonar binding remain. Protected safe merge is not claimed yet. Runtime pV and independent QA pW retain activation/live acceptance custody; their old selected-gauge acceptance is not acceptance of this source. Reversal after merge is one ordinary revert PR of its squash; no runtime deployment happened here.

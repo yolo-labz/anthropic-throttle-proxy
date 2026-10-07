@@ -1,0 +1,23 @@
+{
+  "scope": "synthetic journals / real candidate reader",
+  "passed": [
+    "600+1200 outputs / common60 =30; excludes prompt/cache/durations",
+    "same source/alias refreshed twice is not added twice",
+    "Codex aliases/direct Desktop count once as client events",
+    "declared lower inclusive / upper exclusive common window",
+    "observed idle interval is measured zero",
+    "warmup cannot imply complete60s or use request duration",
+    "negative cannot be complete/healthy accounting",
+    "nonfinite cannot be complete/healthy accounting",
+    "infinity cannot be complete/healthy accounting",
+    "missing output cannot be complete/healthy accounting",
+    "future cannot be complete/healthy accounting",
+    "partial final write never claims complete coverage",
+    "atomic file replacement replaces, not accumulates",
+    "missing file is unknown, not zero",
+    "cache-only fixed-age projection / stale16s",
+    "refresh replaces and invalidates source",
+    "completion119s ->121s expires even within2s of cache refresh"
+  ],
+  "reader_sha256": "7d2ccc07a36c7f881c84fbc2e9030d6dd9695d242ce37df6c25ec36114264d53"
+}

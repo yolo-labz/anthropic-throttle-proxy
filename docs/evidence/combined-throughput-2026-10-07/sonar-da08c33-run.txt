@@ -1,0 +1,1017 @@
+scan	Set up job	﻿2026-10-07T23:32:19.8917768Z Current runner version: '2.337.0'
+scan	Set up job	2026-10-07T23:32:19.8942518Z ##[group]Runner Image Provisioner
+scan	Set up job	2026-10-07T23:32:19.8943383Z Hosted Compute Agent
+scan	Set up job	2026-10-07T23:32:19.8943916Z Version: 20260901.588
+scan	Set up job	2026-10-07T23:32:19.8944517Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+scan	Set up job	2026-10-07T23:32:19.8945181Z Build Date: 2026-09-01T19:56:44Z
+scan	Set up job	2026-10-07T23:32:19.8945902Z Worker ID: {3618be7b-d76e-4d33-bb42-93aea9e388b5}
+scan	Set up job	2026-10-07T23:32:19.8946579Z Azure Region: westus3
+scan	Set up job	2026-10-07T23:32:19.8947117Z ##[endgroup]
+scan	Set up job	2026-10-07T23:32:19.8948904Z ##[group]Operating System
+scan	Set up job	2026-10-07T23:32:19.8949497Z Ubuntu
+scan	Set up job	2026-10-07T23:32:19.8949970Z 24.04.5
+scan	Set up job	2026-10-07T23:32:19.8950550Z LTS
+scan	Set up job	2026-10-07T23:32:19.8951026Z ##[endgroup]
+scan	Set up job	2026-10-07T23:32:19.8951545Z ##[group]Runner Image
+scan	Set up job	2026-10-07T23:32:19.8952102Z Image: ubuntu-24.04
+scan	Set up job	2026-10-07T23:32:19.8952645Z Version: 20260927.320.1
+scan	Set up job	2026-10-07T23:32:19.8953652Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260927.320/images/ubuntu/Ubuntu2404-Readme.md
+scan	Set up job	2026-10-07T23:32:19.8955244Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260927.320
+scan	Set up job	2026-10-07T23:32:19.8956161Z ##[endgroup]
+scan	Set up job	2026-10-07T23:32:19.8957349Z ##[group]GITHUB_TOKEN Permissions
+scan	Set up job	2026-10-07T23:32:19.8959515Z Contents: read
+scan	Set up job	2026-10-07T23:32:19.8960112Z Metadata: read
+scan	Set up job	2026-10-07T23:32:19.8960638Z PullRequests: read
+scan	Set up job	2026-10-07T23:32:19.8961185Z ##[endgroup]
+scan	Set up job	2026-10-07T23:32:19.8963180Z Secret source: Actions
+scan	Set up job	2026-10-07T23:32:19.8964051Z Cache mode: write
+scan	Set up job	2026-10-07T23:32:19.8964739Z Prepare workflow directory
+scan	Set up job	2026-10-07T23:32:19.9284201Z Prepare all required actions
+scan	Set up job	2026-10-07T23:32:19.9331672Z Getting action download info
+scan	Set up job	2026-10-07T23:32:20.2788136Z Download action repository 'step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411' (SHA:9af89fc71515a100421586dfdb3dc9c984fbf411)
+scan	Set up job	2026-10-07T23:32:21.3615648Z Download action repository 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' (SHA:de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+scan	Set up job	2026-10-07T23:32:21.3876453Z Download action repository 'astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b' (SHA:08807647e7069bb48b6ef5acd8ec9567f424441b)
+scan	Set up job	2026-10-07T23:32:22.1728785Z Download action repository 'SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432' (SHA:59db25f34e16620e48ab4bb9e4a5dce155cb5432)
+scan	Set up job	2026-10-07T23:32:23.0957810Z Complete job name: scan
+scan	Pre Harden runner	﻿2026-10-07T23:32:23.1571706Z ##[group]Run step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+scan	Pre Harden runner	2026-10-07T23:32:23.1572486Z with:
+scan	Pre Harden runner	2026-10-07T23:32:23.1572716Z   egress-policy: audit
+scan	Pre Harden runner	2026-10-07T23:32:23.1575257Z   token: ***
+scan	Pre Harden runner	2026-10-07T23:32:23.1575490Z   disable-telemetry: false
+scan	Pre Harden runner	2026-10-07T23:32:23.1575738Z   disable-sudo: false
+scan	Pre Harden runner	2026-10-07T23:32:23.1575989Z   disable-sudo-and-containers: false
+scan	Pre Harden runner	2026-10-07T23:32:23.1576286Z   disable-file-monitoring: false
+scan	Pre Harden runner	2026-10-07T23:32:23.1576561Z   use-policy-store: false
+scan	Pre Harden runner	2026-10-07T23:32:23.1576836Z   deploy-on-self-hosted-vm: false
+scan	Pre Harden runner	2026-10-07T23:32:23.1577243Z ##[endgroup]
+scan	Pre Harden runner	2026-10-07T23:32:23.2824480Z [harden-runner] pre-step
+scan	Pre Harden runner	2026-10-07T23:32:23.2825004Z [!] Current Configuration: 
+scan	Pre Harden runner	2026-10-07T23:32:23.2827260Z {"repo":"yolo-labz/anthropic-throttle-proxy","run_id":"37702817772","correlation_id":"142aa398-c7e6-48fe-aeda-d3e507be68c7","working_directory":"/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy","api_url":"https://agent.api.stepsecurity.io/v1","telemetry_url":"https://prod.app-api.stepsecurity.io/v1","allowed_endpoints":"","egress_policy":"audit","disable_telemetry":false,"disable_sudo":false,"disable_sudo_and_containers":false,"disable_file_monitoring":false,"private":false,"is_github_hosted":true,"is_debug":false,"one_time_key":"","api_key":"","use_policy_store":false,"deploy_on_self_hosted_vm":false}
+scan	Pre Harden runner	2026-10-07T23:32:23.2829701Z 
+scan	Pre Harden runner	2026-10-07T23:32:23.2830087Z ^[[32mView security insights and recommended policy at:^[[0m
+scan	Pre Harden runner	2026-10-07T23:32:23.2830625Z https://app.stepsecurity.io/github/yolo-labz/anthropic-throttle-proxy/actions/runs/37702817772
+scan	Pre Harden runner	2026-10-07T23:32:23.2831384Z RUNNER_NAME: GitHub Actions 1000027582
+scan	Pre Harden runner	2026-10-07T23:32:23.9594519Z Runner IP Address: 20.169.74.55
+scan	Pre Harden runner	2026-10-07T23:32:23.9598572Z Step Security Job Correlation ID: 142aa398-c7e6-48fe-aeda-d3e507be68c7
+scan	Pre Harden runner	2026-10-07T23:32:23.9789834Z [!] Checking TLS_STATUS: yolo-labz
+scan	Pre Harden runner	2026-10-07T23:32:24.1125947Z [!] TLS_NOT_ENABLED: yolo-labz
+scan	Pre Harden runner	2026-10-07T23:32:24.5597084Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+scan	Pre Harden runner	2026-10-07T23:32:24.5686649Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/6f821247-6f27-4e32-a5b8-97405087e7fb -f /home/runner/work/_temp/6755ee7f-35ee-452d-b5fb-fef3aa5d2028
+scan	Pre Harden runner	2026-10-07T23:32:27.3001396Z Initialized
+scan	Harden runner	﻿2026-10-07T23:32:27.3211615Z ##[group]Run step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+scan	Harden runner	2026-10-07T23:32:27.3212056Z with:
+scan	Harden runner	2026-10-07T23:32:27.3212295Z   egress-policy: audit
+scan	Harden runner	2026-10-07T23:32:27.3214732Z   token: ***
+scan	Harden runner	2026-10-07T23:32:27.3214948Z   disable-telemetry: false
+scan	Harden runner	2026-10-07T23:32:27.3215209Z   disable-sudo: false
+scan	Harden runner	2026-10-07T23:32:27.3215455Z   disable-sudo-and-containers: false
+scan	Harden runner	2026-10-07T23:32:27.3215736Z   disable-file-monitoring: false
+scan	Harden runner	2026-10-07T23:32:27.3215999Z   use-policy-store: false
+scan	Harden runner	2026-10-07T23:32:27.3216246Z   deploy-on-self-hosted-vm: false
+scan	Harden runner	2026-10-07T23:32:27.3216488Z env:
+scan	Harden runner	2026-10-07T23:32:27.3216676Z   STATE_disableSudo: false
+scan	Harden runner	2026-10-07T23:32:27.3216934Z   STATE_disableSudoAndContainers: false
+scan	Harden runner	2026-10-07T23:32:27.3217214Z   STATE_monitorStatusCode: 200
+scan	Harden runner	2026-10-07T23:32:27.3217778Z   STATE_addSummary: true
+scan	Harden runner	2026-10-07T23:32:27.3218161Z   STATE_correlation_id: 142aa398-c7e6-48fe-aeda-d3e507be68c7
+scan	Harden runner	2026-10-07T23:32:27.3218480Z   STATE_isTLS: false
+scan	Harden runner	2026-10-07T23:32:27.3218686Z ##[endgroup]
+scan	Harden runner	2026-10-07T23:32:27.3935570Z [harden-runner] main-step
+scan	Harden runner	2026-10-07T23:32:27.3941298Z ^[[32mView security insights and recommended policy at:^[[0m
+scan	Harden runner	2026-10-07T23:32:27.3942379Z https://app.stepsecurity.io/github/yolo-labz/anthropic-throttle-proxy/actions/runs/37702817772
+scan	Checkout (full history for blame-based new-code detection)	﻿2026-10-07T23:32:27.4087018Z ##[group]Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4087631Z with:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4087843Z   fetch-depth: 0
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4088068Z   persist-credentials: false
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4088357Z   repository: yolo-labz/anthropic-throttle-proxy
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4090949Z   token: ***
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4091167Z   ssh-strict: true
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4091383Z   ssh-user: git
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4091587Z   clean: true
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4091804Z   sparse-checkout-cone-mode: true
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4092069Z   fetch-tags: false
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4092537Z   show-progress: true
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4092759Z   lfs: false
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4092953Z   submodules: false
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4093170Z   set-safe-directory: true
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.4093401Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5093402Z Syncing repository: yolo-labz/anthropic-throttle-proxy
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5095519Z ##[group]Getting Git version info
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5096464Z Working directory is '/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy'
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5098040Z [command]/usr/bin/git version
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5112290Z git version 2.55.0
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5133392Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5147691Z Temporarily overriding HOME='/home/runner/work/_temp/1180cabe-db74-4211-ade1-5e91f45eded5' before making global git config changes
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5149522Z Adding repository directory to the temporary git global config as a safe directory
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5153005Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5196922Z Deleting the contents of '/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy'
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5201286Z ##[group]Initializing the repository
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5209057Z [command]/usr/bin/git init /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5311052Z hint: Using 'master' as the name for the initial branch. This default branch name
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5312383Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5313284Z hint: to use in all of your new repositories, which will suppress this warning,
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5314053Z hint: call:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5314376Z hint:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5314886Z hint: 	git config --global init.defaultBranch <name>
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5315465Z hint:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5316046Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5316945Z hint: 'development'. The just-created branch can be renamed via this command:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5317764Z hint:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5318164Z hint: 	git branch -m <name>
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5318527Z hint:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5319135Z hint: Disable this message with "git config set advice.defaultBranchName false"
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5321187Z Initialized empty Git repository in /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5342692Z [command]/usr/bin/git remote add origin https://github.com/yolo-labz/anthropic-throttle-proxy
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5380422Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5380964Z ##[group]Disabling automatic garbage collection
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5385720Z [command]/usr/bin/git config --local gc.auto 0
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5418106Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5418528Z ##[group]Setting up auth
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5419582Z Removing SSH command configuration
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5428397Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5467024Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5831926Z Removing HTTP extra header
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5839519Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.5870442Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6093022Z Removing includeIf entries pointing to credentials config files
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6100488Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6131983Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6326708Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6362457Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6394111Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6426570Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6455732Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6480786Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6481331Z ##[group]Fetching the repository
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:27.6490151Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/* +de4da2aac5376d96a99507916935753703fae0ed:refs/remotes/pull/327/merge
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1512557Z From https://github.com/yolo-labz/anthropic-throttle-proxy
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1514046Z  * [new branch]      082-sse-keepalive                        -> origin/082-sse-keepalive
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1515270Z  * [new branch]      094-subscription-eligibility             -> origin/094-subscription-eligibility
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1516707Z  * [new branch]      159-subscription-lanes                   -> origin/159-subscription-lanes
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1518202Z  * [new branch]      160-dashboard-design                     -> origin/160-dashboard-design
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1519367Z  * [new branch]      161-lane-auth                            -> origin/161-lane-auth
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1520358Z  * [new branch]      162-auth-probe                           -> origin/162-auth-probe
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1521442Z  * [new branch]      163-ui-layout                            -> origin/163-ui-layout
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1522452Z  * [new branch]      164-bearers-cols                         -> origin/164-bearers-cols
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1523616Z  * [new branch]      172-a11y-contrast                        -> origin/172-a11y-contrast
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1524693Z  * [new branch]      175-focus-motion                         -> origin/175-focus-motion
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1525798Z  * [new branch]      176-ultrawide-canvas                     -> origin/176-ultrawide-canvas
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1526952Z  * [new branch]      177-focus-swap                           -> origin/177-focus-swap
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1528120Z  * [new branch]      178-binding-row                          -> origin/178-binding-row
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1529274Z  * [new branch]      179-binding-dedupe                       -> origin/179-binding-dedupe
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1530367Z  * [new branch]      180-quarantine-ui                        -> origin/180-quarantine-ui
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1531418Z  * [new branch]      182-cred-source                          -> origin/182-cred-source
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1532655Z  * [new branch]      187-keepalive-primitive                  -> origin/187-keepalive-primitive
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1534017Z  * [new branch]      188-ui-holds                             -> origin/188-ui-holds
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1535141Z  * [new branch]      189-lane-exhausted                       -> origin/189-lane-exhausted
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1536255Z  * [new branch]      190-exhausted-reason                     -> origin/190-exhausted-reason
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1543620Z  * [new branch]      191-build-identity                       -> origin/191-build-identity
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1545939Z  * [new branch]      192-balance-lanes                        -> origin/192-balance-lanes
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1546995Z  * [new branch]      193-codex-pace                           -> origin/193-codex-pace
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1548252Z  * [new branch]      194-panel-legible                        -> origin/194-panel-legible
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1549240Z  * [new branch]      195-gui-identity                         -> origin/195-gui-identity
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1550189Z  * [new branch]      196-reset-visible                        -> origin/196-reset-visible
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1551332Z  * [new branch]      199-k2-pr-image-build                    -> origin/199-k2-pr-image-build
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1552463Z  * [new branch]      206-oauth-entitlement-429                -> origin/206-oauth-entitlement-429
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1553816Z  * [new branch]      207-entitlement-via-gate                 -> origin/207-entitlement-via-gate
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1555032Z  * [new branch]      209-ingress-relay-hardening              -> origin/209-ingress-relay-hardening
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1556251Z  * [new branch]      210-admission-verdict                    -> origin/210-admission-verdict
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1557330Z  * [new branch]      212-ingress-admission                    -> origin/212-ingress-admission
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1567225Z  * [new branch]      213-admission-credential                 -> origin/213-admission-credential
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1572294Z  * [new branch]      216-dashboard-facelift                   -> origin/216-dashboard-facelift
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1574568Z  * [new branch]      219-client-state-prune                   -> origin/219-client-state-prune
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1578799Z  * [new branch]      219-handoff-prune-record                 -> origin/219-handoff-prune-record
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1580986Z  * [new branch]      225-handoff-pin                          -> origin/225-handoff-pin
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1584189Z  * [new branch]      227-dashboard-audit                      -> origin/227-dashboard-audit
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1586746Z  * [new branch]      231-ui-clip-fixes                        -> origin/231-ui-clip-fixes
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1589239Z  * [new branch]      232-poll-backoff                         -> origin/232-poll-backoff
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1592323Z  * [new branch]      233-delivery-receipt                     -> origin/233-delivery-receipt
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1595529Z  * [new branch]      234-ui-noise                             -> origin/234-ui-noise
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1597860Z  * [new branch]      240-zai-chat-body-budget                 -> origin/240-zai-chat-body-budget
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1599214Z  * [new branch]      241-mimo-plan-meter                      -> origin/241-mimo-plan-meter
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1600279Z  * [new branch]      246-sonar-stragglers                     -> origin/246-sonar-stragglers
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1602773Z  * [new branch]      247-mimo-plan                            -> origin/247-mimo-plan
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1604793Z  * [new branch]      248-complexity                           -> origin/248-complexity
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1606165Z  * [new branch]      249-complexity                           -> origin/249-complexity
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1607307Z  * [new branch]      250-cx-proxy-a                           -> origin/250-cx-proxy-a
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1611224Z  * [new branch]      250-cx-proxy-a2                          -> origin/250-cx-proxy-a2
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1613397Z  * [new branch]      251-cx-proxy-b                           -> origin/251-cx-proxy-b
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1616960Z  * [new branch]      251-cx-proxy-b-2                         -> origin/251-cx-proxy-b-2
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1620157Z  * [new branch]      252-cx-proxy-c                           -> origin/252-cx-proxy-c
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1622451Z  * [new branch]      252-cx-proxy-c-2                         -> origin/252-cx-proxy-c-2
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1625332Z  * [new branch]      253-cx-ui                                -> origin/253-cx-ui
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1627465Z  * [new branch]      253-cx-ui-b                              -> origin/253-cx-ui-b
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1629548Z  * [new branch]      253-cx-ui-c                              -> origin/253-cx-ui-c
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1630692Z  * [new branch]      254-cx-ingress                           -> origin/254-cx-ingress
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1633229Z  * [new branch]      255-cx-proxy-d                           -> origin/255-cx-proxy-d
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1635483Z  * [new branch]      260-handler-params                       -> origin/260-handler-params
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1636739Z  * [new branch]      260-handler-split                        -> origin/260-handler-split
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1638109Z  * [new branch]      260-lanes-normalize                      -> origin/260-lanes-normalize
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1639124Z  * [new branch]      260-routing-fit                          -> origin/260-routing-fit
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1640168Z  * [new branch]      260-slot-s107                            -> origin/260-slot-s107
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1641199Z  * [new branch]      260-sonar-gatewait                       -> origin/260-sonar-gatewait
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1642277Z  * [new branch]      269-evidence-regex                       -> origin/269-evidence-regex
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1643351Z  * [new branch]      276-retry-wait                           -> origin/276-retry-wait
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1644285Z  * [new branch]      277-format-fix                           -> origin/277-format-fix
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1645626Z  * [new branch]      277-ui-observed-state                    -> origin/277-ui-observed-state
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1646564Z  * [new branch]      279-team-capacity                        -> origin/279-team-capacity
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1647666Z  * [new branch]      280-account-pool                         -> origin/280-account-pool
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1648749Z  * [new branch]      287-queue-expiry-hotfix                  -> origin/287-queue-expiry-hotfix
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1649901Z  * [new branch]      288-prospective-accounting               -> origin/288-prospective-accounting
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1650971Z  * [new branch]      289-meter-admission                      -> origin/289-meter-admission
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1651976Z  * [new branch]      306-fresh-input-display                  -> origin/306-fresh-input-display
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1652990Z  * [new branch]      313-gauge-widget                         -> origin/313-gauge-widget
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1654036Z  * [new branch]      314-static-analysis                      -> origin/314-static-analysis
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1655094Z  * [new branch]      315-gap-research                         -> origin/315-gap-research
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1656323Z  * [new branch]      316-improvement-research                 -> origin/316-improvement-research
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1657878Z  * [new branch]      326-combined-throughput                  -> origin/326-combined-throughput
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1659000Z  * [new branch]      327-combined-qa                          -> origin/327-combined-qa
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1659948Z  * [new branch]      328-combined-runtime                     -> origin/328-combined-runtime
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1660981Z  * [new branch]      codex-lane-health                        -> origin/codex-lane-health
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1662040Z  * [new branch]      fix/zai-text-only-content-blocks         -> origin/fix/zai-text-only-content-blocks
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1663023Z  * [new branch]      main                                     -> origin/main
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1664329Z  * [new branch]      throttle-lane-docs                       -> origin/throttle-lane-docs
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1665254Z  * [new ref]         de4da2aac5376d96a99507916935753703fae0ed -> pull/327/merge
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1667245Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1668411Z ##[group]Determining the checkout info
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1669195Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1669793Z [command]/usr/bin/git sparse-checkout disable
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1671282Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1672928Z ##[group]Checking out the ref
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.1673647Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/327/merge
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2778735Z Note: switching to 'refs/remotes/pull/327/merge'.
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2779299Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2779769Z You are in 'detached HEAD' state. You can look around, make experimental
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2780800Z changes and commit them, and you can discard any commits you make in this
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2781909Z state without impacting any branches by switching back to a branch.
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2782467Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2782845Z If you want to create a new branch to retain commits you create, you may
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2783849Z do so (now or later) by using -c with the switch command. Example:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2784479Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2784759Z   git switch -c <new-branch-name>
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2785225Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2785492Z Or undo this operation with:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2785921Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2786105Z   git switch -
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2786408Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2786844Z Turn off this advice by setting config variable advice.detachedHead to false
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2790614Z 
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2792972Z HEAD is now at de4da2a Merge da08c3318310dc7bc64300af44221d65428ac491 into 353d30a61adb3c25eb0d863ce74bba8d58cba286
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2798419Z ##[endgroup]
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2828846Z [command]/usr/bin/git log -1 --format=%H
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2852817Z de4da2aac5376d96a99507916935753703fae0ed
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2862572Z ##[group]Removing auth
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2863394Z Removing SSH command configuration
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2866625Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.2895246Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3086085Z Removing HTTP extra header
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3091379Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3124022Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3311559Z Removing includeIf entries pointing to credentials config files
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3315352Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3338025Z includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3338945Z includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3339617Z includeif.gitdir:/github/workspace/.git.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3340307Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3347104Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3367852Z /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3377210Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3409941Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3430382Z /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3439285Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3469940Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3490026Z /github/runner_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3506711Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3542155Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3561915Z /github/runner_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3574203Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3606630Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3788632Z Removing credentials config '/home/runner/work/_temp/git-credentials-3db6c852-68f2-4b65-8125-d98496bd8336.config'
+scan	Checkout (full history for blame-based new-code detection)	2026-10-07T23:32:30.3796628Z ##[endgroup]
+scan	Set up uv + Python 3.13	﻿2026-10-07T23:32:30.4041060Z ##[group]Run astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4041438Z with:
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4041744Z   version: 0.9.2
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4041951Z   python-version: 3.13
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4042175Z   activate-environment: false
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4042420Z   no-project: false
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4042808Z   working-directory: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4045558Z   github-token: ***
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4045767Z   enable-cache: auto
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4046310Z   cache-dependency-glob: **/*requirements*.txt
+scan	Set up uv + Python 3.13	**/*requirements*.in
+scan	Set up uv + Python 3.13	**/*constraints*.txt
+scan	Set up uv + Python 3.13	**/*constraints*.in
+scan	Set up uv + Python 3.13	**/pyproject.toml
+scan	Set up uv + Python 3.13	**/uv.lock
+scan	Set up uv + Python 3.13	**/*.py.lock
+scan	Set up uv + Python 3.13	
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4046903Z   restore-cache: true
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4047116Z   save-cache: true
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4047318Z   prune-cache: true
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4047709Z   cache-python: false
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4047934Z   ignore-nothing-to-cache: false
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4048206Z   ignore-empty-workdir: false
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4048499Z   add-problem-matchers: true
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4048743Z   resolution-strategy: highest
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.4048982Z ##[endgroup]
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.5768366Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.7069214Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.9.2/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+scan	Set up uv + Python 3.13	2026-10-07T23:32:30.9786352Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/74b95223-5f22-450c-b995-ce80f956e526 -f /home/runner/work/_temp/90f10a77-73d8-4f2f-9727-20f205b3d3db
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3873890Z Added /home/runner/.local/bin to the path
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3876735Z Added /opt/hostedtoolcache/uv/0.9.2/x86_64 to the path
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3878361Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3878790Z Added /home/runner/work/_temp/uv-python-dir to the path
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3879311Z Set UV_PYTHON to 3.13
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3899760Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3900169Z Successfully installed uv version 0.9.2
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.3902474Z Searching files using cache dependency glob: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*requirements*.txt,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*requirements*.in,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*constraints*.txt,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*constraints*.in,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/pyproject.toml,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/uv.lock,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*.py.lock
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.4545034Z /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/pyproject.toml
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.4915811Z /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/uv.lock
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.4924690Z Found 2 files to hash.
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.4987255Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5
+scan	Set up uv + Python 3.13	2026-10-07T23:32:31.6855232Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5
+scan	Set up uv + Python 3.13	2026-10-07T23:32:32.2293611Z Received 101977 of 101977 (100.0%), 0.3 MBs/sec
+scan	Set up uv + Python 3.13	2026-10-07T23:32:32.2294210Z Cache Size: ~0 MB (101977 B)
+scan	Set up uv + Python 3.13	2026-10-07T23:32:32.2322341Z [command]/usr/bin/tar -xf /home/runner/work/_temp/7f0e176e-8bbe-4b89-a21d-d558e6c246ca/cache.tzst -P -C /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy --use-compress-program unzstd
+scan	Set up uv + Python 3.13	2026-10-07T23:32:32.2416265Z Cache restored successfully
+scan	Set up uv + Python 3.13	2026-10-07T23:32:32.2420530Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5
+scan	Install dependencies (locked)	﻿2026-10-07T23:32:32.3052610Z ##[group]Run uv sync --frozen --group dev
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3053068Z ^[[36;1muv sync --frozen --group dev^[[0m
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3224847Z shell: /usr/bin/bash -e {0}
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3225144Z env:
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3225430Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3225771Z   UV_PYTHON: 3.13
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3226025Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+scan	Install dependencies (locked)	2026-10-07T23:32:32.3226323Z ##[endgroup]
+scan	Install dependencies (locked)	2026-10-07T23:32:32.6915265Z Downloading cpython-3.13.8-linux-x86_64-gnu (download) (32.1MiB)
+scan	Install dependencies (locked)	2026-10-07T23:32:33.3998337Z  Downloading cpython-3.13.8-linux-x86_64-gnu (download)
+scan	Install dependencies (locked)	2026-10-07T23:32:33.5422878Z Using CPython 3.13.8
+scan	Install dependencies (locked)	2026-10-07T23:32:33.5423529Z Creating virtual environment at: .venv
+scan	Install dependencies (locked)	2026-10-07T23:32:33.5576780Z    Building anthropic-throttle-proxy @ file:///home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Install dependencies (locked)	2026-10-07T23:32:33.5848397Z Downloading pygments (1.2MiB)
+scan	Install dependencies (locked)	2026-10-07T23:32:33.5850123Z Downloading ruff (10.9MiB)
+scan	Install dependencies (locked)	2026-10-07T23:32:33.5850975Z Downloading aiohttp (1.7MiB)
+scan	Install dependencies (locked)	2026-10-07T23:32:33.7574060Z  Downloading ruff
+scan	Install dependencies (locked)	2026-10-07T23:32:33.7743182Z  Downloading aiohttp
+scan	Install dependencies (locked)	2026-10-07T23:32:33.8074184Z  Downloading pygments
+scan	Install dependencies (locked)	2026-10-07T23:32:34.2915131Z       Built anthropic-throttle-proxy @ file:///home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Install dependencies (locked)	2026-10-07T23:32:34.2923145Z Prepared 24 packages in 744ms
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3068200Z Installed 24 packages in 14ms
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3069014Z  + aiohappyeyeballs==2.6.2
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3069682Z  + aiohttp==3.14.3
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3070237Z  + aiohttp-jinja2==1.6
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3070775Z  + aiosignal==1.4.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3072053Z  + anthropic-throttle-proxy==0.1.0 (from file:///home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy)
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3073023Z  + attrs==26.1.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3073383Z  + coverage==7.14.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3073751Z  + frozenlist==1.8.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3074104Z  + idna==3.15
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3074481Z  + iniconfig==2.3.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3074821Z  + jinja2==3.1.6
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3075164Z  + markupsafe==3.0.3
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3075515Z  + multidict==6.7.1
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3075846Z  + packaging==26.2
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3076160Z  + pluggy==1.6.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3076475Z  + prometheus-client==0.25.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3076844Z  + propcache==0.5.2
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3077219Z  + pygments==2.20.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3077916Z  + pytest==9.0.3
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3078289Z  + pytest-asyncio==1.3.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3078656Z  + pytest-cov==7.1.0
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3078969Z  + pyyaml==6.0.3
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3079321Z  + ruff==0.15.13
+scan	Install dependencies (locked)	2026-10-07T23:32:34.3079631Z  + yarl==1.24.2
+scan	Run tests with coverage	﻿2026-10-07T23:32:34.3201047Z ##[group]Run uv run pytest --cov=anthropic_throttle_proxy --cov-report=xml --cov-report=term-missing
+scan	Run tests with coverage	2026-10-07T23:32:34.3201840Z ^[[36;1muv run pytest --cov=anthropic_throttle_proxy --cov-report=xml --cov-report=term-missing^[[0m
+scan	Run tests with coverage	2026-10-07T23:32:34.3246287Z shell: /usr/bin/bash -e {0}
+scan	Run tests with coverage	2026-10-07T23:32:34.3246705Z env:
+scan	Run tests with coverage	2026-10-07T23:32:34.3246998Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+scan	Run tests with coverage	2026-10-07T23:32:34.3247832Z   UV_PYTHON: 3.13
+scan	Run tests with coverage	2026-10-07T23:32:34.3248118Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+scan	Run tests with coverage	2026-10-07T23:32:34.3248423Z ##[endgroup]
+scan	Run tests with coverage	2026-10-07T23:32:40.4450527Z ============================= test session starts ==============================
+scan	Run tests with coverage	2026-10-07T23:32:40.4451352Z platform linux -- Python 3.13.8, pytest-9.0.3, pluggy-1.6.0
+scan	Run tests with coverage	2026-10-07T23:32:40.4452138Z rootdir: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Run tests with coverage	2026-10-07T23:32:40.4452866Z configfile: pyproject.toml
+scan	Run tests with coverage	2026-10-07T23:32:40.4453245Z testpaths: tests
+scan	Run tests with coverage	2026-10-07T23:32:40.4453591Z plugins: asyncio-1.3.0, cov-7.1.0
+scan	Run tests with coverage	2026-10-07T23:32:40.4454590Z asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+scan	Run tests with coverage	2026-10-07T23:32:40.4455470Z collected 2137 items
+scan	Run tests with coverage	2026-10-07T23:32:40.4455702Z 
+scan	Run tests with coverage	2026-10-07T23:32:41.0123037Z tests/test_accounts.py ................................................. [  2%]
+scan	Run tests with coverage	2026-10-07T23:32:41.1052822Z .............................                                            [  3%]
+scan	Run tests with coverage	2026-10-07T23:32:41.2298337Z tests/test_admission.py ......................................           [  5%]
+scan	Run tests with coverage	2026-10-07T23:32:41.2462130Z tests/test_admission_closure_surface.py ....                             [  5%]
+scan	Run tests with coverage	2026-10-07T23:32:41.7391055Z tests/test_admission_display_trusted.py ...............                  [  6%]
+scan	Run tests with coverage	2026-10-07T23:32:41.8507118Z tests/test_admission_quiesce.py .......                                  [  6%]
+scan	Run tests with coverage	2026-10-07T23:32:41.8898485Z tests/test_auth_probe.py ........                                        [  7%]
+scan	Run tests with coverage	2026-10-07T23:32:41.9392116Z tests/test_body_shrink.py ................                               [  7%]
+scan	Run tests with coverage	2026-10-07T23:32:41.9546506Z tests/test_browser_receipt_sanitize.py .....                             [  8%]
+scan	Run tests with coverage	2026-10-07T23:32:42.1539719Z tests/test_capacity_view.py .....................                        [  8%]
+scan	Run tests with coverage	2026-10-07T23:32:42.2385243Z tests/test_config_overrides.py ..........................                [ 10%]
+scan	Run tests with coverage	2026-10-07T23:32:42.3340928Z tests/test_copilot.py .............                                      [ 10%]
+scan	Run tests with coverage	2026-10-07T23:32:42.4459909Z tests/test_credential_quarantine.py .................................    [ 12%]
+scan	Run tests with coverage	2026-10-07T23:32:42.4890630Z tests/test_dashboard_audit_acceptance.py ...........                     [ 12%]
+scan	Run tests with coverage	2026-10-07T23:32:42.5480727Z tests/test_dashboard_data_contract.py .................                  [ 13%]
+scan	Run tests with coverage	2026-10-07T23:32:42.6887862Z tests/test_dashboard_visibility_acceptance.py .                          [ 13%]
+scan	Run tests with coverage	2026-10-07T23:32:42.7480629Z tests/test_desktop_quota.py ...............                              [ 14%]
+scan	Run tests with coverage	2026-10-07T23:32:42.8100457Z tests/test_desktop_report.py ...............                             [ 15%]
+scan	Run tests with coverage	2026-10-07T23:32:42.9054686Z tests/test_fleet.py ............                                         [ 15%]
+scan	Run tests with coverage	2026-10-07T23:32:43.0074272Z tests/test_fleet_ui_config.py ..................                         [ 16%]
+scan	Run tests with coverage	2026-10-07T23:32:43.6782880Z tests/test_forwarding_paths.py ..........................                [ 17%]
+scan	Run tests with coverage	2026-10-07T23:32:43.8314963Z tests/test_forwarding_text_only.py ...........                           [ 18%]
+scan	Run tests with coverage	2026-10-07T23:32:45.6382457Z tests/test_gauge_routes.py .............                                 [ 18%]
+scan	Run tests with coverage	2026-10-07T23:32:45.7083542Z tests/test_history.py .................                                  [ 19%]
+scan	Run tests with coverage	2026-10-07T23:32:46.2848030Z tests/test_ingress.py ............................................       [ 21%]
+scan	Run tests with coverage	2026-10-07T23:32:46.5168590Z tests/test_ingress_adr6a.py .............................                [ 23%]
+scan	Run tests with coverage	2026-10-07T23:32:46.5724360Z tests/test_ingress_prospective.py ........                               [ 23%]
+scan	Run tests with coverage	2026-10-07T23:32:46.6021774Z tests/test_ingress_prospective_live.py ....                              [ 23%]
+scan	Run tests with coverage	2026-10-07T23:33:46.8514036Z tests/test_keepalive_hold.py ..........................................  [ 25%]
+scan	Run tests with coverage	2026-10-07T23:33:47.0289761Z tests/test_lanes.py ......................................               [ 27%]
+scan	Run tests with coverage	2026-10-07T23:33:47.2887245Z tests/test_ledger.py ................................................... [ 29%]
+scan	Run tests with coverage	2026-10-07T23:33:47.4193907Z .....................                                                    [ 30%]
+scan	Run tests with coverage	2026-10-07T23:33:47.6825112Z tests/test_limiter.py ...............................................    [ 32%]
+scan	Run tests with coverage	2026-10-07T23:33:48.8777204Z tests/test_mimo_admission.py ................                            [ 33%]
+scan	Run tests with coverage	2026-10-07T23:33:49.1251826Z tests/test_mimo_plan.py ................................................ [ 35%]
+scan	Run tests with coverage	2026-10-07T23:33:49.3495986Z .........................................                                [ 37%]
+scan	Run tests with coverage	2026-10-07T23:33:49.5720277Z tests/test_output_usage.py .......................................       [ 39%]
+scan	Run tests with coverage	2026-10-07T23:33:49.7790486Z tests/test_pacing.py ............................                        [ 40%]
+scan	Run tests with coverage	2026-10-07T23:33:49.8957827Z tests/test_plan_lane_pushback.py .....................                   [ 41%]
+scan	Run tests with coverage	2026-10-07T23:33:49.9714954Z tests/test_priority_lane.py ............                                 [ 42%]
+scan	Run tests with coverage	2026-10-07T23:33:50.1687159Z tests/test_prospective_accounting.py ................................... [ 44%]
+scan	Run tests with coverage	2026-10-07T23:33:50.2326003Z ...........                                                              [ 44%]
+scan	Run tests with coverage	2026-10-07T23:33:50.7588238Z tests/test_prospective_admission.py ..................................   [ 46%]
+scan	Run tests with coverage	2026-10-07T23:33:51.2657697Z tests/test_prospective_admission_evidence.py .                           [ 46%]
+scan	Run tests with coverage	2026-10-07T23:33:51.5089488Z tests/test_prospective_calibration.py .................................. [ 47%]
+scan	Run tests with coverage	2026-10-07T23:33:51.6662380Z ..................                                                       [ 48%]
+scan	Run tests with coverage	2026-10-07T23:33:51.8782901Z tests/test_prospective_config.py ......................                  [ 49%]
+scan	Run tests with coverage	2026-10-07T23:33:51.9363778Z tests/test_prospective_forwarding.py .........                           [ 50%]
+scan	Run tests with coverage	2026-10-07T23:33:52.0007809Z tests/test_prospective_forwarding_live.py .....                          [ 50%]
+scan	Run tests with coverage	2026-10-07T23:33:52.0563656Z tests/test_prospective_handler_live.py ....                              [ 50%]
+scan	Run tests with coverage	2026-10-07T23:33:52.2368164Z tests/test_prospective_oracle_live.py ...........                        [ 51%]
+scan	Run tests with coverage	2026-10-07T23:33:52.4764730Z tests/test_prospective_refusal.py ...................................... [ 52%]
+scan	Run tests with coverage	2026-10-07T23:33:52.4772139Z                                                                          [ 52%]
+scan	Run tests with coverage	2026-10-07T23:33:52.7874514Z tests/test_prospective_runtime.py ...................................    [ 54%]
+scan	Run tests with coverage	2026-10-07T23:33:53.0495918Z tests/test_prospective_scope.py ........................................ [ 56%]
+scan	Run tests with coverage	2026-10-07T23:33:53.0635386Z ..                                                                       [ 56%]
+scan	Run tests with coverage	2026-10-07T23:33:53.1410647Z tests/test_prospective_sse_probes.py ...........                         [ 57%]
+scan	Run tests with coverage	2026-10-07T23:33:53.3540573Z tests/test_provider_registry.py .....................                    [ 58%]
+scan	Run tests with coverage	2026-10-07T23:33:54.8090087Z tests/test_proxy_app.py ................................................ [ 60%]
+scan	Run tests with coverage	2026-10-07T23:33:57.4050336Z .................................................                        [ 62%]
+scan	Run tests with coverage	2026-10-07T23:33:57.7405635Z tests/test_proxy_helpers.py ............................................ [ 64%]
+scan	Run tests with coverage	2026-10-07T23:33:58.3180042Z ........................................................................ [ 67%]
+scan	Run tests with coverage	2026-10-07T23:33:58.5339068Z ...........................                                              [ 69%]
+scan	Run tests with coverage	2026-10-07T23:34:00.9020175Z tests/test_queue_depth_admission.py .................................... [ 70%]
+scan	Run tests with coverage	2026-10-07T23:34:00.9992274Z ..                                                                       [ 71%]
+scan	Run tests with coverage	2026-10-07T23:34:01.1811154Z tests/test_queue_wait.py ........                                        [ 71%]
+scan	Run tests with coverage	2026-10-07T23:34:01.2551090Z tests/test_ratelimit_usage.py .........                                  [ 71%]
+scan	Run tests with coverage	2026-10-07T23:34:01.2710168Z tests/test_response_provenance_trust.py ..                               [ 71%]
+scan	Run tests with coverage	2026-10-07T23:34:01.6954996Z tests/test_retry_after_wait.py ......                                    [ 72%]
+scan	Run tests with coverage	2026-10-07T23:34:01.7703108Z tests/test_route_identity.py .........                                   [ 72%]
+scan	Run tests with coverage	2026-10-07T23:34:02.1683425Z tests/test_routing.py .................................................. [ 74%]
+scan	Run tests with coverage	2026-10-07T23:34:02.6918011Z ...............................................................          [ 77%]
+scan	Run tests with coverage	2026-10-07T23:34:02.9904521Z tests/test_routing_chat_budget.py .............................          [ 79%]
+scan	Run tests with coverage	2026-10-07T23:34:03.3334277Z tests/test_routing_text_only.py ........................................ [ 81%]
+scan	Run tests with coverage	2026-10-07T23:34:03.8789905Z ..............................................................           [ 84%]
+scan	Run tests with coverage	2026-10-07T23:34:04.6540351Z tests/test_seat_capacity_acceptance.py .....................             [ 85%]
+scan	Run tests with coverage	2026-10-07T23:34:04.6833048Z tests/test_shutdown.py ...                                               [ 85%]
+scan	Run tests with coverage	2026-10-07T23:34:05.2060671Z tests/test_statusline.py ..........................................      [ 87%]
+scan	Run tests with coverage	2026-10-07T23:34:05.3187210Z tests/test_tps_gauge.py ............                                     [ 87%]
+scan	Run tests with coverage	2026-10-07T23:34:05.3388520Z tests/test_ui_assets.py ..                                               [ 87%]
+scan	Run tests with coverage	2026-10-07T23:34:05.5744693Z tests/test_ui_binding.py ..........                                      [ 88%]
+scan	Run tests with coverage	2026-10-07T23:34:06.0221649Z tests/test_ui_contrast.py .............................................. [ 90%]
+scan	Run tests with coverage	2026-10-07T23:34:06.4123269Z ........................................                                 [ 92%]
+scan	Run tests with coverage	2026-10-07T23:34:06.6150848Z tests/test_ui_display_config.py .....................                    [ 93%]
+scan	Run tests with coverage	2026-10-07T23:34:06.6354324Z tests/test_ui_focus_stability.py ..                                      [ 93%]
+scan	Run tests with coverage	2026-10-07T23:34:06.6793589Z tests/test_ui_icons.py ....                                              [ 93%]
+scan	Run tests with coverage	2026-10-07T23:34:06.9246122Z tests/test_ui_layout.py ........................                         [ 94%]
+scan	Run tests with coverage	2026-10-07T23:34:07.1382506Z tests/test_ui_status.py ......................                           [ 95%]
+scan	Run tests with coverage	2026-10-07T23:34:07.8480634Z tests/test_ui_truth.py ............................................      [ 97%]
+scan	Run tests with coverage	2026-10-07T23:34:08.1874075Z tests/test_unified.py .....................                              [ 98%]
+scan	Run tests with coverage	2026-10-07T23:34:08.2965764Z tests/test_upstream_auth.py ...........                                  [ 99%]
+scan	Run tests with coverage	2026-10-07T23:34:10.3541008Z tests/test_workload_view.py ................                             [100%]
+scan	Run tests with coverage	2026-10-07T23:34:10.3541589Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3541818Z =============================== warnings summary ===============================
+scan	Run tests with coverage	2026-10-07T23:34:10.3542502Z tests/test_accounts.py::test_ui_stats_renders_accounts_panel
+scan	Run tests with coverage	2026-10-07T23:34:10.3543181Z tests/test_accounts.py::test_ui_stats_renders_identity_banner
+scan	Run tests with coverage	2026-10-07T23:34:10.3544917Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/ui/routes.py:1396: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3548220Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3549625Z     app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
+scan	Run tests with coverage	2026-10-07T23:34:10.3550444Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3550731Z tests/test_accounts.py: 3 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3551536Z tests/test_admission_quiesce.py: 7 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3552420Z tests/test_forwarding_paths.py: 13 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3553651Z tests/test_gauge_routes.py: 1 warning
+scan	Run tests with coverage	2026-10-07T23:34:10.3554467Z tests/test_keepalive_hold.py: 25 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3555374Z tests/test_prospective_handler_live.py: 4 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3556277Z tests/test_proxy_app.py: 81 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3557140Z tests/test_ui_binding.py: 1 warning
+scan	Run tests with coverage	2026-10-07T23:34:10.3558023Z tests/test_ui_truth.py: 1 warning
+scan	Run tests with coverage	2026-10-07T23:34:10.3560403Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/ui/routes.py:1397: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3563145Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3564543Z     app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
+scan	Run tests with coverage	2026-10-07T23:34:10.3565418Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3565706Z tests/test_accounts.py: 3 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3566512Z tests/test_admission_quiesce.py: 7 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3567507Z tests/test_forwarding_paths.py: 13 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3568377Z tests/test_keepalive_hold.py: 25 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3569246Z tests/test_prospective_handler_live.py: 4 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3570173Z tests/test_proxy_app.py: 81 warnings
+scan	Run tests with coverage	2026-10-07T23:34:10.3571240Z tests/test_ui_binding.py: 1 warning
+scan	Run tests with coverage	2026-10-07T23:34:10.3572030Z tests/test_ui_truth.py: 1 warning
+scan	Run tests with coverage	2026-10-07T23:34:10.3574379Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/ui/routes.py:1447: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3577159Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3578708Z     app["_history_sampler"] = asyncio.create_task(_history_sample_loop())
+scan	Run tests with coverage	2026-10-07T23:34:10.3579590Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3580298Z tests/test_admission_quiesce.py::test_slow_upload_past_gate_counts_until_completion
+scan	Run tests with coverage	2026-10-07T23:34:10.3583241Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/prospective_runtime.py:346: NotAppKeyWarning: It is recommended to use web.RequestKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3586081Z   https://docs.aiohttp.org/en/stable/web_advanced.html#request-s-storage
+scan	Run tests with coverage	2026-10-07T23:34:10.3587199Z     request[_SELECTED_KEY] = selected
+scan	Run tests with coverage	2026-10-07T23:34:10.3587837Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3588481Z tests/test_admission_quiesce.py::test_slow_upload_past_gate_counts_until_completion
+scan	Run tests with coverage	2026-10-07T23:34:10.3591460Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/forwarding.py:62: NotAppKeyWarning: It is recommended to use web.RequestKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3594080Z   https://docs.aiohttp.org/en/stable/web_advanced.html#request-s-storage
+scan	Run tests with coverage	2026-10-07T23:34:10.3595255Z     request[_SUCCESS_HEADERS_CALLBACK_KEY] = callback
+scan	Run tests with coverage	2026-10-07T23:34:10.3595913Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3596529Z tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
+scan	Run tests with coverage	2026-10-07T23:34:10.3598243Z tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
+scan	Run tests with coverage	2026-10-07T23:34:10.3601122Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/lib/python3.13/site-packages/aiohttp/web_urldispatcher.py:192: DeprecationWarning: Bare functions are deprecated, use async ones
+scan	Run tests with coverage	2026-10-07T23:34:10.3603693Z     warnings.warn(
+scan	Run tests with coverage	2026-10-07T23:34:10.3604046Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3604872Z tests/test_prospective_forwarding_live.py::test_concurrent_budget_denial_sends_no_extra_upstream
+scan	Run tests with coverage	2026-10-07T23:34:10.3606823Z tests/test_prospective_forwarding_live.py::test_upstream_429_retains_debt_and_next_refuses_locally
+scan	Run tests with coverage	2026-10-07T23:34:10.3609041Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[strict]
+scan	Run tests with coverage	2026-10-07T23:34:10.3611108Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[off]
+scan	Run tests with coverage	2026-10-07T23:34:10.3614324Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:121: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3617216Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3618479Z     app["upstream_url"] = endpoint + "/messages"
+scan	Run tests with coverage	2026-10-07T23:34:10.3619049Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3619923Z tests/test_prospective_forwarding_live.py::test_concurrent_budget_denial_sends_no_extra_upstream
+scan	Run tests with coverage	2026-10-07T23:34:10.3621846Z tests/test_prospective_forwarding_live.py::test_upstream_429_retains_debt_and_next_refuses_locally
+scan	Run tests with coverage	2026-10-07T23:34:10.3623934Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[strict]
+scan	Run tests with coverage	2026-10-07T23:34:10.3625992Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[off]
+scan	Run tests with coverage	2026-10-07T23:34:10.3629150Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:122: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3631950Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3633098Z     app["endpoint"] = endpoint
+scan	Run tests with coverage	2026-10-07T23:34:10.3633766Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3634492Z tests/test_prospective_forwarding_live.py::test_default_off_identical_status_and_body
+scan	Run tests with coverage	2026-10-07T23:34:10.3637686Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:186: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3640351Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3641453Z     app["endpoint"] = endpoint
+scan	Run tests with coverage	2026-10-07T23:34:10.3641906Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3642572Z tests/test_prospective_forwarding_live.py::test_default_off_identical_status_and_body
+scan	Run tests with coverage	2026-10-07T23:34:10.3645324Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:187: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3648123Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3649260Z     app["upstream_url"] = endpoint + "/messages"
+scan	Run tests with coverage	2026-10-07T23:34:10.3649820Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3650634Z tests/test_prospective_handler_live.py::test_strict_local_refusal_typed_503_zero_upstream[exhausted]
+scan	Run tests with coverage	2026-10-07T23:34:10.3652605Z tests/test_prospective_handler_live.py::test_strict_local_refusal_typed_503_zero_upstream[unsupported]
+scan	Run tests with coverage	2026-10-07T23:34:10.3654361Z tests/test_prospective_handler_live.py::test_default_off_positive_control_passthrough
+scan	Run tests with coverage	2026-10-07T23:34:10.3657141Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_handler_live.py:73: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+scan	Run tests with coverage	2026-10-07T23:34:10.3659933Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+scan	Run tests with coverage	2026-10-07T23:34:10.3661013Z     app["upstream"] = upstream
+scan	Run tests with coverage	2026-10-07T23:34:10.3661418Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3661925Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+scan	Run tests with coverage	2026-10-07T23:34:10.3663170Z ================================ tests coverage ================================
+scan	Run tests with coverage	2026-10-07T23:34:10.3664381Z _______________ coverage: platform linux, python 3.13.8-final-0 ________________
+scan	Run tests with coverage	2026-10-07T23:34:10.3665179Z 
+scan	Run tests with coverage	2026-10-07T23:34:10.3665566Z Name                                                      Stmts   Miss  Cover   Missing
+scan	Run tests with coverage	2026-10-07T23:34:10.3666705Z ---------------------------------------------------------------------------------------
+scan	Run tests with coverage	2026-10-07T23:34:10.3668148Z src/anthropic_throttle_proxy/__init__.py                      2      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3669589Z src/anthropic_throttle_proxy/__main__.py                      3      3     0%   8-11
+scan	Run tests with coverage	2026-10-07T23:34:10.3671109Z src/anthropic_throttle_proxy/accounts.py                    541     48    91%   84, 113-114, 201, 619, 622, 650-651, 660-661, 762-763, 775, 778-785, 911, 918, 941-944, 969-970, 1009-1010, 1012, 1014, 1020, 1107, 1114, 1116, 1119-1120, 1123, 1162-1163, 1175-1176, 1181, 1208-1209, 1248
+scan	Run tests with coverage	2026-10-07T23:34:10.3673021Z src/anthropic_throttle_proxy/body_shrink.py                  77      8    90%   82-83, 115-116, 144, 147, 156-157
+scan	Run tests with coverage	2026-10-07T23:34:10.3674583Z src/anthropic_throttle_proxy/config.py                      320     49    85%   33-34, 320-321, 649, 735-736, 747-757, 763-764, 768, 772, 781, 785, 789, 793, 797, 801, 809, 817, 821, 825, 833, 1211-1212, 1222-1223, 1236-1237, 1245, 1256, 1285, 1308-1310, 1312-1313, 1340, 1379-1380, 1393-1394
+scan	Run tests with coverage	2026-10-07T23:34:10.3676055Z src/anthropic_throttle_proxy/copilot.py                      70      6    91%   71-72, 93-99, 132, 138
+scan	Run tests with coverage	2026-10-07T23:34:10.3676910Z src/anthropic_throttle_proxy/desktop_report.py               77      4    95%   73, 81, 108, 159
+scan	Run tests with coverage	2026-10-07T23:34:10.3677937Z src/anthropic_throttle_proxy/fleet.py                        64      4    94%   64, 68-69, 112
+scan	Run tests with coverage	2026-10-07T23:34:10.3678804Z src/anthropic_throttle_proxy/fleet_ui_config.py             154      4    97%   74, 153, 195, 286
+scan	Run tests with coverage	2026-10-07T23:34:10.3679741Z src/anthropic_throttle_proxy/forwarding.py                  201     15    93%   191-192, 207-212, 253, 359, 370-372, 429-430
+scan	Run tests with coverage	2026-10-07T23:34:10.3680835Z src/anthropic_throttle_proxy/history.py                      76      1    99%   184
+scan	Run tests with coverage	2026-10-07T23:34:10.3682399Z src/anthropic_throttle_proxy/ingress.py                     573     91    84%   286-291, 441-463, 470, 475-476, 489, 495-496, 522-523, 525, 527, 531-532, 542, 558, 604-606, 614-615, 684, 718-719, 725-726, 736-744, 772-773, 778, 799-806, 846, 875, 935, 956, 1001, 1026, 1103, 1105-1108, 1270, 1281, 1330-1331, 1520, 1536-1543, 1548-1554, 1607-1608, 1618
+scan	Run tests with coverage	2026-10-07T23:34:10.3684100Z src/anthropic_throttle_proxy/lanes.py                       282     10    96%   136, 169-170, 200, 203, 279, 497, 517, 526, 589
+scan	Run tests with coverage	2026-10-07T23:34:10.3684973Z src/anthropic_throttle_proxy/ledger.py                      194      5    97%   68-69, 130, 135, 290
+scan	Run tests with coverage	2026-10-07T23:34:10.3686101Z src/anthropic_throttle_proxy/limiter.py                     635     21    97%   114, 122, 150, 214-215, 222, 243, 254-255, 356, 498, 517, 630, 634, 851, 1142, 1188, 1312, 1521, 1523-1524
+scan	Run tests with coverage	2026-10-07T23:34:10.3687132Z src/anthropic_throttle_proxy/metrics.py                      48      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3688014Z src/anthropic_throttle_proxy/output_usage.py                109      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3688735Z src/anthropic_throttle_proxy/pacing.py                       17      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3689473Z src/anthropic_throttle_proxy/pricing.py                      10      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3690267Z src/anthropic_throttle_proxy/prospective.py                  86      4    95%   55, 73, 77, 117
+scan	Run tests with coverage	2026-10-07T23:34:10.3691222Z src/anthropic_throttle_proxy/prospective_admission.py       219     12    95%   52, 54, 56, 58, 102, 105, 135, 170-174
+scan	Run tests with coverage	2026-10-07T23:34:10.3692226Z src/anthropic_throttle_proxy/prospective_calibration.py     206      7    97%   70, 114, 117, 130, 143, 225-226
+scan	Run tests with coverage	2026-10-07T23:34:10.3693172Z src/anthropic_throttle_proxy/prospective_config.py           90      2    98%   119, 129
+scan	Run tests with coverage	2026-10-07T23:34:10.3694060Z src/anthropic_throttle_proxy/prospective_lifecycle.py        48      4    92%   30, 32, 35, 59
+scan	Run tests with coverage	2026-10-07T23:34:10.3694865Z src/anthropic_throttle_proxy/prospective_refusal.py          51      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3695786Z src/anthropic_throttle_proxy/prospective_runtime.py         244     12    95%   48, 64, 153, 168, 205-206, 243, 258-259, 295, 303-304
+scan	Run tests with coverage	2026-10-07T23:34:10.3696705Z src/anthropic_throttle_proxy/prospective_scope.py            90      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3697735Z src/anthropic_throttle_proxy/provider_registry.py            31      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3700808Z src/anthropic_throttle_proxy/proxy.py                      2444    133    95%   408, 488, 895-896, 902-903, 905, 1089, 1124, 1142-1143, 1164, 1201, 1211-1213, 1263, 1403, 1649, 1891, 2040, 2125-2127, 2235-2236, 2333, 2385, 2458, 2463-2467, 2473, 2477, 2488, 2491, 2520, 2554-2555, 2652-2656, 2677-2681, 2740, 2827, 2928-2929, 2959, 2986-2987, 3034-3037, 3058, 3099-3100, 3117-3120, 3142-3144, 3608, 3626, 3703, 3859-3860, 4077-4079, 4105-4106, 4172, 4223-4225, 4259-4260, 4278-4279, 4299-4300, 4317, 4445, 4448, 4571, 4641, 4739, 4793, 4805, 4809, 4811, 4884, 4886, 4971-4972, 4982, 5017-5021, 5204, 5482-5483, 5534-5535, 5545, 5590-5593, 5600-5601, 5628, 5642-5647, 5652-5653, 5802-5803, 5810, 5862-5863, 5885, 5998, 6299-6304, 6771, 6832
+scan	Run tests with coverage	2026-10-07T23:34:10.3704465Z src/anthropic_throttle_proxy/ratelimit.py                   243     24    90%   77-78, 81, 159-162, 180, 186, 189, 194-195, 217, 337-338, 355-356, 363-364, 422, 426-429, 449
+scan	Run tests with coverage	2026-10-07T23:34:10.3705634Z src/anthropic_throttle_proxy/routing.py                     431     11    97%   617-618, 620, 710, 774, 1016, 1053, 1074, 1194, 1211, 1235
+scan	Run tests with coverage	2026-10-07T23:34:10.3706496Z src/anthropic_throttle_proxy/ui/__init__.py                   0      0   100%
+scan	Run tests with coverage	2026-10-07T23:34:10.3707510Z src/anthropic_throttle_proxy/ui/presentation.py             189      9    95%   26, 75, 200-201, 224, 250, 260, 350, 364
+scan	Run tests with coverage	2026-10-07T23:34:10.3708585Z src/anthropic_throttle_proxy/ui/routes.py                   528     38    93%   310, 687, 773, 907, 1062-1065, 1294, 1307-1322, 1335-1344, 1370-1371, 1442-1443
+scan	Run tests with coverage	2026-10-07T23:34:10.3709803Z src/anthropic_throttle_proxy/ui/signals.py                  161      8    95%   89-91, 136, 179, 198, 201, 206
+scan	Run tests with coverage	2026-10-07T23:34:10.3710600Z src/anthropic_throttle_proxy/ui_http.py                      15     11    27%   24-37
+scan	Run tests with coverage	2026-10-07T23:34:10.3711278Z ---------------------------------------------------------------------------------------
+scan	Run tests with coverage	2026-10-07T23:34:10.3711904Z TOTAL                                                      8529    544    94%
+scan	Run tests with coverage	2026-10-07T23:34:10.3712393Z Coverage XML written to file coverage.xml
+scan	Run tests with coverage	2026-10-07T23:34:10.5944603Z ================ 2137 passed, 290 warnings in 94.64s (0:01:34) =================
+scan	Skip if SonarQube host not configured	﻿2026-10-07T23:34:10.7860707Z ##[group]Run if [ -z "$HOST" ]; then
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7861044Z ^[[36;1mif [ -z "$HOST" ]; then^[[0m
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7861347Z ^[[36;1m  echo "skip=true" >> "$GITHUB_OUTPUT"^[[0m
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7861742Z ^[[36;1m  echo "SONAR_HOST_URL variable not set — skipping Sonar scan."^[[0m
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7862107Z ^[[36;1melse^[[0m
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7862341Z ^[[36;1m  echo "skip=false" >> "$GITHUB_OUTPUT"^[[0m
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7862616Z ^[[36;1mfi^[[0m
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7898207Z shell: /usr/bin/bash -e {0}
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7898484Z env:
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7898764Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7899110Z   UV_PYTHON: 3.13
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7899371Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7899729Z   HOST: https://sonarqube.home301server.com.br
+scan	Skip if SonarQube host not configured	2026-10-07T23:34:10.7900030Z ##[endgroup]
+scan	SonarQube scan	﻿2026-10-07T23:34:10.8040797Z ##[group]Run SonarSource/sonarqube-scan-action@59db25f34e16620e48ab4bb9e4a5dce155cb5432
+scan	SonarQube scan	2026-10-07T23:34:10.8041239Z with:
+scan	SonarQube scan	2026-10-07T23:34:10.8041478Z   args: -Dsonar.qualitygate.wait=true
+scan	SonarQube scan	2026-10-07T23:34:10.8041759Z   projectBaseDir: .
+scan	SonarQube scan	2026-10-07T23:34:10.8041980Z   scannerVersion: 8.0.1.6346
+scan	SonarQube scan	2026-10-07T23:34:10.8042390Z   scannerBinariesUrl: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli
+scan	SonarQube scan	2026-10-07T23:34:10.8042852Z   skipSignatureVerification: false
+scan	SonarQube scan	2026-10-07T23:34:10.8043109Z env:
+scan	SonarQube scan	2026-10-07T23:34:10.8043373Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+scan	SonarQube scan	2026-10-07T23:34:10.8043709Z   UV_PYTHON: 3.13
+scan	SonarQube scan	2026-10-07T23:34:10.8043958Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+scan	SonarQube scan	2026-10-07T23:34:10.8044556Z   SONAR_TOKEN: ***
+scan	SonarQube scan	2026-10-07T23:34:10.8044837Z   SONAR_HOST_URL: https://sonarqube.home301server.com.br
+scan	SonarQube scan	2026-10-07T23:34:10.8045155Z ##[endgroup]
+scan	SonarQube scan	2026-10-07T23:34:10.8885133Z Installing Sonar Scanner CLI 8.0.1.6346 for linux-x64...
+scan	SonarQube scan	2026-10-07T23:34:10.8886314Z Downloading from: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.0.1.6346-linux-x64.zip
+scan	SonarQube scan	2026-10-07T23:34:11.2178205Z Downloading signature from: https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-8.0.1.6346-linux-x64.zip.asc
+scan	SonarQube scan	2026-10-07T23:34:11.2933544Z Importing SonarSource public key from hkps://keyserver.ubuntu.com...
+scan	SonarQube scan	2026-10-07T23:34:11.2949260Z [command]/usr/bin/gpg --homedir /home/runner/work/_temp/gpg-home-1791416051292-3403 --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 679F1EE92B19609DE816FDE81DB198F93525EC1A
+scan	SonarQube scan	2026-10-07T23:34:11.3030459Z gpg: keybox '/home/runner/work/_temp/gpg-home-1791416051292-3403/pubring.kbx' created
+scan	SonarQube scan	2026-10-07T23:34:12.0145638Z gpg: /home/runner/work/_temp/gpg-home-1791416051292-3403/trustdb.gpg: trustdb created
+scan	SonarQube scan	2026-10-07T23:34:12.0151734Z gpg: key 1DB198F93525EC1A: public key "SonarSource S.A. <infra@sonarsource.com>" imported
+scan	SonarQube scan	2026-10-07T23:34:12.0322224Z gpg: Total number processed: 1
+scan	SonarQube scan	2026-10-07T23:34:12.0322846Z gpg:               imported: 1
+scan	SonarQube scan	2026-10-07T23:34:12.0329526Z Successfully imported key from hkps://keyserver.ubuntu.com
+scan	SonarQube scan	2026-10-07T23:34:12.0330571Z ✓ SonarSource public key imported successfully
+scan	SonarQube scan	2026-10-07T23:34:12.0331169Z Verifying GPG signature...
+scan	SonarQube scan	2026-10-07T23:34:12.0345226Z [command]/usr/bin/gpg --homedir /home/runner/work/_temp/gpg-home-1791416051292-3403 --batch --verify /home/runner/work/_temp/ee07f1ff-1079-4890-b6d2-3fb1fca3fc95 /home/runner/work/_temp/11867143-ed0f-41ba-8e39-b09afc63d516
+scan	SonarQube scan	2026-10-07T23:34:12.1514114Z gpg: Signature made Fri Dec  5 15:12:27 2025 UTC
+scan	SonarQube scan	2026-10-07T23:34:12.1514798Z gpg:                using RSA key D1436C0DBACEA48702AF97C363F1DD7753B8B315
+scan	SonarQube scan	2026-10-07T23:34:12.1520105Z gpg: Good signature from "SonarSource S.A. <infra@sonarsource.com>" [unknown]
+scan	SonarQube scan	2026-10-07T23:34:12.1525315Z gpg: WARNING: This key is not certified with a trusted signature!
+scan	SonarQube scan	2026-10-07T23:34:12.1526031Z gpg:          There is no indication that the signature belongs to the owner.
+scan	SonarQube scan	2026-10-07T23:34:12.1552897Z Primary key fingerprint: 679F 1EE9 2B19 609D E816  FDE8 1DB1 98F9 3525 EC1A
+scan	SonarQube scan	2026-10-07T23:34:12.1553453Z      Subkey fingerprint: D143 6C0D BACE A487 02AF  97C3 63F1 DD77 53B8 B315
+scan	SonarQube scan	2026-10-07T23:34:12.1554026Z ✓ GPG signature verification passed
+scan	SonarQube scan	2026-10-07T23:34:12.1574027Z [command]/usr/bin/unzip -o -q /home/runner/work/_temp/11867143-ed0f-41ba-8e39-b09afc63d516
+scan	SonarQube scan	2026-10-07T23:34:13.4562610Z Sonar Scanner CLI cached to: /opt/hostedtoolcache/sonar-scanner-cli/8.0.1.6346/linux-x64
+scan	SonarQube scan	2026-10-07T23:34:13.4581091Z [command]/opt/hostedtoolcache/sonar-scanner-cli/8.0.1.6346/linux-x64/bin/sonar-scanner -Dsonar.projectBaseDir=. -Dsonar.qualitygate.wait=true
+scan	SonarQube scan	2026-10-07T23:34:13.8282960Z 23:34:13.825 INFO  Scanner configuration file: /opt/hostedtoolcache/sonar-scanner-cli/8.0.1.6346/linux-x64/conf/sonar-scanner.properties
+scan	SonarQube scan	2026-10-07T23:34:13.8288886Z 23:34:13.828 INFO  Project root configuration file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/sonar-project.properties
+scan	SonarQube scan	2026-10-07T23:34:13.8406543Z 23:34:13.840 INFO  SonarScanner CLI 8.0.1.6346
+scan	SonarQube scan	2026-10-07T23:34:13.8444468Z 23:34:13.844 INFO  Linux 6.17.0-1022-azure amd64
+scan	SonarQube scan	2026-10-07T23:34:17.7721094Z 23:34:17.771 INFO  Communicating with SonarQube Community Build 26.3.0.120487
+scan	SonarQube scan	2026-10-07T23:34:17.7731205Z 23:34:17.772 INFO  JRE provisioning: os[linux], arch[x86_64]
+scan	SonarQube scan	2026-10-07T23:34:36.4202997Z 23:34:36.419 INFO  Starting SonarScanner Engine...
+scan	SonarQube scan	2026-10-07T23:34:36.4214554Z 23:34:36.421 INFO  Java 21.0.9 Eclipse Adoptium (64-bit)
+scan	SonarQube scan	2026-10-07T23:34:39.5796938Z 23:34:39.579 INFO  Load global settings
+scan	SonarQube scan	2026-10-07T23:34:40.1046414Z 23:34:40.104 INFO  Load global settings (done) | time=525ms
+scan	SonarQube scan	2026-10-07T23:34:40.1068131Z 23:34:40.106 INFO  Server id: A06141FC-AZ1tq8Itx96JSorVRhtP
+scan	SonarQube scan	2026-10-07T23:34:40.1160007Z 23:34:40.115 INFO  Loading required plugins
+scan	SonarQube scan	2026-10-07T23:34:40.1160948Z 23:34:40.115 INFO  Load plugins index
+scan	SonarQube scan	2026-10-07T23:34:40.3995686Z 23:34:40.398 INFO  Load plugins index (done) | time=283ms
+scan	SonarQube scan	2026-10-07T23:34:40.4002436Z 23:34:40.399 INFO  Load/download plugins
+scan	SonarQube scan	2026-10-07T23:34:45.9412813Z 23:34:45.940 INFO  Load/download plugins (done) | time=5542ms
+scan	SonarQube scan	2026-10-07T23:34:46.2439317Z 23:34:46.240 INFO  Process project properties
+scan	SonarQube scan	2026-10-07T23:34:46.2548519Z 23:34:46.252 INFO  Process project properties (done) | time=12ms
+scan	SonarQube scan	2026-10-07T23:34:46.2671508Z 23:34:46.266 INFO  Project key: yolo-labz_anthropic-throttle-proxy
+scan	SonarQube scan	2026-10-07T23:34:46.2717827Z 23:34:46.266 INFO  Base dir: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	SonarQube scan	2026-10-07T23:34:46.2738823Z 23:34:46.266 INFO  Working dir: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.scannerwork
+scan	SonarQube scan	2026-10-07T23:34:46.2783672Z 23:34:46.277 INFO  Load project settings for component key: 'yolo-labz_anthropic-throttle-proxy'
+scan	SonarQube scan	2026-10-07T23:34:46.5541038Z 23:34:46.553 INFO  Load project settings for component key: 'yolo-labz_anthropic-throttle-proxy' (done) | time=275ms
+scan	SonarQube scan	2026-10-07T23:34:46.5708957Z 23:34:46.569 INFO  Load quality profiles
+scan	SonarQube scan	2026-10-07T23:34:46.8358760Z 23:34:46.834 INFO  Load quality profiles (done) | time=265ms
+scan	SonarQube scan	2026-10-07T23:34:46.8548608Z 23:34:46.851 INFO  Auto-configuring with CI 'Github Actions'
+scan	SonarQube scan	2026-10-07T23:34:46.8865835Z 23:34:46.883 INFO  Load active rules
+scan	SonarQube scan	2026-10-07T23:34:47.3645435Z 23:34:47.362 INFO  Load active rules (done) | time=479ms
+scan	SonarQube scan	2026-10-07T23:34:47.3723389Z 23:34:47.370 INFO  Load analysis cache
+scan	SonarQube scan	2026-10-07T23:34:47.7774645Z 23:34:47.777 INFO  Load analysis cache | time=407ms
+scan	SonarQube scan	2026-10-07T23:34:48.3295384Z 23:34:48.328 INFO  Preprocessing files...
+scan	SonarQube scan	2026-10-07T23:34:48.5151568Z 23:34:48.514 INFO  4 languages detected in 127 preprocessed files (done) | time=184ms
+scan	SonarQube scan	2026-10-07T23:34:48.5158741Z 23:34:48.514 INFO  35 files ignored because of inclusion/exclusion patterns
+scan	SonarQube scan	2026-10-07T23:34:48.5159795Z 23:34:48.514 INFO  81 files ignored because of scm ignore settings
+scan	SonarQube scan	2026-10-07T23:34:48.5191497Z 23:34:48.518 INFO  Loading plugins for detected languages
+scan	SonarQube scan	2026-10-07T23:34:48.5195904Z 23:34:48.518 INFO  Load/download plugins
+scan	SonarQube scan	2026-10-07T23:35:14.5640676Z 23:35:14.563 INFO  Load/download plugins (done) | time=26046ms
+scan	SonarQube scan	2026-10-07T23:35:14.7604499Z 23:35:14.756 INFO  Load project repositories
+scan	SonarQube scan	2026-10-07T23:35:15.0662536Z 23:35:15.065 INFO  Load project repositories (done) | time=309ms
+scan	SonarQube scan	2026-10-07T23:35:15.0914579Z 23:35:15.090 INFO  Indexing files...
+scan	SonarQube scan	2026-10-07T23:35:15.0915159Z 23:35:15.090 INFO  Project configuration:
+scan	SonarQube scan	2026-10-07T23:35:15.0915641Z 23:35:15.090 INFO    Excluded sources: **/__pycache__/**, **/*.egg-info/**, dist/**, build/**
+scan	SonarQube scan	2026-10-07T23:35:15.1108576Z 23:35:15.108 INFO  127 files indexed (done) | time=19ms
+scan	SonarQube scan	2026-10-07T23:35:15.1110656Z 23:35:15.109 INFO  Quality profile for css: Sonar way
+scan	SonarQube scan	2026-10-07T23:35:15.1117553Z 23:35:15.110 INFO  Quality profile for js: Sonar way
+scan	SonarQube scan	2026-10-07T23:35:15.1156362Z 23:35:15.112 INFO  Quality profile for py: Sonar way
+scan	SonarQube scan	2026-10-07T23:35:15.1157183Z 23:35:15.112 INFO  Quality profile for web: Sonar way
+scan	SonarQube scan	2026-10-07T23:35:15.1158324Z 23:35:15.112 INFO  ------------- Run sensors on module anthropic-throttle-proxy
+scan	SonarQube scan	2026-10-07T23:35:15.1658572Z 23:35:15.165 INFO  Load metrics repository
+scan	SonarQube scan	2026-10-07T23:35:15.4286867Z 23:35:15.428 INFO  Load metrics repository (done) | time=263ms
+scan	SonarQube scan	2026-10-07T23:35:16.0688286Z 23:35:16.068 INFO  Reflections took 79 ms to scan 1 urls, producing 24 keys and 257 values
+scan	SonarQube scan	2026-10-07T23:35:16.2414899Z 23:35:16.240 INFO  Sensor IaC hadolint report Sensor [iac]
+scan	SonarQube scan	2026-10-07T23:35:16.2427704Z 23:35:16.240 INFO  Sensor IaC hadolint report Sensor [iac] (done) | time=1ms
+scan	SonarQube scan	2026-10-07T23:35:16.2428292Z 23:35:16.240 INFO  Sensor Java Config Sensor [iac]
+scan	SonarQube scan	2026-10-07T23:35:16.2551265Z 23:35:16.250 INFO  There are no files to be analyzed for the Java language
+scan	SonarQube scan	2026-10-07T23:35:16.2555133Z 23:35:16.250 INFO  Sensor Java Config Sensor [iac] (done) | time=8ms
+scan	SonarQube scan	2026-10-07T23:35:16.2575947Z 23:35:16.250 INFO  Sensor IaC Docker Sensor [iac]
+scan	SonarQube scan	2026-10-07T23:35:16.2578062Z 23:35:16.251 INFO  There are no files to be analyzed for the Docker language
+scan	SonarQube scan	2026-10-07T23:35:16.2578873Z 23:35:16.251 INFO  Sensor IaC Docker Sensor [iac] (done) | time=2ms
+scan	SonarQube scan	2026-10-07T23:35:16.2579547Z 23:35:16.251 INFO  Sensor Python Sensor [python]
+scan	SonarQube scan	2026-10-07T23:35:16.7344427Z 23:35:16.733 INFO  Starting global symbols computation
+scan	SonarQube scan	2026-10-07T23:35:16.7411241Z 23:35:16.737 INFO  121 source files to be analyzed
+scan	SonarQube scan	2026-10-07T23:35:20.6288633Z 23:35:20.627 INFO  121/121 source files have been analyzed
+scan	SonarQube scan	2026-10-07T23:35:20.6299059Z 23:35:20.627 INFO  Finished step global symbols computation in 3888ms
+scan	SonarQube scan	2026-10-07T23:35:20.7775251Z 23:35:20.777 INFO  Starting rules execution
+scan	SonarQube scan	2026-10-07T23:35:20.7868484Z 23:35:20.777 INFO  121 source files to be analyzed
+scan	SonarQube scan	2026-10-07T23:35:27.8269553Z 23:35:27.826 INFO  121/121 source files have been analyzed
+scan	SonarQube scan	2026-10-07T23:35:27.8307290Z 23:35:27.828 INFO  Finished step rules execution in 7046ms
+scan	SonarQube scan	2026-10-07T23:35:27.8338507Z 23:35:27.830 INFO  The Python analyzer was able to leverage cached data from previous analyses for 0 out of 121 files. These files were not parsed.
+scan	SonarQube scan	2026-10-07T23:35:27.8368131Z 23:35:27.830 INFO  Sensor Python Sensor [python] (done) | time=11576ms
+scan	SonarQube scan	2026-10-07T23:35:27.8398207Z 23:35:27.830 INFO  Sensor Cobertura Sensor for Python coverage [python]
+scan	SonarQube scan	2026-10-07T23:35:27.8684800Z 23:35:27.868 INFO  Python test coverage
+scan	SonarQube scan	2026-10-07T23:35:27.8700099Z 23:35:27.869 INFO  Parsing report '/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/coverage.xml'
+scan	SonarQube scan	2026-10-07T23:35:27.9849791Z 23:35:27.982 INFO  Sensor Cobertura Sensor for Python coverage [python] (done) | time=155ms
+scan	SonarQube scan	2026-10-07T23:35:27.9868493Z 23:35:27.983 INFO  Sensor PythonXUnitSensor [python]
+scan	SonarQube scan	2026-10-07T23:35:28.0131313Z 23:35:28.012 INFO  Sensor PythonXUnitSensor [python] (done) | time=30ms
+scan	SonarQube scan	2026-10-07T23:35:28.0167202Z 23:35:28.015 INFO  Sensor Python Dependency Sensor [python]
+scan	SonarQube scan	2026-10-07T23:35:28.0170108Z 23:35:28.016 INFO  Sensor Python Dependency Sensor [python] (done) | time=4ms
+scan	SonarQube scan	2026-10-07T23:35:28.0174793Z 23:35:28.017 INFO  Sensor HTML [web]
+scan	SonarQube scan	2026-10-07T23:35:28.2691558Z 23:35:28.268 INFO  Sensor HTML [web] (done) | time=250ms
+scan	SonarQube scan	2026-10-07T23:35:28.2698926Z 23:35:28.268 INFO  Sensor JavaScript/TypeScript analysis [javascript]
+scan	SonarQube scan	2026-10-07T23:35:28.5808894Z 23:35:28.579 INFO  Detected os: Linux arch: amd64 alpine: false. Platform: LINUX_X64
+scan	SonarQube scan	2026-10-07T23:35:28.5838989Z 23:35:28.579 INFO  Deploy location /home/runner/.sonar/js/node-runtime, tagetRuntime: /home/runner/.sonar/js/node-runtime/node,  version: /home/runner/.sonar/js/node-runtime/version.txt
+scan	SonarQube scan	2026-10-07T23:35:31.2740015Z 23:35:31.273 INFO  Using embedded Node.js runtime.
+scan	SonarQube scan	2026-10-07T23:35:31.2741071Z 23:35:31.273 INFO  Using Node.js executable: '/home/runner/.sonar/js/node-runtime/node'.
+scan	SonarQube scan	2026-10-07T23:35:32.9738770Z 23:35:32.973 INFO  Memory configuration: OS (15988 MB), Node.js (4288 MB).
+scan	SonarQube scan	2026-10-07T23:35:33.0923625Z 23:35:33.091 INFO  WebSocket client connected on /ws
+scan	SonarQube scan	2026-10-07T23:35:33.0942634Z 23:35:33.093 INFO  Plugin version: [11.8.0.37897]
+scan	SonarQube scan	2026-10-07T23:35:34.8136600Z 23:35:34.813 INFO  Using generated tsconfig.json file using wildcards /tmp/tsconfig-cmgBSA.json
+scan	SonarQube scan	2026-10-07T23:35:35.3046000Z 23:35:35.303 INFO  Found 1 tsconfig.json file(s): [/tmp/tsconfig-cmgBSA.json]
+scan	SonarQube scan	2026-10-07T23:35:35.3055430Z 23:35:35.304 INFO  1 source file to be analyzed
+scan	SonarQube scan	2026-10-07T23:35:35.3058058Z 23:35:35.304 INFO  Creating TypeScript program
+scan	SonarQube scan	2026-10-07T23:35:35.3059045Z 23:35:35.305 INFO  TypeScript(5.9.3) configuration file /tmp/tsconfig-cmgBSA.json
+scan	SonarQube scan	2026-10-07T23:35:35.3059885Z 23:35:35.305 INFO  1/1 source file has been analyzed
+scan	SonarQube scan	2026-10-07T23:35:35.3122266Z 23:35:35.311 INFO  Hit the cache for 0 out of 1
+scan	SonarQube scan	2026-10-07T23:35:35.3145788Z 23:35:35.313 INFO  Miss the cache for 1 out of 1: ANALYSIS_MODE_INELIGIBLE [1/1]
+scan	SonarQube scan	2026-10-07T23:35:35.3155188Z 23:35:35.314 INFO  Sensor JavaScript/TypeScript analysis [javascript] (done) | time=7046ms
+scan	SonarQube scan	2026-10-07T23:35:35.3171078Z 23:35:35.314 INFO  Sensor JavaScript inside HTML analysis [javascript]
+scan	SonarQube scan	2026-10-07T23:35:35.3221702Z 23:35:35.321 INFO  3 source files to be analyzed
+scan	SonarQube scan	2026-10-07T23:35:35.3819048Z 23:35:35.381 INFO  3/3 source files have been analyzed
+scan	SonarQube scan	2026-10-07T23:35:35.3825788Z 23:35:35.382 INFO  Hit the cache for 0 out of 3
+scan	SonarQube scan	2026-10-07T23:35:35.3832709Z 23:35:35.383 INFO  Miss the cache for 3 out of 3: ANALYSIS_MODE_INELIGIBLE [3/3]
+scan	SonarQube scan	2026-10-07T23:35:35.3834879Z 23:35:35.383 INFO  Sensor JavaScript inside HTML analysis [javascript] (done) | time=70ms
+scan	SonarQube scan	2026-10-07T23:35:35.3840829Z 23:35:35.383 INFO  Sensor CSS Rules [javascript]
+scan	SonarQube scan	2026-10-07T23:35:35.3908819Z 23:35:35.390 INFO  4 source files to be analyzed
+scan	SonarQube scan	2026-10-07T23:35:35.5965954Z 23:35:35.595 INFO  4/4 source files have been analyzed
+scan	SonarQube scan	2026-10-07T23:35:35.5998252Z 23:35:35.595 INFO  Hit the cache for 0 out of 0
+scan	SonarQube scan	2026-10-07T23:35:35.5999127Z 23:35:35.595 INFO  Miss the cache for 0 out of 0
+scan	SonarQube scan	2026-10-07T23:35:35.6028376Z 23:35:35.596 INFO  Sensor CSS Rules [javascript] (done) | time=213ms
+scan	SonarQube scan	2026-10-07T23:35:35.6036047Z 23:35:35.596 INFO  Sensor CSS Metrics [javascript]
+scan	SonarQube scan	2026-10-07T23:35:35.6984644Z 23:35:35.697 INFO  Sensor CSS Metrics [javascript] (done) | time=100ms
+scan	SonarQube scan	2026-10-07T23:35:35.7008443Z 23:35:35.698 INFO  Sensor TextAndSecretsSensor [text]
+scan	SonarQube scan	2026-10-07T23:35:35.7113254Z 23:35:35.710 INFO  Available processors: 4
+scan	SonarQube scan	2026-10-07T23:35:35.7151821Z 23:35:35.710 INFO  Using 4 threads for analysis.
+scan	SonarQube scan	2026-10-07T23:35:36.0578506Z 23:35:36.054 INFO  Start fetching files for the text and secrets analysis
+scan	SonarQube scan	2026-10-07T23:35:36.0684845Z 23:35:36.065 INFO  Using Git CLI to retrieve dirty files
+scan	SonarQube scan	2026-10-07T23:35:36.1967693Z 23:35:36.191 INFO  Retrieving language associated files and files included via "sonar.text.inclusions" that are tracked by git
+scan	SonarQube scan	2026-10-07T23:35:36.1989512Z 23:35:36.192 INFO  Starting the text and secrets analysis
+scan	SonarQube scan	2026-10-07T23:35:36.2068413Z 23:35:36.195 INFO  126 source files to be analyzed for the text and secrets analysis
+scan	SonarQube scan	2026-10-07T23:35:37.5189948Z 23:35:37.518 INFO  126/126 source files have been analyzed for the text and secrets analysis
+scan	SonarQube scan	2026-10-07T23:35:37.5211981Z 23:35:37.520 INFO  Sensor TextAndSecretsSensor [text] (done) | time=1825ms
+scan	SonarQube scan	2026-10-07T23:35:37.5278182Z 23:35:37.523 INFO  ------------- Run sensors on project
+scan	SonarQube scan	2026-10-07T23:35:37.6778490Z 23:35:37.676 INFO  Sensor Zero Coverage Sensor
+scan	SonarQube scan	2026-10-07T23:35:37.6836450Z 23:35:37.676 INFO  Sensor Zero Coverage Sensor (done) | time=0ms
+scan	SonarQube scan	2026-10-07T23:35:37.6988456Z 23:35:37.676 INFO  ------------- Gather SCA dependencies on project
+scan	SonarQube scan	2026-10-07T23:35:37.7048178Z 23:35:37.682 INFO  Dependency analysis skipped
+scan	SonarQube scan	2026-10-07T23:35:37.7078191Z 23:35:37.696 INFO  SCM Publisher SCM provider for this project is: git
+scan	SonarQube scan	2026-10-07T23:35:37.7097069Z 23:35:37.696 INFO  SCM Publisher 3 source files to be analyzed
+scan	SonarQube scan	2026-10-07T23:35:38.1455469Z 23:35:38.144 INFO  SCM Publisher 3/3 source files have been analyzed (done) | time=444ms
+scan	SonarQube scan	2026-10-07T23:35:38.2266608Z 23:35:38.224 INFO  CPD Executor 3 files had no CPD blocks
+scan	SonarQube scan	2026-10-07T23:35:38.2267969Z 23:35:38.225 INFO  CPD Executor Calculating CPD for 36 files
+scan	SonarQube scan	2026-10-07T23:35:38.3007858Z 23:35:38.298 INFO  CPD Executor CPD calculation finished (done) | time=70ms
+scan	SonarQube scan	2026-10-07T23:35:38.3092353Z 23:35:38.304 INFO  SCM revision ID 'da08c3318310dc7bc64300af44221d65428ac491'
+scan	SonarQube scan	2026-10-07T23:35:38.7045494Z 23:35:38.699 INFO  Analysis report generated in 386ms, dir size=5.4 MB
+scan	SonarQube scan	2026-10-07T23:35:39.1494708Z 23:35:39.149 INFO  Analysis report compressed in 453ms, zip size=2.5 MB
+scan	SonarQube scan	2026-10-07T23:35:41.3264263Z 23:35:41.326 INFO  Analysis report uploaded in 2177ms
+scan	SonarQube scan	2026-10-07T23:35:41.3297691Z 23:35:41.329 INFO  ------------- Check Quality Gate status
+scan	SonarQube scan	2026-10-07T23:35:41.3298748Z 23:35:41.329 INFO  Waiting for the analysis report to be processed (max 300s)
+scan	SonarQube scan	2026-10-07T23:35:47.2156432Z 23:35:47.214 ERROR QUALITY GATE STATUS: FAILED - View details on https://sonarqube.home301server.com.br/dashboard?id=yolo-labz_anthropic-throttle-proxy
+scan	SonarQube scan	2026-10-07T23:35:47.5470637Z 23:35:47.546 INFO  EXECUTION FAILURE
+scan	SonarQube scan	2026-10-07T23:35:47.5478755Z 23:35:47.547 INFO  Total time: 1:33.725s
+scan	SonarQube scan	2026-10-07T23:35:47.8710450Z ##[error]Action failed: The process '/opt/hostedtoolcache/sonar-scanner-cli/8.0.1.6346/linux-x64/bin/sonar-scanner' failed with exit code 3
+scan	Post Checkout (full history for blame-based new-code detection)	﻿2026-10-07T23:35:47.8835792Z Post job cleanup.
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9649814Z [command]/usr/bin/git version
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9692610Z git version 2.55.0
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9734311Z Temporarily overriding HOME='/home/runner/work/_temp/89e5dfc6-dcaa-4344-a9f5-e6b441ccf1a2' before making global git config changes
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9735786Z Adding repository directory to the temporary git global config as a safe directory
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9740182Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9769693Z Removing SSH command configuration
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9776442Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:47.9809804Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:48.0046291Z Removing HTTP extra header
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:48.0052655Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:48.0084999Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:48.0301731Z Removing includeIf entries pointing to credentials config files
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:48.0312500Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+scan	Post Checkout (full history for blame-based new-code detection)	2026-10-07T23:35:48.0343090Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+scan	Post Harden runner	﻿2026-10-07T23:35:48.0725246Z Post job cleanup.
+scan	Post Harden runner	2026-10-07T23:35:48.1470941Z [harden-runner] post-step
+scan	Post Harden runner	2026-10-07T23:35:49.1486526Z log:
+scan	Post Harden runner	2026-10-07T23:35:49.1487843Z Wed, 07 Oct 2026 23:32:25 GMT:[buildInfo] tag=v0.16.0 commit=69230545600e99d9c9b2d74ca0897d7100630d96 branch=HEAD 
+scan	Post Harden runner	2026-10-07T23:35:49.1488680Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1488915Z Wed, 07 Oct 2026 23:32:25 GMT:read config 
+scan	Post Harden runner	2026-10-07T23:35:49.1491996Z  &{Repo:yolo-labz/anthropic-throttle-proxy CorrelationId:142aa398-c7e6-48fe-aeda-d3e507be68c7 RunId:37702817772 WorkingDirectory:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy APIURL:https://agent.api.stepsecurity.io/v1 TelemetryURL:https://prod.app-api.stepsecurity.io/v1 OneTimeKey: Endpoints:map[] EgressPolicy:audit DisableTelemetry:false DisableSudo:false DisableSudoAndContainers:false DisableFileMonitoring:false Private:false}
+scan	Post Harden runner	2026-10-07T23:35:49.1494008Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1494336Z Wed, 07 Oct 2026 23:32:25 GMT:Step Security Job Correlation ID: 142aa398-c7e6-48fe-aeda-d3e507be68c7
+scan	Post Harden runner	2026-10-07T23:35:49.1494822Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1495228Z Wed, 07 Oct 2026 23:32:25 GMT:Global feature flags: {AgentType:agent-oss EnableArmour:true EnableCustomDetectionRules:true}
+scan	Post Harden runner	2026-10-07T23:35:49.1495951Z Wed, 07 Oct 2026 23:32:25 GMT:initialized global feature flags
+scan	Post Harden runner	2026-10-07T23:35:49.1496232Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1505358Z Wed, 07 Oct 2026 23:32:25 GMT:initialized global blocklist: &{ipAddresses:map[139.84.223.178:COMPROMISED_MEMTENSOR_MEMOS_SUPPLYCHAIN_LOCAL_WORM 142.11.206.73:COMPROMISED_AXIOS_C2_IP 216.126.225.129:MEGALODON_EXFIL_IP 23.254.164.123:COMPROMISED_MASTRA_C2_DOMAIN 23.254.164.92:COMPROMISED_MASTRA_C2_DOMAIN 23.254.165.112:COMPROMISED_ARRAYREF_C2_IP 37.27.122.124:COMPROMISED_JSCRAMBLER_C2_IP 57.128.246.79:COMPROMISED_JSCRAMBLER_C2_IP 83.142.209.194:COMPROMISED_MISTRAL_PYPI_C2_IP 85.137.53.71:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2] domains:map[api.masscan.cloud.:COMPROMISED_TANSTACK_EXFIL archive.torproject.org.:COMPROMISED_JSCRAMBLER_C2_DOMAIN audit.checkmarx.cx.:COMPROMISED_BITWARDEN_CLI_C2_DOMAIN check.git-service.com.:COMPROMISED_DURABLETASK_C2_DOMAIN check.torproject.org.:COMPROMISED_JSCRAMBLER_C2_DOMAIN ci-artifacts.dev.:SUBQL_CREDENTIAL_THEFT_C2 cjn37-uyaaa-aaaac-qgnva-cai.raw.icp0.io.:COMPROMISED_PGSERVE_EXFIL_CANISTER dht.transmissionbt.com.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 evil.invalid.:GLOBAL_BLOCK_TEST_DOMAIN filev2.getsession.org.:COMPROMISED_TANSTACK_EXFIL flipboxstudio.info.:COMPROMISED_PACKAGIST_C2_DOMAIN git-tanstack.com.:COMPROMISED_TANSTACK_EXFIL igotnofriendsonlineorirl-imgonnakmslmao.skyhanni.cloud.:COMPROMISED_ELEMENTARY_DATA_EXFIL js-mirror.com.:COMPROMISED_CHAINDROP_NPM_EXFIL metrics.femboy.energy.:COMPROMISED_MRMUSTARD_PYPI_C2_DOMAIN npm-cache.com.:COMPROMISED_CHAINDROP_NPM_EXFIL pypi-get.com.:COMPROMISED_CHAINDROP_NPM_EXFIL relay.damus.io.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 relay.nostr.com.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 router.bittorrent.com.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 scan.aquasecurtiy.org.:COMPROMISED_TRIVY_C2_DOMAIN seed1.getsession.org.:COMPROMISED_TANSTACK_EXFIL sfrclak.com.:COMPROMISED_AXIOS_C2_DOMAIN sh.azurestaticprovider.net.:COMPROMISED_NODE_IPC_NPM_C2 skyleen.fr.:COMPROMISED_MEMTENSOR_MEMOS_SUPPLYCHAIN_LOCAL_WORM t.m-kosche.com.:COMPROMISED_ACTIONSCOOL_EXFIL telemetry.api-monitor.com.:COMPROMISED_PGSERVE_EXFIL_DOMAIN whereisitat.lucyatemysuperbox.space.:COMPROMISED_XINFERENCE_C2_DOMAIN zero.masscan.cloud.:COMPROMISED_MINI_SHAI_HULUD_2] wildcardDomains:map[skyleen.fr.:COMPROMISED_MEMTENSOR_MEMOS_SUPPLYCHAIN_LOCAL_WORM]}
+scan	Post Harden runner	2026-10-07T23:35:49.1515144Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1515429Z Wed, 07 Oct 2026 23:32:25 GMT:started process monitor
+scan	Post Harden runner	2026-10-07T23:35:49.1515870Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1516512Z Wed, 07 Oct 2026 23:32:25 GMT:Monitor Processes called
+scan	Post Harden runner	2026-10-07T23:35:49.1517231Z Wed, 07 Oct 2026 23:32:25 GMT:NewAuditClient created
+scan	Post Harden runner	2026-10-07T23:35:49.1517963Z Wed, 07 Oct 2026 23:32:25 GMT:Status is enabled
+scan	Post Harden runner	2026-10-07T23:35:49.1518528Z Wed, 07 Oct 2026 23:32:25 GMT:Rules deleted
+scan	Post Harden runner	2026-10-07T23:35:49.1519461Z Wed, 07 Oct 2026 23:32:25 GMT:File monitor added for /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+scan	Post Harden runner	2026-10-07T23:35:49.1520371Z Wed, 07 Oct 2026 23:32:25 GMT:Agent file monitor added
+scan	Post Harden runner	2026-10-07T23:35:49.1520815Z Wed, 07 Oct 2026 23:32:25 GMT:Docker's daemon.json file monitor added
+scan	Post Harden runner	2026-10-07T23:35:49.1521496Z Wed, 07 Oct 2026 23:32:25 GMT:Systemd's resolved.conf file monitor added
+scan	Post Harden runner	2026-10-07T23:35:49.1521981Z Wed, 07 Oct 2026 23:32:25 GMT:Net monitor added for TCP (connect)
+scan	Post Harden runner	2026-10-07T23:35:49.1522460Z Wed, 07 Oct 2026 23:32:25 GMT:Net monitor added for UDP (sendto & sendmsg)
+scan	Post Harden runner	2026-10-07T23:35:49.1523050Z Wed, 07 Oct 2026 23:32:25 GMT:Process monitor added
+scan	Post Harden runner	2026-10-07T23:35:49.1523620Z Wed, 07 Oct 2026 23:32:25 GMT:receive called
+scan	Post Harden runner	2026-10-07T23:35:49.1523974Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1523984Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1524198Z Wed, 07 Oct 2026 23:32:25 GMT:updated resolved
+scan	Post Harden runner	2026-10-07T23:35:49.1524585Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1524808Z Wed, 07 Oct 2026 23:32:26 GMT:set docker config
+scan	Post Harden runner	2026-10-07T23:35:49.1525205Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1525428Z Wed, 07 Oct 2026 23:32:26 GMT:before audit rules
+scan	Post Harden runner	2026-10-07T23:35:49.1526037Z Wed, 07 Oct 2026 23:32:26 GMT:added audit rules
+scan	Post Harden runner	2026-10-07T23:35:49.1526635Z Wed, 07 Oct 2026 23:32:26 GMT:Armour is enabled
+scan	Post Harden runner	2026-10-07T23:35:49.1527102Z Wed, 07 Oct 2026 23:32:27 GMT:[armour] Runner.Worker PID: 2112
+scan	Post Harden runner	2026-10-07T23:35:49.1527723Z Wed, 07 Oct 2026 23:32:27 GMT:Armour attached
+scan	Post Harden runner	2026-10-07T23:35:49.1528146Z Wed, 07 Oct 2026 23:32:27 GMT:[armour] Custom detection rules enabled
+scan	Post Harden runner	2026-10-07T23:35:49.1528737Z Wed, 07 Oct 2026 23:32:27 GMT:done
+scan	Post Harden runner	2026-10-07T23:35:49.1530205Z Wed, 07 Oct 2026 23:32:27 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/config.lock syscall: openat by exe: /usr/bin/git [d4d2ba562243015206d4248edfec871a74786499292d00ed072dbca2f5ae8073] Timestamp: 2026-10-07T23:32:27.535Z
+scan	Post Harden runner	2026-10-07T23:35:49.1532699Z Wed, 07 Oct 2026 23:32:27 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/config syscall: rename by exe: /usr/bin/git [d4d2ba562243015206d4248edfec871a74786499292d00ed072dbca2f5ae8073] Timestamp: 2026-10-07T23:32:27.535Z
+scan	Post Harden runner	2026-10-07T23:35:49.1534801Z Wed, 07 Oct 2026 23:32:27 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/config.lock syscall: openat by exe: /usr/bin/git [d4d2ba562243015206d4248edfec871a74786499292d00ed072dbca2f5ae8073] Timestamp: 2026-10-07T23:32:27.536Z
+scan	Post Harden runner	2026-10-07T23:35:49.1536179Z Wed, 07 Oct 2026 23:32:27 GMT:domain resolved: github.com., ip address: 140.82.114.3, TTL: 56
+scan	Post Harden runner	2026-10-07T23:35:49.1536896Z Wed, 07 Oct 2026 23:32:27 GMT:domain resolved: prod.app-api.stepsecurity.io., ip address: 32.186.176.187, TTL: 30
+scan	Post Harden runner	2026-10-07T23:35:49.1537933Z Wed, 07 Oct 2026 23:32:27 GMT:endpoint called ip address:port 140.82.114.3:443, domain: github.com., pid: 2746, process: git-remote-http
+scan	Post Harden runner	2026-10-07T23:35:49.1538824Z Wed, 07 Oct 2026 23:32:30 GMT:domain resolved: raw.githubusercontent.com., ip address: 185.199.108.133, TTL: 456
+scan	Post Harden runner	2026-10-07T23:35:49.1539540Z Wed, 07 Oct 2026 23:32:30 GMT:domain resolved: releases.astral.sh., ip address: 172.67.68.3, TTL: 300
+scan	Post Harden runner	2026-10-07T23:35:49.1540332Z Wed, 07 Oct 2026 23:32:30 GMT:domain resolved: results-receiver.actions.githubusercontent.com., ip address: 140.82.114.22, TTL: 30
+scan	Post Harden runner	2026-10-07T23:35:49.1541298Z Wed, 07 Oct 2026 23:32:30 GMT:endpoint called ip address:port 185.199.108.133:443, domain: raw.githubusercontent.com., pid: 2851, process: node
+scan	Post Harden runner	2026-10-07T23:35:49.1542206Z Wed, 07 Oct 2026 23:32:30 GMT:endpoint called ip address:port 172.67.68.3:443, domain: releases.astral.sh., pid: 2851, process: node
+scan	Post Harden runner	2026-10-07T23:35:49.1543482Z Wed, 07 Oct 2026 23:32:31 GMT:endpoint called ip address:port 140.82.114.22:443, domain: results-receiver.actions.githubusercontent.com., pid: 2851, process: node
+scan	Post Harden runner	2026-10-07T23:35:49.1544497Z Wed, 07 Oct 2026 23:32:31 GMT:domain resolved: productionresultssa1.blob.core.windows.net., ip address: 20.209.227.33, TTL: 30
+scan	Post Harden runner	2026-10-07T23:35:49.1545592Z Wed, 07 Oct 2026 23:32:31 GMT:endpoint called ip address:port 20.209.227.33:443, domain: productionresultssa1.blob.core.windows.net., pid: 2851, process: node
+scan	Post Harden runner	2026-10-07T23:35:49.1546834Z Wed, 07 Oct 2026 23:32:32 GMT:endpoint called ip address:port 140.82.114.3:443, domain: github.com., pid: 2876, process: uv
+scan	Post Harden runner	2026-10-07T23:35:49.1548065Z Wed, 07 Oct 2026 23:32:32 GMT:domain resolved: release-assets.githubusercontent.com., ip address: 185.199.108.133, TTL: 36
+scan	Post Harden runner	2026-10-07T23:35:49.1549008Z Wed, 07 Oct 2026 23:32:32 GMT:endpoint called ip address:port 185.199.108.133:443, domain: release-assets.githubusercontent.com., pid: 2876, process: uv
+scan	Post Harden runner	2026-10-07T23:35:49.1549846Z Wed, 07 Oct 2026 23:32:33 GMT:domain resolved: pypi.org., ip address: 151.101.192.223, TTL: 11468
+scan	Post Harden runner	2026-10-07T23:35:49.1550514Z Wed, 07 Oct 2026 23:32:33 GMT:domain resolved: files.pythonhosted.org., ip address: 151.101.192.223, TTL: 60
+scan	Post Harden runner	2026-10-07T23:35:49.1551337Z Wed, 07 Oct 2026 23:32:33 GMT:endpoint called ip address:port 151.101.192.223:443, domain: files.pythonhosted.org., pid: 2876, process: uv
+scan	Post Harden runner	2026-10-07T23:35:49.1552243Z Wed, 07 Oct 2026 23:32:44 GMT:domain resolved: hosted-compute-watchdog-prod-iad-01.githubapp.com., ip address: 140.82.114.23, TTL: 31
+scan	Post Harden runner	2026-10-07T23:35:49.1553257Z Wed, 07 Oct 2026 23:33:47 GMT:domain resolved: hosted-compute-request-orchestrator-prod-iad-01.githubapp.com., ip address: 140.82.112.23, TTL: 43
+scan	Post Harden runner	2026-10-07T23:35:49.1554186Z Wed, 07 Oct 2026 23:33:47 GMT:domain resolved: prod.app-api.stepsecurity.io., ip address: 100.22.115.227, TTL: 56
+scan	Post Harden runner	2026-10-07T23:35:49.1554932Z Wed, 07 Oct 2026 23:34:10 GMT:domain resolved: binaries.sonarsource.com., ip address: 18.238.109.54, TTL: 60
+scan	Post Harden runner	2026-10-07T23:35:49.1555800Z Wed, 07 Oct 2026 23:34:11 GMT:domain resolved: results-receiver.actions.githubusercontent.com., ip address: 140.82.113.21, TTL: 54
+scan	Post Harden runner	2026-10-07T23:35:49.1556897Z Wed, 07 Oct 2026 23:34:11 GMT:endpoint called ip address:port 140.82.113.21:443, domain: results-receiver.actions.githubusercontent.com., pid: 2112, process: Runner.Worker
+scan	Post Harden runner	2026-10-07T23:35:49.1558004Z Wed, 07 Oct 2026 23:34:11 GMT:endpoint called ip address:port 18.238.109.54:443, domain: binaries.sonarsource.com., pid: 3403, process: node
+scan	Post Harden runner	2026-10-07T23:35:49.1558802Z Wed, 07 Oct 2026 23:34:11 GMT:domain resolved: keyserver.ubuntu.com., ip address: 185.125.188.27, TTL: 80
+scan	Post Harden runner	2026-10-07T23:35:49.1559468Z Wed, 07 Oct 2026 23:34:11 GMT:endpoint called ip address:port 168.63.129.16:53, domain: , pid: 2257, process: systemd-resolved
+scan	Post Harden runner	2026-10-07T23:35:49.1560453Z Wed, 07 Oct 2026 23:34:11 GMT:endpoint called ip address:port 185.125.188.27:443, domain: keyserver.ubuntu.com., pid: 3418, process: dirmngr
+scan	Post Harden runner	2026-10-07T23:35:49.1561226Z Wed, 07 Oct 2026 23:34:11 GMT:domain resolved: productionresultssa0.blob.core.windows.net., ip address: 20.209.227.33, TTL: 39
+scan	Post Harden runner	2026-10-07T23:35:49.1561948Z Wed, 07 Oct 2026 23:34:11 GMT:endpoint called ip address:port 168.63.129.16:80, domain: , pid: 3370, process: python3.12
+scan	Post Harden runner	2026-10-07T23:35:49.1563009Z Wed, 07 Oct 2026 23:34:16 GMT:domain resolved: sonarqube.home301server.com.br., ip address: 172.67.223.113, TTL: 300
+scan	Post Harden runner	2026-10-07T23:35:49.1563775Z Wed, 07 Oct 2026 23:34:17 GMT:endpoint called ip address:port 172.67.223.113:443, domain: sonarqube.home301server.com.br., pid: 3431, process: java
+scan	Post Harden runner	2026-10-07T23:35:49.1564599Z Wed, 07 Oct 2026 23:34:39 GMT:endpoint called ip address:port 172.67.223.113:443, domain: sonarqube.home301server.com.br., pid: 3491, process: java
+scan	Post Harden runner	2026-10-07T23:35:49.1565487Z Wed, 07 Oct 2026 23:35:17 GMT:domain resolved: hosted-compute-request-orchestrator-prod-iad-01.githubapp.com., ip address: 140.82.113.23, TTL: 56
+scan	Post Harden runner	2026-10-07T23:35:49.1566234Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1566366Z Wed, 07 Oct 2026 23:35:48 GMT:post_event called
+scan	Post Harden runner	2026-10-07T23:35:49.1567054Z Wed, 07 Oct 2026 23:35:48 GMT:domain resolved: results-receiver.actions.githubusercontent.com., ip address: 140.82.113.22, TTL: 52
+scan	Post Harden runner	2026-10-07T23:35:49.1568116Z Wed, 07 Oct 2026 23:35:48 GMT:endpoint called ip address:port 140.82.113.22:443, domain: results-receiver.actions.githubusercontent.com., pid: 2112, process: Runner.Worker
+scan	Post Harden runner	2026-10-07T23:35:49.1569517Z Wed, 07 Oct 2026 23:35:48 GMT:domain resolved: productionresultssa0.blob.core.windows.net., ip address: 20.209.226.1, TTL: 40
+scan	Post Harden runner	2026-10-07T23:35:49.1571299Z Wed, 07 Oct 2026 23:35:48 GMT:endpoint called ip address:port 20.209.226.1:443, domain: productionresultssa0.blob.core.windows.net., pid: 2112, process: Runner.Worker
+scan	Post Harden runner	2026-10-07T23:35:49.1571843Z 
+scan	Post Harden runner	2026-10-07T23:35:49.1571927Z status:
+scan	Post Harden runner	2026-10-07T23:35:49.1572132Z Initialized
+scan	Post Harden runner	2026-10-07T23:35:49.1631688Z agent.service log:
+scan	Post Harden runner	2026-10-07T23:35:49.1633226Z Oct 07 23:32:25 runnervm8df0l systemd[1]: /etc/systemd/system/agent.service:9: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+scan	Post Harden runner	2026-10-07T23:35:49.1635491Z Oct 07 23:32:25 runnervm8df0l systemd[1]: /etc/systemd/system/agent.service:10: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+scan	Post Harden runner	2026-10-07T23:35:49.1636545Z Oct 07 23:32:25 runnervm8df0l systemd[1]: Started agent.service - Agent.
+scan	Post Harden runner	2026-10-07T23:35:49.1637510Z Oct 07 23:32:25 runnervm8df0l sudo[2249]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl stop systemd-resolved
+scan	Post Harden runner	2026-10-07T23:35:49.1638247Z Oct 07 23:32:25 runnervm8df0l sudo[2249]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+scan	Post Harden runner	2026-10-07T23:35:49.1638886Z Oct 07 23:32:25 runnervm8df0l sudo[2249]: pam_unix(sudo:session): session closed for user root
+scan	Post Harden runner	2026-10-07T23:35:49.1639601Z Oct 07 23:32:25 runnervm8df0l sudo[2255]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl restart systemd-resolved
+scan	Post Harden runner	2026-10-07T23:35:49.1640277Z Oct 07 23:32:25 runnervm8df0l sudo[2255]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+scan	Post Harden runner	2026-10-07T23:35:49.1640873Z Oct 07 23:32:25 runnervm8df0l sudo[2255]: pam_unix(sudo:session): session closed for user root
+scan	Post Harden runner	2026-10-07T23:35:49.1641518Z Oct 07 23:32:25 runnervm8df0l sudo[2261]:     root : *** ; USER=root ; COMMAND=/usr/bin/resolvectl flush-caches
+scan	Post Harden runner	2026-10-07T23:35:49.1642241Z Oct 07 23:32:25 runnervm8df0l sudo[2261]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+scan	Post Harden runner	2026-10-07T23:35:49.1642867Z Oct 07 23:32:25 runnervm8df0l sudo[2261]: pam_unix(sudo:session): session closed for user root
+scan	Post Harden runner	2026-10-07T23:35:49.1643496Z Oct 07 23:32:25 runnervm8df0l sudo[2264]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl reload docker
+scan	Post Harden runner	2026-10-07T23:35:49.1644119Z Oct 07 23:32:25 runnervm8df0l sudo[2264]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+scan	Post Harden runner	2026-10-07T23:35:49.1644729Z Oct 07 23:32:25 runnervm8df0l sudo[2264]: pam_unix(sudo:session): session closed for user root
+scan	Post Harden runner	2026-10-07T23:35:49.1645348Z Oct 07 23:32:25 runnervm8df0l sudo[2270]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl daemon-reload
+scan	Post Harden runner	2026-10-07T23:35:49.1645968Z Oct 07 23:32:25 runnervm8df0l sudo[2270]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+scan	Post Harden runner	2026-10-07T23:35:49.1647028Z Oct 07 23:32:26 runnervm8df0l systemd[1]: /etc/systemd/system/agent.service:9: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+scan	Post Harden runner	2026-10-07T23:35:49.1648649Z Oct 07 23:32:26 runnervm8df0l systemd[1]: /etc/systemd/system/agent.service:10: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+scan	Post Harden runner	2026-10-07T23:35:49.1649650Z Oct 07 23:32:26 runnervm8df0l sudo[2270]: pam_unix(sudo:session): session closed for user root
+scan	Post Harden runner	2026-10-07T23:35:49.1650520Z Oct 07 23:32:26 runnervm8df0l sudo[2341]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl restart docker
+scan	Post Harden runner	2026-10-07T23:35:49.1651147Z Oct 07 23:32:26 runnervm8df0l sudo[2341]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+scan	Post Harden runner	2026-10-07T23:35:49.1651732Z Oct 07 23:32:26 runnervm8df0l sudo[2341]: pam_unix(sudo:session): session closed for user root
+scan	Post Harden runner	2026-10-07T23:35:49.1652748Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Fetching custom detection rules module=armour api_url=https://agent.api.stepsecurity.io/v1 repo=yolo-labz/anthropic-throttle-proxy
+scan	Post Harden runner	2026-10-07T23:35:49.1653739Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: [armour-cdr] Event Policy:  package hardenrunner.event
+scan	Post Harden runner	2026-10-07T23:35:49.1654276Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: import rego.v1
+scan	Post Harden runner	2026-10-07T23:35:49.1654851Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: # Rule: Agent - Event System Rule (707af3d3-11d5-4cce-abab-8e6dfcfc510c)
+scan	Post Harden runner	2026-10-07T23:35:49.1655485Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: default runner_worker_mem_read := false
+scan	Post Harden runner	2026-10-07T23:35:49.1655922Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 
+scan	Post Harden runner	2026-10-07T23:35:49.1656325Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: runner_worker_mem_read if {
+scan	Post Harden runner	2026-10-07T23:35:49.1656800Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     evt := input.armour_event
+scan	Post Harden runner	2026-10-07T23:35:49.1657265Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     evt.kind == "FILE_READ"
+scan	Post Harden runner	2026-10-07T23:35:49.1657903Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     evt.file_info != null
+scan	Post Harden runner	2026-10-07T23:35:49.1658438Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     endswith(evt.file_info.current_exe, "python")
+scan	Post Harden runner	2026-10-07T23:35:49.1659042Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     startswith(evt.file_info.target_file, "/proc")
+scan	Post Harden runner	2026-10-07T23:35:49.1659642Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     endswith(evt.file_info.target_file, "/mem")
+scan	Post Harden runner	2026-10-07T23:35:49.1660482Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     endswith(evt.file_info.target_exe, "Runner.Worker")
+scan	Post Harden runner	2026-10-07T23:35:49.1661293Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: }
+scan	Post Harden runner	2026-10-07T23:35:49.1661779Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 
+scan	Post Harden runner	2026-10-07T23:35:49.1662427Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: runner_worker_mem_read if {
+scan	Post Harden runner	2026-10-07T23:35:49.1663203Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     evt := input.armour_event
+scan	Post Harden runner	2026-10-07T23:35:49.1664037Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     evt.kind == "FILE_READ"
+scan	Post Harden runner	2026-10-07T23:35:49.1664990Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     evt.file_info != null
+scan	Post Harden runner	2026-10-07T23:35:49.1665536Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     endswith(evt.file_info.current_exe, "python3")
+scan	Post Harden runner	2026-10-07T23:35:49.1666137Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     startswith(evt.file_info.target_file, "/proc")
+scan	Post Harden runner	2026-10-07T23:35:49.1666732Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     endswith(evt.file_info.target_file, "/mem")
+scan	Post Harden runner	2026-10-07T23:35:49.1667349Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     endswith(evt.file_info.target_exe, "Runner.Worker")
+scan	Post Harden runner	2026-10-07T23:35:49.1668407Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: }
+scan	Post Harden runner	2026-10-07T23:35:49.1668999Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 
+scan	Post Harden runner	2026-10-07T23:35:49.1669764Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: default suspicious_file_access := false
+scan	Post Harden runner	2026-10-07T23:35:49.1670734Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: suspicious_file_access := true if {
+scan	Post Harden runner	2026-10-07T23:35:49.1671755Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     contains(input.file_event.file_name, "router_init.js")
+scan	Post Harden runner	2026-10-07T23:35:49.1673153Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     input.file_event.checksum == "ab4fcadaec49c03278063dd269ea5eef82d24f2124a8e15d7b90f2fa8601266c"
+scan	Post Harden runner	2026-10-07T23:35:49.1674343Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: }
+scan	Post Harden runner	2026-10-07T23:35:49.1675486Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: [armour-cdr] State Policy:  package hardenrunner.state
+scan	Post Harden runner	2026-10-07T23:35:49.1676506Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: import rego.v1
+scan	Post Harden runner	2026-10-07T23:35:49.1677643Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: # Rule: Agent - State System Rule (a6dabdfb-ba5b-4932-bf3c-ed621582dbce)
+scan	Post Harden runner	2026-10-07T23:35:49.1678871Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: default action := ""
+scan	Post Harden runner	2026-10-07T23:35:49.1679574Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 
+scan	Post Harden runner	2026-10-07T23:35:49.1680230Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: lockdown_required if {
+scan	Post Harden runner	2026-10-07T23:35:49.1681128Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     input.state.runner_worker_mem_read
+scan	Post Harden runner	2026-10-07T23:35:49.1681935Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: }
+scan	Post Harden runner	2026-10-07T23:35:49.1682555Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 
+scan	Post Harden runner	2026-10-07T23:35:49.1683256Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: lockdown_required if {
+scan	Post Harden runner	2026-10-07T23:35:49.1684210Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     input.state.suspicious_file_access
+scan	Post Harden runner	2026-10-07T23:35:49.1685071Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: }
+scan	Post Harden runner	2026-10-07T23:35:49.1685695Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 
+scan	Post Harden runner	2026-10-07T23:35:49.1686338Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: action := "lockdown" if {
+scan	Post Harden runner	2026-10-07T23:35:49.1687177Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]:     lockdown_required
+scan	Post Harden runner	2026-10-07T23:35:49.1688072Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: }
+scan	Post Harden runner	2026-10-07T23:35:49.1688953Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: [armour-cdr] Checksum Paths:  [router_init.js]
+scan	Post Harden runner	2026-10-07T23:35:49.1690208Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Custom detection rules evaluator initialized module=armour
+scan	Post Harden runner	2026-10-07T23:35:49.1691896Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Detection manager started module=detection-manager workers=4 buffer_size=1000
+scan	Post Harden runner	2026-10-07T23:35:49.1693345Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Config module=armour AGENT_PID=2235
+scan	Post Harden runner	2026-10-07T23:35:49.1694599Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Config module=armour ENFORCE_READ_BLOCK=false
+scan	Post Harden runner	2026-10-07T23:35:49.1695962Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Config module=armour ENFORCE_WRITE_BLOCK=false
+scan	Post Harden runner	2026-10-07T23:35:49.1697892Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Config module=armour ENFORCE_KILL_BLOCK=false
+scan	Post Harden runner	2026-10-07T23:35:49.1699247Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Map size module=armour protected_pids=1
+scan	Post Harden runner	2026-10-07T23:35:49.1700494Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Map size module=armour protected_pid_inodes=1
+scan	Post Harden runner	2026-10-07T23:35:49.1701696Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Map size module=armour protected_bpf_ids=9
+scan	Post Harden runner	2026-10-07T23:35:49.1702979Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Map size module=armour protected_fs_inodes=6
+scan	Post Harden runner	2026-10-07T23:35:49.1704277Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Map size module=armour protected_proc_fs_inodes=2
+scan	Post Harden runner	2026-10-07T23:35:49.1705544Z Oct 07 23:32:26 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:26 INFO Map size module=armour events=16384
+scan	Post Harden runner	2026-10-07T23:35:49.1706785Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO ProtectedPids module=armour pids=map[2236:2235]
+scan	Post Harden runner	2026-10-07T23:35:49.1708412Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO ProtectedBPFIDs module=armour ids="[20 14 18 21 19]"
+scan	Post Harden runner	2026-10-07T23:35:49.1709974Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO File Info module=armour inoKey="{Device:24 Inode:15442}" path=/proc/2112/mem
+scan	Post Harden runner	2026-10-07T23:35:49.1711628Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO File Info module=armour inoKey="{Device:24 Inode:19522}" path=/proc/2092/mem
+scan	Post Harden runner	2026-10-07T23:35:49.1713617Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO File Info module=armour inoKey="{Device:2049 Inode:91157}" path=/etc/sudoers.d/runner
+scan	Post Harden runner	2026-10-07T23:35:49.1715353Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO File Info module=armour inoKey="{Device:28 Inode:931}" path=/etc/resolv.conf
+scan	Post Harden runner	2026-10-07T23:35:49.1717272Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO File Info module=armour inoKey="{Device:2049 Inode:508}" path=/etc/systemd/resolved.conf
+scan	Post Harden runner	2026-10-07T23:35:49.1719162Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO File Info module=armour inoKey="{Device:2049 Inode:324920}" path=/etc/docker/daemon.json
+scan	Post Harden runner	2026-10-07T23:35:49.1720645Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO Protection maps populated module=armour
+scan	Post Harden runner	2026-10-07T23:35:49.1721854Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO Protection maps are freezed module=armour
+scan	Post Harden runner	2026-10-07T23:35:49.1723096Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO Linking completed module=armour
+scan	Post Harden runner	2026-10-07T23:35:49.1724246Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO Armour engaged module=armour
+scan	Post Harden runner	2026-10-07T23:35:49.1725487Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO RingBuffer created module=armour size=16384
+scan	Post Harden runner	2026-10-07T23:35:49.1726633Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO Listening for events module=armour
+scan	Post Harden runner	2026-10-07T23:35:49.1728029Z Oct 07 23:32:27 runnervm8df0l agentservice[2235]: 2026/10/07 23:32:27 INFO [LOCKDOWN] Runner.Worker PID set module=armour pid=2112
+scan	Post Harden runner	2026-10-07T23:35:49.1728805Z 
+scan	Complete job	﻿2026-10-07T23:35:49.3654321Z Cleaning up orphan processes
