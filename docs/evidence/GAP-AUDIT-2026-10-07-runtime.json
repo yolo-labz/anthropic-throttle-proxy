@@ -1,0 +1,358 @@
+{
+  "captured_at": "2026-10-07T16:09:23.071501-03:00",
+  "source_head": "3c64a535ea6902f00245173696d1005d5114eb0a",
+  "generator_family": "openai",
+  "scope": "read-only metadata; no inference; identities, credentials, raw logs and request content omitted",
+  "units": {
+    "anthropic-throttle-proxy": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "FragmentPath": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service",
+      "DropInPaths": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "3842394",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Sun 2026-10-04 03:18:05 -03",
+      "ExecMainExitTimestamp": "",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service -> /nix/store/glvrzlxwg52ds2zc6x1icn446s5nircm-anthropic-throttle-proxy.service/anthropic-throttle-proxy.service",
+        "ExecStart=/nix/store/4dywagmibnil2y6z80d1dvllh2w3p3fh-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+        "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+        "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+        "ExecStart=",
+        "ExecStart=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+        "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+        "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf"
+      ]
+    },
+    "zai-throttle-proxy": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "FragmentPath": "/home/notroot/.config/systemd/user/zai-throttle-proxy.service",
+      "DropInPaths": "/home/notroot/.config/systemd/user/zai-throttle-proxy.service.d/90-throttler-7236d96.conf",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "3842786",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Sun 2026-10-04 03:18:06 -03",
+      "ExecMainExitTimestamp": "",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/zai-throttle-proxy.service -> /nix/store/ghdhjm36lr9rxrjyxinwbjivprfm4yq3-zai-throttle-proxy.service/zai-throttle-proxy.service",
+        "ExecStart=/nix/store/4dywagmibnil2y6z80d1dvllh2w3p3fh-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+        "# /home/notroot/.config/systemd/user/zai-throttle-proxy.service.d/90-throttler-7236d96.conf",
+        "ExecStart=",
+        "ExecStart=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy"
+      ]
+    },
+    "mimo-throttle-proxy": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "FragmentPath": "/home/notroot/.config/systemd/user/mimo-throttle-proxy.service",
+      "DropInPaths": "/home/notroot/.config/systemd/user/mimo-throttle-proxy.service.d/90-throttler-7236d96.conf",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "3873577",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Sun 2026-10-04 03:19:37 -03",
+      "ExecMainExitTimestamp": "",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/mimo-throttle-proxy.service -> /nix/store/q20p2ddw243yxja6lxd7m4gg5qcd94dg-mimo-throttle-proxy.service/mimo-throttle-proxy.service",
+        "ExecStart=/nix/store/4dywagmibnil2y6z80d1dvllh2w3p3fh-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+        "# /home/notroot/.config/systemd/user/mimo-throttle-proxy.service.d/90-throttler-7236d96.conf",
+        "ExecStart=",
+        "ExecStart=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy"
+      ]
+    },
+    "ingress-throttle-proxy": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "FragmentPath": "/home/notroot/.config/systemd/user/ingress-throttle-proxy.service",
+      "DropInPaths": "/home/notroot/.config/systemd/user/ingress-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/ingress-throttle-proxy.service.d/queue-wait.conf",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "3843155",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Sun 2026-10-04 03:18:08 -03",
+      "ExecMainExitTimestamp": "",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-ingress ; argv[]=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-ingress ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/ingress-throttle-proxy.service -> /nix/store/yhy6j02xh60lr4cbfqb7d946angs0pfx-ingress-throttle-proxy.service/ingress-throttle-proxy.service",
+        "ExecStart=/nix/store/4dywagmibnil2y6z80d1dvllh2w3p3fh-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-ingress",
+        "# /home/notroot/.config/systemd/user/ingress-throttle-proxy.service.d/90-throttler-7236d96.conf",
+        "ExecStart=",
+        "ExecStart=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-ingress",
+        "# /home/notroot/.config/systemd/user/ingress-throttle-proxy.service.d/queue-wait.conf"
+      ]
+    },
+    "mimo-desktop-api": {
+      "ActiveState": "inactive",
+      "SubState": "dead",
+      "FragmentPath": "/home/notroot/.config/systemd/user/mimo-desktop-api.service",
+      "DropInPaths": "",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "0",
+      "Result": "success",
+      "ExecMainStartTimestamp": "",
+      "ExecMainExitTimestamp": "",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python ; argv[]=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python main.py ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/mimo-desktop-api.service",
+        "ExecStart=%h/.local/share/mimo-desktop-api/.venv/bin/python main.py"
+      ]
+    },
+    "mimo-tokenplan-shim": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "FragmentPath": "/home/notroot/.config/systemd/user/mimo-tokenplan-shim.service",
+      "DropInPaths": "",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "1980",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Sat 2026-10-03 12:47:35 -03",
+      "ExecMainExitTimestamp": "",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python ; argv[]=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python /home/notroot/.local/share/mimo-tokenplan-shim/shim.py ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/mimo-tokenplan-shim.service",
+        "ExecStart=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python /home/notroot/.local/share/mimo-tokenplan-shim/shim.py"
+      ]
+    },
+    "mimo-dashboard-probe": {
+      "ActiveState": "inactive",
+      "SubState": "dead",
+      "FragmentPath": "/home/notroot/.config/systemd/user/mimo-dashboard-probe.service",
+      "DropInPaths": "/home/notroot/.config/systemd/user/mimo-dashboard-probe.service.d/80-sampler-284.conf /home/notroot/.config/systemd/user/mimo-dashboard-probe.service.d/90-throttler-7236d96.conf",
+      "TimeoutStartUSec": "1min 30s",
+      "MainPID": "0",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Wed 2026-10-07 15:56:44 -03",
+      "ExecMainExitTimestamp": "Wed 2026-10-07 15:56:53 -03",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/nix/store/pad3bjjkjhb4qfijjp1s51x2sw9dni3i-mimo-dashboard-probe/bin/mimo-dashboard-probe ; argv[]=/nix/store/pad3bjjkjhb4qfijjp1s51x2sw9dni3i-mimo-dashboard-probe/bin/mimo-dashboard-probe ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/mimo-dashboard-probe.service -> /nix/store/gcq059pi5mxxnpbva8pbvidshpgkwr4g-mimo-dashboard-probe.service/mimo-dashboard-probe.service",
+        "ExecStart=/nix/store/frvyjvj8br4n0b19vkvj2bihzplgbf19-mimo-dashboard-probe/bin/mimo-dashboard-probe",
+        "# /home/notroot/.config/systemd/user/mimo-dashboard-probe.service.d/80-sampler-284.conf",
+        "ExecStart=",
+        "ExecStart=/nix/store/l5rrq6n1rkjz54b5lqaw47sija0s1lxi-new-wrapper",
+        "# /home/notroot/.config/systemd/user/mimo-dashboard-probe.service.d/90-throttler-7236d96.conf",
+        "ExecStart=",
+        "ExecStart=/nix/store/pad3bjjkjhb4qfijjp1s51x2sw9dni3i-mimo-dashboard-probe/bin/mimo-dashboard-probe"
+      ]
+    },
+    "throttle-lanes": {
+      "ActiveState": "inactive",
+      "SubState": "dead",
+      "FragmentPath": "/home/notroot/.config/systemd/user/throttle-lanes.service",
+      "DropInPaths": "",
+      "TimeoutStartUSec": "3min",
+      "MainPID": "0",
+      "Result": "success",
+      "ExecMainStartTimestamp": "Wed 2026-10-07 16:04:21 -03",
+      "ExecMainExitTimestamp": "Wed 2026-10-07 16:05:23 -03",
+      "ExecMainStatus": "0",
+      "ExecStart": "{ path=/nix/store/bpblqs717zsjds3f87171q4w0qjadj14-throttle-lanes-probe/bin/throttle-lanes-probe ; argv[]=/nix/store/bpblqs717zsjds3f87171q4w0qjadj14-throttle-lanes-probe/bin/throttle-lanes-probe ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+      "persisted_exec_chain": [
+        "# /home/notroot/.config/systemd/user/throttle-lanes.service -> /nix/store/4rcb1z392jlph76zpnc4fzs8cpbqlh63-throttle-lanes.service/throttle-lanes.service",
+        "ExecStart=/nix/store/bpblqs717zsjds3f87171q4w0qjadj14-throttle-lanes-probe/bin/throttle-lanes-probe"
+      ]
+    }
+  },
+  "http": {
+    "8765/health": {
+      "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+      "upstream": "http://127.0.0.1:1",
+      "queue_mode": "fair",
+      "central_status": "unknown",
+      "central_url": "",
+      "served": 0,
+      "inflight": 0,
+      "queued": 0,
+      "upstream_egress_ok": true,
+      "upstream_auth_ok": null,
+      "elapsed_ms": 29.97
+    },
+    "8765/admission": {
+      "state": "capped",
+      "allow": false,
+      "reason": "0/2 bearers serving",
+      "serving": 0,
+      "total": 2,
+      "retry_after_s": 0.0,
+      "elapsed_ms": 2.27
+    },
+    "8766/health": {
+      "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+      "upstream": "https://api.z.ai",
+      "queue_mode": "fair",
+      "central_status": "unknown",
+      "central_url": "",
+      "served": 6544,
+      "inflight": 0,
+      "queued": 0,
+      "upstream_egress_ok": true,
+      "upstream_auth_ok": null,
+      "elapsed_ms": 1.17
+    },
+    "8766/admission": {
+      "state": "capped",
+      "allow": false,
+      "reason": "lane closed: no-usable-bearer",
+      "serving": 0,
+      "total": 1,
+      "retry_after_s": 9833.662,
+      "elapsed_ms": 0.98
+    },
+    "8760/health": {
+      "served": 72,
+      "elapsed_ms": 1.17
+    },
+    "8773/health": {
+      "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+      "upstream": "https://token-plan-sgp.xiaomimimo.com",
+      "queue_mode": "fair",
+      "central_status": "unknown",
+      "central_url": "",
+      "served": 2081,
+      "inflight": 0,
+      "queued": 0,
+      "upstream_egress_ok": true,
+      "upstream_auth_ok": null,
+      "elapsed_ms": 1.37
+    },
+    "8773/admission": {
+      "state": "capped",
+      "allow": false,
+      "reason": "0/2 bearers serving",
+      "serving": 0,
+      "total": 2,
+      "retry_after_s": 0.0,
+      "elapsed_ms": 2.03
+    },
+    "8099/health": {
+      "elapsed_ms": 2.43
+    },
+    "8100/health": {
+      "error_class": "HTTPError",
+      "elapsed_ms": 1.74
+    }
+  },
+  "reports": {
+    "/run/user/1000/throttle-lanes.json": {
+      "mode": "0o600",
+      "generatedAt": "2026-10-07T19:05:23Z",
+      "intervalSeconds": 900,
+      "age_s": 240.3,
+      "lanes": [
+        {
+          "id": "codex:a",
+          "kind": "codex",
+          "status": "ok",
+          "meter_count": 1
+        },
+        {
+          "id": "codex:b",
+          "kind": "codex",
+          "status": "ok",
+          "meter_count": 1
+        },
+        {
+          "id": "codex:c",
+          "kind": "codex",
+          "status": "ok",
+          "meter_count": 1
+        },
+        {
+          "id": "copilot:personal",
+          "kind": "copilot",
+          "status": "ok",
+          "meter_count": 0
+        },
+        {
+          "id": "zai:plan",
+          "kind": "zai",
+          "status": "ok",
+          "meter_count": 2
+        },
+        {
+          "id": "anthropic:proxy",
+          "kind": "anthropic",
+          "status": "delegated",
+          "meter_count": 0
+        }
+      ]
+    },
+    "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-plan.json": {
+      "mode": "0o600",
+      "generatedAt": "2026-10-07T18:56:50Z",
+      "intervalSeconds": 900,
+      "age_s": 753.3,
+      "lanes": [
+        {
+          "id": "mimo:plan",
+          "kind": "mimo",
+          "status": "exhausted",
+          "meter_count": 1
+        },
+        {
+          "id": "mimo:team-owner",
+          "kind": "mimo",
+          "status": "exhausted",
+          "meter_count": 1
+        },
+        {
+          "id": "mimo:team-b",
+          "kind": "mimo",
+          "status": "unknown",
+          "meter_count": 0
+        }
+      ]
+    }
+  },
+  "runtime_source_match": {
+    "rev": "6ac87f11a470d6c130b000a2afb5f931890d9a51",
+    "matched_count": 32,
+    "different_or_missing": []
+  },
+  "timer_receipt": "NEXT                            LEFT LAST                           PASSED UNIT                       ACTIVATES\nWed 2026-10-07 16:11:44 -03 2min 21s Wed 2026-10-07 15:56:44 -03 12min ago mimo-dashboard-probe.timer mimo-dashboard-probe.service\nWed 2026-10-07 16:19:21 -03     9min Wed 2026-10-07 16:04:21 -03  5min ago throttle-lanes.timer       throttle-lanes.service\nWed 2026-10-07 16:52:28 -03    43min Wed 2026-10-07 15:52:28 -03 16min ago mimo-esc-watch.timer       mimo-esc-watch.service\n\n3 timers listed.\n",
+  "hm_service": "ExecMainStartTimestamp=Tue 2026-10-06 14:16:32 -03\nExecMainStatus=0\nExecStart={ path=/nix/store/ai56hq0pdj6m2qqb96xgwhsvrm9zrwjp-hm-setup-env ; argv[]=/nix/store/ai56hq0pdj6m2qqb96xgwhsvrm9zrwjp-hm-setup-env /nix/store/dbpd8a5kpbzqhxfrc40z5xgrad5q56jk-home-manager-generation ; ignore_errors=no ; start_time=[Tue 2026-10-06 14:16:32 -03] ; stop_time=[Tue 2026-10-06 14:17:31 -03] ; pid=2707365 ; code=exited ; status=0 }\n",
+  "current_system": "/nix/store/7jxpzvrgb2r5gncrd5i7cdp9brak8jc4-nixos-system-desktop-26.11.20260904.e5ead30",
+  "bridge_source_sha256": {
+    "/home/notroot/.local/share/mimo-desktop-api/app/desktop_session.py": "17135c3c335fcdced6879cc1288984d3a2c9bf67abe6cf5f7e04af398dcce1ae"
+  },
+  "desktop_activation_delta": {
+    "observed_at": "2026-10-07T16:12:45.837028-03:00",
+    "note": "Concurrent coordinator activation; no changes performed by audit worker.",
+    "unit": {
+      "ActiveState": "active",
+      "FragmentPath": "/home/notroot/.config/systemd/user/mimo-desktop-subscription.service",
+      "DropInPaths": "",
+      "MainPID": "1718616",
+      "ExecMainStartTimestamp": "Wed 2026-10-07 16:08:56 -03"
+    },
+    "http://127.0.0.1:8100/health": {
+      "error_class": "HTTPError",
+      "http_status": 404
+    },
+    "http://127.0.0.1:8100/__throttle/health": {
+      "error_class": "HTTPError",
+      "http_status": 404
+    }
+  },
+  "external_source_readback": {
+    "captured_at": "2026-10-07T16:18:27.640587-03:00",
+    "nixos_main_head": "ebc0ee54bcb5b982fa5b495d214b5da43e3b29e5",
+    "nixos_main_dirty": true,
+    "sha256": {
+      "/home/notroot/NixOS/modules/home/mimo-dashboard.nix": "dbd9d538a2bc3e408a23bf2791ad976f9c22a6403118608328181975346b3b63",
+      "/home/notroot/NixOS/modules/home/mimo-throttle-proxy.nix": "5cdfa741bcb020388f010dd820974c61869b18c3ddab233241e5ddcb841e56e3",
+      "/home/notroot/NixOS/modules/home/pi.nix": "6305075bb9e112543a7c9790ae0236449e172edb4b9416ca5e59cae6bbccab9f",
+      "/home/notroot/NixOS/modules/home/lib/pi-mimo-token-plan-key.sh": "98af6b1f886db7216f27c782ccbe8e0df98ff5a8be9b0bbc87f4ca3eb1a8ff3d"
+    }
+  }
+}
