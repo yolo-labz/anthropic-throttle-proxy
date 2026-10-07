@@ -107,6 +107,25 @@ The branch suffix327 here is QA; GitHub PR#327 is pT source. Current-head source
 CI and accepted main binding still must be verified, then normal QA PR delivery
 and pV exact deployed acceptance. The live health checkpoint remains old95ll5i712.
 
+## Final-source binding and normal delivery underway
+
+At **20:28 BRT**, QA rebased its two unpushed commits onto pT's published
+`3a398791ee5b49478dac9fb920014ddf81c4feb7`. No pT backend/CSS edits; all source
+bytes come from that candidate. Mergiraf's automatic helper merge was reviewed
+and found a moved lexical fixture call; QA moved only the cache-injection patch
+back into its legacy caller, leaving shared refresh/network guards intact. A
+small CI regression asserts the helper preserves an injected accounting fixture
+and refuses collection. Reviewed source diff stored as `rebased-render-helper.diff`.
+Normal Ruff passes after the resolution; no unreviewed automerge shipped.
+
+The bounded full pytest + final combined/legacy browser packet was refused
+before execution (loaded heavy unit race). Its final immutable/dial-visual/helper
+execution is pending, not conflated with the earlier candidate run. QA will
+publish a normal draft dependent PR and require exact-head CI, then re-bind
+accepted main and normal merge. pT source#327 current head3a39879 was still
+OPEN/BLOCKED on real required CI at20:28; neither source nor runtime is accepted
+from historical green.
+
 ## Independent observational reference (not acceptance)
 
 A bounded 2 MiB read at **19:49:07 BRT** observed 92 completion events and 89,813

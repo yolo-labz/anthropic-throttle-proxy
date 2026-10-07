@@ -13,8 +13,8 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import replace
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -255,7 +255,6 @@ async def deployed(out, expected_build):
 def render_app(now, row, forbidden):
     """One isolated render guard shared by legacy and combined browser acceptance."""
     with (
-        patch.object(output_usage, "_cache", client_fixture()),
         patch.object(output_usage, "refresh", forbidden),
         patch.object(routes._config, "FLEET_HEALTH_URLS", "mimo:http://example.test/health"),
         patch.object(routes._config, "COPILOT_TOKEN", ""),
@@ -321,8 +320,10 @@ async def main(out=OUT, live=True):
             providers=("codex-a", "zai"),
         )
 
-    with render_app(now, row, forbidden) as app:
-        
+    with (
+        patch.object(output_usage, "_cache", client_fixture()),
+        render_app(now, row, forbidden) as app,
+    ):
         async with TestServer(app) as server, async_playwright() as playwright:
             browser = await launch(playwright)
             try:
