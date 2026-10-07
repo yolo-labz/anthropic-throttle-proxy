@@ -5,7 +5,7 @@ Coordinator: w1P:pG. Isolated branch: `319-ui-browser-qa`.
 
 ## Scope and status
 
-**Browser acceptance and post-deploy acceptance remain blocked, not passed.**
+**Browser acceptance is FAIL at 390px; post-deploy acceptance remains blocked.**
 This slice changes only the existing executable check, its redaction regression,
 plan/tasks and receipts. No competing templates/backend edits, runtime changes,
 agents, account attachment or provider fallback.
@@ -107,6 +107,38 @@ Small targets/focus styles are measured; existing contrast tests remain the colo
 oracle. Physical touch, screen readers, all 200% zoom/device variants and live
 provider-network accounting require separate evidence. Tests do not prove them.
 
+## Admitted browser evidence — 18:09 BRT
+
+Heavy admission finally granted. Installed headless Chromium **152.0.7977.82**,
+GPU disabled, ephemeral owned page; job memory peak **~1 GiB**, CPU time 8.59 s,
+wall time 10.89 s. No supervised account/profile or service mutation.
+
+- **Actual old live** `/ui` at 1366 and 390 CSS pixels: document width equals
+  viewport; one main/h1, unique IDs/named controls; no gauge text clipping.
+  Fresh sanitized `live-{1366,390}.png/.html` captured, independent of the
+  coordinator screenshot. This proves the old page's layout, not deployment.
+- **Exact #316 route**, synthetic workload buckets **plus the existing read-only
+  lane-report snapshot** (not wholly synthetic account quotas): gauge 120 output
+  tokens/s; actual HTMX polls retained `source=mimo`; source aria-current remained
+  selected; checkbox selection and `providers-scroll` focus survived another poll.
+- **FAIL:** at 390 pixels, document width **473 pixels** (83-pixel page overflow).
+  1366-pixel workload view has no page overflow; no gauge text clipping, duplicate
+  IDs or unnamed inputs in either viewport. Source anchors measured **16.875px
+  high** (25/30px wide). Checkbox geometry is 13px, but its wrapping label must
+  be considered before calling the whole target a failure.
+- Failing DOM/PNG and exact imported-source hashes are durable. First pass stopped
+  at overflow; stale/error/unknown transitions, touch/keyboard-source selection and
+  final console/network acceptance were **not yet reached**. Earlier executed
+  selection/focus assertions are not promoted to a full pass.
+
+Hypothesis for the failure: the workload page's capacity/metadata layout overflows
+when a lane report exists; neither the gauge itself nor the new source picker is
+established as the cause. Falsifier: a bounded rectangle census locates overflow
+elsewhere. QA makes no competing template/CSS fix. Batched confirmation retains
+all failures and nonzero exit, but collects later checks instead of stopping at
+the first layout error. One remaining confirmation attempt at 18:11 was refused
+because the shared heavy slot was running since 18:09:42; no unadmitted fallback.
+
 ## Execution evidence and exact blockers
 
 - Initial heavy browser smoke: refused before execution, **exit 75**,
@@ -125,7 +157,8 @@ provider-network accounting require separate evidence. Tests do not prove them.
 - Lightweight source lint under the admitted control allocation:
   **Ruff check src tests passed; 116 files already formatted**;
   `git diff --check` passed. Source pytest/sanitizer
-  and the actual browser check have **not yet executed locally**.
+  did not execute locally before the admitted first browser run. CI executed
+  the sanitizer/full source suite; actual browser results are recorded above.
 
 ## Delivery and deployment
 
