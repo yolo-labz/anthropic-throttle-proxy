@@ -34,6 +34,22 @@ The same attempt captured the newly served page with root widths 1366/1366 and
 all-oracle deployment acceptance. The repaired source/live attempt has been
 refused before execution for loaded slot / pressure recovery; exact results
 must supersede this pending state, not be inferred from frontend's own pass.
+At the last verified clock **19:25 BRT**, heavy slot remained occupied since
+19:21:30. Later control admission also refused memory headroom:
+**MemAvailable=21,408,660 KiB below 24 GiB**. No attempt to shrink headroom,
+kill sibling work, render in the control lane, or run an unallocated remote job.
+Exact refusals/state: `admission-blocker.json`. No additional rendering actually
+executed after the preserved AX instrumentation error.
+
+## Source-only delivery
+
+QA PR **#324** at `f573ef9951859deefdd69ea2ec10adaea902cbad`; normal hooks
+passed after deduplicating browser launch rather than suppressing clone findings.
+At 19:25 required `ruff + pytest` and `code-slop + alignment` passed, `scan`
+was pending and PR OPEN/BLOCKED. At **19:27**, all three required checks on that
+exact head passed and PR was CLEAN; heavy slot still occupied. A doc-only
+follow-up must pass its own exact-head gates. Detached normal waiter is armed;
+no head-mismatched green or source-CI-to-browser approval.
 
 ## Separate live acceptance packet for pV
 

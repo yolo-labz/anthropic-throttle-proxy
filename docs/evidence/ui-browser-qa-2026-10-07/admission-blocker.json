@@ -1,0 +1,24 @@
+{
+  "last_verified_clock": "07/10/2026 19:25 BRT",
+  "scope": "Repaired independent final-source + deployed-browser packet; no subprocess launched on refusals",
+  "final_source": "45b7d0ef3321cca9c6d4e8513686efa30d889c1a",
+  "source_pr": 324,
+  "source_head": "f573ef9951859deefdd69ea2ec10adaea902cbad",
+  "last_pr_observation": "ruff + pytest and code-slop + alignment PASS; required scan pending; OPEN/BLOCKED",
+  "heavy_slot": "active/running since 07/10/2026 19:21:30 BRT",
+  "heavy_refusals": [
+    "pressure-high cause=io io-full=1100c",
+    "Unit desktop-job-slot.service already loaded",
+    "reopen-pending 21 seconds below-threshold remaining",
+    "pressure-high cause=io io-full=1126c"
+  ],
+  "control_refusals": [
+    "small pool unavailable deadline; nothing executed",
+    "budget-exceeded MemAvailable=22895380kB below 24GiB",
+    "budget-exceeded MemAvailable=21408660kB below 24GiB"
+  ],
+  "attempted_browser": "One admitted attempt stopped at partial AX-tree instrumentation assertion; retained in final-source/instrumentation-failure.json",
+  "repaired_packet": "Full AX-tree source check and separate deployed-build mode prepared; not executed yet",
+  "independent_all_oracle_acceptance": "BLOCKED; no pass claimed",
+  "recovery_policy": "No slot kill/limit increase/unadmitted render/offhost allocation/stress loop; retain normal PR waiter and pV activation custody"
+}

@@ -13,11 +13,12 @@
     "src/anthropic_throttle_proxy/ui/templates/partials/config.html": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
     "src/anthropic_throttle_proxy/ui/templates/partials/stats.html": "af6b6ddd5947c863d6daa2a10eaf35dca53758c7fab7120b54ac56daa9289e4c"
   },
-  "checker_sha256": "38b92f136199e159845c9d303e747b3ad622c6d52f0b3e44135920445a0d9e2f",
-  "checker_delta": "add independent CDP quota accessible text oracle; no UI changes",
+  "checker_sha256": "8a043ddfbfca0f870aa32bf442046dac782ebd8f517adadd14d427a1cce98628",
+  "checker_delta": "Full AX quota oracle and separate deployed mode; first partial-tree failure retained; repaired packet awaiting admission",
   "fail_before": "docs/evidence/ui-geometry-2026-10-07/before/receipt.json",
   "original_qa_fail_before": "docs/evidence/ui-browser-qa-2026-10-07/confirmation/receipt.json",
   "browser_status": "bounded instrumentation repair pending",
   "instrumentation_error": "first attempt used partial AX tree of generic span; no readable children; not UI verdict",
-  "admission_refusal": "pressure-high io-full=1100c exit 75; later io-full=1769c"
+  "admission_refusal": "pressure-high io-full=1100c exit 75; later io-full=1769c",
+  "checker_source_head": "f573ef9951859deefdd69ea2ec10adaea902cbad"
 }
