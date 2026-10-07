@@ -602,10 +602,13 @@ def _desktop_row(path: str, now: float) -> dict[str, Any]:
     # money, window duration or producer-provided arbitrary labels/notes.
     stale = age > interval * _STALE_INTERVALS
     observed = datetime.fromtimestamp(now - age, UTC).strftime("%d/%m/%Y %H:%M UTC")
+    status = "ok" if remaining > 0 else "exhausted"
+    if stale:
+        status = "stale"
     row = _normalize(
         {
             **unknown,
-            "status": "stale" if stale else ("ok" if remaining > 0 else "exhausted"),
+            "status": status,
             "reason": (
                 f"{'last sample' if stale else 'sampled'} {observed} · not Token Plan credits"
             ),

@@ -74,10 +74,33 @@ imported build. The dirty main NixOS secret file was not touched.
 6. Rollback: restore retained previous one-service override, daemon-reload,
    restart only this idle service; verify imported old build/closed upstream.
 
-## Current blockers
+## Exact-head CI failure and correction
 
-Full tests/browser/package build require admitted compute (I/O pressure refusal
-at 17:48). CI is the normal remote acceptance path. Scoped activation waits for
-exact-head CI/build/idle proofs. Central delivery is not this one-service slice;
-its revision must be recorded without restarting it. Durable producer timer is
-coordinated with pN; one successful probe is not ongoing collection/persistence.
+Source PR **#319**, initial head `0add715ab1e59d5e48ada15194c99ada2e8314e2`:
+- CI run **37686095391**: Ruff lint/format success, **2,088 passed**, 155 warnings
+  in 80.73s. This is remote executable acceptance, not local/browser acceptance.
+- Required scan run **37686095470 FAILED**. Scanner log explicitly names the
+  same SCM revision; report uploaded 18:02:22 BRT, CE task
+  `b31dc286-111f-44f5-ab3e-40d023491307`, historical analysis
+  `4a747c36-0dc3-431d-b774-56d5756e54e7` binds that exact revision via
+  `project_analyses/search` (persisted JSON receipts in spec directory).
+- `qualitygates/project_status?analysisId=4a747c36-0dc3-431d-b774-56d5756e54e7`
+  returned **ERROR**, new violations **1**, new coverage 93.5%, new duplication
+  0.0%. Thresholds remain 0 / 80% / 3%; no exclusion/threshold change.
+- Concrete finding **python:S3358**, issue
+  `2415a855-fb74-46b3-a12d-ace8565fc5fe`, `lanes.py:608`: nested conditional
+  expression. Extracted status calculation and explicit stale override.
+- Shared Community dashboard subsequently analyzed a sibling revision and closed
+  the issue because this code was absent. That is **not our fix acceptance**;
+  projectKey/current-green metrics remain revision-mismatched/unknown. No rerun
+  of the failed head and no deployment through the red gate.
+- Retrieval used authenticated read-only tailnet Dokku nginx with the Sonar Host
+  header; Cloudflare public data API returned 403. Credentials stayed in memory,
+  never command arguments/output. No Actions/#315 change or unrelated restart.
+
+New source head must pass its own normal CI and required scan before merge or
+scoped activation. Local heavy/browser/package admission remains I/O-blocked;
+CI does not substitute for actual imported-build/browser acceptance. Durable
+producer timer is coordinated with pN; one successful probe is not ongoing
+collection/persistence. Central revision/deployment is separate from this
+one-service slice and is not claimed accepted.

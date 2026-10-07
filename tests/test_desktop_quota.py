@@ -126,8 +126,12 @@ def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
     assert row["binding_pct"] is None
 
 
-def test_desktop_ages_independently(tmp_path, monkeypatch):
-    rows = read(tmp_path, monkeypatch, payload(), NOW + 601)
+@pytest.mark.parametrize("remaining", [93.6, 0])
+def test_desktop_ages_independently(tmp_path, monkeypatch, remaining):
+    raw = payload()
+    raw["lanes"][0]["status"] = "ok" if remaining else "exhausted"
+    raw["lanes"][0]["meters"][0].update(remainingPercent=remaining, usedPercent=100 - remaining)
+    rows = read(tmp_path, monkeypatch, raw, NOW + 601)
     row = next(row for row in rows if row["id"] == LANE_ID)
     assert row["status"] == "stale"
     assert "last sample" in row["reason"]
