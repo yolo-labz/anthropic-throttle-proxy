@@ -181,7 +181,8 @@ findings remain. No runtime/template/CSS fix or acceptance waiver was made.
   **exit 1**, `Unit desktop-job-slot.service was already loaded`.
 - Later attempts also refused before execution: `reopen-pending` (23 seconds of
   below-threshold recovery remaining), another loaded-slot collision, then
-  `pressure-high: io-full=1453c`. No browser/test subprocess ever launched.
+  `pressure-high: io-full=1453c`. No browser/test subprocess launched in those
+  refused attempts; the two later admitted passes are recorded separately above.
 - At 17:48 BRT that unit was active/running since **17:43:15**, CPUQuota **4s**,
   MemoryMax **4 GiB**. No killing/resizing the sibling workload, sleeping inside a
   job, small-lane test/render fallback or global cache/worktree sweep.
