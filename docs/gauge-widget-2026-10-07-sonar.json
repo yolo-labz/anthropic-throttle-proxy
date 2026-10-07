@@ -1,0 +1,74 @@
+{
+  "scope": "Read-only Sonar Community project; verify revision before attributing current issues",
+  "matching_analyses": [
+    {
+      "key": "8ef7ada3-3a52-4b2e-8e1a-8a9b96526a9e",
+      "date": "2026-10-07T19:42:51+0000",
+      "events": [
+        {
+          "key": "0bb61e5c-878e-4369-9c9d-3bc629be9162",
+          "category": "QUALITY_GATE",
+          "name": "Failed",
+          "description": "New Issues > 0"
+        },
+        {
+          "key": "90cff414-79ea-4d78-95f1-57423cb2007c",
+          "category": "VERSION",
+          "name": "not provided"
+        }
+      ],
+      "projectVersion": "not provided",
+      "manualNewCodePeriodBaseline": false,
+      "revision": "8e0669e2bb2511abd56233c2ca3a8a94302d84f5",
+      "detectedCI": "Github Actions"
+    }
+  ],
+  "quality_gate": {
+    "projectStatus": {
+      "status": "ERROR",
+      "conditions": [
+        {
+          "status": "OK",
+          "metricKey": "new_coverage",
+          "comparator": "LT",
+          "errorThreshold": "80",
+          "actualValue": "93.5"
+        },
+        {
+          "status": "OK",
+          "metricKey": "new_duplicated_lines_density",
+          "comparator": "GT",
+          "errorThreshold": "3",
+          "actualValue": "0.0"
+        },
+        {
+          "status": "ERROR",
+          "metricKey": "new_violations",
+          "comparator": "GT",
+          "errorThreshold": "0",
+          "actualValue": "1"
+        }
+      ],
+      "ignoredConditions": false,
+      "period": {
+        "mode": "PREVIOUS_VERSION",
+        "date": "2026-05-22T02:08:28+0000"
+      },
+      "caycStatus": "compliant"
+    }
+  },
+  "latest_analysis": {
+    "key": "8ef7ada3-3a52-4b2e-8e1a-8a9b96526a9e",
+    "revision": "8e0669e2bb2511abd56233c2ca3a8a94302d84f5",
+    "date": "2026-10-07T19:42:51+0000"
+  },
+  "current_issues": [
+    {
+      "key": "e2df7973-a477-4750-87c5-050c874c25ab",
+      "rule": "python:S3776",
+      "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/routes.py",
+      "line": 1066,
+      "message": "Refactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed."
+    }
+  ]
+}

@@ -90,7 +90,9 @@ Validation on the implementation tree:
 | `uv run ruff check src tests` | All checks passed |
 | `uv run ruff format --check src tests` | 115 files already formatted |
 | `node tests/dashboard-refresh-check.mjs` | PASS single-script invariant + server-side freshness stamp |
-| Types / isolated browser / PR CI | Pending receipts. Desktop heavy admission refused `pressure-high`, then `reopen-pending`; no unadmitted fallback |
+| Types | CI mypy report on `8e0669e2`: 136 diagnostics, 17 in UI; report-only badge is not type-clean. One introduced missing annotation corrected; final-head report required |
+| Isolated browser | Runnable `tests/check_gauge_wire.py`; **not executed**: repeated desktop heavy admission refused `pressure-high` / `reopen-pending`; no unadmitted fallback |
+| PR CI on `8e0669e2` | Full tests: 2,059 passed / 155 warnings in 81.69s; Ruff, CodeQL, OSV, throwaway image, slop/alignment passed. Required Sonar `scan` failed; final-head recheck required |
 
 No coverage/security score or Sonar gate improvement is inferred from pytest.
 
@@ -130,4 +132,30 @@ new separate Desktop meter after its producer exists. Preserve `:8773` and
 legacy Token Plan while doing so. Source merge does not activate any unit here.
 
 Reversal: one normal `git revert <squash-commit>` PR; no runtime changes to undo
-from this worker. PR/head/CI and browser/type receipt are recorded below.
+from this worker.
+
+## PR and scanner receipts
+
+PR: [#316](https://github.com/yolo-labz/anthropic-throttle-proxy/pull/316).
+First source head: `8e0669e2bb2511abd56233c2ca3a8a94302d84f5`.
+
+- `docs/gauge-widget-2026-10-07-types.txt`: exact-head report-only type diagnostics;
+  existing module-wide debt is not green just because the workflow is success.
+- `docs/gauge-widget-2026-10-07-sonar.json`: analysis matching that exact SHA,
+  gate **ERROR**: new coverage 93.5% (≥80), duplication 0% (≤3), **one new issue**
+  (must be zero). Finding `python:S3776`: `_collect_view` cognitive complexity
+  17 versus allowed 15. The display-source choice is extracted to its own small
+  function in the follow-up, with no suppression or threshold change.
+- Public Sonar API returns 403. Stored rbw credential authenticated through the
+  existing Dokku loopback nginx over SSH; only sanitized receipts were retained.
+  No auth/ACL/secret changes. Sonar is Community single-branch: revision-match
+  receipts are evidence, not a claim of isolated PR analysis.
+- The commit hook initially found a 53-token duplicate synthetic fixture between
+  route and browser tests. Reusing one fixture in existing `tests/ui_render.py`
+  fixed it; hook then passed with **zero clone regressions**, no bypass.
+
+The bounded slice is approximately 490 added code/test/template/style lines.
+No further feature expansion: missing Desktop producer/reset semantics,
+blocked browser execution, legacy type debt and runtime activation remain
+explicit follow-up inputs for the coordinator. Final delivery reports the
+latest exact head/check state, not this initial scan as final acceptance.

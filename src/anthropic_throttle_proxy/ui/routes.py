@@ -1054,13 +1054,25 @@ def _cached_fleet(now: float) -> list[dict]:
 
 
 def _cached_copilot(now: float) -> list[dict]:
-    rows = []
+    rows: list[dict] = []
     if not _config.COPILOT_TOKEN:
         return rows
     for org in _copilot.parse_orgs(_config.COPILOT_ORGS):
         cached = _copilot._cache_hit(org, now)
         rows.append({"org": org, **(cached or {"ok": False, "err": "awaiting billing sample"})})
     return rows
+
+
+def _display_config(source: str | None) -> dict:
+    ui_cfg = _fleet_ui_config.load()
+    if source is None:
+        return ui_cfg
+    # Per-tab display choice only; never publish shared settings or route inference.
+    ui_cfg = {**ui_cfg, "defaults": {**ui_cfg.get("defaults", {}), "workload": source}}
+    if source == "local":
+        ui_cfg["defaults"].pop("workload", None)
+        ui_cfg["defaults"]["show_primary"] = True
+    return ui_cfg
 
 
 async def _collect_view(*, project: bool = True, source: str | None = None) -> dict[str, object]:
@@ -1075,13 +1087,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
     hiding the button never disabled the endpoint).
     """
     cs = _proxy.state["central_status"]
-    ui_cfg = _fleet_ui_config.load()
-    if project and source is not None:
-        # Per-tab display choice only; never publish shared settings or route inference.
-        ui_cfg = {**ui_cfg, "defaults": {**ui_cfg.get("defaults", {}), "workload": source}}
-        if source == "local":
-            ui_cfg["defaults"].pop("workload", None)
-            ui_cfg["defaults"]["show_primary"] = True
+    ui_cfg = _display_config(source if project else None)
     # Collection runs in the background regardless of display hiding. A GET
     # must never acquire a collector lock or wait on an upstream network call.
     labels = _accounts.bearer_labels()
