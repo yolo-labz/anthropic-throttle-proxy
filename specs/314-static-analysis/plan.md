@@ -41,7 +41,8 @@ metrics, not all repository code; helpers and the Pi client are absent.
 
 - [x] Read canonical references; inspect live read-only Dokku/GitHub/Sonar.
 - [x] Implement checker, red-capable tests and integration diff (25 tests pass).
-- [ ] Obtain fresh complete-namespace coverage and exact-head PR checks.
+- [x] Obtain fresh complete-namespace coverage and exact-head PR checks:
+      code head 15a16bd, merge checkout 259bd498, 2,074 tests, 88.92%, 42 files.
 - [x] Document inventory, scopes, measured baseline, findings and authorization.
 
 Initial admitted full run passed 2,072 tests but its incomplete coverage inventory
@@ -51,9 +52,14 @@ no unit cleanup/restart is authorized. Existing CI collected all 42 Python files
 2,072 tests passed and 88.9121% coverage at 9da2aa8, then failed validation because
 coverage.py rounds its XML rate to four significant digits. Decoder now checks
 that exact producer format, with valid/forged rounding regressions. Follow-up CI
-must verify the corrected head; no threshold relaxation or fabricated receipt.
-- [ ] Open ordinary PR. Actions changes require operator merge authorization;
+verified corrected head 15a16bd: all PR checks succeeded, 2,074 tests and 88.92%
+coverage, all 42 source files matched. OSV is green report-only but has new open
+alert #55 (inherited multidict 6.7.1/CVE-2026-104874); separate dependency follow-up
+is documented. No threshold relaxation or fabricated receipt.
+- [x] Open ordinary PR #315. Actions changes require operator merge authorization;
       no self-merge, ruleset changes or production deploys in this workstream.
+- [ ] Operator-authorized merge, expanded-scope main Sonar and dependency repair
+      remain pending; this branch is not merged or activated.
 
 Constitution check: no proxy/runtime code or SDKs, bearer handling, health path,
 limiter/pacing or service activation is changed. No score gaming or new dependency.

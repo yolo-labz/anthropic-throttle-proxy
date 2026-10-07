@@ -132,6 +132,27 @@ required for this corrected code; first-head CI is not final-head approval.
 Slop/alignment, Ruff/full pytest, OSV and throwaway Docker build passed at the
 first PR head; mypy job is green **report-only**, not type-clean.
 
+### Corrected exact-head CI receipt
+
+At code head `15a16bdee345656899ff8bcd225af60ae64abc0c`, every PR check
+completed successfully (`gh pr view 315` returned `state=OPEN`,
+`mergeStateStatus=CLEAN`). Sonar-named **report preflight** run
+[37675579511](https://github.com/yolo-labz/anthropic-throttle-proxy/actions/runs/37675579511)
+passed **2,074 tests** in 94.07s and validated fresh coverage for all **42** Python
+source files: **8,084 / 9,091 = 88.92%**. Its exact tested checkout is GitHub's
+PR merge revision `259bd498485b3b4eeb85758dc25c956d84803943`, not the branch
+head. `ci-corrected-runs.json` binds workflow runs to the branch head;
+`ci-corrected-source-receipt.json` binds the merge checkout/report/source hashes.
+Raw XML is retained compressed with the matching digest. No Sonar publication
+step ran on that PR; this green check **does not assert a Community quality gate**.
+
+CI slop: score 100, 0 errors/warnings; ratchet 0 regressions. Alignment 0 errors.
+CodeQL analysis at the merge revision reports **0 PR results**; existing main
+alerts remain separately open. OSV reports **1 finding despite its green job**:
+see the following dependency follow-up. Thus the overall security/dependency
+acceptance contract is **not fully satisfied**. All receipts are retained with
+their real scope; subsequent evidence-only commits require their own final checks.
+
 ## Findings outside this slice / precise follow-ups
 
 - CodeQL open **#13** (`ratelimit.py:55`) and **#53** (`test_accounts.py:27`),
@@ -141,8 +162,14 @@ first PR head; mypy job is green **report-only**, not type-clean.
 - Seven open Scorecard alerts: branch protection, code review, security policy,
   fuzzing, CII badge, two unpinned Dockerfile image findings. No claim that an
   external badge/score equals executable security acceptance.
-- OSV exact baseline SHA has **0 results**. Workflow is report-only and uploads
-  SARIF; absence of findings is not evidence of a blocking vulnerability gate.
+- OSV exact baseline SHA has **0 results**, but actual candidate scan at merge
+  revision `259bd498485b3b4eeb85758dc25c956d84803943` has **1**: open **#55**,
+  **multidict 6.7.1 / CVE-2026-104874 / GHSA-54p9-h82j-f925**, in `uv.lock`.
+  This inherited lock dependency was not changed by this slice. **Dependency
+  follow-up:** validate the advisory's fixed range, upgrade the locked dependency
+  in a separate PR, run full tests and OSV, and require the same-revision SARIF
+  to clear #55. Workflow is report-only and uploads SARIF; its green job is
+  not dependency-clean. No dependency suppressions or lock changes here.
 - Mypy legacy debt: proxy 59; limiter 25; UI routes 18; other modules 35.
   UI/limiter/runtime fixes belong to their owners/follow-up slices.
 - Existing Sonar S7503 package-wide suppression and Web S6845 template-wide
