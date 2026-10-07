@@ -1,0 +1,119 @@
+{
+  "captured_at": "2026-10-07T17:46:48.691464-03:00",
+  "base_revision": "66ad9dc9df82887bccc90572ae0d84dadf5df5fe",
+  "admission": {
+    "browser_smoke": "NOT RUN",
+    "reason": "pressure-high: cause=io memory-full=0c io-full=1125c; exit 75",
+    "offhost": "Nix.Server automation-pod-pool and automation-pod-mcp inactive since 05/10/2026; no allocated fallback started",
+    "confirmation": "NOT RUN: Unit desktop-job-slot.service already loaded; exit 1",
+    "slot_observed": "active/running since 07/10/2026 17:43:15 BRT; CPUQuota=4s, MemoryMax=4294967296",
+    "later_refusals": [
+      "exit 75 reopen-pending: 23 seconds below-threshold recovery remaining",
+      "exit 1 desktop-job-slot.service already loaded",
+      "exit 75 pressure-high: cause=io memory-full=0c io-full=1453c"
+    ]
+  },
+  "live": {
+    "8765": {
+      "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+      "status": "HTTP 200",
+      "gauge_label": "Output throughput not yet measured",
+      "gauge_value": "\u2014",
+      "source_links": [],
+      "htmx_get": [
+        "/ui/stats",
+        "/ui/config"
+      ],
+      "tokens_payload": null,
+      "history_keys": null
+    },
+    "8766": {
+      "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+      "status": "HTTP 200",
+      "gauge_label": "Output throughput not yet measured",
+      "gauge_value": "\u2014",
+      "source_links": [],
+      "htmx_get": [
+        "/ui/stats",
+        "/ui/config"
+      ],
+      "tokens_payload": null,
+      "history_keys": null
+    },
+    "8773": {
+      "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+      "status": "HTTP 200",
+      "gauge_label": "Output throughput not yet measured",
+      "gauge_value": "\u2014",
+      "source_links": [],
+      "htmx_get": [
+        "/ui/stats",
+        "/ui/config"
+      ],
+      "tokens_payload": null,
+      "history_keys": null
+    }
+  },
+  "source_vs_running": {
+    "routes.py": {
+      "source_sha256": "d9612dd75673656c96f736a8c6101f8c74c3ec6110c7fa3ea77dab99730dabbc",
+      "live_sha256": "0ec8b3adc6eec35765bc83cf8f37bd356b16cc734767e45ae7f134fde46ee333",
+      "matches": false
+    },
+    "presentation.py": {
+      "source_sha256": "6c79d3b0b2aced03daa6a1b0b780f920948b459b1c14ba74718408554208d893",
+      "live_sha256": "6ce2ed4c3e5fcbf49654655a019a1487c0cff2c7f3dac0a65bc094d3c08edde4",
+      "matches": false
+    },
+    "signals.py": {
+      "source_sha256": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0",
+      "live_sha256": "9191817255cc40ef48c823adc093b2c9aeaad750d57ad66d9f1e437e76167c89",
+      "matches": false
+    },
+    "__init__.py": {
+      "source_sha256": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7",
+      "live_sha256": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7",
+      "matches": true
+    },
+    "templates/dashboard.html": {
+      "source_sha256": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9",
+      "live_sha256": "8daea02664572cd42ba1c470782045faf04e183ecbcbc5ffd0acb01fbffc754f",
+      "matches": false
+    },
+    "static/style.css": {
+      "source_sha256": "19862218eee3e1c0121ef757f2ec46d7c81919126b5c34279b49f59d7aa0d74c",
+      "live_sha256": "b568996ba8d6a25ebf5ca9b5efbd4971980a1de5e05e26f87e5f9eb4cc1bc937",
+      "matches": false
+    },
+    "templates/partials/config.html": {
+      "source_sha256": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
+      "live_sha256": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
+      "matches": true
+    },
+    "templates/partials/stats.html": {
+      "source_sha256": "af6b6ddd5947c863d6daa2a10eaf35dca53758c7fab7120b54ac56daa9289e4c",
+      "live_sha256": "3c6db6cc170aad84fb616720e9fb84445fee96635a641922f94562a0a7e8ce8b",
+      "matches": false
+    }
+  },
+  "systemd_effective": "ActiveState=active\nSubState=running\nFragmentPath=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service\nDropInPaths=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf\nMainPID=3842394\nExecStart={ path=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+  "systemd_persisted_exec": [
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service -> /nix/store/glvrzlxwg52ds2zc6x1icn446s5nircm-anthropic-throttle-proxy.service/anthropic-throttle-proxy.service",
+    "ExecStart=/nix/store/4dywagmibnil2y6z80d1dvllh2w3p3fh-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+    "ExecStart=",
+    "ExecStart=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf"
+  ],
+  "persisted_symlink": "/nix/store/glvrzlxwg52ds2zc6x1icn446s5nircm-anthropic-throttle-proxy.service/anthropic-throttle-proxy.service",
+  "317-ui-operability": {
+    "head": "66ad9dc9df82887bccc90572ae0d84dadf5df5fe 2026-10-07T16:58:12-03:00",
+    "status": "?? docs/UI-OPERABILITY-2026-10-07.md\n?? specs/317-ui-operability/\n?? tests/check_source_navigation.py"
+  },
+  "318-ui-runtime": {
+    "head": "66ad9dc9df82887bccc90572ae0d84dadf5df5fe 2026-10-07T16:58:12-03:00",
+    "status": "M src/anthropic_throttle_proxy/lanes.py\n?? specs/318-desktop-quota-report/\n?? src/anthropic_throttle_proxy/desktop_report.py\n?? tests/test_desktop_quota.py"
+  }
+}
