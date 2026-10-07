@@ -61,6 +61,7 @@ def _isolate_lane_report(monkeypatch, tmp_path_factory):
     """
     absent = tmp_path_factory.mktemp("lanes") / "absent.json"
     monkeypatch.setenv("THROTTLE_LANES_FILE", str(absent))
+    monkeypatch.delenv("THROTTLE_MIMO_DESKTOP_REPORT", raising=False)
     from anthropic_throttle_proxy import lanes
 
     lanes._cache = None

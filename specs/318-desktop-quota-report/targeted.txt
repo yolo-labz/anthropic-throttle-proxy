@@ -1,0 +1,58 @@
+F.........F...........F.......................................           [100%]
+=================================== FAILURES ===================================
+______________ test_independent_weekly_units_and_no_inferred_pace ______________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-1/test_independent_weekly_units_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x79ae86376190>
+
+    def test_independent_weekly_units_and_no_inferred_pace(tmp_path, monkeypatch):
+        rows = read(tmp_path, monkeypatch, payload())
+        assert {row["id"] for row in rows} == {LANE_ID, "mimo:plan"}
+        row = next(row for row in rows if row["id"] == LANE_ID)
+>       assert row["status"] == "ok"
+E       AssertionError: assert 'unknown' == 'ok'
+E         
+E         - ok
+E         + unknown
+
+tests/test_desktop_quota.py:54: AssertionError
+_______________________ test_desktop_ages_independently ________________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-1/test_desktop_ages_independentl0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x79ae8637a970>
+
+    def test_desktop_ages_independently(tmp_path, monkeypatch):
+        rows = read(tmp_path, monkeypatch, payload(), NOW + 601)
+        row = next(row for row in rows if row["id"] == LANE_ID)
+>       assert row["status"] == "stale"
+E       AssertionError: assert 'unknown' == 'stale'
+E         
+E         - stale
+E         + unknown
+
+tests/test_desktop_quota.py:83: AssertionError
+___________ test_failure_replaces_success_atomically_without_secret ____________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-1/test_failure_replaces_success_0')
+
+    def test_failure_replaces_success_atomically_without_secret(tmp_path):
+        path = tmp_path / "quota.json"
+        desktop_report.publish(path, desktop_report.report({"percent": 100}, NOW))
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        desktop_report.publish(path, desktop_report.report({"error": "secret-url", "percent": 100}, NOW))
+        result = json.loads(path.read_text())
+        assert result["lanes"][0]["status"] == "unknown"
+        assert "secret-url" not in path.read_text()
+>       assert list(tmp_path.iterdir()) == [path]
+E       AssertionError: assert [PosixPath('/.../quota.json')] == [PosixPath('/.../quota.json')]
+E         
+E         At index 0 diff: PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-1/test_failure_replaces_success_0/test-fleet-ui.yaml') != PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-1/test_failure_replaces_success_0/quota.json')
+E         Left contains one more item: PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-1/test_failure_replaces_success_0/quota.json')
+E         Use -v to get more diff
+
+tests/test_desktop_report.py:47: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_desktop_quota.py::test_independent_weekly_units_and_no_inferred_pace
+FAILED tests/test_desktop_quota.py::test_desktop_ages_independently - Asserti...
+FAILED tests/test_desktop_report.py::test_failure_replaces_success_atomically_without_secret
+3 failed, 59 passed in 1.09s

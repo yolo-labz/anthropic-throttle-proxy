@@ -1,0 +1,23 @@
+{
+  "total": 1,
+  "issues": [
+    {
+      "key": "2415a855-fb74-46b3-a12d-ace8565fc5fe",
+      "rule": "python:S3358",
+      "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/lanes.py",
+      "line": null,
+      "message": "Extract this nested conditional expression into an independent statement.",
+      "severity": "MAJOR",
+      "status": "CLOSED",
+      "creationDate": "2026-10-07T21:01:30+0000",
+      "closeDate": "2026-10-07T21:05:06+0000",
+      "effort": "5min",
+      "textRange": {
+        "startLine": 608,
+        "endLine": 608,
+        "startOffset": 45,
+        "endOffset": 83
+      }
+    }
+  ]
+}

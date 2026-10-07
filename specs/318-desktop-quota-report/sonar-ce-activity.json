@@ -1,0 +1,28 @@
+{
+  "tasks": [
+    {
+      "id": "b31dc286-111f-44f5-ab3e-40d023491307",
+      "type": "REPORT",
+      "componentId": "2bf1ca1d-9aaa-421e-9a46-f4eeed2a6108",
+      "componentKey": "yolo-labz_anthropic-throttle-proxy",
+      "componentName": "anthropic-throttle-proxy",
+      "componentQualifier": "TRK",
+      "analysisId": "4a747c36-0dc3-431d-b774-56d5756e54e7",
+      "status": "SUCCESS",
+      "submittedAt": "2026-10-07T21:02:22+0000",
+      "submitterLogin": "admin",
+      "startedAt": "2026-10-07T21:02:24+0000",
+      "executedAt": "2026-10-07T21:02:25+0000",
+      "executionTimeMs": 1248,
+      "hasScannerContext": true,
+      "warningCount": 0,
+      "warnings": [],
+      "infoMessages": []
+    }
+  ],
+  "paging": {
+    "pageIndex": 1,
+    "pageSize": 20,
+    "total": 713
+  }
+}

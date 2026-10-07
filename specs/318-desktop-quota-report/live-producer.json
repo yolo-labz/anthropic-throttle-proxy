@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-10-07T21:10:40Z",
+  "intervalSeconds": 300,
+  "lanes": [
+    {
+      "id": "mimo:desktop-subscription",
+      "kind": "mimo",
+      "plan": "Desktop subscription \u00b7 weekly quota",
+      "status": "ok",
+      "reason": "Desktop weekly remaining quota \u00b7 not Token Plan credits",
+      "meters": [
+        {
+          "limitId": "weekly",
+          "usedPercent": 6.900000000000006,
+          "remainingPercent": 93.1,
+          "unit": "percent",
+          "resetsAt": 1791844029
+        }
+      ]
+    }
+  ]
+}
