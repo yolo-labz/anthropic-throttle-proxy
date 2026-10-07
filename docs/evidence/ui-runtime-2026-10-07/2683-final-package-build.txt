@@ -1,0 +1,3 @@
+this derivation will be built:
+  /nix/store/vi99wnqxpp4m0ahi9pg1r4qbjsx3dr0j-anthropic-throttle-proxy-0.1.0.drv
+building '/nix/store/vi99wnqxpp4m0ahi9pg1r4qbjsx3dr0j-anthropic-throttle-proxy-0.1.0.drv'...

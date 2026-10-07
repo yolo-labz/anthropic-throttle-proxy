@@ -2,6 +2,14 @@
 
 Owner: `thr-ui-runtime`, w1P:pV. Generator: openai / GPT-6.1 Sol.
 
+**Current status — 07/10/2026 19:18 BRT:** corrected protected source #323
+(`45b7d0ef`) is activated only on `:8765`. Persisted/effective/imported package,
+ten source-file fingerprints and served CSS agree. Automatic producer is fresh;
+actual `/ui` reports **91.2% weekly remaining**, not monthly credits/throughput.
+Independent complete deployed-browser acceptance remains with pW; no full
+browser-green claim. Historical failures/blockers below are retained, not current
+runtime status. Nix declaration #2682 remains unmerged on an unprotected base.
+
 ## Scope and hypothesis
 
 Desktop `:8100` weekly subscription had no independent gauge producer/wiring;
@@ -41,7 +49,7 @@ Integration coordination is recorded in canonical `UI-TEAM-2026-10-07.md`.
 pN's dirty NixOS-2681 is untouched; separate pin worktree is
 `/home/notroot/NixOS-2683-throttle-ui-runtime`.
 
-## Evidence (source vs live)
+## Historical pre-delivery evidence (source vs live)
 
 | Evidence | Result |
 | --- | --- |
@@ -58,8 +66,8 @@ pN's dirty NixOS-2681 is untouched; separate pin worktree is
 | Live pre-delivery `:8773` | Token Plan upstream, independent process; not restarted |
 
 No browser screenshot, final full-suite green, merged source, build activation or
-live gauge acceptance is claimed by the above. Source current #316 is NOT the
-imported build. The dirty main NixOS secret file was not touched.
+live gauge acceptance was established by that historical baseline. Source #316
+was NOT the baseline imported build. The dirty main NixOS secret file was not touched.
 
 ## Delivery plan / rollback
 
@@ -146,5 +154,133 @@ immediate idle checks, full persisted/effective/imported chain comparison and
 actual `/ui`/browser receipt. Central `GIT_REV` read-only receipt:
 `e16d15900f73e9f82c1714738368f5db3f21cfd0`, running; no central restart/delivery.
 
-New artifacts after #319 landing are maintained in isolated
-`anthropic-throttle-proxy-322-ui-runtime-receipts`, not by editing shared main.
+## Resumed scoped producer delivery — 07/10/2026 18:51 BRT
+
+#322 source receipt is confirmed MERGED (`1240058cc53ecb422487b1627eae5bc5dbf0b64f`)
+by coordinator. This new runtime receipt lives in isolated
+`anthropic-throttle-proxy-324-ui-runtime-delivery`; previous worktrees/evidence
+are retained. No shared-main edits or new workers.
+
+- Normal heavy admission built the exact measured `4aedd3fc` candidate at 18:38:
+  **8.436s, 181.2 MiB peak**, package
+  `/nix/store/czidrgs5ydsjdq16kbm9xas7kxwcdwi8-anthropic-throttle-proxy-0.1.0`;
+  Nix import check passed, existing-path GC root retained. This is source/build
+  acceptance only. **UI remains inactive**: #321's admitted confirmation
+  genuinely failed **473px/390 and 1391px/1366**. pT owns exact root-cause fix
+  in fresh `323-ui-scroll-geometry`, pW owns confirmation; no duplicate UI work.
+- Related read-only producer service/timer installed from immutable rooted Nix
+  files and enabled every five minutes. CPU 50%, 128 MiB, 16 tasks, timeout 60s,
+  read-only home, atomic report 0600. No bridge credential/key adoption or client
+  catalogue changes. It uses the source-tested candidate producer only.
+- First timer-triggered collection **18:41:47→18:41:54**, success/status 0,
+  **92.3% weekly remaining**. Second **AUTOMATIC** run
+  **18:46:47→18:46:54**, success/status 0 and refreshed independent report;
+  next tick 18:51:47. This proves ongoing report freshness, not UI consumption.
+- Original `:8765` PID **3842394**, imported old jmak9s5, cancelled closed sink
+  intact. Desktop `:8100`, Token Plan, Z.AI and shim PIDs match preflight exactly;
+  none restarted, original ten clients untouched.
+- Declarative equivalent added only in isolated NixOS-2683's existing UI-only
+  `mimo-dashboard.nix`; pN's branch/module untouched. Reuses shared package,
+  installed backend Python and original monthly probe unchanged. Existing
+  hermetic `assert-mimo-dashboard` final admitted check **PASS**, plus **27
+  exact-identity report fixtures PASS**, 11.507s / 691.4 MiB peak. Initial test
+  exposed HM ExecStart JSON-list shape; normalized the test without weakening
+  assertions. No full system closure build/switch.
+- Actual flake-overlay candidate package `mhkm6z1...` also built in that native
+  check; its producer bytes match the standalone candidate. Final corrected UI
+  will use the canonical flake package, not conflate dependency closures.
+
+Receipts/template/rollback path: `NixOS-2683-throttle-ui-runtime/meta/`:
+`2683-before-runtime.json` (whole persisted chain component paths/hash + effective
+ExecStart), `2683-package-build-candidate.txt`,
+`2683-producer-first-timer-sample.json`, `2683-producer-second-tick.json`,
+`2683-desktop-wiring-check-final.txt`, inactive candidate override and rooted unit
+paths. systemd verification exited 0; unrelated inherited unit warnings were
+not modified or hidden.
+
+Remaining UI activation: pT protected corrected exact head + real pW confirmation,
+resolve measured final filtered source hash, admitted canonical package build,
+retain old/new roots, immediate idle checks, immutable additive persistent
+`99-ui-runtime-2026-10-07.conf`, restart ONLY :8765, compare full
+persisted/effective/imported chain, fresh `/ui` row/source picker and browser seam.
+No acceptance is inferred from known failing geometry. Nix main/unprotected
+source and bridge credential adoption remain separate gates.
+
+Producer rollback (if this new related timer is wrong): disable/stop only
+`mimo-desktop-quota-report.timer`, preserve its last timestamp so the consumer
+ages it stale; remove only this newly-created service/timer symlink and reload.
+Never rotate credentials, restart the bridge or alter ten clients to undo this
+read-only probe. UI override has not been installed, so UI rollback is presently
+unnecessary at 18:51; retained old drop-in remains exact.
+
+## Final-source scoped activation — 07/10/2026 19:18 BRT
+
+- Protected **#323 MERGED** as `45b7d0ef3321cca9c6d4e8513686efa30d889c1a`;
+  required checks passed for exact head `4862145d`. pT's causal correction binds
+  clipped quota annotations to the scrollport. Its branch browser/tests pass is
+  distinct from pW's independent deployed oracle.
+- Final filtered hash **sha256-wpx/L5yiv2vo9rNndRIcvur58MYp7Rkke4LivnWXJrY=**;
+  intentional mismatch preserved in `meta/2683-final-source-hash.txt`.
+  Normal heavy, one-job/one-core canonical desktop-flake package build and native
+  wiring check passed together: **27.799s, 695.3 MiB peak**, import check PASS,
+  native wiring/27 report fixtures PASS. Exact package:
+  `/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0`.
+- Immediate preflight: zero inflight and six zero bearer queues; inherited unit
+  hashes/PIDs still matched. Added immutable rooted persistent
+  `99-ui-runtime-2026-10-07.conf`, updated only related producer's package path,
+  restarted **only** authorized `anthropic-throttle-proxy.service`.
+  Effective start **19:07:13**, PID **1096484**. Closed Anthropic upstream
+  `http://127.0.0.1:1`, central empty; all existing drop-ins retained byte-identical.
+- **19:18 executable runtime receipt PASS:** complete persisted/effective chain,
+  actual imported build, native `/proc` command-line observation, ten deployed
+  source fingerprints versus squash45b7d0ef, and HTTP-served CSS all agree.
+  Separate monthly/weekly report environment is preserved. Actual `/ui` has the
+  independent Desktop row and **91.2% weekly remaining**, matching the producer
+  sample generated19:17:12, age77.3s, mode0600. Timer is enabled/active, five-minute
+  real samples continue. Old/new packages and immutable units/override have
+  retained GC roots. Nothing was inferred from package basename alone.
+- Full runtime check: `python ~/NixOS-2683-throttle-ui-runtime/meta/2683-verify-runtime.py`.
+  Its allowlisted JSON/output is copied to `docs/evidence/ui-runtime-2026-10-07/`.
+  No raw credentials/config, account DOM or monetary payload retained.
+
+### Important verification correction
+
+The19:09 aggregate assertion failed because the **Desktop bridge PID changed**,
+not because HTML/imported build failed. Named checks19:12 passed the UI/build,
+report freshness and inherited chain. Token Plan/Z.AI/shim still match preflight.
+Bridge1718616→1181854: journal explicitly records **Scheduled restart job,
+counter1** and Started at **19:08:30**, after the UI start. Bridge is active/
+running, Result success. Runtime seat issued no bridge restart, credential/key
+adoption or client mutation. The exit cause is **not established**; no attribution
+to this UI/probe, pN or credential adoption is made. This discontinuity is retained
+in `2683-desktop-pid-change.json`, not hidden behind an all-PIDs-unchanged claim.
+
+The initial complete-receipt run then hit a `/proc` **instrumentation namespace**
+error: the admitted control unit cannot see host PID1096484. Native metadata read
+verified the living process's exact wrapped command line; receipt/script compare
+that observed PID against current systemd PID instead. Failed output retained as
+`2683-runtime-verification-proc-namespace-failure.txt`; no admission fence changed.
+Several control admissions were refused before execution; no fallback. These are
+receipt failures/history, not evidence that an app restart or browser pass occurred.
+
+### Reversal and remaining boundary
+
+One-command scoped UI reversal:
+`bash ~/NixOS-2683-throttle-ui-runtime/meta/2683-ui-runtime-rollback.sh`.
+It requires exact installed override identity and immediate idle/closed-upstream
+checks, removes **only** this additive99 symlink, reloads/restarts only:8765, then
+verifies imported rooted oldjmak9s5. `--check` runs non-mutating preflight;
+actual reversal has not been executed. Existing incident/closed-sink drop-ins,
+producer timer and all other services remain untouched.
+
+Nix source **#2682** carries the declarative counterpart/final shared pin; base
+is unprotected and pin can affect future fleet packages. **No autonomous Nix
+merge, broad activation or deployment elsewhere.** Reconcile only this slice's
+manual reporting links/99 override when an eventual declaration activation is
+explicitly authorized; do not substitute a system switch for this scoped receipt.
+
+pW's actual deployed-browser oracle remains separately recorded in
+`docs/UI-BROWSER-QA-2026-10-07.md` and canonical UI-TEAM. Its partial measured
+1366/1366 and390/390 capture is encouraging but **not full acceptance** while AX
+instrumentation repair/admitted final run is pending. No duplicate browser work,
+new agents, paid/provider fallback, client change or global GC/sweep.

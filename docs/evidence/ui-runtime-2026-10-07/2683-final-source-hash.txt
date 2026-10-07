@@ -1,0 +1,12 @@
+these 2 derivations will be built:
+  /nix/store/0fl208vwnsx8rvjx8hsblj22b34xyi3v-source.drv
+  /nix/store/1a58yr6v8agkfw98mxi5dc1ffl3slc7w-anthropic-throttle-proxy-0.1.0.drv
+building '/nix/store/0fl208vwnsx8rvjx8hsblj22b34xyi3v-source.drv'...
+error: hash mismatch in fixed-output derivation '/nix/store/0fl208vwnsx8rvjx8hsblj22b34xyi3v-source.drv':
+         specified: sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+            got:    sha256-wpx/L5yiv2vo9rNndRIcvur58MYp7Rkke4LivnWXJrY=
+error: Cannot build '/nix/store/1a58yr6v8agkfw98mxi5dc1ffl3slc7w-anthropic-throttle-proxy-0.1.0.drv'.
+       Reason: 1 dependency failed.
+       Output paths:
+         /nix/store/llfg7y5n5g316693bmc1ccnwhwlhnm9j-anthropic-throttle-proxy-0.1.0
+         /nix/store/vyjazd6xjd275dnrdgnpnyhgviypv3q2-anthropic-throttle-proxy-0.1.0-dist

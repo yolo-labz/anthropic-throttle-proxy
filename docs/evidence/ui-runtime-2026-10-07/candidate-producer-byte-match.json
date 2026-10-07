@@ -1,0 +1,6 @@
+{
+  "candidate": "/nix/store/czidrgs5ydsjdq16kbm9xas7kxwcdwi8-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy/desktop_report.py",
+  "canonical_flake_candidate": "/nix/store/mhkm6z1j4r2j0h5mwl8qsjnq1a886zmw-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy/desktop_report.py",
+  "sha256": "c892fea995414d47e23f741e955eb15ae25c3465758a21e758b595fb99bc0cc6",
+  "match": true
+}

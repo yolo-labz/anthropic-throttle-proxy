@@ -1,0 +1,19 @@
+{
+  "recordedAt": "2026-10-07T22:13:39.341317+00:00",
+  "state": "ActiveState=active\nSubState=running\nInvocationID=1c89353fbc4d4a4080441c5dc65da2a7\nMainPID=1181854\nResult=success\nNRestarts=1\nExecMainStartTimestamp=Wed 2026-10-07 19:08:30 -03\nExecMainStatus=0\n",
+  "systemdLifecycle": [
+    {
+      "timestamp_us": "1791410900717090",
+      "message": "mimo-desktop-subscription.service: Consumed 30.877s CPU time over 2h 59min 23.914s wall clock time, 112.1M memory peak."
+    },
+    {
+      "timestamp_us": "1791410910766034",
+      "message": "mimo-desktop-subscription.service: Scheduled restart job, restart counter is at 1."
+    },
+    {
+      "timestamp_us": "1791410910768192",
+      "message": "Started MiMo Desktop membership bridge (async auth refresh, scoped 143 cutover)."
+    }
+  ],
+  "scope": "Read-only investigation of changed bridge PID; runtime seat issued no bridge restart/key/client change."
+}

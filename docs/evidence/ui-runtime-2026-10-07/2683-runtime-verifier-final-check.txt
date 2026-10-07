@@ -1,0 +1,4 @@
+PASS: persisted/effective/imported/cmdline and 10 source files match 45b7d0ef3321cca9c6d4e8513686efa30d889c1a
+PASS: actual /ui matches 86.0% weekly remaining; sample 148.5s old
+PASS: rollback/active roots and closed upstream retained; Token Plan/Z.AI/shim PIDs unchanged
+Desktop PID discontinuity retained: {'mimo-desktop-subscription.service': {'before': '1718616', 'after': '1181854'}}

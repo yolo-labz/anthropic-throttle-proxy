@@ -1,0 +1,10 @@
+{
+  "observedAtBrt": "07/10/2026 19:17 BRT",
+  "source": "Native read of /proc/1096484/cmdline and /proc/1096484/status; metadata only. The admitted control unit cannot see this host PID in its /proc namespace.",
+  "pid": "1096484",
+  "state": "S (sleeping)",
+  "argv": [
+    "/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14",
+    "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/.anthropic-throttle-proxy-wrapped"
+  ]
+}

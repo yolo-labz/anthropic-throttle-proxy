@@ -1,0 +1,40 @@
+{
+  "recordedAt": "2026-10-07T22:12:02.580151+00:00",
+  "checks": {
+    "old_chain_bytes_unchanged": true,
+    "effective_package": true,
+    "last_persisted_execstart": true,
+    "imported_package": true,
+    "closed_upstream": true,
+    "html_desktop_subscription": true,
+    "html_mimo_desktop": true,
+    "html_weekly": true,
+    "html_independent_identity": true,
+    "report_fresh": true,
+    "report_mode_0600": true,
+    "unrelated_pids_unchanged": false
+  },
+  "reportGeneratedAt": "2026-10-07T22:07:13Z",
+  "reportAgeSeconds": 289.54,
+  "lanePids": {
+    "mimo-desktop-subscription.service": "1181854",
+    "mimo-throttle-proxy.service": "3873577",
+    "zai-throttle-proxy.service": "3842786",
+    "mimo-tokenplan-shim.service": "1980"
+  },
+  "expectedLanePids": {
+    "mimo-desktop-subscription.service": "1718616",
+    "mimo-throttle-proxy.service": "3873577",
+    "zai-throttle-proxy.service": "3842786",
+    "mimo-tokenplan-shim.service": "1980"
+  },
+  "health": {
+    "build": "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "upstream": "http://127.0.0.1:1",
+    "central_url": "",
+    "inflight": 0,
+    "served": 0
+  },
+  "failedVerification": "19:09 unnamed aggregate assertion stopped before producing full receipt; named predicates below isolate it.",
+  "htmlSha256": "9102599d82e9b9245b2e47a93a259747f51960628abd20ab94c1af4f68251f0d"
+}
