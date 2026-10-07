@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-10-07T16:12:12.127446-03:00",
+  "source_head": "3c64a535ea6902f00245173696d1005d5114eb0a",
+  "prior_failure": "Harness run 1 omitted positional target/timeout arguments; TypeError, not a product failure. Corrected to named arguments. Subsequent heavy admission attempt was refused before execution.",
+  "experiments": [
+    {
+      "interpreter": "/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14",
+      "exit": 0,
+      "stdout": "{\"capture_scope\": \"synthetic cap/parser reproduction; not an actual live stream\", \"full_usage\": {\"cache_creation\": 0, \"cache_read\": 0, \"input\": 11, \"output\": 37}, \"prefix_usage\": {\"cache_creation\": 0, \"cache_read\": 0, \"input\": 11, \"output\": 0}, \"uncertain_post_replayed_identically\": true, \"uncertain_post_wire_sends\": 2}\n",
+      "stderr": "[anthropic-throttle] upstream-error path=/v1/messages: ServerDisconnectedError('Server disconnected') \u2192 retry direct once\n"
+    },
+    {
+      "interpreter": "/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python",
+      "exit": 0,
+      "stdout": "{\"first_succeeded\": true, \"same_seed_second_returned_none\": true, \"scaled_block_ms\": 50.2, \"scope\": \"synthetic SSO and 50ms wait; actual source timeout is 60s\"}\n",
+      "stderr": ""
+    }
+  ]
+}
