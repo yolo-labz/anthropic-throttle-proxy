@@ -65,39 +65,54 @@ def report(usage: dict, now: datetime) -> dict:
     }
 
 
-async def collect(root: Path) -> dict:
-    """Reuse the installed bridge/SSO rather than another credential transport."""
+def read_credentials(root: Path) -> dict | None:
+    """Read encrypted seed without ConfigManager's destructive recovery writes."""
     for name in ("config.json", ".secret_key"):
         info = (root / name).lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-            return {"error": "seed-permissions"}
-    sys.path.insert(0, str(root))
-    # Explicit external backend plugin, not a dependency of the proxy package.
-    # Verify module origin rather than accidentally loading a different `app`.
-    backend = {}
-    for name in ("config", "desktop_session"):
-        module = importlib.import_module(f"app.{name}")
-        if Path(module.__file__) != root / "app" / f"{name}.py":
-            return {"error": "backend-origin"}
-        backend[name] = module
-    accounts = backend["config"].config_manager.config.mimo_accounts
+            return None
+    # Do not import ConfigManager: its load-error/legacy path SAVES defaults
+    # over the seed. A telemetry read must never mutate credential storage.
+    seed = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    accounts = seed.get("mimo_accounts") if isinstance(seed, dict) else None
     # ponytail: one independently observed account; multiple accounts require
     # per-account report identities, never an invented average/summed quota.
-    if len(accounts) != 1:
-        return {"error": "account-count-not-one"}
-    account = accounts[0]
+    if not isinstance(accounts, list) or len(accounts) != 1 or not isinstance(accounts[0], dict):
+        return None
+    fields = {
+        "mimoPassToken": "mimo_pass_token",
+        "mimoUserId": "mimo_user_id",
+        "mimoCUserId": "mimo_c_user_id",
+    }
+    encrypted = {key: accounts[0].get(field) for key, field in fields.items()}
+    if any(
+        not isinstance(value, str) or not value.startswith("enc:v1:")
+        for value in encrypted.values()
+    ):
+        return None
+    # Optional dependencies belong to the installed backend Python, not the
+    # proxy package. Reuse its Fernet format and existing SSO implementation.
+    box = importlib.import_module("cryptography.fernet").Fernet(
+        (root / ".secret_key").read_bytes().strip()
+    )
+    credentials = {
+        key: box.decrypt(value[7:].encode()).decode() for key, value in encrypted.items()
+    }
+    return credentials if all(credentials.values()) else None
+
+
+async def collect(root: Path) -> dict:
+    """Reuse the installed bridge/SSO rather than another credential transport."""
+    credentials = read_credentials(root)
+    if credentials is None:
+        return {"error": "invalid-seed"}
+    sys.path.insert(0, str(root))
+    module = importlib.import_module("app.desktop_session")
+    if Path(module.__file__) != root / "app" / "desktop_session.py":
+        return {"error": "backend-origin"}
     # The backend owns its existing 30s SSO / 15s usage clients. Bound the
     # complete read as well; there is no second HTTP transport in this adapter.
-    return await asyncio.wait_for(
-        backend["desktop_session"].get_account_usage(
-            {
-                "mimoPassToken": account.mimo_pass_token,
-                "mimoUserId": account.mimo_user_id,
-                "mimoCUserId": account.mimo_c_user_id,
-            }
-        ),
-        timeout=45,
-    )
+    return await asyncio.wait_for(module.get_account_usage(credentials), timeout=45)
 
 
 def publish(output: Path, payload: dict) -> None:

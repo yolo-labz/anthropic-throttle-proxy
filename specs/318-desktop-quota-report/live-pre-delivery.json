@@ -1,0 +1,31 @@
+{
+  "desktop": {
+    "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "inflight": 0,
+    "served": 0,
+    "queue_mode": "fair",
+    "upstream": "http://127.0.0.1:1",
+    "central_url": ""
+  },
+  "token_plan": {
+    "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "inflight": 0,
+    "served": 2081,
+    "queue_mode": "fair",
+    "upstream": "https://token-plan-sgp.xiaomimimo.com",
+    "central_url": ""
+  },
+  "central": {
+    "build": null,
+    "inflight": 0,
+    "served": 10525,
+    "queue_mode": "fair",
+    "upstream": "https://api.anthropic.com",
+    "central_url": ""
+  },
+  "ui": {
+    "sha256": "0fb319def4c53dda787057e1746dd4fb3eb8fcc9c73386625574e48253d33c7d",
+    "desktop_row_present": false,
+    "source_picker_present": false
+  }
+}

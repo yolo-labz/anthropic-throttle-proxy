@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "generatedAt": "2026-10-07T21:01:24Z",
+  "generatedAt": "2026-10-07T21:10:40Z",
   "intervalSeconds": 300,
   "lanes": [
     {
@@ -12,8 +12,8 @@
       "meters": [
         {
           "limitId": "weekly",
-          "usedPercent": 6.700000000000003,
-          "remainingPercent": 93.3,
+          "usedPercent": 6.900000000000006,
+          "remainingPercent": 93.1,
           "unit": "percent",
           "resetsAt": 1791844029
         }

@@ -27,11 +27,15 @@ visual system. Detector on the modified reader returned `[]`; no visual redesign
   than retains a previously healthy sample. Last observation is shown in row detail.
 - One installed account only; multiple accounts explicitly unknown until a
   per-account contract exists. Existing bridge SSO reused, not reimplemented.
-- Installed bridge resolves its private seed relative to cwd: producer changes
-  cwd only within the isolated collector. Initial wrong-cwd live read failed
-  unknown and generated default files in this feature worktree; only these
-  verified freshly-created defaults were removed. Private seed not copied or
-  emitted. Regression checks cover cwd isolation/log suppression.
+- Initial ConfigManager-based wrong-cwd live read failed unknown and generated
+  default files in this feature worktree; only those verified freshly-created
+  defaults were removed. Inspection then found ConfigManager also SAVES defaults
+  on load errors: the current producer therefore **never imports ConfigManager**.
+  It reads the already-encrypted single-account seed with the backend's installed
+  Fernet implementation and uses only its existing read-only SSO/usage module.
+  Synthetic checks cover no mutating import; real collection at 18:10 returned
+  **93.1% remaining**, and private config/key were byte-identical afterward.
+  Cwd isolation/log suppression remain tested. Private seed not copied/emitted.
 
 Integration coordination is recorded in canonical `UI-TEAM-2026-10-07.md`.
 pN's dirty NixOS-2681 is untouched; separate pin worktree is

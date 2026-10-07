@@ -73,12 +73,8 @@ async def test_external_backend_origin_and_existing_usage_function(
         calls.append(credentials)
         return {"percent": 80}
 
-    account = SimpleNamespace(mimo_pass_token=None, mimo_user_id=None, mimo_c_user_id=None)
+    monkeypatch.setattr(desktop_report, "read_credentials", lambda root: {"mimoPassToken": None})
     modules = {
-        "app.config": SimpleNamespace(
-            __file__=str(tmp_path / "app" / "config.py"),
-            config_manager=SimpleNamespace(config=SimpleNamespace(mimo_accounts=[account])),
-        ),
         "app.desktop_session": SimpleNamespace(
             __file__=str(
                 tmp_path / ("elsewhere" if wrong_origin else "app") / "desktop_session.py"
@@ -93,6 +89,44 @@ async def test_external_backend_origin_and_existing_usage_function(
         assert result == {"error": "backend-origin"} and calls == []
     else:
         assert result == {"percent": 80} and len(calls) == 1
+
+
+def test_seed_reader_does_not_import_mutating_config_manager(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    seed = {
+        "mimo_accounts": [
+            {
+                field: "enc:v1:synthetic"
+                for field in ("mimo_pass_token", "mimo_user_id", "mimo_c_user_id")
+            }
+        ]
+    }
+    for name, content in (("config.json", json.dumps(seed)), (".secret_key", "synthetic-key")):
+        path = tmp_path / name
+        path.write_text(content)
+        path.chmod(0o600)
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    imported = []
+
+    def plugin(name):
+        imported.append(name)
+        assert name == "cryptography.fernet"
+        return SimpleNamespace(
+            Fernet=lambda key: SimpleNamespace(decrypt=lambda value: b"synthetic")
+        )
+
+    monkeypatch.setattr(desktop_report.importlib, "import_module", plugin)
+    assert desktop_report.read_credentials(tmp_path) == {
+        "mimoPassToken": "synthetic",
+        "mimoUserId": "synthetic",
+        "mimoCUserId": "synthetic",
+    }
+    assert imported == ["cryptography.fernet"]
+    assert before == {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    (tmp_path / "config.json").write_text('{"mimo_accounts": [{"mimo_pass_token": "plaintext"}]}')
+    assert desktop_report.read_credentials(tmp_path) is None
+    assert imported == ["cryptography.fernet"]
 
 
 def test_cli_suppresses_backend_logs_and_exception(tmp_path, monkeypatch, capsys):
