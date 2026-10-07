@@ -1,0 +1,12 @@
+{
+  "observedAtBrt": "07/10/2026 19:43 BRT",
+  "method": "Native read of live /proc/1096484/status and mountinfo; no namespace or credential changes. Admitted control jobs cannot see host PIDs, so this is independent metadata evidence.",
+  "pid": "1096484",
+  "uid": [1000, 1000, 1000, 1000],
+  "gid": [100, 100, 100, 100],
+  "state": "S (sleeping)",
+  "rootMount": "987 386 259:1 / / ro,nosuid,noatime shared:1103 master:1 - ext4 /dev/nvme0n1p1 rw,commit=30",
+  "journalPath": "/home/notroot/.local/state/pi-harness/usage.jsonl",
+  "journalMountAssessment": "Journal inherits the readable root filesystem. Full mountinfo had no inaccessible/home/pi-harness overlay. Only the existing proxy state directory is a writable home bind. read-only mount flags prevent writes, not reads.",
+  "scope": "Filesystem read prerequisites verified against current process identity/mount policy plus same-UID bounded journal open in runtime-preflight.json. Actual future sampler/coverage/render acceptance awaits accepted pT source; not a claim that current #323 already implements combined throughput."
+}
