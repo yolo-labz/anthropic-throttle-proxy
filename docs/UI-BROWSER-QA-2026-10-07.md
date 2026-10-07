@@ -28,8 +28,12 @@ At **17:46 BRT**, read-only `/ui`, `/ui/stats`, `/__throttle/health` returned HT
   incident drop-in; base unit alone is not the running build proof.
 - Actual gauge: **“Output throughput not yet measured”**, numeric **“—”**.
   No source-picker links; HTMX polls `/ui/stats` without per-tab source selection.
-- Health exposes **no `throughput` payload** on these old builds. Neither served
-  counts nor quota percentages establish throughput; absence is not measured zero.
+- Default health omits `throughput`. **Correction after testing the opt-in**:
+  `/__throttle/health?telemetry=1` on all three old instances does publish
+  `bucket_seconds=10.0`, 360 `[output,input+cache]` buckets, all zero, with no
+  `tokens_fresh` sidecar. Default-schema absence is not missing producer support.
+  Neither served counts nor quota percentages establish current stream speed;
+  zero accounting history is not a fresh inference probe.
 - Six UI files differ from exact #316 `66ad9dc9df82887bccc90572ae0d84dadf5df5fe`.
   Per-file SHA-256 comparison is durable in the build receipt, not an inferred
   Git revision from a package basename.
@@ -49,8 +53,10 @@ Exact #316 accepts sibling **10-second token buckets**: `[output, input+cache]`,
 optional separate measured fresh-input buckets. Six synthetic `[1200,3000]`
 buckets imply **120 output tokens/s**, not quota or an instantaneous stream rate.
 The check asserts that visible/accessibility label and removes the numeric sweep
-for unknown/stale/error fixtures. The live producer does not yet provide that
-payload, so synthetic 120 tokens/s is **not live MiMo acceptance**.
+for unknown/stale/error fixtures. At **18:00 BRT**, explicit opt-in live telemetry
+confirmed the same 10-second/two-column units, but no accounted tokens in any
+retained bucket. Old builds lack the fresh-input sidecar. Synthetic 120 tokens/s
+is **not live MiMo acceptance**. Receipt: `telemetry-optin.json`.
 
 Runtime seat's proposed independent contract is
 `THROTTLE_MIMO_DESKTOP_REPORT`, one `mimo:desktop-subscription` row with weekly
@@ -63,7 +69,10 @@ The runtime owner's allowlisted producer receipt at **17:52 BRT** reports
 **93.3% weekly remaining / 6.7% used**, `limitId=weekly`, `unit=percent`, reset epoch
 1791844029. Its producer maps the bridge's `percent` to remaining, not used.
 That observed producer report is not yet a deployed `/ui` row or continuous
-sampling proof; no raw credential-bearing API payload was copied.
+sampling proof; no raw credential-bearing API payload was copied. Runtime source
+head observed at 18:00 BRT: `0add715ab1e59d5e48ada15194c99ada2e8314e2`;
+frontend source remains based on #316 with uncommitted CSS/tests. Live imported
+build remains `jmak9s5h…`; no post-deploy acceptance is claimed.
 
 ## Minimal runnable check
 
