@@ -5,7 +5,7 @@ Coordinator: w1P:pG. Isolated branch: `319-ui-browser-qa`.
 
 ## Scope and status
 
-**Browser acceptance and post-deploy acceptance remain blocked, not passed.**
+**Browser acceptance is FAIL at 390px; post-deploy acceptance remains blocked.**
 This slice changes only the existing executable check, its redaction regression,
 plan/tasks and receipts. No competing templates/backend edits, runtime changes,
 agents, account attachment or provider fallback.
@@ -71,8 +71,12 @@ The runtime owner's allowlisted producer receipt at **17:52 BRT** reports
 That observed producer report is not yet a deployed `/ui` row or continuous
 sampling proof; no raw credential-bearing API payload was copied. Runtime source
 head observed at 18:00 BRT: `0add715ab1e59d5e48ada15194c99ada2e8314e2`;
-frontend source remains based on #316 with uncommitted CSS/tests. Live imported
-build remains `jmak9s5h…`; no post-deploy acceptance is claimed.
+frontend later committed its caption-only contrast fix at
+`f41c277c8ed715e453593929d63f47fec6e3c898` (#320). The **18:05 BRT** exact-source
+comparison is `latest-source-state.json`; live UI still differs from #316 and
+the frontend commit. Runtime source remains `0add715a` (#319), with a subsequent
+uncommitted reader repair. Live imported build remains `jmak9s5h…`; no
+post-deploy acceptance is claimed.
 
 ## Minimal runnable check
 
@@ -103,6 +107,72 @@ Small targets/focus styles are measured; existing contrast tests remain the colo
 oracle. Physical touch, screen readers, all 200% zoom/device variants and live
 provider-network accounting require separate evidence. Tests do not prove them.
 
+## Admitted browser evidence — 18:09 BRT
+
+Heavy admission finally granted. Installed headless Chromium **152.0.7977.82**,
+GPU disabled, ephemeral owned page; job memory peak **~1 GiB**, CPU time 8.59 s,
+wall time 10.89 s. No supervised account/profile or service mutation.
+
+- **Actual old live** `/ui` at 1366 and 390 CSS pixels: document width equals
+  viewport; one main/h1, unique IDs/named controls; no gauge text clipping.
+  Fresh sanitized `live-{1366,390}.png/.html` captured, independent of the
+  coordinator screenshot. This proves the old page's layout, not deployment.
+- **Exact #316 route**, synthetic workload buckets **plus the existing read-only
+  lane-report snapshot** (not wholly synthetic account quotas): gauge 120 output
+  tokens/s; actual HTMX polls retained `source=mimo`; source aria-current remained
+  selected; checkbox selection and `providers-scroll` focus survived another poll.
+- **FAIL:** at 390 pixels, document width **473 pixels** (83-pixel page overflow).
+  1366-pixel workload view has no page overflow; no gauge text clipping, duplicate
+  IDs or unnamed inputs in either viewport. Source anchors measured **16.875px
+  high** (25/30px wide). Checkbox geometry is 13px, but its wrapping label must
+  be considered before calling the whole target a failure.
+- Failing DOM/PNG and exact imported-source hashes are durable. First pass stopped
+  at overflow; stale/error/unknown transitions, touch/keyboard-source selection and
+  final console/network acceptance were **not yet reached**. Earlier executed
+  selection/focus assertions are not promoted to a full pass.
+
+Hypothesis for the failure: the workload page's capacity/metadata layout overflows
+when a lane report exists; neither the gauge itself nor the new source picker is
+established as the cause. Falsifier: a bounded rectangle census locates overflow
+elsewhere. QA makes no competing template/CSS fix. Batched confirmation retains
+all failures and nonzero exit, but collects later checks instead of stopping at
+the first layout error. One remaining confirmation attempt at 18:11 was refused
+because the shared heavy slot was running since 18:09:42; no unadmitted fallback.
+
+## Bounded confirmation — 18:21 BRT
+
+Exactly one remaining browser pass ran after #319/#320 source landed. Branch
+`42f9ba8` includes runtime squash **1969bdcb** and caption squash **4aedd3fc**.
+Targeted local tests: **104 passed**, one warning, 1.67 seconds. Browser job:
+15.75-second wall time, 10.96 CPU seconds, **620 MiB** peak; no further polishing
+or browser loop. Screenshot/DOM/receipt: `confirmation/` in the evidence folder.
+
+- **PASS, synthetic workload + real read-only lane report:** HTMX source remains
+  `mimo`, gauge 120 tokens/s, selected native detail checkbox retained; focused
+  `subs-scroll` survives polling with computed 2px visible outline/box-shadow.
+- **PASS:** stale 60-second sibling and failed sibling show throughput unavailable
+  without a numeric sweep; local cold history says unknown/“—”; keyboard Enter
+  selects local and Chromium-synthesized touch selects the sibling link.
+- **PASS:** structural landmark/control-name/ID checks; no gauge text clipping;
+  **zero page/console errors**, **zero unexpected browser network requests**.
+  Cached route rendering cannot invoke collectors or `ClientSession._request`.
+- **FAIL retained:** 390px workload document width **473px** after both sibling
+  changes; final error/sibling view measured **1391px at 1366px**, **473px at 390px**.
+  The final receipt's historical key `unknown_view_overflow` actually describes
+  the returned **failed sibling** page after the touch link, not the local unknown
+  page. Raw widths/screenshots are preserved; no renamed result hides a failure.
+- Overflow census found **no outside-table bounding box beyond the viewport**;
+  scroll-region descendants were intentionally excluded. This falsifies the
+  earlier outside-capacity-metadata attribution. Root cause is **unverified**;
+  overflow propagation from the scroll region remains a candidate, not a shipped
+  fix. Do not patch the picker/gauge purely by symptom similarity.
+- The old **live** page still fits both widths. Running package remains `jmak9s5h…`,
+  so none of the changed-source checks is a post-deployment pass. Central revision
+  was not verified or activated by QA. Runtime owner still owns that transition.
+
+The check exits **1**, after exercising all checks, because the recorded layout
+findings remain. No runtime/template/CSS fix or acceptance waiver was made.
+
 ## Execution evidence and exact blockers
 
 - Initial heavy browser smoke: refused before execution, **exit 75**,
@@ -111,7 +181,8 @@ provider-network accounting require separate evidence. Tests do not prove them.
   **exit 1**, `Unit desktop-job-slot.service was already loaded`.
 - Later attempts also refused before execution: `reopen-pending` (23 seconds of
   below-threshold recovery remaining), another loaded-slot collision, then
-  `pressure-high: io-full=1453c`. No browser/test subprocess ever launched.
+  `pressure-high: io-full=1453c`. No browser/test subprocess launched in those
+  refused attempts; the two later admitted passes are recorded separately above.
 - At 17:48 BRT that unit was active/running since **17:43:15**, CPUQuota **4s**,
   MemoryMax **4 GiB**. No killing/resizing the sibling workload, sleeping inside a
   job, small-lane test/render fallback or global cache/worktree sweep.
@@ -121,7 +192,8 @@ provider-network accounting require separate evidence. Tests do not prove them.
 - Lightweight source lint under the admitted control allocation:
   **Ruff check src tests passed; 116 files already formatted**;
   `git diff --check` passed. Source pytest/sanitizer
-  and the actual browser check have **not yet executed locally**.
+  did not execute locally before the admitted first browser run. CI executed
+  the sanitizer/full source suite; actual browser results are recorded above.
 
 ## Delivery and deployment
 
@@ -131,15 +203,21 @@ Normal hooks passed (code-slop/alignment); no hook bypass. On exact source head
 successfully at **17:57 BRT**: Ruff checks plus **2,064 passed**, 155 warnings,
 84.28 seconds. The sanitizer regression was executed there. This is source
 acceptance only; the browser script is not a pytest test and did not run in CI.
-At that observation required `scan` was still pending; no merge claim. A detached
-normal CI waiter tracks #318 (an initial wrong-number #319 waiter was immediately
-cancelled without changes or merge intent). Later doc-only heads need their own
-green checks; historical green is not substituted for current head.
+At that historical observation required `scan` was still pending. On final source
+head **`3d79c879519445d16c7697e1abb0ae7a85d39ec8`**, CI **37686470563** passed
+**2,064 tests** (84.38 seconds), Ruff and format. All required checks passed:
+`ruff + pytest`, `code-slop + alignment`, and `scan` (run **37686470589**).
+`gh pr view` showed `CLEAN`, no required approvals, and GraphQL returned no review
+threads. **#318 MERGED at 18:06 BRT** with squash
+**`1511eb05fdafdd6f8e739e7389dd71384613aef5`**. Receipts are `delivery-318.json`,
+`required-checks-3d79c87.json`, `ci-3d79c87.json`. No source-green-to-browser/live
+promotion. The initial wrong-number #319 waiter was immediately cancelled with
+no changes or merge intent.
 
 Runtime owner must land/activate its exact revision first. Re-read
 running import path, persisted/effective unit, configured report shape and served
 UI asset/source digests, then perform admitted post-deploy browser checks. A green
 source PR alone cannot close this runtime/browser gate.
 
-Rollback for this check-only slice: one `git revert <squash-commit>` PR. No service
+Rollback for the check-only slice: `git revert 1511eb05` in a normal PR. No service
 rollback is needed because this seat changes no service.

@@ -61,6 +61,11 @@ async def capture(page, out, name):
           .map(e => ({tag: e.tagName, id: e.id, width: e.getBoundingClientRect().width,
             height: e.getBoundingClientRect().height}))
           .filter(e => e.width < 24 || e.height < 24),
+        overflow: [...document.querySelectorAll('body *')].filter(visible)
+          .filter(e => !e.closest('.bearers-wrap')
+            && e.getBoundingClientRect().right > innerWidth + 1)
+          .map(e => ({tag: e.tagName, cls: e.getAttribute('class'),
+            right: e.getBoundingClientRect().right})).slice(0, 30),
         gauge_clip: [...document.querySelectorAll('.tps-panel *')].filter(visible)
           .filter(e => !e.children.length && e.clientWidth && e.scrollWidth > e.clientWidth + 1)
           .map(e => ({tag: e.tagName, cls: e.getAttribute('class'),
@@ -77,7 +82,10 @@ async def main(out=OUT, live=True):
     from playwright.async_api import async_playwright
 
     out.mkdir(parents=True, exist_ok=True)
-    receipt = {"scope": "live read-only GETs + isolated branch route/browser; not deployed"}
+    receipt = {
+        "scope": "live GETs + synthetic workload/real read-only lane-report snapshot; not deployed"
+    }
+    findings = []
     receipt["source_sha256"] = {
         str(p.relative_to(Path(routes.__file__).parent)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in Path(routes.__file__).parent.rglob("*")
@@ -188,6 +196,7 @@ async def main(out=OUT, live=True):
                 assert await page.evaluate("document.activeElement.id") == region_id
                 assert await toggle.is_checked()
                 measured["focus_after_poll"] = region_id
+                receipt["branch_measured"] = measured
                 measured["focus_style"] = await region.evaluate(
                     "e => ({outline: getComputedStyle(e).outline, "
                     "boxShadow: getComputedStyle(e).boxShadow})"
@@ -196,11 +205,13 @@ async def main(out=OUT, live=True):
                 for width in (1366, 390):
                     await page.set_viewport_size({"width": width, "height": 844})
                     dims = await capture(page, out, f"synthetic-measured-{width}")
-                    assert dims["content"] <= dims["width"], dims
-                    assert not dims["duplicate_ids"] and not dims["unnamed_inputs"], dims
-                    assert dims["main_landmarks"] == dims["h1_count"] == 1, dims
-                    assert not dims["gauge_clip"], dims
                     receipt["synthetic_viewports"].append(dims)
+                    if dims["content"] > dims["width"]:
+                        findings.append({"kind": "page_overflow", "viewport": dims})
+                    if dims["duplicate_ids"] or dims["unnamed_inputs"] or dims["gauge_clip"]:
+                        findings.append({"kind": "structural_a11y_or_clip", "viewport": dims})
+                    if dims["main_landmarks"] != 1 or dims["h1_count"] != 1:
+                        findings.append({"kind": "landmarks", "viewport": dims})
                 url = "http://example.test/health"
                 routes._fleet._cache[url] = (now - 60, row)
                 await page.wait_for_function(
@@ -252,16 +263,20 @@ async def main(out=OUT, live=True):
                 assert not unexpected, unexpected
                 assert not console, console
                 receipt["render_network_guard"] = "ClientSession._request and collectors raise"
-                receipt["completed"] = True
                 viewports = []
                 for width in (1366, 390):
                     await page.set_viewport_size({"width": width, "height": 844})
                     dims = await page.evaluate(
                         "({width: innerWidth, content: document.documentElement.scrollWidth})"
                     )
-                    assert dims["content"] <= dims["width"], dims
                     viewports.append(dims)
+                    if dims["content"] > dims["width"]:
+                        findings.append({"kind": "unknown_view_overflow", "viewport": dims})
                 receipt["viewports"] = viewports
+                receipt["findings"] = findings
+                receipt["checks_executed"] = True
+                assert not findings, findings
+                receipt["completed"] = True
             except Exception as error:
                 receipt["failure"] = sanitize(str(error))
                 raise
