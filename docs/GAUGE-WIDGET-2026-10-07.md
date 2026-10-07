@@ -90,9 +90,9 @@ Validation on the implementation tree:
 | `uv run ruff check src tests` | All checks passed |
 | `uv run ruff format --check src tests` | 115 files already formatted |
 | `node tests/dashboard-refresh-check.mjs` | PASS single-script invariant + server-side freshness stamp |
-| Types | CI mypy report on `8e0669e2`: 136 diagnostics, 17 in UI; report-only badge is not type-clean. One introduced missing annotation corrected; final-head report required |
+| Types | CI mypy report on `1c88aa14`: 135 diagnostics, 16 in UI. Introduced missing annotation removed; remaining UI diagnostics map to unchanged base expressions. Report-only badge is **not** type-clean |
 | Isolated browser | Runnable `tests/check_gauge_wire.py`; **not executed**: repeated desktop heavy admission refused `pressure-high` / `reopen-pending`; no unadmitted fallback |
-| PR CI on `8e0669e2` | Full tests: 2,059 passed / 155 warnings in 81.69s; Ruff, CodeQL, OSV, throwaway image, slop/alignment passed. Required Sonar `scan` failed; final-head recheck required |
+| Initial PR CI on `8e0669e2` | Full tests: 2,059 passed / 155 warnings in 81.69s; Ruff, CodeQL, OSV, throwaway image, slop/alignment passed. Required Sonar `scan` failed; see follow-up below |
 
 No coverage/security score or Sonar gate improvement is inferred from pytest.
 
@@ -115,8 +115,12 @@ a reviewed compatible producer/normalizer contract. A raw Desktop SGP
 
 Live deployed `:8773/__throttle/health` currently does **not** publish
 `throughput`, including with `?telemetry=1`. Thus the new selector correctly
-shows unmeasured throughput on that old runtime until coordinator activation
-ships the existing token export; it does not invent it from served counts.
+shows unmeasured throughput on that old runtime. Coordinator activation must
+ship the existing token export **and** use `?telemetry=1` on the configured
+sibling health URL: current `proxy.health` exports buckets only on that explicit
+query, while existing `fleet._fetch_json` requests the configured URL verbatim.
+Neither the producer/collector module nor live shared URL settings are owned
+by this UI slice. Served counts cannot substitute for missing token telemetry.
 
 Unknowns: the user's exact intended MiMo quota widget may also need that
 producer; no fresh Desktop report exists in this branch. Sibling `/health`
@@ -139,8 +143,13 @@ from this worker.
 PR: [#316](https://github.com/yolo-labz/anthropic-throttle-proxy/pull/316).
 First source head: `8e0669e2bb2511abd56233c2ca3a8a94302d84f5`.
 
-- `docs/gauge-widget-2026-10-07-types.txt`: exact-head report-only type diagnostics;
-  existing module-wide debt is not green just because the workflow is success.
+- `docs/gauge-widget-2026-10-07-types.txt`: follow-up `1c88aa14` report-only type
+  diagnostics: 135 total, 16 UI. Existing module-wide debt is not green just
+  because the workflow is success.
+- `docs/gauge-widget-2026-10-07-wire.json`: sanitized deployed GET receipt;
+  `:8765` 200 in 34.0ms and `:8773` 200 in 9.7ms, both values `—` and accessible
+  label “not yet measured”. These are individual requests, not a latency SLO
+  or browser/activation acceptance.
 - `docs/gauge-widget-2026-10-07-sonar.json`: analysis matching that exact SHA,
   gate **ERROR**: new coverage 93.5% (≥80), duplication 0% (≤3), **one new issue**
   (must be zero). Finding `python:S3776`: `_collect_view` cognitive complexity
@@ -153,6 +162,14 @@ First source head: `8e0669e2bb2511abd56233c2ca3a8a94302d84f5`.
 - The commit hook initially found a 53-token duplicate synthetic fixture between
   route and browser tests. Reusing one fixture in existing `tests/ui_render.py`
   fixed it; hook then passed with **zero clone regressions**, no bypass.
+
+Follow-up source head: `1c88aa149ce9a1edb85c5047755bd40d3d6d8f0f`.
+CI run [37677425291](https://github.com/yolo-labz/anthropic-throttle-proxy/actions/runs/37677425291)
+ran Ruff lint/format and the full suite: **2,059 passed, 155 warnings in 84.69s**.
+Slop/alignment, CodeQL, OSV and throwaway image checks also passed on that head.
+Required Sonar `scan` is still in progress at this receipt's collection time;
+no merge/green-all claim is based on pending state. Browser admission remained
+`pressure-high` on the last bounded attempt; the worker did not execute it.
 
 The bounded slice is approximately 490 added code/test/template/style lines.
 No further feature expansion: missing Desktop producer/reset semantics,

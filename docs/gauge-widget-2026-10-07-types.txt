@@ -1,20 +1,19 @@
-CI run 37676281340; source head 8e0669e2bb2511abd56233c2ca3a8a94302d84f5
+CI run 37677425369; source head 1c88aa149ce9a1edb85c5047755bd40d3d6d8f0f
 Report-only check; success is NOT type-clean.
-Total diagnostics: 136; UI diagnostics: 17
+Total diagnostics: 135; UI diagnostics: 16
 src/anthropic_throttle_proxy/ui/routes.py:476: error: Generator has incompatible item type "int"; expected "bool"  [misc]
 src/anthropic_throttle_proxy/ui/routes.py:476: error: "object" has no attribute "values"  [attr-defined]
 src/anthropic_throttle_proxy/ui/routes.py:477: error: Generator has incompatible item type "int"; expected "bool"  [misc]
 src/anthropic_throttle_proxy/ui/routes.py:477: error: "object" has no attribute "values"  [attr-defined]
 src/anthropic_throttle_proxy/ui/routes.py:961: error: Argument 1 to "float" has incompatible type "Any | None"; expected "str | Buffer | SupportsFloat | SupportsIndex"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1057: error: Need type annotation for "rows" (hint: "rows: list[<type>] = ...")  [var-annotated]
-src/anthropic_throttle_proxy/ui/routes.py:1109: error: Argument 1 to "_retry_after_text" has incompatible type "object"; expected "dict[Any, Any] | None"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1113: error: Argument 1 to "_window_stale" has incompatible type "object"; expected "dict[Any, Any] | None"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1127: error: "object" has no attribute "snapshot"  [attr-defined]
-src/anthropic_throttle_proxy/ui/routes.py:1152: error: Key expression in dictionary comprehension has incompatible type "object | Any"; expected type "str"  [misc]
-src/anthropic_throttle_proxy/ui/routes.py:1152: error: Value expression in dictionary comprehension has incompatible type "object"; expected type "dict[Any, Any]"  [misc]
-src/anthropic_throttle_proxy/ui/routes.py:1157: error: Argument "admission" to "_compute_status" has incompatible type "dict[str, bool]"; expected "dict[str, object] | None"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1163: error: Argument "central_status" to "_build_providers" has incompatible type "object"; expected "str"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1165: error: Argument "inflight" to "_build_providers" has incompatible type "object"; expected "int"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1166: error: Argument "queued" to "_build_providers" has incompatible type "object"; expected "int"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1167: error: Argument "served" to "_build_providers" has incompatible type "object"; expected "int"  [arg-type]
-src/anthropic_throttle_proxy/ui/routes.py:1405: error: "object" has no attribute "max_concurrent"  [attr-defined]
+src/anthropic_throttle_proxy/ui/routes.py:1115: error: Argument 1 to "_retry_after_text" has incompatible type "object"; expected "dict[Any, Any] | None"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1119: error: Argument 1 to "_window_stale" has incompatible type "object"; expected "dict[Any, Any] | None"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1133: error: "object" has no attribute "snapshot"  [attr-defined]
+src/anthropic_throttle_proxy/ui/routes.py:1158: error: Key expression in dictionary comprehension has incompatible type "object | Any"; expected type "str"  [misc]
+src/anthropic_throttle_proxy/ui/routes.py:1158: error: Value expression in dictionary comprehension has incompatible type "object"; expected type "dict[Any, Any]"  [misc]
+src/anthropic_throttle_proxy/ui/routes.py:1163: error: Argument "admission" to "_compute_status" has incompatible type "dict[str, bool]"; expected "dict[str, object] | None"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1169: error: Argument "central_status" to "_build_providers" has incompatible type "object"; expected "str"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1171: error: Argument "inflight" to "_build_providers" has incompatible type "object"; expected "int"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1172: error: Argument "queued" to "_build_providers" has incompatible type "object"; expected "int"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1173: error: Argument "served" to "_build_providers" has incompatible type "object"; expected "int"  [arg-type]
+src/anthropic_throttle_proxy/ui/routes.py:1411: error: "object" has no attribute "max_concurrent"  [attr-defined]
