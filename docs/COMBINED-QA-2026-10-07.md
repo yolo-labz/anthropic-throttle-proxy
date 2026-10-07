@@ -199,6 +199,21 @@ pass but still OPEN, runtime still95ll5i712. This report/receipt delta will adva
 QA head and earn fresh exact-head CI; do not reuse77b checks. Accepted-main/
 normal merge and pV deployed combined acceptance remain separate unfinished gates.
 
+## Accepted source main binding
+
+At **20:48 BRT**, source#327 exact c16 required checks were freshly green and
+GraphQL zero threads; protected normal squash verified **MERGED
+c4bd3ce6f203220683e18504a629343d5d53b12b**. Source receipt/CI stored as
+`source327-{merge,final-ci}.json`. Reversal: `git revert c4bd3ce` via normal PR;
+no deployment performed by QA.
+
+QA merged accepted main normally, resolving the single caller-local fixture
+conflict exactly as previously tested; no backend/CSS diff from accepted main.
+This main-binding receipt delta advances QA head and needs fresh current-head
+CI before self-merge. pV can now perform its independently scoped accepted-source
+activation; QA exact deployed packet still required. Old95ll5i712 is not accepted
+as a combined build.
+
 ## Pending runtime and reversal
 
 pV alone activates the exact accepted immutable combined build. QA must bind the
