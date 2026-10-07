@@ -71,8 +71,12 @@ The runtime owner's allowlisted producer receipt at **17:52 BRT** reports
 That observed producer report is not yet a deployed `/ui` row or continuous
 sampling proof; no raw credential-bearing API payload was copied. Runtime source
 head observed at 18:00 BRT: `0add715ab1e59d5e48ada15194c99ada2e8314e2`;
-frontend source remains based on #316 with uncommitted CSS/tests. Live imported
-build remains `jmak9s5h…`; no post-deploy acceptance is claimed.
+frontend later committed its caption-only contrast fix at
+`f41c277c8ed715e453593929d63f47fec6e3c898` (#320). The **18:05 BRT** exact-source
+comparison is `latest-source-state.json`; live UI still differs from #316 and
+the frontend commit. Runtime source remains `0add715a` (#319), with a subsequent
+uncommitted reader repair. Live imported build remains `jmak9s5h…`; no
+post-deploy acceptance is claimed.
 
 ## Minimal runnable check
 
@@ -131,15 +135,21 @@ Normal hooks passed (code-slop/alignment); no hook bypass. On exact source head
 successfully at **17:57 BRT**: Ruff checks plus **2,064 passed**, 155 warnings,
 84.28 seconds. The sanitizer regression was executed there. This is source
 acceptance only; the browser script is not a pytest test and did not run in CI.
-At that observation required `scan` was still pending; no merge claim. A detached
-normal CI waiter tracks #318 (an initial wrong-number #319 waiter was immediately
-cancelled without changes or merge intent). Later doc-only heads need their own
-green checks; historical green is not substituted for current head.
+At that historical observation required `scan` was still pending. On final source
+head **`3d79c879519445d16c7697e1abb0ae7a85d39ec8`**, CI **37686470563** passed
+**2,064 tests** (84.38 seconds), Ruff and format. All required checks passed:
+`ruff + pytest`, `code-slop + alignment`, and `scan` (run **37686470589**).
+`gh pr view` showed `CLEAN`, no required approvals, and GraphQL returned no review
+threads. **#318 MERGED at 18:06 BRT** with squash
+**`1511eb05fdafdd6f8e739e7389dd71384613aef5`**. Receipts are `delivery-318.json`,
+`required-checks-3d79c87.json`, `ci-3d79c87.json`. No source-green-to-browser/live
+promotion. The initial wrong-number #319 waiter was immediately cancelled with
+no changes or merge intent.
 
 Runtime owner must land/activate its exact revision first. Re-read
 running import path, persisted/effective unit, configured report shape and served
 UI asset/source digests, then perform admitted post-deploy browser checks. A green
 source PR alone cannot close this runtime/browser gate.
 
-Rollback for this check-only slice: one `git revert <squash-commit>` PR. No service
+Rollback for the check-only slice: `git revert 1511eb05` in a normal PR. No service
 rollback is needed because this seat changes no service.
