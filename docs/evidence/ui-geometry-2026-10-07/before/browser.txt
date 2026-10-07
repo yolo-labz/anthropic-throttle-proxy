@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/check_gauge_wire.py", line 330, in <module>
+    asyncio.run(main(args.out, not args.synthetic_only, args.diagnose_geometry))
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/notroot/.local/share/uv/python/cpython-3.13.8-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/notroot/.local/share/uv/python/cpython-3.13.8-linux-x86_64-gnu/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/notroot/.local/share/uv/python/cpython-3.13.8-linux-x86_64-gnu/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/tests/check_gauge_wire.py", line 312, in main
+    assert not findings, findings
+           ^^^^^^^^^^^^
+AssertionError: [{'kind': 'page_overflow', 'viewport': {'width': 390, 'content': 473, 'scroll_regions': [{'id': 'subs-scroll', 'width': 366, 'content': 480, 'position': 'static', 'overflowX': 'auto', 'positioned': [{'tag': 'SPAN', 'cls': 'sr-only', 'right': 472.75, 'containing_block': 'BODY', 'clip': 'rect(0px, 0px, 0px, 0px)'}, {'tag': 'SPAN', 'cls': 'sr-only', 'right': 472.75, 'containing_block': 'BODY', 'clip': 'rect(0px, 0px, 0px, 0px)'}, {'tag': 'SPAN', 'cls': 'sr-only', 'right': 472.75, 'containing_block': 'BODY', 'clip': 'rect(0px, 0px, 0px, 0px)'}, {'tag': 'SPAN', 'cls': 'sr-only', 'right': 472.75, 'containing_block': 'BODY', 'clip': 'rect(0px, 0px, 0px, 0px)'}, {'tag': 'SPAN', 'cls': 'sr-only', 'right': 472.75, 'containing_block': 'BODY', 'clip': 'rect(0px, 0px, 0px, 0px)'}, {'tag': 'SPAN', 'cls': 'sr-only', 'right': 472.75, 'containing_block': 'BODY', 'clip': 'rect(0px, 0px, 0px, 0px)'}]}, {'id': 'providers-scroll', 'width': 366, 'content': 426, 'position': 'static', 'overflowX': 'auto', 'positioned': []}], 'duplicate_ids': [], 'main_landmarks': 1, 'h1_count': 1, 'unnamed_inputs': [], 'small_targets': [{'tag': 'INPUT', 'id': 'show-details', 'width': 13, 'height': 13}, {'tag': 'A', 'id': '', 'width': 25.0625, 'height': 16.875}, {'tag': 'A', 'id': '', 'width': 30.0625, 'height': 16.875}], 'overflow': [], 'gauge_clip': []}}, {'kind': 'unknown_view_overflow', 'viewport': {'width': 1366, 'content': 1391}}, {'kind': 'unknown_view_overflow', 'viewport': {'width': 390, 'content': 473}}]

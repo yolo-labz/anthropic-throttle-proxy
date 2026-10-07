@@ -1,0 +1,52 @@
+[
+  {
+    "antipattern": "side-tab",
+    "name": "Side-tab accent border",
+    "description": "Thick colored border on one side of a card — the most recognizable tell of AI-generated UIs. Use a subtler accent or remove it entirely.",
+    "severity": "warning",
+    "category": "slop",
+    "file": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/static/style.css",
+    "line": 210,
+    "snippet": "border-left: 3px solid var(--muted)"
+  },
+  {
+    "antipattern": "side-tab",
+    "name": "Side-tab accent border",
+    "description": "Thick colored border on one side of a card — the most recognizable tell of AI-generated UIs. Use a subtler accent or remove it entirely.",
+    "severity": "warning",
+    "category": "slop",
+    "file": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/static/style.css",
+    "line": 897,
+    "snippet": "border-left: 3px solid var(--muted)"
+  },
+  {
+    "antipattern": "side-tab",
+    "name": "Side-tab accent border",
+    "description": "Thick colored border on one side of a card — the most recognizable tell of AI-generated UIs. Use a subtler accent or remove it entirely.",
+    "severity": "warning",
+    "category": "slop",
+    "file": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/static/style.css",
+    "line": 1017,
+    "snippet": "border-left: 3px solid var(--ok)"
+  },
+  {
+    "antipattern": "side-tab",
+    "name": "Side-tab accent border",
+    "description": "Thick colored border on one side of a card — the most recognizable tell of AI-generated UIs. Use a subtler accent or remove it entirely.",
+    "severity": "warning",
+    "category": "slop",
+    "file": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/static/style.css",
+    "line": 1018,
+    "snippet": "border-left: 3px solid var(--crit)"
+  },
+  {
+    "antipattern": "side-tab",
+    "name": "Side-tab accent border",
+    "description": "Thick colored border on one side of a card — the most recognizable tell of AI-generated UIs. Use a subtler accent or remove it entirely.",
+    "severity": "warning",
+    "category": "slop",
+    "file": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-323-ui-scroll-geometry/src/anthropic_throttle_proxy/ui/static/style.css",
+    "line": 1023,
+    "snippet": "border-left: 3px solid var(--info)"
+  }
+]

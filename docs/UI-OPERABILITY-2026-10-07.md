@@ -1,5 +1,9 @@
 # Gauge caption operability — 07/10/2026
 
+## Geometry follow-up (fresh 323, separate from merged caption slice)
+
+Current origin/main base `de88b98` contains #319/#320/#321. Admitted fail-before browser proved six absolute clipped quota annotations use BODY as their containing block and extend to 472.75px; adding only scroll-local positioning reversibly changes document width 473→390. Bounded correction/actual browser receipts and current acceptance status are in [UI-GEOMETRY-2026-10-07.md](UI-GEOMETRY-2026-10-07.md), Speckit `specs/323-ui-scroll-geometry/`. No runtime or live acceptance promotion from this source investigation.
+
 Owner `thr-ui-frontend`; isolated branch/worktree `317-ui-operability`. Generator OpenAI, pinned GPT-6.1 Sol; no spawned agents, fallback, reviewer verdict or deployment claim.
 
 ## Evidence / smallest slice
