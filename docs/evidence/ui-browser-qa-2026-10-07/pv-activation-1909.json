@@ -1,0 +1,26 @@
+{
+  "captured_at": "2026-10-07T19:13:09.112623-03:00",
+  "build": "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+  "served": 0,
+  "inflight": 0,
+  "effective_unit": "ActiveState=active\nFragmentPath=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service\nDropInPaths=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf\nMainPID=1096484\nExecStart={ path=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+  "persisted_exec_chain": [
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service -> /nix/store/glvrzlxwg52ds2zc6x1icn446s5nircm-anthropic-throttle-proxy.service/anthropic-throttle-proxy.service",
+    "ExecStart=/nix/store/4dywagmibnil2y6z80d1dvllh2w3p3fh-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+    "ExecStart=",
+    "ExecStart=/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf -> /nix/store/fkabv7iwwlvv16iqdyrpgs6spz6mv6fn-99-ui-runtime-2026-10-07.conf",
+    "ExecStart=",
+    "ExecStart=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+    "# /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf"
+  ],
+  "producer_timer": "ActiveState=active\nFragmentPath=/home/notroot/.config/systemd/user/mimo-desktop-quota-report.timer\nNextElapseUSecRealtime=\nLastTriggerUSec=Wed 2026-10-07 19:12:06 -03\n",
+  "producer_service": "FragmentPath=/home/notroot/.config/systemd/user/mimo-desktop-quota-report.service\nExecMainStartTimestamp=Wed 2026-10-07 19:12:06 -03\nExecMainExitTimestamp=Wed 2026-10-07 19:12:12 -03\nExecMainStatus=0\n",
+  "pV_nix_pin": [
+    "rev = \"45b7d0ef3321cca9c6d4e8513686efa30d889c1a\";",
+    "hash = \"sha256-wpx/L5yiv2vo9rNndRIcvur58MYp7Rkke4LivnWXJrY=\";"
+  ]
+}

@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -88,6 +89,31 @@ async def forbidden(*args, **kwargs):
     raise AssertionError("render attempted network I/O")
 
 
+async def quota_accessibility(page):
+    """Clipping must preserve quota text in Chromium's actual accessibility tree."""
+    client = await page.context.new_cdp_session(page)
+    try:
+        expected = await page.locator(".bearers-wrap .pct .sr-only").all_text_contents()
+        assert expected, "fixture must contain quota annotations"
+        await client.send("Accessibility.enable")
+        tree = await client.send("Accessibility.getFullAXTree")
+        readable = [
+            node.get("name", {}).get("value", "").strip()
+            for node in tree["nodes"]
+            if not node.get("ignored") and node.get("role", {}).get("value") == "StaticText"
+        ]
+        annotations = []
+        for expected_text in expected:
+            text = expected_text.strip()
+            matches = [name for name in readable if text in name]
+            assert matches, {"missing_quota": text}
+            readable.remove(matches[0])  # Each DOM annotation needs an exposed text node.
+            annotations.append({"text": sanitize(text), "accessible": True})
+        return annotations
+    finally:
+        await client.detach()
+
+
 async def check_keyboard_scroll(page):
     region = page.locator("#subs-scroll")
     assert await region.evaluate("e => e.scrollWidth > e.clientWidth"), "fixture must scroll"
@@ -104,6 +130,123 @@ async def check_keyboard_scroll(page):
     assert result["focused"], result
     await region.evaluate("e => { e.scrollLeft = 0; }")
     return result
+
+
+async def launch(engine):
+    return await engine.chromium.launch(
+        executable_path=os.environ["BROWSER_EXECUTABLE"], headless=True, args=["--disable-gpu"]
+    )
+
+
+async def deployed(out, expected_build):
+    """Read-only real service acceptance; never patch live caches/collectors."""
+    from playwright.async_api import async_playwright
+
+    out.mkdir(parents=True, exist_ok=True)
+    receipt = {"scope": "deployed desktop; read-only, no synthetic runtime patches"}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with session.get("http://127.0.0.1:8765/__throttle/health") as response:
+                assert response.status == 200
+                health = await response.json()
+            build = Path(health["build"])
+            receipt["build"] = str(build)
+            assert build.is_relative_to(expected_build), receipt["build"]
+            source = Path(routes.__file__).parent
+            receipt["ui_sha256"] = {}
+            for file in source.rglob("*"):
+                if file.suffix not in {".html", ".css", ".py"}:
+                    continue
+                relative = file.relative_to(source)
+                assert (build / "ui" / relative).read_bytes() == file.read_bytes(), relative
+                receipt["ui_sha256"][str(relative)] = hashlib.sha256(file.read_bytes()).hexdigest()
+            async with session.get("http://127.0.0.1:8765/ui/static/style.css") as response:
+                assert await response.read() == (source / "static/style.css").read_bytes()
+        async with async_playwright() as engine:
+            browser = await launch(engine)
+            try:
+                receipt["browser"] = browser.version
+                page = await browser.new_page(viewport={"width": 1366, "height": 844})
+                page.set_default_timeout(10000)
+                polls, errors, unexpected = [], [], []
+                page.on("pageerror", lambda error: errors.append(sanitize(str(error))))
+                page.on(
+                    "console",
+                    lambda message: (
+                        errors.append(sanitize(message.text)) if message.type == "error" else None
+                    ),
+                )
+                page.on("response", lambda r: polls.append(r.url) if "/ui/stats" in r.url else None)
+                page.on(
+                    "request",
+                    lambda r: (
+                        unexpected.append(r.url)
+                        if not (
+                            r.url.startswith("http://127.0.0.1:8765/")
+                            or r.url.startswith("https://unpkg.com/htmx.org@1.9.12")
+                        )
+                        else None
+                    ),
+                )
+                receipt["viewports"] = []
+                for width in (1366, 390):
+                    await page.set_viewport_size({"width": width, "height": 844})
+                    await page.goto("http://127.0.0.1:8765/ui?source=local")
+                    await page.wait_for_function("window.htmx !== undefined")
+                    await page.locator("#show-details").check()
+                    region = page.locator('.bearers-wrap[tabindex="0"]').first
+                    region_id = await region.get_attribute("id")
+                    assert region_id
+                    await region.focus()
+                    before = len(polls)
+                    await page.wait_for_timeout(2400)
+                    assert len(polls) > before and all("source=local" in p for p in polls)
+                    assert await page.evaluate("document.activeElement.id") == region_id
+                    assert await page.locator("#show-details").is_checked()
+                    quota_row = page.locator('[data-subscription-id="mimo:desktop-subscription"]')
+                    assert await quota_row.count() == 1
+                    report_path = (
+                        Path.home() / ".local/state/anthropic-throttle-proxy/mimo-desktop.json"
+                    )
+                    report = json.loads(report_path.read_text())
+                    rows = [r for r in report["lanes"] if r["id"] == "mimo:desktop-subscription"]
+                    assert len(rows) == 1 and report["intervalSeconds"] == 300
+                    meter = rows[0]["meters"][0]
+                    assert meter["limitId"] == "weekly" and meter["unit"] == "percent"
+                    assert abs(meter["usedPercent"] + meter["remainingPercent"] - 100) < 1e-6
+                    age = (
+                        datetime.now(UTC) - datetime.fromisoformat(report["generatedAt"])
+                    ).total_seconds()
+                    assert 0 <= age < 600, age
+                    shown = await quota_row.locator(".pct").inner_text()
+                    assert abs(float(shown.split("%", 1)[0]) - meter["usedPercent"]) <= 0.51
+                    receipt["desktop_quota"] = {
+                        "generatedAt": report["generatedAt"],
+                        "age_s": age,
+                        "unit": "percent",
+                        "window": "weekly",
+                        "used": meter["usedPercent"],
+                        "remaining": meter["remainingPercent"],
+                        "display": sanitize(await quota_row.inner_text()),
+                    }
+                    receipt.setdefault("quota_accessibility", {})[
+                        str(width)
+                    ] = await quota_accessibility(page)
+                    dims = await capture(page, out, f"deployed-{width}")
+                    receipt["viewports"].append(dims)
+                    assert dims["width"] == dims["content"], dims
+                    assert not dims["duplicate_ids"] and not dims["unnamed_inputs"], dims
+                receipt["polls"] = len(polls)
+                receipt["console_errors"], receipt["unexpected_requests"] = errors, unexpected
+                assert not errors and not unexpected
+                receipt["completed"] = True
+            finally:
+                await browser.close()
+    except Exception as error:
+        receipt["failure"] = sanitize(str(error))
+        raise
+    finally:
+        (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
 async def main(out=OUT, live=True):
@@ -156,11 +299,7 @@ async def main(out=OUT, live=True):
         app.on_startup.clear()
         app.on_cleanup.clear()
         async with TestServer(app) as server, async_playwright() as playwright:
-            browser = await playwright.chromium.launch(
-                executable_path=os.environ["BROWSER_EXECUTABLE"],
-                headless=True,
-                args=["--disable-gpu"],
-            )
+            browser = await launch(playwright)
             try:
                 receipt["browser"] = browser.version
                 page = await browser.new_page(
@@ -231,8 +370,10 @@ async def main(out=OUT, live=True):
                 )
                 receipt["synthetic_viewports"] = []
                 receipt["state_viewports"] = []
+                receipt["quota_accessibility"] = {}
                 for width in (1366, 390):
                     await page.set_viewport_size({"width": width, "height": 844})
+                    receipt["quota_accessibility"][str(width)] = await quota_accessibility(page)
                     dims = await capture(page, out, f"synthetic-measured-{width}")
                     receipt["synthetic_viewports"].append(dims)
                     if dims["content"] > dims["width"]:
@@ -336,5 +477,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=OUT)
     parser.add_argument("--synthetic-only", action="store_true")
+    parser.add_argument("--deployed-build", type=Path, help="exact pV-activated package root")
     args = parser.parse_args()
-    asyncio.run(main(args.out, not args.synthetic_only))
+    if args.deployed_build:
+        assert not args.synthetic_only
+        asyncio.run(deployed(args.out, args.deployed_build))
+    else:
+        asyncio.run(main(args.out, not args.synthetic_only))

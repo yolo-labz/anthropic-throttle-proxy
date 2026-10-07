@@ -1,0 +1,24 @@
+{
+  "captured_at": "2026-10-07T19:05:09.212316-03:00",
+  "candidate": "4862145dcaff3a1d499e8d90cc34f0e29dada96c",
+  "source_revision": "45b7d0ef3321cca9c6d4e8513686efa30d889c1a",
+  "ui_matches_candidate": true,
+  "ui_sha256": {
+    "src/anthropic_throttle_proxy/ui/routes.py": "d9612dd75673656c96f736a8c6101f8c74c3ec6110c7fa3ea77dab99730dabbc",
+    "src/anthropic_throttle_proxy/ui/presentation.py": "6c79d3b0b2aced03daa6a1b0b780f920948b459b1c14ba74718408554208d893",
+    "src/anthropic_throttle_proxy/ui/signals.py": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0",
+    "src/anthropic_throttle_proxy/ui/__init__.py": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7",
+    "src/anthropic_throttle_proxy/ui/templates/dashboard.html": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9",
+    "src/anthropic_throttle_proxy/ui/static/style.css": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+    "src/anthropic_throttle_proxy/ui/templates/partials/config.html": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
+    "src/anthropic_throttle_proxy/ui/templates/partials/stats.html": "af6b6ddd5947c863d6daa2a10eaf35dca53758c7fab7120b54ac56daa9289e4c"
+  },
+  "checker_sha256": "8a043ddfbfca0f870aa32bf442046dac782ebd8f517adadd14d427a1cce98628",
+  "checker_delta": "Full AX quota oracle and separate deployed mode; first partial-tree failure retained; repaired packet awaiting admission",
+  "fail_before": "docs/evidence/ui-geometry-2026-10-07/before/receipt.json",
+  "original_qa_fail_before": "docs/evidence/ui-browser-qa-2026-10-07/confirmation/receipt.json",
+  "browser_status": "bounded instrumentation repair pending",
+  "instrumentation_error": "first attempt used partial AX tree of generic span; no readable children; not UI verdict",
+  "admission_refusal": "pressure-high io-full=1100c exit 75; later io-full=1769c",
+  "checker_source_head": "f573ef9951859deefdd69ea2ec10adaea902cbad"
+}
