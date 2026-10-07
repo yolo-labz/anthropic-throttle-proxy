@@ -68,6 +68,45 @@ legacy and combined checks; no suppression or bypass. Hook re-verification is
 pending, not an asserted fix. Clone diagnostic is durable in this packet. The subsequent final lint/restage/normal-hook/push command was
 admission-refused (exit74, nothing executed); commit/PR delivery is not asserted.
 
+## Latest verified QA progression
+
+At **20:20 BRT** Ruff passed after the shared guard extraction. At **20:22 BRT**
+normal commit hooks re-executed: aislop100/zero errors, clone ratchet zero relevant/
+zero regressions, alignment zero findings. Local QA commit **c2f9f3b** exists;
+not yet pushed/PR-tested while accepted combined source dependency is outstanding.
+
+An admitted candidate combined browser run at 20:20 executed and stopped on QA's
+case-sensitive rendered-label assertion: existing CSS `text-transform: uppercase`
+affects Chromium `inner_text`. Value30 and preceding HTMX/focus checks passed,
+but this is **failed instrumentation, not a passing UI verdict**. Immutable
+failure command and receipt remain at `candidate-combined-browser/`. The lookup
+now uses DOM `text_content`; no frontend/CSS change. A repaired attempt uses a
+separate directory. Source and deployed combined acceptance remain pending.
+
+At last 20:24 source metadata, pT `344f1e2` existed but template/checker follow-up
+was uncommitted; no source PR existed. Final reader source changed since the
+first arithmetic receipt (format/source delta); re-run arithmetic and browser
+on final immutable source rather than relabel the old fingerprint.
+
+## Repaired combined candidate actually executed
+
+At **20:25 BRT**, a normal admitted packet re-ran all **16 accounting cases**
+and the repaired browser against pT's source. The new immutable receipt directory
+`candidate-repaired-combined-browser/` records **completed=true**, **11 polls**,
+keyboard local/touch sibling selection keeps **30**, ignoring sibling120 and
+seeded local proxy9000 outputs; 1366/1366 and390/390, hidden quota AX, no console/
+unexpected requests, journal/collector/network render guards. Fixture states:
+idle0, stale/error/warm-up/unsupported —. Source fingerprints unchanged during
+this run: reader `5172d8bc…`, template `3297ea5f…`. This passes real-source/
+synthetic-journal acceptance only. First failed instrumentation receipts retained.
+Focused-table screenshots prove geometry but are not a dial visual review; final
+immutable check explicitly scrolls the gauge into view for capture.
+
+At **20:26 BRT**, pT published source **PR#327 / 742fafd22553501017e485824534fd5da930034c**.
+The branch suffix327 here is QA; GitHub PR#327 is pT source. Current-head source
+CI and accepted main binding still must be verified, then normal QA PR delivery
+and pV exact deployed acceptance. The live health checkpoint remains old95ll5i712.
+
 ## Independent observational reference (not acceptance)
 
 A bounded 2 MiB read at **19:49:07 BRT** observed 92 completion events and 89,813

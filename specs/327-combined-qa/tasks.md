@@ -8,6 +8,10 @@
 - [x] Complete repaired admitted legacy AX/live oracle: receipts completed=true,
   full quota AX, 1366/1366 and 390/390, no network/console errors; retain history.
 - [ ] Rerun independent checks on immutable merged combined source.
-- [ ] Require workload selection and HTMX not to scope combined output.
+- [x] Require workload selection and HTMX not to scope combined output:
+  repaired candidate receipt completed=true, 11 polls, local/sibling keep30
+  despite sibling120/proxy9000; unknown/idle/cache/no-network passed.
+- [ ] Capture final immutable gauge visual (previous focused-table screenshots
+  retain geometry evidence, not dial visual review).
 - [ ] Deliver receipts/tests via normal hooks/PR/current-head CI and safe merge.
 - [ ] Verify pV exact combined build on real served UI or record evidenced blocker.

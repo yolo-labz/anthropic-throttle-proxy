@@ -129,6 +129,7 @@ async def source(out):
                         assert "accounted at completion" in side and "partial" in side.lower()
                         assert "non-Pi / other hosts unmeasured" in side
                         receipt["quota_accessibility"][str(width)] = await quota_accessibility(page)
+                        await page.locator(".tps-panel").scroll_into_view_if_needed()
                         dims = await capture(page, out, f"combined-measured-{width}")
                         receipt["viewports"].append(dims)
                         assert dims["width"] == dims["content"] and not dims["gauge_clip"], dims
@@ -167,6 +168,7 @@ async def source(out):
                             assert "unknown" in await page.locator(".tps-arc").get_attribute(
                                 "aria-label"
                             )
+                        await page.locator(".tps-panel").scroll_into_view_if_needed()
                         dims = await capture(page, out, f"combined-{state}-390")
                         assert dims["width"] == dims["content"] and not dims["gauge_clip"], dims
                         receipt["states"].append(
