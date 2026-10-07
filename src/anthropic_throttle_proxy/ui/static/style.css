@@ -1147,7 +1147,7 @@ footer a:hover { color: var(--info); text-decoration: underline; }
 .tps-side { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
 .tps-detail { font-size: var(--fs-meta); color: var(--ctp-subtext0); font-variant-numeric: tabular-nums; }
 .tps-detail b { color: var(--ctp-mauve); font-weight: 600; }
-.tps-foot { font-size: var(--fs-meta); color: var(--ctp-overlay0); }
+.tps-foot { font-size: var(--fs-meta); color: var(--muted); }
 @media (max-width: 900px) {
   .tps-panel { grid-template-columns: minmax(0, 1fr); }
 }
