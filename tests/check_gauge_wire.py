@@ -14,6 +14,7 @@ import json
 import os
 import re
 from datetime import UTC, datetime
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,7 +23,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from ui_render import workload_snapshot
 
-from anthropic_throttle_proxy import fleet_ui_config, history
+from anthropic_throttle_proxy import fleet_ui_config, history, output_usage
 from anthropic_throttle_proxy.ui import routes
 
 OUT = Path("docs/evidence/ui-browser-qa-2026-10-07")
@@ -254,7 +255,8 @@ async def main(out=OUT, live=True):
 
     out.mkdir(parents=True, exist_ok=True)
     receipt = {
-        "scope": "live GETs + synthetic workload/real read-only lane-report snapshot; not deployed"
+        "scope": ("live GETs + " if live else "")
+        + "synthetic client accounting/real read-only lane-report snapshot; not deployed"
     }
     findings = []
     receipt["source_sha256"] = {
@@ -262,6 +264,9 @@ async def main(out=OUT, live=True):
         for p in Path(routes.__file__).parent.rglob("*")
         if p.suffix in {".html", ".css", ".py"}
     }
+    receipt["source_sha256"]["../output_usage.py"] = hashlib.sha256(
+        Path(output_usage.__file__).read_bytes()
+    ).hexdigest()
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
         live_rows = []
         for port in (8765, 8773) if live else ():
@@ -281,7 +286,19 @@ async def main(out=OUT, live=True):
     history.reset()
     now = routes.time.time()
     row = workload_snapshot()
+
+    def client_fixture():
+        # Synthetic single-domain 1800 output /60s, independent of the 120/s proxy copy.
+        return output_usage.Snapshot(
+            routes._signals.tps_gauge([[300, 0]] * 6),
+            routes.time.time(),
+            output_tokens=1800,
+            providers=("codex-a", "zai"),
+        )
+
     with (
+        patch.object(output_usage, "_cache", client_fixture()),
+        patch.object(output_usage, "refresh", forbidden),
         patch.object(routes._config, "FLEET_HEALTH_URLS", "mimo:http://example.test/health"),
         patch.object(routes._config, "COPILOT_TOKEN", ""),
         patch.object(routes._fleet, "_cache", {"http://example.test/health": (now, row)}),
@@ -338,12 +355,13 @@ async def main(out=OUT, live=True):
                 await page.wait_for_function("window.htmx !== undefined")
                 await page.wait_for_timeout(2400)  # own bounded HTMX polling sample
                 assert len(polls) >= 2, polls
-                assert await page.locator(".tps-num").inner_text() == "120"
-                assert "120 output tokens per second" in await page.locator(
+                assert await page.locator(".tps-num").inner_text() == "30"
+                assert "30 output tokens per second" in await page.locator(
                     ".tps-arc"
                 ).get_attribute("aria-label")
                 measured = {
-                    "value": "120",
+                    "value": "30",
+                    "accounting_domain": "single synthetic client journal; proxy copy excluded",
                     "polls": len(polls),
                     "all_polls_keep_source": all("source=mimo" in url for url in polls),
                 }
@@ -387,10 +405,9 @@ async def main(out=OUT, live=True):
                 url = "http://example.test/health"
                 routes._fleet._cache[url] = (now - 60, row)
                 await page.wait_for_function(
-                    "document.querySelector('.tps-panel').textContent"
-                    ".includes('throughput unavailable')"
+                    "document.querySelector('.verdict').textContent.includes('WORKLOAD UNKNOWN')"
                 )
-                assert await page.locator(".tps-value").count() == 0
+                assert await page.locator(".tps-num").inner_text() == "30"
                 receipt["synthetic_stale"] = {
                     "cache_age_s": 60,
                     "display": await page.locator(".tps-panel").inner_text(),
@@ -400,13 +417,21 @@ async def main(out=OUT, live=True):
                     routes._fleet._cache[url] = (routes.time.time(), row)
                     row["ok"] = False
                 await page.wait_for_function(
-                    "document.querySelector('.tps-panel').textContent"
-                    ".includes('throughput unavailable')"
+                    "document.querySelector('.verdict').textContent.includes('WORKLOAD UNKNOWN')"
                 )
-                assert await page.locator(".tps-value").count() == 0
+                assert await page.locator(".tps-num").inner_text() == "30"
                 measured["failure_refresh"] = await page.locator(".tps-panel").inner_text()
                 receipt["branch_measured"] = measured
                 receipt["state_viewports"].append(await capture(page, out, "synthetic-error-390"))
+                output_usage._cache = replace(client_fixture(), sampled_at=now - 60)
+                await page.wait_for_function(
+                    "document.querySelector('.tps-panel').textContent.includes('cache stale')"
+                )
+                assert await page.locator(".tps-value").count() == 0
+                receipt["state_viewports"].append(
+                    await capture(page, out, "synthetic-client-stale-390")
+                )
+                output_usage._cache = None
                 # Exercise a real native link by keyboard, not page.goto selection.
                 await page.locator('.workload-picker a[href="/ui?source=local"]').focus()
                 await page.keyboard.press("Enter")
@@ -419,8 +444,10 @@ async def main(out=OUT, live=True):
                 assert "unknown" in unknown["arc_label"]
                 receipt["branch_unknown"] = unknown
                 receipt["state_viewports"].append(await capture(page, out, "synthetic-unknown-390"))
+                output_usage._cache = client_fixture()
                 await page.locator('.workload-picker a[href="/ui?source=mimo"]').tap()
                 await page.wait_for_url("**/ui?source=mimo")
+                assert await page.locator(".tps-num").inner_text() == "30"
                 receipt["narrow_touch"] = "synthetic Chromium touch: native source link"
                 unexpected = [
                     u

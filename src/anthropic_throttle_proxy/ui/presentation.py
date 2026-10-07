@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from math import isfinite
 
 from ..lanes import _pct
-from . import signals
 
 
 def _family(value: str) -> str:
@@ -134,7 +133,7 @@ def apply_display(view: dict, config: dict) -> dict:
 
 
 def apply_workload(view: dict, config: dict, fleet: list[dict]) -> None:
-    """Select observed sibling telemetry, never routing or local admin controls."""
+    """Select workload signals, never routing, admin controls or the combined dial."""
     name = (config.get("defaults") or {}).get("workload")
     if not name:
         return
@@ -154,9 +153,6 @@ def apply_workload(view: dict, config: dict, fleet: list[dict]) -> None:
     for key in ("inflight", "queued", "served", "max_concurrent"):
         view[key] = row.get(key, 0)
     view["holds"] = row.get("keepalive_holds_active", 0)
-    view["tps"] = signals.remote_tps(row.get("throughput"))
-    if view["tps"] is not None:
-        view["tps"] = view["tps"]._replace(sample_age_s=row.get("age_s"))
     refused = row.get("upstream_auth_ok") is False
     view["status"] = {
         "level": "warn" if refused else "idle",

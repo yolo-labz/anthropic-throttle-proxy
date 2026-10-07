@@ -104,7 +104,7 @@
 <section class="tps-panel" aria-label="Output tokens per second over the last minute">
   <div class="tps-dial" data-seen="{{ 'true' if tps.seen else 'false' }}">
     <svg class="tps-arc" viewBox="0 0 220 120" role="img"
-         aria-label="{% if tps.seen %}{{ '%.0f'|format(tps.value) }} output tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, peak 10-second bucket {{ '%.0f'|format(tps.peak) }}{% elif tps.stale %}Output throughput unknown: sample stale{% else %}Output throughput unknown: not yet measured{% endif %}">
+         aria-label="{% if tps.seen %}{{ '%.0f'|format(tps.value) }} output tokens per second over the last {{ '%.0f'|format(tps.window_s) }} seconds, peak 10-second bucket {{ '%.0f'|format(tps.peak) }}{% elif tps.stale %}Output throughput unknown: sample stale{% else %}Output throughput unknown: not yet measured{% endif %}{% if output_accounting | default(false) %}; combined Pi on this host, partial fleet coverage{% endif %}">
       <defs>
         <linearGradient id="tps-fill" x1="0" y1="0" x2="1" y2="0">
           <stop class="tps-stop-a" offset="0" />
@@ -133,7 +133,7 @@
     </div>
   </div>
   <div class="tps-side">
-    <span class="gauge-label">{{ workload_label | default('local') }} output throughput</span>
+    <span class="gauge-label">{% if output_accounting | default(false) %}Combined output throughput{% else %}{{ workload_label | default('local') }} output throughput{% endif %}</span>
     <div class="gauge-row">
       {% if tps.seen %}
       <span class="tps-detail">last {{ '%.0f'|format(tps.window_s) }}s · 10s peak <b>{{ '%.0f'|format(tps.peak) }}</b> · scale {{ '%.0f'|format(tps.scale) }} tokens/s</span>
@@ -144,7 +144,8 @@
       </svg>
       {% endif %}
     </div>
-    <span class="tps-foot">{% if tps.seen %}accounted at completion · in+cache {{ '%.1f'|format(tps.tok_in_now) }}/s (prompt-side total, cache included){% if tps.tok_in_fresh is not none %} · fresh {{ '%.1f'|format(tps.tok_in_fresh) }}/s{% endif %}{% elif tps.stale %}throughput sample stale; not a current reading{% else %}waiting for accounted output; not a measured zero{% endif %}</span>
+    <span class="tps-foot">{% if output_accounting | default(false) %}{% if tps.seen %}exact output / {{ '%.0f'|format(tps.window_s) }} wall-clock seconds · accounted at completion{% else %}{{ output_accounting.reason }}; not a measured zero{% endif %}{% elif tps.seen %}accounted at completion · in+cache {{ '%.1f'|format(tps.tok_in_now) }}/s (prompt-side total, cache included){% if tps.tok_in_fresh is not none %} · fresh {{ '%.1f'|format(tps.tok_in_fresh) }}/s{% endif %}{% elif tps.stale %}throughput sample stale; not a current reading{% else %}waiting for accounted output; not a measured zero{% endif %}</span>
+    {% if output_accounting | default(false) %}<span class="tps-foot">Partial coverage · Pi on this host only · {{ output_accounting.providers | length }} provider labels in window · non-Pi / other hosts unmeasured</span>{% endif %}
     <span class="tps-foot">Accounted throughput · not a subscription quota{% if tps.sample_age_s is not none %} · sample {{ '%.0f'|format(tps.sample_age_s) }}s old{% endif %}</span>
   </div>
 </section>

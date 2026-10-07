@@ -10,7 +10,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from ui_render import workload_snapshot
 
-from anthropic_throttle_proxy import fleet_ui_config, history
+from anthropic_throttle_proxy import fleet_ui_config, history, output_usage
 from anthropic_throttle_proxy.ui import routes
 
 
@@ -29,9 +29,28 @@ class Gauge(HTMLParser):
 
 
 @pytest.fixture
-async def ui(monkeypatch):
+async def ui(monkeypatch, tmp_path):
     now = 1000.0
     history.reset()
+    journal = tmp_path / "usage.jsonl"
+    journal.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "ts": datetime.fromtimestamp(stamp, UTC).isoformat(),
+                    "provider": provider,
+                    "output": count,
+                }
+            )
+            + "\n"
+            for stamp, count, provider in (
+                (900, 0, "codex-a"),
+                (970, 600, "codex-a"),
+                (980, 1200, "mimo-desktop-subscription"),
+            )
+        )
+    )
+    monkeypatch.setattr(output_usage, "_cache", output_usage.read_usage(journal, now=now))
     monkeypatch.setattr(routes.time, "time", lambda: now)
     monkeypatch.setattr(routes._accounts, "account_view", lambda *args: [])
     monkeypatch.setattr(routes._accounts, "bearer_labels", lambda: {})
@@ -103,17 +122,19 @@ async def test_routes_are_network_free_and_select_the_requested_sibling(ui):
     gauge = Gauge()
     gauge.feed(html)
     assert gauge.poll == "/ui/stats?source=mimo"
-    assert "mimo output throughput" in html
-    assert '<span class="tps-num">120</span>' in html
-    assert "120 output tokens per second" in gauge.label
+    assert '<span class="tps-num">30</span>' in html
+    assert "Combined output throughput" in html
+    assert "Partial coverage" in html
+    assert "non-Pi / other hosts unmeasured" in html
+    assert "30 output tokens per second" in gauge.label
     response = await client.get("/ui/stats?source=mimo")
     assert response.status == 200
-    assert '<span class="tps-num">120</span>' in await response.text()
+    assert '<span class="tps-num">30</span>' in await response.text()
     assert calls == []
 
 
 @pytest.mark.parametrize("change", ["stale", "missing", "malformed", "failed"])
-async def test_bad_workload_never_draws_local_zero_or_old_throughput(ui, change):
+async def test_bad_workload_cannot_narrow_or_replace_combined_throughput(ui, change):
     client, row, calls = ui
     if change == "stale":
         routes._fleet._cache["http://example.test/health"] = (900, row)
@@ -126,14 +147,15 @@ async def test_bad_workload_never_draws_local_zero_or_old_throughput(ui, change)
     response = await client.get("/ui/stats?source=mimo")
     html = await response.text()
     assert response.status == 200
-    assert "throughput unavailable" in html
+    assert "Combined output throughput" in html
+    assert '<span class="tps-num">30</span>' in html
     assert '<span class="tps-num">120</span>' not in html
-    assert "local output throughput" not in html
     assert calls == []
 
 
-async def test_unknown_arc_is_accessibly_unknown_not_zero(ui):
+async def test_unknown_arc_is_accessibly_unknown_not_zero(ui, monkeypatch):
     client, _, _ = ui
+    monkeypatch.setattr(output_usage, "_cache", None)
     response = await client.get("/ui?source=local")
     html = await response.text()
     gauge = Gauge()
@@ -144,14 +166,13 @@ async def test_unknown_arc_is_accessibly_unknown_not_zero(ui):
     assert "not a subscription quota" in html
 
 
-async def test_sampler_staleness_is_not_erased_by_html_refresh(ui):
+async def test_client_cache_staleness_is_not_erased_by_html_refresh(ui, monkeypatch):
     client, _, _ = ui
-    history.observe_tokens(out=600)
-    history.record(0, 0, 4, now=900)
+    monkeypatch.setattr(routes.time, "time", lambda: 1016)
     response = await client.get("/ui/stats?source=local")
     html = await response.text()
-    assert "throughput sample stale" in html
-    assert '<span class="tps-num">60</span>' not in html
+    assert "client accounting cache stale" in html
+    assert '<span class="tps-num">30</span>' not in html
 
 
 async def test_partial_keeps_revision_reload_and_default_view_policy(ui, monkeypatch):
@@ -163,10 +184,56 @@ async def test_partial_keeps_revision_reload_and_default_view_policy(ui, monkeyp
     config = {"subscriptions": [], "defaults": {"workload": "mimo"}}
     monkeypatch.setattr(fleet_ui_config, "load", lambda: config)
     response = await client.get("/ui?source=local")
-    assert "local output throughput" in await response.text()
+    assert "Combined output throughput" in await response.text()
     assert config["defaults"]["workload"] == "mimo"  # per-tab choice never writes policy
     response = await client.get("/ui")
-    assert "mimo output throughput" in await response.text()
+    assert "Combined output throughput" in await response.text()
+
+
+async def test_proxy_copies_and_self_cannot_change_the_single_client_domain(ui, monkeypatch):
+    client, row, calls = ui
+    row["throughput"] = {"bucket_seconds": 10, "tokens": [[999999, 888888]] * 6}
+    monkeypatch.setattr(
+        routes._fleet.config,
+        "FLEET_HEALTH_URLS",
+        "mimo:http://example.test/health,central:http://central.test/health,"
+        "self:http://127.0.0.1:8765/__throttle/health",
+    )
+    routes._fleet._cache.update(
+        {
+            "http://central.test/health": (1000, row),
+            "http://127.0.0.1:8765/__throttle/health": (1000, row),
+        }
+    )
+    for _ in range(6):
+        history.observe_tokens(out=999999)
+        history.record(0, 0, 4, now=1000)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("cached render attempted journal I/O")
+
+    monkeypatch.setattr(output_usage, "read_usage", forbidden)
+    for source in ("local", "mimo", "central", "self", "missing"):
+        response = await client.get("/ui/stats?source=" + source)
+        assert response.status == 200
+        html = await response.text()
+        assert '<span class="tps-num">30</span>' in html
+        assert "Combined output throughput" in html
+    assert calls == []
+
+
+async def test_hidden_primary_does_not_hide_the_combined_gauge(ui, monkeypatch):
+    client, _, calls = ui
+    monkeypatch.setattr(
+        fleet_ui_config,
+        "load",
+        lambda: {"subscriptions": [], "defaults": {"show_primary": False, "workload": "mimo"}},
+    )
+    for route in ("/ui", "/ui/stats?source=mimo"):
+        html = await (await client.get(route)).text()
+        assert '<span class="tps-num">30</span>' in html
+        assert "Partial coverage" in html
+    assert calls == []
 
 
 async def test_weekly_desktop_unknown_is_not_monthly_token_plan_usage(ui, monkeypatch, tmp_path):
