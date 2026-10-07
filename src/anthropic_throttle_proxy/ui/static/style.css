@@ -1084,6 +1084,16 @@ footer a:hover { color: var(--info); text-decoration: underline; }
    tokens (invariant: no raw hex outside :root). The gradient stops are
    styled here because SVG `stop-color` is a presentation attribute — CSS
    can hold it, which keeps even gradient colours in the token file. */
+.workload-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.8rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+  font-size: var(--fs-meta);
+}
+.workload-picker a[aria-current="page"] { color: var(--ctp-text); font-weight: 600; }
+.workload-picker a:focus-visible { outline: 2px solid var(--ctp-mauve); outline-offset: 3px; }
 .tps-panel {
   display: grid;
   grid-template-columns: 15rem minmax(0, 1fr);

@@ -160,7 +160,9 @@ class TpsGauge(NamedTuple):
     tok_in_fresh: float | None  # trailing-window FRESH input tokens/s (cache
     # excluded). None = not measured (e.g. 2-field sibling snapshots) — never
     # rendered as a measured zero.
-    seen: bool  # False until the ring holds a bucket with any token traffic
+    seen: bool  # False until the ring holds accounted output and is fresh
+    sample_age_s: float | None = None
+    stale: bool = False
 
 
 # Arc geometry — one place, so the template never recomputes it.
@@ -217,11 +219,17 @@ def remote_tps(snapshot: object) -> TpsGauge | None:
     return tps_gauge([[pair[0], pair[1], f] for pair, f in zip(buckets, fresh, strict=True)])
 
 
-def tps_gauge(token_buckets: list | None = None) -> TpsGauge:
-    """Build the gauge from local history or validated sibling token buckets."""
+def tps_gauge(token_buckets: list | None = None, *, now: float | None = None) -> TpsGauge:
+    """Build from measured buckets; HTML freshness never refreshes the sample."""
     buckets = token_buckets
+    age = None
+    stale = False
     if buckets is None:
-        buckets = [(p.tok_out, p.tok_in, p.tok_in_fresh) for p in _history.series()]
+        points = _history.series()
+        if points and now is not None:
+            age = max(0.0, now - points[-1].t)
+            stale = now < points[-1].t or age > 3 * _history.RESOLUTION_S
+        buckets = [(p.tok_out, p.tok_in, p.tok_in_fresh) for p in points]
     rates = [p[0] / _history.RESOLUTION_S for p in buckets]
     in_rates = [p[1] / _history.RESOLUTION_S for p in buckets]
     fresh_rates = [p[2] / _history.RESOLUTION_S for p in buckets if len(p) > 2]
@@ -254,13 +262,15 @@ def tps_gauge(token_buckets: list | None = None) -> TpsGauge:
         frac=frac,
         peak_frac=peak_frac,
         arc_len=_ARC_LEN,
-        window_s=_TPS_WINDOW_BUCKETS * _history.RESOLUTION_S,
+        window_s=n * _history.RESOLUTION_S,
         ticks=ticks,
         peak_marker=(round(mx1, 1), round(my1, 1), round(mx2, 1), round(my2, 1)),
         spark=sparkline(_fold(rates, peaks=True)),
         tok_in_now=tok_in_now,
         tok_in_fresh=tok_in_fresh,
-        seen=any(p[0] > 0 for p in buckets),
+        seen=not stale and any(p[0] > 0 for p in buckets),
+        sample_age_s=age,
+        stale=stale,
     )
 
 

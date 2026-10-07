@@ -27,6 +27,21 @@ import jinja2
 from anthropic_throttle_proxy.ui import routes
 from anthropic_throttle_proxy.ui import signals as _signals
 
+
+def workload_snapshot() -> dict:
+    """Shared synthetic sibling input for route and browser gauge regressions."""
+    return {
+        "ok": True,
+        "status": 200,
+        "inflight": 2,
+        "queued": 1,
+        "served": 50,
+        "max_concurrent": 4,
+        "upstream": "https://example.test",
+        "throughput": {"bucket_seconds": 10, "tokens": [[1200, 3000]] * 6},
+    }
+
+
 # Page-level keys the panel reads. `identity` is grouped here rather than
 # defaulted in the template because `_collect_view` always supplies it and the
 # banner it gates is a real state, not a missing one.

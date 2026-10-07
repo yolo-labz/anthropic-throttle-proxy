@@ -446,20 +446,11 @@ async def test_collect_view_wires_summary_and_provider_capacity(monkeypatch):
         "upstream_egress_ok": True,
     }
 
-    async def fake_refresh(now):
-        return {}
-
-    async def fake_fleet(now):
-        return [fleet_row]
-
-    async def fake_copilot(now):
-        return []
-
-    monkeypatch.setattr(routes._accounts, "refresh_endpoint", fake_refresh)
+    monkeypatch.setattr(routes._accounts, "_endpoint_cache", {})
     monkeypatch.setattr(routes._accounts, "account_view", lambda bearers, now, endpoint: [])
     monkeypatch.setattr(routes, "_publish_account_gauges", lambda endpoint, identity: None)
-    monkeypatch.setattr(routes._fleet, "refresh", fake_fleet)
-    monkeypatch.setattr(routes._copilot, "refresh", fake_copilot)
+    monkeypatch.setattr(routes, "_cached_fleet", lambda now: [fleet_row])
+    monkeypatch.setattr(routes, "_cached_copilot", lambda now: [])
     monkeypatch.setattr(routes._lanes, "view", lambda now: lanes_view)
     monkeypatch.setattr(
         fleet_ui_config,
