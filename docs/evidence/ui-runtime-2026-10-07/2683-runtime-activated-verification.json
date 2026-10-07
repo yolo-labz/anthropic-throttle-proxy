@@ -1,0 +1,171 @@
+{
+  "recordedAt": "2026-10-07T22:18:29.349544+00:00",
+  "sourceRevision": "45b7d0ef3321cca9c6d4e8513686efa30d889c1a",
+  "filteredHash": "sha256-wpx/L5yiv2vo9rNndRIcvur58MYp7Rkke4LivnWXJrY=",
+  "persistedChain": [
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service",
+      "target": "/nix/store/glvrzlxwg52ds2zc6x1icn446s5nircm-anthropic-throttle-proxy.service/anthropic-throttle-proxy.service",
+      "sha256": "3a1fa1a7c72d778d81d3d97bdfe353015fcb56e02b368fcd954cb7cd62646d76"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+      "sha256": "8722e97ed6367041a34774fdc495ce4c4d1e454778bcf4910b21dae7a2c199d7"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+      "sha256": "cd4213c881a463cb4b97fdb2e626ac950114925ef074420a6517753e54884b67"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+      "sha256": "ace484e8c4cc135101a52f3518fefc74ecab8722ab3a6ccdaaf6f1428c652ee2"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf",
+      "target": "/nix/store/fkabv7iwwlvv16iqdyrpgs6spz6mv6fn-99-ui-runtime-2026-10-07.conf",
+      "sha256": "a3c8435d4ad75ae79fc8adaae785e951147b92d6262839e62852dc3c4b2153d7"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf",
+      "sha256": "3fede87470cedb173548c9aa233d73783dc591aff0b37dc403c7bdb6b4cbe1ef"
+    }
+  ],
+  "effective": "ActiveState=active\nSubState=running\nFragmentPath=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service\nDropInPaths=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf\nMainPID=1096484\nExecMainStartTimestamp=Wed 2026-10-07 19:07:13 -03\nExecStart={ path=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+  "cmdlineNativeRead": {
+    "observedAtBrt": "07/10/2026 19:17 BRT",
+    "source": "Native read of /proc/1096484/cmdline and /proc/1096484/status; metadata only. The admitted control unit cannot see this host PID in its /proc namespace.",
+    "pid": "1096484",
+    "state": "S (sleeping)",
+    "argv": [
+      "/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14",
+      "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/.anthropic-throttle-proxy-wrapped"
+    ]
+  },
+  "selectedSystemdEnvironment": {
+    "THROTTLE_MIMO_REPORT": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-plan.json",
+    "THROTTLE_CENTRAL_URL": "",
+    "THROTTLE_UPSTREAM": "http://127.0.0.1:1",
+    "THROTTLE_MIMO_DESKTOP_REPORT": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-desktop.json"
+  },
+  "health": {
+    "build": "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "upstream": "http://127.0.0.1:1",
+    "central_url": "",
+    "inflight": 0,
+    "served": 0,
+    "queue_mode": "fair"
+  },
+  "report": {
+    "schema": 1,
+    "generatedAt": "2026-10-07T22:17:12Z",
+    "intervalSeconds": 300,
+    "lanes": [
+      {
+        "id": "mimo:desktop-subscription",
+        "kind": "mimo",
+        "plan": "Desktop subscription \u00b7 weekly quota",
+        "status": "ok",
+        "reason": "Desktop weekly remaining quota \u00b7 not Token Plan credits",
+        "meters": [
+          {
+            "limitId": "weekly",
+            "usedPercent": 8.799999999999997,
+            "remainingPercent": 91.2,
+            "unit": "percent",
+            "resetsAt": 1791844029
+          }
+        ]
+      }
+    ]
+  },
+  "reportAgeSeconds": 77.35,
+  "reportMode": "0600",
+  "lanePids": {
+    "mimo-desktop-subscription.service": "1181854",
+    "mimo-throttle-proxy.service": "3873577",
+    "zai-throttle-proxy.service": "3842786",
+    "mimo-tokenplan-shim.service": "1980"
+  },
+  "unrelatedPidDiscontinuity": {
+    "mimo-desktop-subscription.service": {
+      "before": "1718616",
+      "after": "1181854"
+    }
+  },
+  "pidDiscontinuityEvidence": "2683-desktop-pid-change.json: systemd scheduled restart 19:08:30 after UI activation 19:07:13; cause not established, no bridge restart issued by runtime seat.",
+  "producer": "Result=success\nExecMainStartTimestamp=Wed 2026-10-07 19:17:06 -03\nExecMainExitTimestamp=Wed 2026-10-07 19:17:12 -03\nExecMainStatus=0\nExecStart={ path=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python ; argv[]=/home/notroot/.local/share/mimo-desktop-api/.venv/bin/python /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy/desktop_report.py --backend /home/notroot/.local/share/mimo-desktop-api --output /home/notroot/.local/state/anthropic-throttle-proxy/mimo-desktop.json ; ignore_errors=no ; start_time=[Wed 2026-10-07 19:17:06 -03] ; stop_time=[Wed 2026-10-07 19:17:12 -03] ; pid=1511025 ; code=exited ; status=0 }\nCPUQuotaPerSecUSec=500ms\nMemoryMax=134217728\nTasksMax=16\nProtectHome=read-only\nStateDirectory=anthropic-throttle-proxy\n",
+  "timer": "ActiveState=active\nUnitFileState=alias\nNextElapseUSecMonotonic=4d 6h 34min 47.219028s\nLastTriggerUSec=Wed 2026-10-07 19:17:06 -03\n",
+  "gcRoots": {
+    "newPackage": [
+      "/proc/1096484/environ -> /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0",
+      "/home/notroot/.local/state/nix/gcroots/throttler-ui-45b7d0e-runtime -> /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0",
+      "/home/notroot/NixOS-2683-throttle-ui-runtime/result-ui-final -> /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0"
+    ],
+    "rollbackPackage": [
+      "/home/notroot/.local/state/nix/gcroots/throttler-6ac87f1-runtime -> /nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0",
+      "/proc/3843155/environ -> /nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0",
+      "/proc/3873577/environ -> /nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0",
+      "/proc/3842786/environ -> /nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0"
+    ],
+    "override": [
+      "/home/notroot/.local/state/nix/gcroots/throttler-ui-runtime-override -> /nix/store/fkabv7iwwlvv16iqdyrpgs6spz6mv6fn-99-ui-runtime-2026-10-07.conf"
+    ],
+    "producerUnit": [
+      "/home/notroot/.local/state/nix/gcroots/throttler-desktop-quota-service -> /nix/store/4axdcrdffbp0qi48k51inkh4xfpb6civ-mimo-desktop-quota-report.service"
+    ]
+  },
+  "sourceFingerprints": [
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/desktop_report.py",
+      "sha256": "c892fea995414d47e23f741e955eb15ae25c3465758a21e758b595fb99bc0cc6"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/lanes.py",
+      "sha256": "165811aceb9c73fabd74d6db3254b0690c91b002203854c190c35fb48135626f"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/__init__.py",
+      "sha256": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/presentation.py",
+      "sha256": "6c79d3b0b2aced03daa6a1b0b780f920948b459b1c14ba74718408554208d893"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/routes.py",
+      "sha256": "d9612dd75673656c96f736a8c6101f8c74c3ec6110c7fa3ea77dab99730dabbc"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/signals.py",
+      "sha256": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/static/style.css",
+      "sha256": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/templates/dashboard.html",
+      "sha256": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/templates/partials/config.html",
+      "sha256": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095"
+    },
+    {
+      "sourcePath": "src/anthropic_throttle_proxy/ui/templates/partials/stats.html",
+      "sha256": "af6b6ddd5947c863d6daa2a10eaf35dca53758c7fab7120b54ac56daa9289e4c"
+    }
+  ],
+  "uiHtmlSha256": "b8d73e9256e41c69ba52308e9b6c9a55c1434f79db69de1b706bd2f41ca7ae6d",
+  "servedCssSha256": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+  "actualUiAssertions": [
+    "independent Desktop weekly row agrees with producer remainingPercent",
+    "distinct monthly/weekly report environment",
+    "served CSS agrees with final immutable source"
+  ],
+  "browserAcceptance": "Separate pW receipt required; not claimed by this script."
+}

@@ -1,0 +1,29 @@
+{
+  "recorded_epoch": 1791409772.7772093,
+  "second_automatic_tick": "Result=success\nExecMainStartTimestamp=Wed 2026-10-07 18:46:47 -03\nExecMainExitTimestamp=Wed 2026-10-07 18:46:54 -03\nExecMainStatus=0\n",
+  "timer": "ActiveState=active\nNextElapseUSecMonotonic=4d 6h 4min 28.290876s\nLastTriggerUSec=Wed 2026-10-07 18:46:47 -03\n",
+  "report": {
+    "schema": 1,
+    "generatedAt": "2026-10-07T21:46:54Z",
+    "intervalSeconds": 300,
+    "lanes": [
+      {
+        "id": "mimo:desktop-subscription",
+        "kind": "mimo",
+        "plan": "Desktop subscription \u00b7 weekly quota",
+        "status": "ok",
+        "reason": "Desktop weekly remaining quota \u00b7 not Token Plan credits",
+        "meters": [
+          {
+            "limitId": "weekly",
+            "usedPercent": 7.700000000000003,
+            "remainingPercent": 92.3,
+            "unit": "percent",
+            "resetsAt": 1791844029
+          }
+        ]
+      }
+    ]
+  },
+  "ui_pid": "3842394"
+}

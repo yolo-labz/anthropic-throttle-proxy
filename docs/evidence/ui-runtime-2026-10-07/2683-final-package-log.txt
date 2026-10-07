@@ -1,0 +1,72 @@
+Sourcing python-remove-tests-dir-hook
+Sourcing python-catch-conflicts-hook.sh
+Sourcing python-remove-bin-bytecode-hook.sh
+Sourcing pypa-build-hook
+Using pypaBuildPhase
+Sourcing python-runtime-deps-check-hook
+Using pythonRuntimeDepsCheckHook
+Sourcing pypa-install-hook
+Using pypaInstallPhase
+Sourcing python-imports-check-hook.sh
+Using pythonImportsCheckPhase
+Sourcing python-namespaces-hook
+Sourcing python-catch-conflicts-hook.sh
+Running phase: unpackPhase
+@nix { "action": "setPhase", "phase": "unpackPhase" }
+unpacking source archive /nix/store/l05gd2n53gipcv34m7rkan51wcrgswmw-source
+source root is source
+setting SOURCE_DATE_EPOCH to timestamp 315619200 of file "source/uv.lock"
+Running phase: patchPhase
+@nix { "action": "setPhase", "phase": "patchPhase" }
+Running phase: updateAutotoolsGnuConfigScriptsPhase
+@nix { "action": "setPhase", "phase": "updateAutotoolsGnuConfigScriptsPhase" }
+Running phase: configurePhase
+@nix { "action": "setPhase", "phase": "configurePhase" }
+no configure script, doing nothing
+Running phase: buildPhase
+@nix { "action": "setPhase", "phase": "buildPhase" }
+Executing pypaBuildPhase
+Creating a wheel...
+pypa build flags: --no-isolation --outdir dist/ --wheel
+[1m* Getting build dependencies for wheel...[0m
+[1m* Building wheel...[0m
+[1m[92mSuccessfully built [4manthropic_throttle_proxy-0.1.0-py3-none-any.whl[0m[1m[92m[0m
+Finished creating a wheel...
+Finished executing pypaBuildPhase
+Running phase: pythonRuntimeDepsCheckHook
+@nix { "action": "setPhase", "phase": "pythonRuntimeDepsCheckHook" }
+Executing pythonRuntimeDepsCheck
+Checking runtime dependencies for anthropic_throttle_proxy-0.1.0-py3-none-any.whl
+Finished executing pythonRuntimeDepsCheck
+Running phase: installPhase
+@nix { "action": "setPhase", "phase": "installPhase" }
+Executing pypaInstallPhase
+Successfully installed anthropic_throttle_proxy-0.1.0-py3-none-any.whl
+Finished executing pypaInstallPhase
+Running phase: pythonOutputDistPhase
+@nix { "action": "setPhase", "phase": "pythonOutputDistPhase" }
+Executing pythonOutputDistPhase
+Finished executing pythonOutputDistPhase
+Running phase: fixupPhase
+@nix { "action": "setPhase", "phase": "fixupPhase" }
+shrinking RPATHs of ELF executables and libraries in /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0
+checking for references to /build/ in /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0...
+patching script interpreter paths in /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0
+stripping (with command strip and flags -S -p) in /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/lib /nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin
+shrinking RPATHs of ELF executables and libraries in /nix/store/dzwriy57kc8jpcda7axp0kbp6w2c3p3h-anthropic-throttle-proxy-0.1.0-dist
+checking for references to /build/ in /nix/store/dzwriy57kc8jpcda7axp0kbp6w2c3p3h-anthropic-throttle-proxy-0.1.0-dist...
+patching script interpreter paths in /nix/store/dzwriy57kc8jpcda7axp0kbp6w2c3p3h-anthropic-throttle-proxy-0.1.0-dist
+Rewriting #!/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14 to #!/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7
+wrapping `/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy'...
+Rewriting #!/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14 to #!/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7
+wrapping `/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-ingress'...
+Executing pythonRemoveTestsDir
+Finished executing pythonRemoveTestsDir
+Running phase: pythonCatchConflictsPhase
+@nix { "action": "setPhase", "phase": "pythonCatchConflictsPhase" }
+Running phase: pythonRemoveBinBytecodePhase
+@nix { "action": "setPhase", "phase": "pythonRemoveBinBytecodePhase" }
+Running phase: pythonImportsCheckPhase
+@nix { "action": "setPhase", "phase": "pythonImportsCheckPhase" }
+Executing pythonImportsCheckPhase
+Check whether the following modules can be imported: anthropic_throttle_proxy

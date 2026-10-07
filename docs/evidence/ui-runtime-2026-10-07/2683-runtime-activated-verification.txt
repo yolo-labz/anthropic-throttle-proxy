@@ -1,0 +1,11 @@
+removing stale temporary roots file "/nix/var/nix/temproots/1091758"
+removing stale temporary roots file "/nix/var/nix/temproots/1091939"
+removing stale temporary roots file "/nix/var/nix/temproots/951313"
+removing stale temporary roots file "/nix/var/nix/temproots/1091717"
+removing stale temporary roots file "/nix/var/nix/temproots/946297"
+removing stale temporary roots file "/nix/var/nix/temproots/1091800"
+removing stale temporary roots file "/nix/var/nix/temproots/1091871"
+PASS: persisted/effective/imported/cmdline and 10 source files match 45b7d0ef3321cca9c6d4e8513686efa30d889c1a
+PASS: actual /ui matches 91.2% weekly remaining; sample 77.3s old
+PASS: rollback/active roots and closed upstream retained; Token Plan/Z.AI/shim PIDs unchanged
+Desktop PID discontinuity retained: {'mimo-desktop-subscription.service': {'before': '1718616', 'after': '1181854'}}
