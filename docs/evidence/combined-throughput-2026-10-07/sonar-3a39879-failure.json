@@ -1,0 +1,15 @@
+{
+  "observed_at": "07/10/2026 20:33 BRT",
+  "revision": "3a398791ee5b49478dac9fb920014ddf81c4feb7",
+  "ce_task": "0919a4c2-a9fa-490c-8b65-3d4bd8809306",
+  "analysis_id": "dea8dd03-1b85-4963-8f3a-726cd0e593db",
+  "historical_gate": "ERROR",
+  "conditions": {"new_coverage": "93.6", "new_duplicated_lines_density": "0.0", "new_violations": "3"},
+  "issues": [
+    {"key": "c1764782-e5de-4ec7-b399-754e712755d4", "rule": "python:S3776", "file": "output_usage.py", "line": 83, "message": "read_usage cognitive complexity 17, allowed 15"},
+    {"key": "a2d6b21b-e4f1-419b-8cd4-0d645f034924", "rule": "python:S5886", "file": "output_usage.py", "line": 150, "message": "cached returns dataclasses.replace; explicit concrete Snapshot return type required"},
+    {"key": "deeff825-4ceb-4eac-878b-f2bc5e0b6dea", "rule": "python:S5886", "file": "output_usage.py", "line": 156, "message": "cached returns dataclasses.replace; explicit concrete Snapshot return type required"}
+  ],
+  "provenance": "Read-only authenticated tailnet CE activity + project analyses + qualitygates/project_status?analysisId, then issues for that current shared-project analysis. This is a superseded head, not final acceptance.",
+  "repair": "Move bound validation to the existing bounded I/O seam; retain all input checks. Explicit typing.cast(Snapshot, replace(...)) preserves immutable snapshot API and runtime behavior. No exclusions, suppression or threshold changes."
+}

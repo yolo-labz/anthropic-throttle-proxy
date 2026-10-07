@@ -1,0 +1,553 @@
+{
+  "head": "da08c3318310dc7bc64300af44221d65428ac491",
+  "ce": {
+    "id": "e57bad44-aebb-4748-bd7b-3a6f7374b757",
+    "type": "REPORT",
+    "componentId": "2bf1ca1d-9aaa-421e-9a46-f4eeed2a6108",
+    "componentKey": "yolo-labz_anthropic-throttle-proxy",
+    "componentName": "anthropic-throttle-proxy",
+    "componentQualifier": "TRK",
+    "analysisId": "685648ee-3f33-4230-9d78-ab2b4a7b5126",
+    "status": "SUCCESS",
+    "submittedAt": "2026-10-07T23:35:41+0000",
+    "submitterLogin": "admin",
+    "startedAt": "2026-10-07T23:35:42+0000",
+    "executedAt": "2026-10-07T23:35:43+0000",
+    "executionTimeMs": 1224,
+    "hasScannerContext": true,
+    "warningCount": 0,
+    "warnings": [],
+    "infoMessages": []
+  },
+  "analysis": {
+    "key": "685648ee-3f33-4230-9d78-ab2b4a7b5126",
+    "date": "2026-10-07T23:34:46+0000",
+    "events": [
+      {
+        "key": "a1b7d5da-1cca-4074-b84f-0e111b3d99cf",
+        "category": "VERSION",
+        "name": "not provided"
+      }
+    ],
+    "projectVersion": "not provided",
+    "manualNewCodePeriodBaseline": false,
+    "revision": "da08c3318310dc7bc64300af44221d65428ac491",
+    "detectedCI": "Github Actions"
+  },
+  "historical_gate": {
+    "projectStatus": {
+      "status": "ERROR",
+      "conditions": [
+        {
+          "status": "OK",
+          "metricKey": "new_coverage",
+          "comparator": "LT",
+          "errorThreshold": "80",
+          "actualValue": "93.6"
+        },
+        {
+          "status": "OK",
+          "metricKey": "new_duplicated_lines_density",
+          "comparator": "GT",
+          "errorThreshold": "3",
+          "actualValue": "0.0"
+        },
+        {
+          "status": "ERROR",
+          "metricKey": "new_violations",
+          "comparator": "GT",
+          "errorThreshold": "0",
+          "actualValue": "4"
+        }
+      ],
+      "ignoredConditions": false,
+      "period": {
+        "mode": "PREVIOUS_VERSION",
+        "date": "2026-05-22T02:08:28+0000"
+      },
+      "caycStatus": "compliant"
+    }
+  },
+  "issues": [
+    {
+      "key": "e539b644-5ad8-4aa0-8738-94cfdbfd6502",
+      "rule": "python:S5886",
+      "severity": "MAJOR",
+      "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+      "project": "yolo-labz_anthropic-throttle-proxy",
+      "line": 158,
+      "hash": "17326c13c1bfde4f03662f54ca97e6bd",
+      "textRange": {
+        "startLine": 158,
+        "endLine": 162,
+        "startOffset": 19,
+        "endOffset": 13
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 4,
+                "endOffset": 10
+              },
+              "msg": "Function definition.",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 43,
+                "endOffset": 51
+              },
+              "msg": "Type hint.",
+              "msgFormattings": []
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Return a value of type \"Snapshot\" instead of \"DataclassInstance\" or update function \"cached\" type hint.",
+      "effort": "5min",
+      "debt": "5min",
+      "author": "30302237+phsb5321@users.noreply.github.com",
+      "tags": [
+        "typing"
+      ],
+      "creationDate": "2026-10-07T23:34:46+0000",
+      "updateDate": "2026-10-07T23:34:46+0000",
+      "type": "CODE_SMELL",
+      "scope": "MAIN",
+      "quickFixAvailable": false,
+      "messageFormattings": [],
+      "codeVariants": [],
+      "cleanCodeAttribute": "LOGICAL",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "prioritizedRule": false,
+      "fromSonarQubeUpdate": false,
+      "internalTags": [],
+      "linkedTicketStatus": "NOT_LINKED"
+    },
+    {
+      "key": "7a27dc3e-1085-4385-b6b7-15ced19c1f6a",
+      "rule": "python:S5886",
+      "severity": "MAJOR",
+      "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+      "project": "yolo-labz_anthropic-throttle-proxy",
+      "line": 163,
+      "hash": "8e47f8a391aa2308ddde9392a6d29106",
+      "textRange": {
+        "startLine": 163,
+        "endLine": 163,
+        "startOffset": 15,
+        "endOffset": 77
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 4,
+                "endOffset": 10
+              },
+              "msg": "Function definition.",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 43,
+                "endOffset": 51
+              },
+              "msg": "Type hint.",
+              "msgFormattings": []
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Return a value of type \"Snapshot\" instead of \"DataclassInstance\" or update function \"cached\" type hint.",
+      "effort": "5min",
+      "debt": "5min",
+      "author": "30302237+phsb5321@users.noreply.github.com",
+      "tags": [
+        "typing"
+      ],
+      "creationDate": "2026-10-07T23:34:46+0000",
+      "updateDate": "2026-10-07T23:34:46+0000",
+      "type": "CODE_SMELL",
+      "scope": "MAIN",
+      "quickFixAvailable": false,
+      "messageFormattings": [],
+      "codeVariants": [],
+      "cleanCodeAttribute": "LOGICAL",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "prioritizedRule": false,
+      "fromSonarQubeUpdate": false,
+      "internalTags": [],
+      "linkedTicketStatus": "NOT_LINKED"
+    },
+    {
+      "key": "c1764782-e5de-4ec7-b399-754e712755d4",
+      "rule": "python:S3776",
+      "severity": "CRITICAL",
+      "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+      "project": "yolo-labz_anthropic-throttle-proxy",
+      "line": 83,
+      "hash": "609921527b46f0f078cdc515231622a7",
+      "textRange": {
+        "startLine": 83,
+        "endLine": 83,
+        "startOffset": 4,
+        "endOffset": 14
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 88,
+                "endLine": 88,
+                "startOffset": 8,
+                "endOffset": 10
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 88,
+                "endLine": 88,
+                "startOffset": 38,
+                "endOffset": 40
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 91,
+                "endLine": 91,
+                "startOffset": 4,
+                "endOffset": 10
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 92,
+                "endLine": 92,
+                "startOffset": 36,
+                "endOffset": 38
+              },
+              "msg": "+2 (incl 1 for nesting)",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 93,
+                "endLine": 93,
+                "startOffset": 4,
+                "endOffset": 10
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 94,
+                "endLine": 94,
+                "startOffset": 36,
+                "endOffset": 38
+              },
+              "msg": "+2 (incl 1 for nesting)",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 95,
+                "endLine": 95,
+                "startOffset": 4,
+                "endOffset": 6
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 97,
+                "endLine": 97,
+                "startOffset": 4,
+                "endOffset": 6
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 99,
+                "endLine": 99,
+                "startOffset": 4,
+                "endOffset": 6
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 110,
+                "endLine": 110,
+                "startOffset": 8,
+                "endOffset": 11
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 113,
+                "endLine": 113,
+                "startOffset": 12,
+                "endOffset": 14
+              },
+              "msg": "+2 (incl 1 for nesting)",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 116,
+                "endLine": 116,
+                "startOffset": 4,
+                "endOffset": 10
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 118,
+                "endLine": 118,
+                "startOffset": 4,
+                "endOffset": 6
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 120,
+                "endLine": 120,
+                "startOffset": 4,
+                "endOffset": 6
+              },
+              "msg": "+1",
+              "msgFormattings": []
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Refactor this function to reduce its Cognitive Complexity from 17 to the 15 allowed.",
+      "effort": "7min",
+      "debt": "7min",
+      "author": "30302237+phsb5321@users.noreply.github.com",
+      "tags": [
+        "brain-overload"
+      ],
+      "creationDate": "2026-10-07T23:20:26+0000",
+      "updateDate": "2026-10-07T23:31:14+0000",
+      "type": "CODE_SMELL",
+      "scope": "MAIN",
+      "quickFixAvailable": false,
+      "messageFormattings": [],
+      "codeVariants": [],
+      "cleanCodeAttribute": "FOCUSED",
+      "cleanCodeAttributeCategory": "ADAPTABLE",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "HIGH"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "prioritizedRule": false,
+      "fromSonarQubeUpdate": false,
+      "internalTags": [],
+      "linkedTicketStatus": "NOT_LINKED"
+    },
+    {
+      "key": "a2d6b21b-e4f1-419b-8cd4-0d645f034924",
+      "rule": "python:S5886",
+      "severity": "MAJOR",
+      "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+      "project": "yolo-labz_anthropic-throttle-proxy",
+      "line": 150,
+      "hash": "17326c13c1bfde4f03662f54ca97e6bd",
+      "textRange": {
+        "startLine": 150,
+        "endLine": 154,
+        "startOffset": 15,
+        "endOffset": 9
+      },
+      "flows": [
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 4,
+                "endOffset": 10
+              },
+              "msg": "Function definition.",
+              "msgFormattings": []
+            }
+          ]
+        },
+        {
+          "locations": [
+            {
+              "component": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/output_usage.py",
+              "textRange": {
+                "startLine": 143,
+                "endLine": 143,
+                "startOffset": 43,
+                "endOffset": 51
+              },
+              "msg": "Type hint.",
+              "msgFormattings": []
+            }
+          ]
+        }
+      ],
+      "status": "OPEN",
+      "message": "Return a value of type \"Snapshot\" instead of \"DataclassInstance\" or update function \"cached\" type hint.",
+      "effort": "5min",
+      "debt": "5min",
+      "author": "30302237+phsb5321@users.noreply.github.com",
+      "tags": [
+        "typing"
+      ],
+      "creationDate": "2026-10-07T23:20:26+0000",
+      "updateDate": "2026-10-07T23:31:14+0000",
+      "type": "CODE_SMELL",
+      "scope": "MAIN",
+      "quickFixAvailable": false,
+      "messageFormattings": [],
+      "codeVariants": [],
+      "cleanCodeAttribute": "LOGICAL",
+      "cleanCodeAttributeCategory": "INTENTIONAL",
+      "impacts": [
+        {
+          "softwareQuality": "MAINTAINABILITY",
+          "severity": "MEDIUM"
+        }
+      ],
+      "issueStatus": "OPEN",
+      "prioritizedRule": false,
+      "fromSonarQubeUpdate": false,
+      "internalTags": [],
+      "linkedTicketStatus": "NOT_LINKED"
+    }
+  ]
+}

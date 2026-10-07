@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from .ui import signals
 
@@ -57,6 +58,9 @@ def _completion(line: bytes, now: float) -> tuple[float, int, str]:
 
 
 def _read_tail(path: Path | None, max_bytes: int) -> tuple[bytes, tuple[int, int]]:
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("invalid journal read bound")
+    max_bytes = min(MAX_READ_BYTES, max_bytes)
     if path is None:
         default = Path(
             os.environ.get("PI_USAGE_STATE_DIR", Path.home() / ".local/state/pi-harness")
@@ -85,9 +89,7 @@ def read_usage(
 ) -> Snapshot:
     """Replaceable snapshot of exact output in [now-60, now); bounded local I/O."""
     try:
-        if type(max_bytes) is not int or max_bytes <= 0:
-            raise ValueError("invalid journal read bound")
-        data, identity = _read_tail(path, min(MAX_READ_BYTES, max_bytes))
+        data, identity = _read_tail(path, max_bytes)
     except OSError:
         return _unknown(time.time() if now is None else now, "client output journal unavailable")
     except ValueError as exc:
@@ -147,18 +149,24 @@ def cached(*, now: float | None = None) -> Snapshot:
     if _cache is None:
         return _unknown(now, "awaiting client output accounting")
     if now < _cache.sampled_at or now - _cache.sampled_at > CACHE_STALE_S:
-        return replace(
-            _cache,
-            gauge=_cache.gauge._replace(seen=False, stale=True),
-            reason="client accounting cache stale",
+        return cast(
+            Snapshot,
+            replace(
+                _cache,
+                gauge=_cache.gauge._replace(seen=False, stale=True),
+                reason="client accounting cache stale",
+            ),
         )
     if _cache.last_event_at is not None:
         age = now - _cache.last_event_at
         if age > EVENT_STALE_S:
-            return replace(
-                _cache,
-                gauge=_cache.gauge._replace(seen=False, stale=True, sample_age_s=age),
-                reason="client completion evidence stale",
+            return cast(
+                Snapshot,
+                replace(
+                    _cache,
+                    gauge=_cache.gauge._replace(seen=False, stale=True, sample_age_s=age),
+                    reason="client completion evidence stale",
+                ),
             )
-        return replace(_cache, gauge=_cache.gauge._replace(sample_age_s=age))
+        return cast(Snapshot, replace(_cache, gauge=_cache.gauge._replace(sample_age_s=age)))
     return _cache
