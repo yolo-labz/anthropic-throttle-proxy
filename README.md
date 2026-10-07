@@ -64,6 +64,21 @@ to 32,768 characters. A missing source displays **no reading**, not 0% usage.
 or generate telemetry.** A `codex:c` row needs a lane probe that actually
 measures that account; YAML alone cannot complete that integration.
 
+### Combined output throughput
+
+The dial is exact generated output recorded at completion across **Pi turns on
+this host**, summed over one trailing 60-second wall-clock window. Workload
+selection scopes other panels, not this combined dial. It uses only the
+installed Pi completion journal; overlapping proxy/central counters are never
+added. Non-Pi clients and other hosts remain visibly **unmeasured**.
+
+`THROTTLE_PI_USAGE_PATH` overrides `~/.local/state/pi-harness/usage.jsonl`
+(`PI_USAGE_STATE_DIR` is also respected). The five-second background collector
+reads a bounded 2 MiB tail off the event loop; renders are cache-only. Missing,
+malformed, incomplete/warming-up or stale evidence displays unknown, not zero.
+A complete measured idle minute displays zero. No journal is installed or
+produced by this proxy; a central/container without it stays unknown.
+
 ## Deploy to Dokku
 
 See [`docs/DEPLOY-DOKKU.md`](docs/DEPLOY-DOKKU.md). One-time:
