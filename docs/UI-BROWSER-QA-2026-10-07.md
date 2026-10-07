@@ -1,5 +1,11 @@
 # Independent UI/browser acceptance — 07/10/2026
 
+> The #316/#321 failures below are historical retained receipts. New #323 final
+> source is `45b7d0ef` (candidate `4862145d`), now activated by pV in package
+> `95ll5i712…`. Fresh independent AX/geometry and exact deployed acceptance are
+> tracked in [UI-QA-FINAL-2026-10-07.md](UI-QA-FINAL-2026-10-07.md), not inferred
+> from the old pending #321 footnote. #321 is already MERGED `de88b981`.
+
 Seat: `thr-ui-browser-qa`, w1P:pW. Generator: OpenAI GPT-6.1 Sol.
 Coordinator: w1P:pG. Isolated branch: `319-ui-browser-qa`.
 
