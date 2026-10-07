@@ -1,0 +1,273 @@
+FFFFFFFFFFFF                                                             [100%]
+=================================== FAILURES ===================================
+______________ test_independent_weekly_units_and_no_inferred_pace ______________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_independent_weekly_units_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c4993950>
+
+    def test_independent_weekly_units_and_no_inferred_pace(tmp_path, monkeypatch):
+        rows = read(tmp_path, monkeypatch, payload())
+>       assert {row["id"] for row in rows} == {LANE_ID, "mimo:plan"}
+E       AssertionError: assert {'mimo:plan'} == {'mimo:deskto..., 'mimo:plan'}
+E         
+E         Extra items in the right set:
+E         'mimo:desktop-subscription'
+E         Use -v to get more diff
+
+tests/test_desktop_quota.py:52: AssertionError
+_______________ test_bad_contract_unknown_not_healthy[duplicate] _______________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c4993490>
+mutation = 'duplicate'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+________________ test_bad_contract_unknown_not_healthy[missing] ________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c4734ef0>
+mutation = 'missing'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+________________ test_bad_contract_unknown_not_healthy[monthly] ________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c477ead0>
+mutation = 'monthly'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+_________________ test_bad_contract_unknown_not_healthy[unit] __________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c477f240>
+mutation = 'unit'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+_________________ test_bad_contract_unknown_not_healthy[range] _________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_4')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c47e5550>
+mutation = 'range'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+_____________ test_bad_contract_unknown_not_healthy[inconsistent] ______________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_5')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c47e5f50>
+mutation = 'inconsistent'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+_________________ test_bad_contract_unknown_not_healthy[clock] _________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_6')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c4728140>
+mutation = 'clock'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+_______________ test_bad_contract_unknown_not_healthy[interval] ________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_7')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c47285f0>
+mutation = 'interval'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+________________ test_bad_contract_unknown_not_healthy[schema] _________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_bad_contract_unknown_not_8')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c472c3d0>
+mutation = 'schema'
+
+    @pytest.mark.parametrize("mutation", ["duplicate", "missing", "monthly", "unit", "range", "inconsistent", "clock", "interval", "schema"])
+    def test_bad_contract_unknown_not_healthy(tmp_path, monkeypatch, mutation):
+        raw = payload()
+        meter = raw["lanes"][0]["meters"][0]
+        if mutation == "duplicate": raw["lanes"] *= 2
+        if mutation == "missing": raw["lanes"] = []
+        if mutation == "monthly": meter["limitId"] = "monthly"
+        if mutation == "unit": meter["unit"] = "credits"
+        if mutation == "range": meter["remainingPercent"] = 101
+        if mutation == "inconsistent": meter["usedPercent"] = 93.6
+        if mutation == "clock": raw["generatedAt"] = "bad"
+        if mutation == "interval": raw.pop("intervalSeconds")
+        if mutation == "schema": raw["schema"] = 2
+>       row = next(row for row in read(tmp_path, monkeypatch, raw) if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:75: StopIteration
+_______________________ test_desktop_ages_independently ________________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_desktop_ages_independentl0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c472fa10>
+
+    def test_desktop_ages_independently(tmp_path, monkeypatch):
+        rows = read(tmp_path, monkeypatch, payload(), NOW + 601)
+>       row = next(row for row in rows if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:82: StopIteration
+_______________ test_missing_file_replaces_previously_fresh_row ________________
+
+tmp_path = PosixPath('/var/tmp/pi-agent-1000/28502da5966f2034.3378875.5c78a7927ed2/pytest-of-notroot/pytest-0/test_missing_file_replaces_pre0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x78e6c48f6270>
+
+    def test_missing_file_replaces_previously_fresh_row(tmp_path, monkeypatch):
+        read(tmp_path, monkeypatch, payload())
+        (tmp_path / "desktop.json").unlink()
+        rows = lanes.view(NOW + lanes.TTL_S)["lanes"]
+>       row = next(row for row in rows if row["id"] == LANE_ID)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       StopIteration
+
+tests/test_desktop_quota.py:91: StopIteration
+=========================== short test summary info ============================
+FAILED tests/test_desktop_quota.py::test_independent_weekly_units_and_no_inferred_pace
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[duplicate]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[missing]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[monthly]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[unit]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[range]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[inconsistent]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[clock]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[interval]
+FAILED tests/test_desktop_quota.py::test_bad_contract_unknown_not_healthy[schema]
+FAILED tests/test_desktop_quota.py::test_desktop_ages_independently - StopIte...
+FAILED tests/test_desktop_quota.py::test_missing_file_replaces_previously_fresh_row
+12 failed in 0.12s
