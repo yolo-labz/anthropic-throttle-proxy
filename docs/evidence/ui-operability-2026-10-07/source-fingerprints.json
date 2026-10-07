@@ -1,0 +1,16 @@
+{
+  "scope": "source fingerprints only; not deployed/runtime evidence",
+  "head": "1c734250a424768161620fabece6fd094de540bb",
+  "files": [
+    {
+      "path": "src/anthropic_throttle_proxy/ui/static/style.css",
+      "baseline_sha256": "19862218eee3e1c0121ef757f2ec46d7c81919126b5c34279b49f59d7aa0d74c",
+      "candidate_sha256": "cdb8f14c1c35bc2f37975fcf91636f7289538f4f4a2a870220e74bfd7b87cffc"
+    },
+    {
+      "path": "tests/test_ui_contrast.py",
+      "baseline_sha256": "11b1ae9d889ddb725ec0a2b55b93ddcf63ec71adabb753cb0936423aad9fa4be",
+      "candidate_sha256": "268dcbe13af09f862e0139eb358a46a4588a08bd5ecab4e6141cdb77e2974274"
+    }
+  ]
+}
