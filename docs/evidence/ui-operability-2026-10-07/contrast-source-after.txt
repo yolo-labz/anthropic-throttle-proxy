@@ -1,0 +1,3 @@
+SOURCE ARITHMETIC ONLY; pytest/browser NOT executed
+--muted (#a6adc8) on --panel (#181825): 7.8856:1
+WCAG normal-text AA: True

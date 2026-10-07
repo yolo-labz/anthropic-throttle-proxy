@@ -1,0 +1,625 @@
+ruff + pytest	Set up job	﻿2026-10-07T21:06:27.8238531Z Current runner version: '2.337.0'
+ruff + pytest	Set up job	2026-10-07T21:06:27.8257723Z ##[group]Runner Image Provisioner
+ruff + pytest	Set up job	2026-10-07T21:06:27.8258292Z Hosted Compute Agent
+ruff + pytest	Set up job	2026-10-07T21:06:27.8258748Z Version: 20261002.596
+ruff + pytest	Set up job	2026-10-07T21:06:27.8259149Z Commit: c3d12f3313a95f25162a1503be624f3b0617f8c0
+ruff + pytest	Set up job	2026-10-07T21:06:27.8259642Z Build Date: 2026-10-02T22:28:27Z
+ruff + pytest	Set up job	2026-10-07T21:06:27.8260107Z Worker ID: {fcb5deea-f6a5-4150-bc5d-b1c4a0f9b39c}
+ruff + pytest	Set up job	2026-10-07T21:06:27.8260543Z Region: centralus
+ruff + pytest	Set up job	2026-10-07T21:06:27.8261141Z Cloud: Azure
+ruff + pytest	Set up job	2026-10-07T21:06:27.8261521Z ##[endgroup]
+ruff + pytest	Set up job	2026-10-07T21:06:27.8262635Z ##[group]Operating System
+ruff + pytest	Set up job	2026-10-07T21:06:27.8263048Z Ubuntu
+ruff + pytest	Set up job	2026-10-07T21:06:27.8263388Z 24.04.5
+ruff + pytest	Set up job	2026-10-07T21:06:27.8263730Z LTS
+ruff + pytest	Set up job	2026-10-07T21:06:27.8264099Z ##[endgroup]
+ruff + pytest	Set up job	2026-10-07T21:06:27.8264474Z ##[group]Runner Image
+ruff + pytest	Set up job	2026-10-07T21:06:27.8264880Z Image: ubuntu-24.04
+ruff + pytest	Set up job	2026-10-07T21:06:27.8265250Z Version: 20261004.327.1
+ruff + pytest	Set up job	2026-10-07T21:06:27.8265898Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/Ubuntu2404-Readme.md
+ruff + pytest	Set up job	2026-10-07T21:06:27.8267027Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261004.327
+ruff + pytest	Set up job	2026-10-07T21:06:27.8267634Z ##[endgroup]
+ruff + pytest	Set up job	2026-10-07T21:06:27.8268324Z ##[group]GITHUB_TOKEN Permissions
+ruff + pytest	Set up job	2026-10-07T21:06:27.8269567Z Contents: read
+ruff + pytest	Set up job	2026-10-07T21:06:27.8269969Z Metadata: read
+ruff + pytest	Set up job	2026-10-07T21:06:27.8270315Z ##[endgroup]
+ruff + pytest	Set up job	2026-10-07T21:06:27.8272005Z Secret source: Actions
+ruff + pytest	Set up job	2026-10-07T21:06:27.8272590Z Cache mode: write
+ruff + pytest	Set up job	2026-10-07T21:06:27.8273088Z Prepare workflow directory
+ruff + pytest	Set up job	2026-10-07T21:06:27.8497893Z Prepare all required actions
+ruff + pytest	Set up job	2026-10-07T21:06:27.8532077Z Getting action download info
+ruff + pytest	Set up job	2026-10-07T21:06:28.0988500Z Download action repository 'step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411' (SHA:9af89fc71515a100421586dfdb3dc9c984fbf411)
+ruff + pytest	Set up job	2026-10-07T21:06:29.1166706Z Download action repository 'actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd' (SHA:de0fac2e4500dabe0009e67214ff5f5447ce83dd)
+ruff + pytest	Set up job	2026-10-07T21:06:29.2814465Z Download action repository 'astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b' (SHA:08807647e7069bb48b6ef5acd8ec9567f424441b)
+ruff + pytest	Set up job	2026-10-07T21:06:29.9977617Z Complete job name: ruff + pytest
+ruff + pytest	Pre Harden runner	﻿2026-10-07T21:06:30.0584966Z ##[group]Run step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0586131Z with:
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0586664Z   egress-policy: audit
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0591601Z   token: ***
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0592141Z   disable-telemetry: false
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0592747Z   disable-sudo: false
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0593354Z   disable-sudo-and-containers: false
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0594059Z   disable-file-monitoring: false
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0594721Z   use-policy-store: false
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0595352Z   deploy-on-self-hosted-vm: false
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.0596072Z ##[endgroup]
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1506254Z [harden-runner] pre-step
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1507304Z [!] Current Configuration: 
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1512484Z {"repo":"yolo-labz/anthropic-throttle-proxy","run_id":"37687007287","correlation_id":"3d716391-e9d6-4c55-a51b-08996eb6087c","working_directory":"/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy","api_url":"https://agent.api.stepsecurity.io/v1","telemetry_url":"https://prod.app-api.stepsecurity.io/v1","allowed_endpoints":"","egress_policy":"audit","disable_telemetry":false,"disable_sudo":false,"disable_sudo_and_containers":false,"disable_file_monitoring":false,"private":false,"is_github_hosted":true,"is_debug":false,"one_time_key":"","api_key":"","use_policy_store":false,"deploy_on_self_hosted_vm":false}
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1517390Z 
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1518071Z ^[[32mView security insights and recommended policy at:^[[0m
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1519338Z https://app.stepsecurity.io/github/yolo-labz/anthropic-throttle-proxy/actions/runs/37687007287
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.1520491Z RUNNER_NAME: GitHub Actions 1000027392
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.6987914Z Runner IP Address: 52.242.245.133
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.6988569Z Step Security Job Correlation ID: 3d716391-e9d6-4c55-a51b-08996eb6087c
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.7173180Z [!] Checking TLS_STATUS: yolo-labz
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:30.9126981Z [!] TLS_NOT_ENABLED: yolo-labz
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:31.2584108Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:31.2659322Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/0e0dc261-177c-4082-b262-96d3bfe0a4a9 -f /home/runner/work/_temp/e9da1676-981a-4465-8706-6991dedabd47
+ruff + pytest	Pre Harden runner	2026-10-07T21:06:39.5340371Z Initialized
+ruff + pytest	Harden runner	﻿2026-10-07T21:06:39.5521314Z ##[group]Run step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5521686Z with:
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5521817Z   egress-policy: audit
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5523299Z   token: ***
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5523423Z   disable-telemetry: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5523562Z   disable-sudo: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5523702Z   disable-sudo-and-containers: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5523875Z   disable-file-monitoring: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524064Z   use-policy-store: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524217Z   deploy-on-self-hosted-vm: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524362Z env:
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524478Z   STATE_disableSudo: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524627Z   STATE_disableSudoAndContainers: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524798Z   STATE_monitorStatusCode: 200
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5524980Z   STATE_addSummary: true
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5525151Z   STATE_correlation_id: 3d716391-e9d6-4c55-a51b-08996eb6087c
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5525340Z   STATE_isTLS: false
+ruff + pytest	Harden runner	2026-10-07T21:06:39.5585749Z ##[endgroup]
+ruff + pytest	Harden runner	2026-10-07T21:06:39.6174348Z [harden-runner] main-step
+ruff + pytest	Harden runner	2026-10-07T21:06:39.6178202Z ^[[32mView security insights and recommended policy at:^[[0m
+ruff + pytest	Harden runner	2026-10-07T21:06:39.6178677Z https://app.stepsecurity.io/github/yolo-labz/anthropic-throttle-proxy/actions/runs/37687007287
+ruff + pytest	Checkout	﻿2026-10-07T21:06:39.6338955Z ##[group]Run actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+ruff + pytest	Checkout	2026-10-07T21:06:39.6339392Z with:
+ruff + pytest	Checkout	2026-10-07T21:06:39.6339595Z   persist-credentials: false
+ruff + pytest	Checkout	2026-10-07T21:06:39.6339897Z   repository: yolo-labz/anthropic-throttle-proxy
+ruff + pytest	Checkout	2026-10-07T21:06:39.6342849Z   token: ***
+ruff + pytest	Checkout	2026-10-07T21:06:39.6343104Z   ssh-strict: true
+ruff + pytest	Checkout	2026-10-07T21:06:39.6343316Z   ssh-user: git
+ruff + pytest	Checkout	2026-10-07T21:06:39.6343529Z   clean: true
+ruff + pytest	Checkout	2026-10-07T21:06:39.6343749Z   sparse-checkout-cone-mode: true
+ruff + pytest	Checkout	2026-10-07T21:06:39.6343987Z   fetch-depth: 1
+ruff + pytest	Checkout	2026-10-07T21:06:39.6344190Z   fetch-tags: false
+ruff + pytest	Checkout	2026-10-07T21:06:39.6344398Z   show-progress: true
+ruff + pytest	Checkout	2026-10-07T21:06:39.6344598Z   lfs: false
+ruff + pytest	Checkout	2026-10-07T21:06:39.6344783Z   submodules: false
+ruff + pytest	Checkout	2026-10-07T21:06:39.6344984Z   set-safe-directory: true
+ruff + pytest	Checkout	2026-10-07T21:06:39.6345206Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:39.7071720Z Syncing repository: yolo-labz/anthropic-throttle-proxy
+ruff + pytest	Checkout	2026-10-07T21:06:39.7073021Z ##[group]Getting Git version info
+ruff + pytest	Checkout	2026-10-07T21:06:39.7073360Z Working directory is '/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy'
+ruff + pytest	Checkout	2026-10-07T21:06:39.7073983Z [command]/usr/bin/git version
+ruff + pytest	Checkout	2026-10-07T21:06:39.7138069Z git version 2.55.0
+ruff + pytest	Checkout	2026-10-07T21:06:39.7156866Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:39.7177719Z Temporarily overriding HOME='/home/runner/work/_temp/8f8c5130-3885-42c6-a692-0aa4c1521d35' before making global git config changes
+ruff + pytest	Checkout	2026-10-07T21:06:39.7178620Z Adding repository directory to the temporary git global config as a safe directory
+ruff + pytest	Checkout	2026-10-07T21:06:39.7182430Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Checkout	2026-10-07T21:06:39.7242719Z Deleting the contents of '/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy'
+ruff + pytest	Checkout	2026-10-07T21:06:39.7246073Z ##[group]Initializing the repository
+ruff + pytest	Checkout	2026-10-07T21:06:39.7250954Z [command]/usr/bin/git init /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Checkout	2026-10-07T21:06:39.7361208Z hint: Using 'master' as the name for the initial branch. This default branch name
+ruff + pytest	Checkout	2026-10-07T21:06:39.7362225Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+ruff + pytest	Checkout	2026-10-07T21:06:39.7363435Z hint: to use in all of your new repositories, which will suppress this warning,
+ruff + pytest	Checkout	2026-10-07T21:06:39.7363808Z hint: call:
+ruff + pytest	Checkout	2026-10-07T21:06:39.7363993Z hint:
+ruff + pytest	Checkout	2026-10-07T21:06:39.7364282Z hint: 	git config --global init.defaultBranch <name>
+ruff + pytest	Checkout	2026-10-07T21:06:39.7364742Z hint:
+ruff + pytest	Checkout	2026-10-07T21:06:39.7365065Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+ruff + pytest	Checkout	2026-10-07T21:06:39.7365570Z hint: 'development'. The just-created branch can be renamed via this command:
+ruff + pytest	Checkout	2026-10-07T21:06:39.7365954Z hint:
+ruff + pytest	Checkout	2026-10-07T21:06:39.7366164Z hint: 	git branch -m <name>
+ruff + pytest	Checkout	2026-10-07T21:06:39.7366384Z hint:
+ruff + pytest	Checkout	2026-10-07T21:06:39.7366826Z hint: Disable this message with "git config set advice.defaultBranchName false"
+ruff + pytest	Checkout	2026-10-07T21:06:39.7382640Z Initialized empty Git repository in /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/
+ruff + pytest	Checkout	2026-10-07T21:06:39.7384315Z [command]/usr/bin/git remote add origin https://github.com/yolo-labz/anthropic-throttle-proxy
+ruff + pytest	Checkout	2026-10-07T21:06:39.7439309Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:39.7440015Z ##[group]Disabling automatic garbage collection
+ruff + pytest	Checkout	2026-10-07T21:06:39.7443189Z [command]/usr/bin/git config --local gc.auto 0
+ruff + pytest	Checkout	2026-10-07T21:06:39.7482162Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:39.7482895Z ##[group]Setting up auth
+ruff + pytest	Checkout	2026-10-07T21:06:39.7483423Z Removing SSH command configuration
+ruff + pytest	Checkout	2026-10-07T21:06:39.7490253Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+ruff + pytest	Checkout	2026-10-07T21:06:39.7532827Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+ruff + pytest	Checkout	2026-10-07T21:06:39.7854153Z Removing HTTP extra header
+ruff + pytest	Checkout	2026-10-07T21:06:39.7859697Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+ruff + pytest	Checkout	2026-10-07T21:06:39.7897892Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+ruff + pytest	Checkout	2026-10-07T21:06:39.8122413Z Removing includeIf entries pointing to credentials config files
+ruff + pytest	Checkout	2026-10-07T21:06:39.8128156Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+ruff + pytest	Checkout	2026-10-07T21:06:39.8165847Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+ruff + pytest	Checkout	2026-10-07T21:06:39.8395849Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+ruff + pytest	Checkout	2026-10-07T21:06:39.8440813Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:39.8479911Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:39.8539897Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:39.8579305Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:39.8612488Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:39.8612910Z ##[group]Fetching the repository
+ruff + pytest	Checkout	2026-10-07T21:06:39.8619710Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7533d5fbd31f47f62fc0b8cf2c1b8d96cf8f2cca:refs/remotes/pull/320/merge
+ruff + pytest	Checkout	2026-10-07T21:06:40.7441961Z From https://github.com/yolo-labz/anthropic-throttle-proxy
+ruff + pytest	Checkout	2026-10-07T21:06:40.7442604Z  * [new ref]         7533d5fbd31f47f62fc0b8cf2c1b8d96cf8f2cca -> pull/320/merge
+ruff + pytest	Checkout	2026-10-07T21:06:40.7447109Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:40.7447392Z ##[group]Determining the checkout info
+ruff + pytest	Checkout	2026-10-07T21:06:40.7447799Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:40.7452229Z [command]/usr/bin/git sparse-checkout disable
+ruff + pytest	Checkout	2026-10-07T21:06:40.7503502Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+ruff + pytest	Checkout	2026-10-07T21:06:40.7537099Z ##[group]Checking out the ref
+ruff + pytest	Checkout	2026-10-07T21:06:40.7540922Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/320/merge
+ruff + pytest	Checkout	2026-10-07T21:06:40.8058042Z Note: switching to 'refs/remotes/pull/320/merge'.
+ruff + pytest	Checkout	2026-10-07T21:06:40.8058699Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8059285Z You are in 'detached HEAD' state. You can look around, make experimental
+ruff + pytest	Checkout	2026-10-07T21:06:40.8059807Z changes and commit them, and you can discard any commits you make in this
+ruff + pytest	Checkout	2026-10-07T21:06:40.8060274Z state without impacting any branches by switching back to a branch.
+ruff + pytest	Checkout	2026-10-07T21:06:40.8060716Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8060901Z If you want to create a new branch to retain commits you create, you may
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061220Z do so (now or later) by using -c with the switch command. Example:
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061471Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061577Z   git switch -c <new-branch-name>
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061690Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061753Z Or undo this operation with:
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061853Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8061905Z   git switch -
+ruff + pytest	Checkout	2026-10-07T21:06:40.8062035Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8062160Z Turn off this advice by setting config variable advice.detachedHead to false
+ruff + pytest	Checkout	2026-10-07T21:06:40.8062332Z 
+ruff + pytest	Checkout	2026-10-07T21:06:40.8062566Z HEAD is now at 7533d5f Merge 1c734250a424768161620fabece6fd094de540bb into 9a1c08c55172b82dc16542402506261676beb87b
+ruff + pytest	Checkout	2026-10-07T21:06:40.8067465Z ##[endgroup]
+ruff + pytest	Checkout	2026-10-07T21:06:40.8114023Z [command]/usr/bin/git log -1 --format=%H
+ruff + pytest	Checkout	2026-10-07T21:06:40.8146786Z 7533d5fbd31f47f62fc0b8cf2c1b8d96cf8f2cca
+ruff + pytest	Checkout	2026-10-07T21:06:40.8158406Z ##[group]Removing auth
+ruff + pytest	Checkout	2026-10-07T21:06:40.8158691Z Removing SSH command configuration
+ruff + pytest	Checkout	2026-10-07T21:06:40.8163399Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+ruff + pytest	Checkout	2026-10-07T21:06:40.8221791Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+ruff + pytest	Checkout	2026-10-07T21:06:40.8433420Z Removing HTTP extra header
+ruff + pytest	Checkout	2026-10-07T21:06:40.8437555Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+ruff + pytest	Checkout	2026-10-07T21:06:40.8480188Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+ruff + pytest	Checkout	2026-10-07T21:06:40.8703232Z Removing includeIf entries pointing to credentials config files
+ruff + pytest	Checkout	2026-10-07T21:06:40.8731777Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+ruff + pytest	Checkout	2026-10-07T21:06:40.8736248Z includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8737130Z includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8737843Z includeif.gitdir:/github/workspace/.git.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8738277Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8745881Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8781747Z /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.8788461Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git.path /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.8835802Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8863927Z /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.8872706Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.8911693Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.8938387Z /github/runner_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.8947452Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.8995916Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+ruff + pytest	Checkout	2026-10-07T21:06:40.9021945Z /github/runner_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.9032144Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config
+ruff + pytest	Checkout	2026-10-07T21:06:40.9069412Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+ruff + pytest	Checkout	2026-10-07T21:06:40.9288042Z Removing credentials config '/home/runner/work/_temp/git-credentials-eabd166d-d117-459e-aae8-b8d1f3b326d7.config'
+ruff + pytest	Checkout	2026-10-07T21:06:40.9298855Z ##[endgroup]
+ruff + pytest	Set up uv + Python 3.13	﻿2026-10-07T21:06:40.9469477Z ##[group]Run astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9469725Z with:
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9469841Z   version: 0.9.2
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9469961Z   python-version: 3.13
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9470094Z   activate-environment: false
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9470234Z   no-project: false
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9470457Z   working-directory: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9472279Z   github-token: ***
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9472398Z   enable-cache: auto
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9472699Z   cache-dependency-glob: **/*requirements*.txt
+ruff + pytest	Set up uv + Python 3.13	**/*requirements*.in
+ruff + pytest	Set up uv + Python 3.13	**/*constraints*.txt
+ruff + pytest	Set up uv + Python 3.13	**/*constraints*.in
+ruff + pytest	Set up uv + Python 3.13	**/pyproject.toml
+ruff + pytest	Set up uv + Python 3.13	**/uv.lock
+ruff + pytest	Set up uv + Python 3.13	**/*.py.lock
+ruff + pytest	Set up uv + Python 3.13	
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473037Z   restore-cache: true
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473160Z   save-cache: true
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473274Z   prune-cache: true
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473388Z   cache-python: false
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473517Z   ignore-nothing-to-cache: false
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473669Z   ignore-empty-workdir: false
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9473860Z   add-problem-matchers: true
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9474001Z   resolution-strategy: highest
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:40.9474148Z ##[endgroup]
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:41.0713030Z Fetching manifest data from https://raw.githubusercontent.com/astral-sh/versions/main/v1/uv.ndjson ...
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:41.1801202Z Downloading uv from "https://releases.astral.sh/github/uv/releases/download/0.9.2/uv-x86_64-unknown-linux-gnu.tar.gz" ...
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:41.7038752Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/c23ca28d-9466-466a-92df-384e85cf8ba0 -f /home/runner/work/_temp/cb2367ae-eca0-488d-bd21-46e05555a63b
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2494666Z Added /home/runner/.local/bin to the path
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2497273Z Added /opt/hostedtoolcache/uv/0.9.2/x86_64 to the path
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2498017Z Set UV_PYTHON_INSTALL_DIR to /home/runner/work/_temp/uv-python-dir
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2498459Z Added /home/runner/work/_temp/uv-python-dir to the path
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2498817Z Set UV_PYTHON to 3.13
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2521810Z Set UV_CACHE_DIR to /home/runner/work/_temp/setup-uv-cache
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2522183Z Successfully installed uv version 0.9.2
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2524493Z Searching files using cache dependency glob: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*requirements*.txt,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*requirements*.in,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*constraints*.txt,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*constraints*.in,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/pyproject.toml,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/uv.lock,/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/**/*.py.lock
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2687456Z /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/pyproject.toml
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2946892Z /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/uv.lock
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.2954126Z Found 2 files to hash.
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.3021359Z Trying to restore cache from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.4624921Z Cache hit for: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.8065193Z Received 101977 of 101977 (100.0%), 0.6 MBs/sec
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.8065655Z Cache Size: ~0 MB (101977 B)
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.8085060Z [command]/usr/bin/tar -xf /home/runner/work/_temp/aecda83e-899a-4b16-a67c-90e0720a1b4c/cache.tzst -P -C /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy --use-compress-program unzstd
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.8184779Z Cache restored successfully
+ruff + pytest	Set up uv + Python 3.13	2026-10-07T21:06:42.8189039Z cache restored from GitHub Actions cache with key: setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5
+ruff + pytest	Install dependencies (locked)	﻿2026-10-07T21:06:42.8891565Z ##[group]Run uv sync --frozen --group dev
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.8891856Z ^[[36;1muv sync --frozen --group dev^[[0m
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.9106644Z shell: /usr/bin/bash -e {0}
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.9107446Z env:
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.9107636Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.9107877Z   UV_PYTHON: 3.13
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.9108033Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:42.9108227Z ##[endgroup]
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:43.2190441Z Downloading cpython-3.13.8-linux-x86_64-gnu (download) (32.1MiB)
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:43.9302596Z  Downloading cpython-3.13.8-linux-x86_64-gnu (download)
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.0446563Z Using CPython 3.13.8
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.0446922Z Creating virtual environment at: .venv
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.0572000Z    Building anthropic-throttle-proxy @ file:///home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.1393529Z Downloading aiohttp (1.7MiB)
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.1393945Z Downloading pygments (1.2MiB)
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.1395530Z Downloading ruff (10.9MiB)
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.3366279Z  Downloading aiohttp
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.3380940Z  Downloading ruff
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.3564736Z  Downloading pygments
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7537068Z       Built anthropic-throttle-proxy @ file:///home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7544006Z Prepared 24 packages in 705ms
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7722133Z Installed 24 packages in 17ms
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7722505Z  + aiohappyeyeballs==2.6.2
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7722723Z  + aiohttp==3.14.3
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7722912Z  + aiohttp-jinja2==1.6
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7723108Z  + aiosignal==1.4.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7723548Z  + anthropic-throttle-proxy==0.1.0 (from file:///home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy)
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7724028Z  + attrs==26.1.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7724211Z  + coverage==7.14.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7724398Z  + frozenlist==1.8.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7724583Z  + idna==3.15
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7724805Z  + iniconfig==2.3.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7724997Z  + jinja2==3.1.6
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7725185Z  + markupsafe==3.0.3
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7725374Z  + multidict==6.7.1
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7725559Z  + packaging==26.2
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7725739Z  + pluggy==1.6.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7726192Z  + prometheus-client==0.25.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7726401Z  + propcache==0.5.2
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7726589Z  + pygments==2.20.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7726775Z  + pytest==9.0.3
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7726970Z  + pytest-asyncio==1.3.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7727182Z  + pytest-cov==7.1.0
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7727370Z  + pyyaml==6.0.3
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7727805Z  + ruff==0.15.13
+ruff + pytest	Install dependencies (locked)	2026-10-07T21:06:44.7728371Z  + yarl==1.24.2
+ruff + pytest	Ruff lint	﻿2026-10-07T21:06:44.7889604Z ##[group]Run uv run ruff check src tests
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7889832Z ^[[36;1muv run ruff check src tests^[[0m
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7944374Z shell: /usr/bin/bash -e {0}
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7944549Z env:
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7944724Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7944919Z   UV_PYTHON: 3.13
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7945071Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.7945248Z ##[endgroup]
+ruff + pytest	Ruff lint	2026-10-07T21:06:44.8844548Z All checks passed!
+ruff + pytest	Ruff format check	﻿2026-10-07T21:06:44.8890302Z ##[group]Run uv run ruff format --check src tests
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8890805Z ^[[36;1muv run ruff format --check src tests^[[0m
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8945189Z shell: /usr/bin/bash -e {0}
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8945357Z env:
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8945529Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8945734Z   UV_PYTHON: 3.13
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8945896Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.8946078Z ##[endgroup]
+ruff + pytest	Ruff format check	2026-10-07T21:06:44.9648835Z 115 files already formatted
+ruff + pytest	Pytest	﻿2026-10-07T21:06:44.9705509Z ##[group]Run uv run pytest -q
+ruff + pytest	Pytest	2026-10-07T21:06:44.9705786Z ^[[36;1muv run pytest -q^[[0m
+ruff + pytest	Pytest	2026-10-07T21:06:44.9763318Z shell: /usr/bin/bash -e {0}
+ruff + pytest	Pytest	2026-10-07T21:06:44.9763504Z env:
+ruff + pytest	Pytest	2026-10-07T21:06:44.9763686Z   UV_PYTHON_INSTALL_DIR: /home/runner/work/_temp/uv-python-dir
+ruff + pytest	Pytest	2026-10-07T21:06:44.9763893Z   UV_PYTHON: 3.13
+ruff + pytest	Pytest	2026-10-07T21:06:44.9764050Z   UV_CACHE_DIR: /home/runner/work/_temp/setup-uv-cache
+ruff + pytest	Pytest	2026-10-07T21:06:44.9764232Z ##[endgroup]
+ruff + pytest	Pytest	2026-10-07T21:06:48.1214643Z ........................................................................ [  3%]
+ruff + pytest	Pytest	2026-10-07T21:06:48.4224017Z ........................................................................ [  6%]
+ruff + pytest	Pytest	2026-10-07T21:06:48.5789643Z ........................................................................ [ 10%]
+ruff + pytest	Pytest	2026-10-07T21:06:48.7949349Z ........................................................................ [ 13%]
+ruff + pytest	Pytest	2026-10-07T21:06:49.7730367Z ........................................................................ [ 17%]
+ruff + pytest	Pytest	2026-10-07T21:06:50.4308079Z ........................................................................ [ 20%]
+ruff + pytest	Pytest	2026-10-07T21:07:40.6096508Z ........................................................................ [ 24%]
+ruff + pytest	Pytest	2026-10-07T21:07:50.8199408Z ........................................................................ [ 27%]
+ruff + pytest	Pytest	2026-10-07T21:07:51.0813374Z ........................................................................ [ 31%]
+ruff + pytest	Pytest	2026-10-07T21:07:52.3540917Z ........................................................................ [ 34%]
+ruff + pytest	Pytest	2026-10-07T21:07:52.6251861Z ........................................................................ [ 38%]
+ruff + pytest	Pytest	2026-10-07T21:07:52.8592662Z ........................................................................ [ 41%]
+ruff + pytest	Pytest	2026-10-07T21:07:53.8455335Z ........................................................................ [ 45%]
+ruff + pytest	Pytest	2026-10-07T21:07:54.2646126Z ........................................................................ [ 48%]
+ruff + pytest	Pytest	2026-10-07T21:07:54.6318719Z ........................................................................ [ 52%]
+ruff + pytest	Pytest	2026-10-07T21:07:54.9582719Z ........................................................................ [ 55%]
+ruff + pytest	Pytest	2026-10-07T21:07:56.7028330Z ........................................................................ [ 59%]
+ruff + pytest	Pytest	2026-10-07T21:07:57.7354842Z ........................................................................ [ 62%]
+ruff + pytest	Pytest	2026-10-07T21:07:58.0906289Z ........................................................................ [ 66%]
+ruff + pytest	Pytest	2026-10-07T21:08:00.5661923Z ........................................................................ [ 69%]
+ruff + pytest	Pytest	2026-10-07T21:08:01.4385646Z ........................................................................ [ 73%]
+ruff + pytest	Pytest	2026-10-07T21:08:01.8337422Z ........................................................................ [ 76%]
+ruff + pytest	Pytest	2026-10-07T21:08:02.2653148Z ........................................................................ [ 80%]
+ruff + pytest	Pytest	2026-10-07T21:08:02.9544767Z ........................................................................ [ 83%]
+ruff + pytest	Pytest	2026-10-07T21:08:03.6608178Z ........................................................................ [ 87%]
+ruff + pytest	Pytest	2026-10-07T21:08:04.1357862Z ........................................................................ [ 90%]
+ruff + pytest	Pytest	2026-10-07T21:08:04.5862705Z ........................................................................ [ 94%]
+ruff + pytest	Pytest	2026-10-07T21:08:05.1178215Z ........................................................................ [ 97%]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9621296Z ............................................                             [100%]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9621939Z =============================== warnings summary ===============================
+ruff + pytest	Pytest	2026-10-07T21:08:05.9622436Z tests/test_accounts.py::test_ui_stats_renders_accounts_panel
+ruff + pytest	Pytest	2026-10-07T21:08:05.9622873Z tests/test_accounts.py::test_ui_stats_renders_identity_banner
+ruff + pytest	Pytest	2026-10-07T21:08:05.9623787Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/ui/routes.py:1387: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9625191Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9625507Z     app["_account_refresher"] = asyncio.create_task(_account_refresh_loop())
+ruff + pytest	Pytest	2026-10-07T21:08:05.9625700Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9625773Z tests/test_accounts.py: 3 warnings
+ruff + pytest	Pytest	2026-10-07T21:08:05.9625950Z tests/test_admission_quiesce.py: 7 warnings
+ruff + pytest	Pytest	2026-10-07T21:08:05.9626131Z tests/test_forwarding_paths.py: 13 warnings
+ruff + pytest	Pytest	2026-10-07T21:08:05.9626298Z tests/test_keepalive_hold.py: 25 warnings
+ruff + pytest	Pytest	2026-10-07T21:08:05.9626482Z tests/test_prospective_handler_live.py: 4 warnings
+ruff + pytest	Pytest	2026-10-07T21:08:05.9626672Z tests/test_proxy_app.py: 81 warnings
+ruff + pytest	Pytest	2026-10-07T21:08:05.9626847Z tests/test_ui_binding.py: 1 warning
+ruff + pytest	Pytest	2026-10-07T21:08:05.9627017Z tests/test_ui_truth.py: 1 warning
+ruff + pytest	Pytest	2026-10-07T21:08:05.9627493Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/ui/routes.py:1439: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9628087Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9628416Z     app["_history_sampler"] = asyncio.create_task(_history_sample_loop())
+ruff + pytest	Pytest	2026-10-07T21:08:05.9628590Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9628737Z tests/test_admission_quiesce.py::test_slow_upload_past_gate_counts_until_completion
+ruff + pytest	Pytest	2026-10-07T21:08:05.9629333Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/prospective_runtime.py:346: NotAppKeyWarning: It is recommended to use web.RequestKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9629948Z   https://docs.aiohttp.org/en/stable/web_advanced.html#request-s-storage
+ruff + pytest	Pytest	2026-10-07T21:08:05.9630208Z     request[_SELECTED_KEY] = selected
+ruff + pytest	Pytest	2026-10-07T21:08:05.9630335Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9630486Z tests/test_admission_quiesce.py::test_slow_upload_past_gate_counts_until_completion
+ruff + pytest	Pytest	2026-10-07T21:08:05.9631405Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/forwarding.py:62: NotAppKeyWarning: It is recommended to use web.RequestKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9631985Z   https://docs.aiohttp.org/en/stable/web_advanced.html#request-s-storage
+ruff + pytest	Pytest	2026-10-07T21:08:05.9632254Z     request[_SUCCESS_HEADERS_CALLBACK_KEY] = callback
+ruff + pytest	Pytest	2026-10-07T21:08:05.9632386Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9632534Z tests/test_gauge_routes.py::test_background_partial_failure_retries_and_tasks_cancel
+ruff + pytest	Pytest	2026-10-07T21:08:05.9633294Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/src/anthropic_throttle_proxy/ui/routes.py:1389: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9633837Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9634146Z     app["_panel_refresher"] = asyncio.create_task(_panel_refresh_loop())
+ruff + pytest	Pytest	2026-10-07T21:08:05.9634327Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9634470Z tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
+ruff + pytest	Pytest	2026-10-07T21:08:05.9634789Z tests/test_ingress_adr6a.py::test_requirement_and_spoof_headers_not_forwarded
+ruff + pytest	Pytest	2026-10-07T21:08:05.9635420Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/lib/python3.13/site-packages/aiohttp/web_urldispatcher.py:192: DeprecationWarning: Bare functions are deprecated, use async ones
+ruff + pytest	Pytest	2026-10-07T21:08:05.9635938Z     warnings.warn(
+ruff + pytest	Pytest	2026-10-07T21:08:05.9636022Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9636207Z tests/test_prospective_forwarding_live.py::test_concurrent_budget_denial_sends_no_extra_upstream
+ruff + pytest	Pytest	2026-10-07T21:08:05.9636614Z tests/test_prospective_forwarding_live.py::test_upstream_429_retains_debt_and_next_refuses_locally
+ruff + pytest	Pytest	2026-10-07T21:08:05.9637035Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[strict]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9637479Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[off]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9638075Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:121: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9638743Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9639018Z     app["upstream_url"] = endpoint + "/messages"
+ruff + pytest	Pytest	2026-10-07T21:08:05.9639152Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9639330Z tests/test_prospective_forwarding_live.py::test_concurrent_budget_denial_sends_no_extra_upstream
+ruff + pytest	Pytest	2026-10-07T21:08:05.9639745Z tests/test_prospective_forwarding_live.py::test_upstream_429_retains_debt_and_next_refuses_locally
+ruff + pytest	Pytest	2026-10-07T21:08:05.9640162Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[strict]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9640664Z tests/test_prospective_forwarding_live.py::test_transport_provenance_enabled_strips_off_preserves[off]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9641269Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:122: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9641810Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9642058Z     app["endpoint"] = endpoint
+ruff + pytest	Pytest	2026-10-07T21:08:05.9642164Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9642313Z tests/test_prospective_forwarding_live.py::test_default_off_identical_status_and_body
+ruff + pytest	Pytest	2026-10-07T21:08:05.9642891Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:186: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9643443Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9643677Z     app["endpoint"] = endpoint
+ruff + pytest	Pytest	2026-10-07T21:08:05.9643771Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9643917Z tests/test_prospective_forwarding_live.py::test_default_off_identical_status_and_body
+ruff + pytest	Pytest	2026-10-07T21:08:05.9644513Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_forwarding_live.py:187: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9645068Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9645330Z     app["upstream_url"] = endpoint + "/messages"
+ruff + pytest	Pytest	2026-10-07T21:08:05.9645461Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9645632Z tests/test_prospective_handler_live.py::test_strict_local_refusal_typed_503_zero_upstream[exhausted]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9646012Z tests/test_prospective_handler_live.py::test_strict_local_refusal_typed_503_zero_upstream[unsupported]
+ruff + pytest	Pytest	2026-10-07T21:08:05.9646767Z tests/test_prospective_handler_live.py::test_default_off_positive_control_passthrough
+ruff + pytest	Pytest	2026-10-07T21:08:05.9647512Z   /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/tests/test_prospective_handler_live.py:73: NotAppKeyWarning: It is recommended to use web.AppKey instances for keys.
+ruff + pytest	Pytest	2026-10-07T21:08:05.9648248Z   https://docs.aiohttp.org/en/stable/web_advanced.html#application-s-config
+ruff + pytest	Pytest	2026-10-07T21:08:05.9648592Z     app["upstream"] = upstream
+ruff + pytest	Pytest	2026-10-07T21:08:05.9648733Z 
+ruff + pytest	Pytest	2026-10-07T21:08:05.9648892Z -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+ruff + pytest	Pytest	2026-10-07T21:08:05.9649254Z 2060 passed, 155 warnings in 79.62s (0:01:19)
+ruff + pytest	Post Set up uv + Python 3.13	﻿2026-10-07T21:08:06.3624441Z Post job cleanup.
+ruff + pytest	Post Set up uv + Python 3.13	2026-10-07T21:08:06.4354426Z UV_CACHE_DIR is already set to /home/runner/work/_temp/setup-uv-cache
+ruff + pytest	Post Set up uv + Python 3.13	2026-10-07T21:08:06.4357323Z UV_PYTHON_INSTALL_DIR is already set to /home/runner/work/_temp/uv-python-dir
+ruff + pytest	Post Set up uv + Python 3.13	2026-10-07T21:08:06.4358770Z Cache hit occurred on key setup-uv-2-x86_64-unknown-linux-gnu-ubuntu-24.04-3.13-pruned-d5bc9947bb33fb1330ebc7791157aa40e85e68dd92a5f9aed656a235f5cbc6b5, not saving cache.
+ruff + pytest	Post Checkout	﻿2026-10-07T21:08:06.4921475Z Post job cleanup.
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5492987Z [command]/usr/bin/git version
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5529709Z git version 2.55.0
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5557765Z Temporarily overriding HOME='/home/runner/work/_temp/b8ac057b-a5d1-4a40-82f2-c74e745074bb' before making global git config changes
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5581960Z Adding repository directory to the temporary git global config as a safe directory
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5582865Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5651966Z Removing SSH command configuration
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5652451Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5692727Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5971471Z Removing HTTP extra header
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.5977625Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.6053155Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.6307041Z Removing includeIf entries pointing to credentials config files
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.6314354Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+ruff + pytest	Post Checkout	2026-10-07T21:08:06.6350109Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+ruff + pytest	Post Harden runner	﻿2026-10-07T21:08:06.6683529Z Post job cleanup.
+ruff + pytest	Post Harden runner	2026-10-07T21:08:06.7234015Z [harden-runner] post-step
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7248726Z log:
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7249498Z Wed, 07 Oct 2026 21:06:32 GMT:[buildInfo] tag=v0.16.0 commit=69230545600e99d9c9b2d74ca0897d7100630d96 branch=HEAD 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7249917Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7250030Z Wed, 07 Oct 2026 21:06:32 GMT:read config 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7251600Z  &{Repo:yolo-labz/anthropic-throttle-proxy CorrelationId:3d716391-e9d6-4c55-a51b-08996eb6087c RunId:37687007287 WorkingDirectory:/home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy APIURL:https://agent.api.stepsecurity.io/v1 TelemetryURL:https://prod.app-api.stepsecurity.io/v1 OneTimeKey: Endpoints:map[] EgressPolicy:audit DisableTelemetry:false DisableSudo:false DisableSudoAndContainers:false DisableFileMonitoring:false Private:false}
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7252635Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7252796Z Wed, 07 Oct 2026 21:06:32 GMT:Step Security Job Correlation ID: 3d716391-e9d6-4c55-a51b-08996eb6087c
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7253080Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7253663Z Wed, 07 Oct 2026 21:06:32 GMT:Global feature flags: {AgentType:agent-oss EnableArmour:true EnableCustomDetectionRules:true}
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7254053Z Wed, 07 Oct 2026 21:06:32 GMT:initialized global feature flags
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7254204Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7259015Z Wed, 07 Oct 2026 21:06:32 GMT:initialized global blocklist: &{ipAddresses:map[139.84.223.178:COMPROMISED_MEMTENSOR_MEMOS_SUPPLYCHAIN_LOCAL_WORM 142.11.206.73:COMPROMISED_AXIOS_C2_IP 216.126.225.129:MEGALODON_EXFIL_IP 23.254.164.123:COMPROMISED_MASTRA_C2_DOMAIN 23.254.164.92:COMPROMISED_MASTRA_C2_DOMAIN 23.254.165.112:COMPROMISED_ARRAYREF_C2_IP 37.27.122.124:COMPROMISED_JSCRAMBLER_C2_IP 57.128.246.79:COMPROMISED_JSCRAMBLER_C2_IP 83.142.209.194:COMPROMISED_MISTRAL_PYPI_C2_IP 85.137.53.71:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2] domains:map[api.masscan.cloud.:COMPROMISED_TANSTACK_EXFIL archive.torproject.org.:COMPROMISED_JSCRAMBLER_C2_DOMAIN audit.checkmarx.cx.:COMPROMISED_BITWARDEN_CLI_C2_DOMAIN check.git-service.com.:COMPROMISED_DURABLETASK_C2_DOMAIN check.torproject.org.:COMPROMISED_JSCRAMBLER_C2_DOMAIN ci-artifacts.dev.:SUBQL_CREDENTIAL_THEFT_C2 cjn37-uyaaa-aaaac-qgnva-cai.raw.icp0.io.:COMPROMISED_PGSERVE_EXFIL_CANISTER dht.transmissionbt.com.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 evil.invalid.:GLOBAL_BLOCK_TEST_DOMAIN filev2.getsession.org.:COMPROMISED_TANSTACK_EXFIL flipboxstudio.info.:COMPROMISED_PACKAGIST_C2_DOMAIN git-tanstack.com.:COMPROMISED_TANSTACK_EXFIL igotnofriendsonlineorirl-imgonnakmslmao.skyhanni.cloud.:COMPROMISED_ELEMENTARY_DATA_EXFIL js-mirror.com.:COMPROMISED_CHAINDROP_NPM_EXFIL metrics.femboy.energy.:COMPROMISED_MRMUSTARD_PYPI_C2_DOMAIN npm-cache.com.:COMPROMISED_CHAINDROP_NPM_EXFIL pypi-get.com.:COMPROMISED_CHAINDROP_NPM_EXFIL relay.damus.io.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 relay.nostr.com.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 router.bittorrent.com.:COMPROMISED_ASYNCAPI_GENERATOR_MIASMA_RAT_C2 scan.aquasecurtiy.org.:COMPROMISED_TRIVY_C2_DOMAIN seed1.getsession.org.:COMPROMISED_TANSTACK_EXFIL sfrclak.com.:COMPROMISED_AXIOS_C2_DOMAIN sh.azurestaticprovider.net.:COMPROMISED_NODE_IPC_NPM_C2 skyleen.fr.:COMPROMISED_MEMTENSOR_MEMOS_SUPPLYCHAIN_LOCAL_WORM t.m-kosche.com.:COMPROMISED_ACTIONSCOOL_EXFIL telemetry.api-monitor.com.:COMPROMISED_PGSERVE_EXFIL_DOMAIN whereisitat.lucyatemysuperbox.space.:COMPROMISED_XINFERENCE_C2_DOMAIN zero.masscan.cloud.:COMPROMISED_MINI_SHAI_HULUD_2] wildcardDomains:map[skyleen.fr.:COMPROMISED_MEMTENSOR_MEMOS_SUPPLYCHAIN_LOCAL_WORM]}
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7263893Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7263975Z Wed, 07 Oct 2026 21:06:32 GMT:started process monitor
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7264113Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7264197Z Wed, 07 Oct 2026 21:06:32 GMT:Monitor Processes called
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7264422Z Wed, 07 Oct 2026 21:06:32 GMT:NewAuditClient created
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7264629Z Wed, 07 Oct 2026 21:06:32 GMT:Status is enabled
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7264821Z Wed, 07 Oct 2026 21:06:32 GMT:Rules deleted
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7265141Z Wed, 07 Oct 2026 21:06:32 GMT:File monitor added for /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7265678Z Wed, 07 Oct 2026 21:06:32 GMT:Agent file monitor added
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7265909Z Wed, 07 Oct 2026 21:06:32 GMT:Docker's daemon.json file monitor added
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7266157Z Wed, 07 Oct 2026 21:06:32 GMT:Systemd's resolved.conf file monitor added
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7266403Z Wed, 07 Oct 2026 21:06:32 GMT:Net monitor added for TCP (connect)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7266673Z Wed, 07 Oct 2026 21:06:32 GMT:Net monitor added for UDP (sendto & sendmsg)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7266932Z Wed, 07 Oct 2026 21:06:32 GMT:Process monitor added
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267128Z Wed, 07 Oct 2026 21:06:32 GMT:receive called
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267244Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267247Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267317Z Wed, 07 Oct 2026 21:06:32 GMT:updated resolved
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267439Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267507Z Wed, 07 Oct 2026 21:06:38 GMT:set docker config
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267625Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267699Z Wed, 07 Oct 2026 21:06:38 GMT:before audit rules
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7267988Z Wed, 07 Oct 2026 21:06:38 GMT:added audit rules
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7268165Z Wed, 07 Oct 2026 21:06:38 GMT:Armour is enabled
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7268375Z Wed, 07 Oct 2026 21:06:39 GMT:[armour] Runner.Worker PID: 1934
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7268593Z Wed, 07 Oct 2026 21:06:39 GMT:Armour attached
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7268811Z Wed, 07 Oct 2026 21:06:39 GMT:[armour] Custom detection rules enabled
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7269056Z Wed, 07 Oct 2026 21:06:39 GMT:done
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7269825Z Wed, 07 Oct 2026 21:06:39 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/config.lock syscall: openat by exe: /usr/bin/git [d4d2ba562243015206d4248edfec871a74786499292d00ed072dbca2f5ae8073] Timestamp: 2026-10-07T21:06:39.74Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7271114Z Wed, 07 Oct 2026 21:06:39 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/config syscall: rename by exe: /usr/bin/git [d4d2ba562243015206d4248edfec871a74786499292d00ed072dbca2f5ae8073] Timestamp: 2026-10-07T21:06:39.74Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7272149Z Wed, 07 Oct 2026 21:06:39 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.git/config.lock syscall: openat by exe: /usr/bin/git [d4d2ba562243015206d4248edfec871a74786499292d00ed072dbca2f5ae8073] Timestamp: 2026-10-07T21:06:39.741Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7272834Z Wed, 07 Oct 2026 21:06:39 GMT:domain resolved: github.com., ip address: 140.82.113.4, TTL: 60
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7273202Z Wed, 07 Oct 2026 21:06:39 GMT:domain resolved: prod.app-api.stepsecurity.io., ip address: 32.186.176.187, TTL: 45
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7273638Z Wed, 07 Oct 2026 21:06:40 GMT:endpoint called ip address:port 140.82.113.4:443, domain: github.com., pid: 2574, process: git-remote-http
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7274068Z Wed, 07 Oct 2026 21:06:41 GMT:domain resolved: raw.githubusercontent.com., ip address: 185.199.108.133, TTL: 2498
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7274458Z Wed, 07 Oct 2026 21:06:41 GMT:domain resolved: releases.astral.sh., ip address: 172.67.68.3, TTL: 300
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7274903Z Wed, 07 Oct 2026 21:06:41 GMT:endpoint called ip address:port 185.199.108.133:443, domain: raw.githubusercontent.com., pid: 2676, process: node
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7275368Z Wed, 07 Oct 2026 21:06:41 GMT:endpoint called ip address:port 172.67.68.3:443, domain: releases.astral.sh., pid: 2676, process: node
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7275828Z Wed, 07 Oct 2026 21:06:42 GMT:domain resolved: results-receiver.actions.githubusercontent.com., ip address: 140.82.112.21, TTL: 30
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7276364Z Wed, 07 Oct 2026 21:06:42 GMT:endpoint called ip address:port 140.82.112.21:443, domain: results-receiver.actions.githubusercontent.com., pid: 2676, process: node
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7276877Z Wed, 07 Oct 2026 21:06:42 GMT:domain resolved: productionresultssa1.blob.core.windows.net., ip address: 20.209.227.33, TTL: 30
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7277387Z Wed, 07 Oct 2026 21:06:42 GMT:endpoint called ip address:port 20.209.227.33:443, domain: productionresultssa1.blob.core.windows.net., pid: 2676, process: node
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7278198Z Wed, 07 Oct 2026 21:06:43 GMT:endpoint called ip address:port 140.82.113.4:443, domain: github.com., pid: 2701, process: uv
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7278926Z Wed, 07 Oct 2026 21:06:43 GMT:domain resolved: release-assets.githubusercontent.com., ip address: 185.199.110.133, TTL: 899
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7279725Z Wed, 07 Oct 2026 21:06:43 GMT:endpoint called ip address:port 185.199.110.133:443, domain: release-assets.githubusercontent.com., pid: 2701, process: uv
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7280434Z Wed, 07 Oct 2026 21:06:44 GMT:domain resolved: pypi.org., ip address: 151.101.0.223, TTL: 20268
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7281064Z Wed, 07 Oct 2026 21:06:44 GMT:domain resolved: files.pythonhosted.org., ip address: 151.101.192.223, TTL: 60
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7281668Z Wed, 07 Oct 2026 21:06:44 GMT:endpoint called ip address:port 151.101.0.223:443, domain: pypi.org., pid: 2701, process: uv
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7282382Z Wed, 07 Oct 2026 21:06:44 GMT:endpoint called ip address:port 151.101.192.223:443, domain: files.pythonhosted.org., pid: 2701, process: uv
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7283302Z Wed, 07 Oct 2026 21:06:44 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/.lock syscall: openat by exe: /opt/hostedtoolcache/uv/0.9.2/x86_64/uv [b399aea47c961d15b83ae3ea14d616149a1babb157c53009b49a15ceafcc9fee] Timestamp: 2026-10-07T21:06:44.906Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7284741Z Wed, 07 Oct 2026 21:06:44 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.ruff_cache/CACHEDIR.TAG syscall: openat by exe: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/bin/ruff [e7fe044c1215edf671c497dc77312d329237f827e50ecfcb7266a662a110dc97] Timestamp: 2026-10-07T21:06:44.918Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7286536Z Wed, 07 Oct 2026 21:06:44 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.ruff_cache/.gitignore syscall: openat by exe: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/bin/ruff [e7fe044c1215edf671c497dc77312d329237f827e50ecfcb7266a662a110dc97] Timestamp: 2026-10-07T21:06:44.918Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7288773Z Wed, 07 Oct 2026 21:06:44 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.ruff_cache/0.15.13/15527821909721120984 syscall: renameat by exe: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/bin/ruff [e7fe044c1215edf671c497dc77312d329237f827e50ecfcb7266a662a110dc97] Timestamp: 2026-10-07T21:06:44.963Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7290317Z Wed, 07 Oct 2026 21:06:45 GMT:[Source code overwritten] file: /home/runner/work/anthropic-throttle-proxy/anthropic-throttle-proxy/.venv/.lock syscall: openat by exe: /opt/hostedtoolcache/uv/0.9.2/x86_64/uv [b399aea47c961d15b83ae3ea14d616149a1babb157c53009b49a15ceafcc9fee] Timestamp: 2026-10-07T21:06:44.989Z
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7291333Z Wed, 07 Oct 2026 21:06:55 GMT:domain resolved: hosted-compute-watchdog-prod-eus-02.githubapp.com., ip address: 20.75.202.224, TTL: 2569
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7291915Z Wed, 07 Oct 2026 21:07:56 GMT:domain resolved: hosted-compute-request-orchestrator-prod-eus-02.githubapp.com., ip address: 20.75.202.224, TTL: 332
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7292404Z Wed, 07 Oct 2026 21:07:56 GMT:domain resolved: prod.app-api.stepsecurity.io., ip address: 32.186.176.187, TTL: 31
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7292843Z Wed, 07 Oct 2026 21:08:06 GMT:domain resolved: results-receiver.actions.githubusercontent.com., ip address: 140.82.113.21, TTL: 55
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7293117Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7293195Z Wed, 07 Oct 2026 21:08:06 GMT:post_event called
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7293606Z Wed, 07 Oct 2026 21:08:06 GMT:endpoint called ip address:port 140.82.113.21:443, domain: results-receiver.actions.githubusercontent.com., pid: 1934, process: Runner.Worker
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7294172Z Wed, 07 Oct 2026 21:08:07 GMT:domain resolved: productionresultssa10.blob.core.windows.net., ip address: 20.209.226.1, TTL: 30
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7294867Z Wed, 07 Oct 2026 21:08:07 GMT:endpoint called ip address:port 20.209.226.1:443, domain: productionresultssa10.blob.core.windows.net., pid: 1934, process: Runner.Worker
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7295200Z 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7295256Z status:
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7295374Z Initialized
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7403768Z agent.service log:
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7404741Z Oct 07 21:06:32 runnervmmprz5 systemd[1]: /etc/systemd/system/agent.service:9: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7405645Z Oct 07 21:06:32 runnervmmprz5 systemd[1]: /etc/systemd/system/agent.service:10: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7406192Z Oct 07 21:06:32 runnervmmprz5 systemd[1]: Started agent.service - Agent.
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7407124Z Oct 07 21:06:32 runnervmmprz5 sudo[2069]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl stop systemd-resolved
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7407582Z Oct 07 21:06:32 runnervmmprz5 sudo[2069]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7407977Z Oct 07 21:06:32 runnervmmprz5 sudo[2069]: pam_unix(sudo:session): session closed for user root
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7408503Z Oct 07 21:06:32 runnervmmprz5 sudo[2075]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl restart systemd-resolved
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7408931Z Oct 07 21:06:32 runnervmmprz5 sudo[2075]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7409308Z Oct 07 21:06:32 runnervmmprz5 sudo[2075]: pam_unix(sudo:session): session closed for user root
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7409702Z Oct 07 21:06:32 runnervmmprz5 sudo[2081]:     root : *** ; USER=root ; COMMAND=/usr/bin/resolvectl flush-caches
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7410104Z Oct 07 21:06:32 runnervmmprz5 sudo[2081]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7410517Z Oct 07 21:06:32 runnervmmprz5 sudo[2081]: pam_unix(sudo:session): session closed for user root
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7411132Z Oct 07 21:06:32 runnervmmprz5 sudo[2084]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl reload docker
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7411522Z Oct 07 21:06:32 runnervmmprz5 sudo[2084]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7411906Z Oct 07 21:06:32 runnervmmprz5 sudo[2084]: pam_unix(sudo:session): session closed for user root
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7412331Z Oct 07 21:06:32 runnervmmprz5 sudo[2095]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl daemon-reload
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7412753Z Oct 07 21:06:32 runnervmmprz5 sudo[2095]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7413509Z Oct 07 21:06:32 runnervmmprz5 systemd[1]: /etc/systemd/system/agent.service:9: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7414442Z Oct 07 21:06:32 runnervmmprz5 systemd[1]: /etc/systemd/system/agent.service:10: Standard output type syslog is obsolete, automatically updating to journal. Please update your unit file, and consider removing the setting altogether.
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7415070Z Oct 07 21:06:32 runnervmmprz5 sudo[2095]: pam_unix(sudo:session): session closed for user root
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7415490Z Oct 07 21:06:32 runnervmmprz5 sudo[2163]:     root : *** ; USER=root ; COMMAND=/usr/bin/systemctl restart docker
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7415932Z Oct 07 21:06:32 runnervmmprz5 sudo[2163]: pam_unix(sudo:session): session opened for user root(uid=0) by (uid=0)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7416334Z Oct 07 21:06:38 runnervmmprz5 sudo[2163]: pam_unix(sudo:session): session closed for user root
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7416985Z Oct 07 21:06:38 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:38 INFO Fetching custom detection rules module=armour api_url=https://agent.api.stepsecurity.io/v1 repo=yolo-labz/anthropic-throttle-proxy
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7417761Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: [armour-cdr] Event Policy:  package hardenrunner.event
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7418115Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: import rego.v1
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7418512Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: # Rule: Agent - Event System Rule (707af3d3-11d5-4cce-abab-8e6dfcfc510c)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7418963Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: default runner_worker_mem_read := false
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7419268Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7419536Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: runner_worker_mem_read if {
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7419855Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     evt := input.armour_event
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7420159Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     evt.kind == "FILE_READ"
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7420687Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     evt.file_info != null
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7421038Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     endswith(evt.file_info.current_exe, "python")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7421444Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     startswith(evt.file_info.target_file, "/proc")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7421839Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     endswith(evt.file_info.target_file, "/mem")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7422258Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     endswith(evt.file_info.target_exe, "Runner.Worker")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7422579Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: }
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7422785Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7423021Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: runner_worker_mem_read if {
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7423303Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     evt := input.armour_event
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7423606Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     evt.kind == "FILE_READ"
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7423888Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     evt.file_info != null
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7424191Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     endswith(evt.file_info.current_exe, "python3")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7424574Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     startswith(evt.file_info.target_file, "/proc")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7424969Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     endswith(evt.file_info.target_file, "/mem")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7425326Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     endswith(evt.file_info.target_exe, "Runner.Worker")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7425629Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: }
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7425832Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7426098Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: default suspicious_file_access := false
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7426421Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: suspicious_file_access := true if {
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7426764Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     contains(input.file_event.file_name, "router_init.js")
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7427246Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     input.file_event.checksum == "ab4fcadaec49c03278063dd269ea5eef82d24f2124a8e15d7b90f2fa8601266c"
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7427635Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: }
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7427981Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: [armour-cdr] State Policy:  package hardenrunner.state
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7428376Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: import rego.v1
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7428709Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: # Rule: Agent - State System Rule (a6dabdfb-ba5b-4932-bf3c-ed621582dbce)
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7429049Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: default action := ""
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7429415Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7429653Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: lockdown_required if {
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7429951Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     input.state.runner_worker_mem_read
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7430280Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: }
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7431353Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7431792Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: lockdown_required if {
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7432311Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     input.state.suspicious_file_access
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7432792Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: }
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7433145Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7433545Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: action := "lockdown" if {
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7434000Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]:     lockdown_required
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7434696Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: }
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7435186Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: [armour-cdr] Checksum Paths:  [router_init.js]
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7435893Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Custom detection rules evaluator initialized module=armour
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7436739Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Detection manager started module=detection-manager workers=4 buffer_size=1000
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7437522Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Config module=armour ENFORCE_KILL_BLOCK=false
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7437911Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Config module=armour AGENT_PID=2056
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7438304Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Config module=armour ENFORCE_READ_BLOCK=false
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7438728Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Config module=armour ENFORCE_WRITE_BLOCK=false
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7439203Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Map size module=armour protected_pids=1
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7439601Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Map size module=armour protected_pid_inodes=1
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7439987Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Map size module=armour protected_bpf_ids=9
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7440383Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Map size module=armour protected_fs_inodes=6
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7441005Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Map size module=armour protected_proc_fs_inodes=2
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7441511Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Map size module=armour events=16384
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7441906Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO ProtectedPids module=armour pids=map[2057:2056]
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7442332Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO ProtectedBPFIDs module=armour ids="[20 14 18 21 19]"
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7442805Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO File Info module=armour inoKey="{Device:24 Inode:13315}" path=/proc/1934/mem
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7443322Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO File Info module=armour inoKey="{Device:24 Inode:13880}" path=/proc/1914/mem
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7443845Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO File Info module=armour inoKey="{Device:769 Inode:91136}" path=/etc/sudoers.d/runner
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7444352Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO File Info module=armour inoKey="{Device:28 Inode:932}" path=/etc/resolv.conf
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7445038Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO File Info module=armour inoKey="{Device:769 Inode:508}" path=/etc/systemd/resolved.conf
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7445581Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO File Info module=armour inoKey="{Device:769 Inode:796237}" path=/etc/docker/daemon.json
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7446088Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Protection maps populated module=armour
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7446485Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Protection maps are freezed module=armour
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7446883Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Linking completed module=armour
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7447246Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Armour engaged module=armour
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7447617Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO RingBuffer created module=armour size=16384
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7448108Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO Listening for events module=armour
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7448503Z Oct 07 21:06:39 runnervmmprz5 agentservice[2056]: 2026/10/07 21:06:39 INFO [LOCKDOWN] Runner.Worker PID set module=armour pid=1934
+ruff + pytest	Post Harden runner	2026-10-07T21:08:07.7448755Z 
+ruff + pytest	Complete job	﻿2026-10-07T21:08:07.9903698Z Cleaning up orphan processes

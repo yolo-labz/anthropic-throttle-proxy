@@ -1,0 +1,4 @@
+SOURCE ARITHMETIC ONLY; pytest/browser NOT executed
+.tps-foot --ctp-overlay0 (#6c7086) on .tps-panel --panel (#181825): 3.5943:1
+WCAG normal-text AA: False
+Baseline low-contrast defect independently reproduced.
