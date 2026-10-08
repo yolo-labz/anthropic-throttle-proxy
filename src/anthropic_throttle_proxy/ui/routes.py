@@ -77,7 +77,8 @@ def _asset_version(
         h.update((view or Path(__file__)).read_bytes())
         for module in ("signals.py", "presentation.py"):
             h.update((_HERE / module).read_bytes())
-        h.update((_HERE.parent / "output_usage.py").read_bytes())
+        for module in ("output_usage.py", "fleet_ui_config.py"):
+            h.update((_HERE.parent / module).read_bytes())
     return h.hexdigest()[:12]
 
 
@@ -861,6 +862,11 @@ def _lane_meters(lane: dict[str, Any]) -> list[dict]:
 def _lane_subscription_row(lane: dict[str, Any], now: float) -> dict:
     """One Subscriptions row from a lane report entry (burn pace included)."""
     pace, eta = _lane_pace_eta(lane, now)
+    source = "Local meter report"
+    if lane.get("id") == "mimo:desktop-subscription":
+        source = "Desktop weekly report"
+    elif lane.get("kind") == "mimo":
+        source = "MiMo plan report"
     return {
         "id": lane.get("id") or "?",
         "identity": lane.get("identity") or lane.get("provider") or lane.get("id") or "?",
@@ -869,7 +875,10 @@ def _lane_subscription_row(lane: dict[str, Any], now: float) -> dict:
         "sub": "",
         "family": lane.get("family") or "",
         "plan": lane.get("plan") or "",
-        "src": "Pi meter report",
+        "src": source,
+        "sample_age_s": lane.get("sample_age_s"),
+        "sample_observed_at": lane.get("sample_observed_at"),
+        "sample_interval_s": lane.get("sample_interval_s"),
         "meters": _lane_meters(lane),
         "pace": pace,
         "pace_warn": pace is not None and pace >= _accounts.PACE_WARN,
@@ -1179,7 +1188,9 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
     lanes_view = _lanes.view(now)
     _publish_lane_gauges(lanes_view)
     subscriptions = _build_subscriptions(accounts_view, lanes_view, now)
-    subscriptions = _fleet_ui_config.decorate(subscriptions, ui_cfg)["rows"]
+    subscriptions = _fleet_ui_config.decorate(
+        subscriptions, ui_cfg, native_meters=_fleet_ui_config.native_codex_meters()
+    )["rows"]
     _attach_binding(status, subscriptions)
     knobs = _config.knob_snapshot()
     view = {

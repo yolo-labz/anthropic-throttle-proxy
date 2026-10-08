@@ -20,10 +20,12 @@
    us, since when, and when does it come back" — so they are one panel, and it
    is the largest type on the page. #}
 {% if status %}
-<section class="hero {{ status.level | default('idle') }}" aria-label="Fleet verdict">
+{% set verdict_scope = 'Local proxy' if show_local | default(true) else (workload_label | default('Subscription meters')) %}
+<section class="hero {{ status.level | default('idle') }}" aria-label="{{ verdict_scope }} verdict">
   <div class="hero-verdict">
     <span class="dot" aria-hidden="true"></span>
     <span class="verdict">{{ status.verdict }}</span>
+    <span class="verdict-scope">{{ verdict_scope }}</span>
     {% if status.since %}<span class="since" title="How long this proxy has held this verdict">for {{ status.since }}</span>{% endif %}
     <span class="as-of" title="Server render time of this panel. It is re-rendered every 2s; the tint below turns amber if a swap stops arriving, so a frozen reading says so on its own.">as of {{ as_of | default('—') }}</span>
   </div>
@@ -197,18 +199,18 @@
 {# ── CAPACITY BOARD — the payload ──────────────────────────────────────────── #}
 {% if subscriptions %}
 <section class="board" aria-label="Configured subscription meters; observed usage does not prove model eligibility">
-  <h2 id="subs-heading">Capacity · <span class="count">{{ subscriptions | length }}</span>
+  <h2 id="subs-heading">Capacity · <span class="count">{{ summary.total if summary else subscriptions | length }}</span>
     {# The ordering hint, not the disclaimer: in subscription-only display the
        hero already says "read-only account meters; model eligibility is not
        verified", and this line repeated it word for word one row below. #}
-    <span class="h2-note">fullest binding window first</span>
+    <span class="h2-note">active sources{% if summary and summary.catalogue_total | default(0) %} · {{ summary.catalogue_total }} catalogue only{% endif %}</span>
     {% if lanes and (lanes.stale or lanes.error) %}<span class="tag-stale" title="Old or untrusted observation time — not current capacity">{{ 'report stale / untrusted' if lanes.stale else 'report untrusted' }}</span>{% endif %}
   </h2>
   {# Freshness is a property of the meters, so it lives in the panel's own
      caption rather than in a paragraph above the table. #}
   {% if lanes %}
   <p class="panel-meta" title="The meter report is written by an out-of-process probe timer; the page poll every 2s is not the sampling cadence.">
-    <span class="pm-k">meter report</span>
+    <span class="pm-k">local meter report</span>
     {% if lanes.age_s is not none %}<span class="pm-v">{{ lanes.age_s | int }}s old</span>{% else %}<span class="pm-v is-warn-text">observation time unknown</span>{% endif %}
     <span class="pm-sep">·</span>
     <span class="pm-k">sampling every</span>
@@ -228,14 +230,14 @@
      cycles are unlike and are never summed into a fictitious total, and the
      live line is scoped to this proxy. #}
   {% if summary %}
-  <div class="summary" aria-label="Capacity at a glance: seats by capacity class, binding windows and live load">
+  <div class="summary" aria-label="Capacity at a glance: active sources by capacity class, binding windows and live load">
     <div class="sum-row">
       {% for cls in ("usable", "limited", "exhausted", "stale", "unknown") %}
       {% if cls != "limited" or summary.counts.limited %}
       <span class="sum-chip chip-{{ cls }}"><b>{{ summary.counts[cls] }}</b> {{ cls }}</span>
       {% endif %}
       {% endfor %}
-      <span class="sum-note" title="Seat counts, never a summed budget — the windows, units and currencies below are unlike and are never added into one number">of {{ summary.total }} seat{{ '' if summary.total == 1 else 's' }} · windows and units are unlike — never summed</span>
+      <span class="sum-note" title="Source counts, never a summed budget; catalogue-only entries are excluded">of {{ summary.total }} active source{{ '' if summary.total == 1 else 's' }} · windows and units are unlike — never summed</span>
     </div>
     {% if summary.windows %}
     <div class="sum-row sum-windows" aria-label="Binding windows; each measured, never summed">
@@ -267,7 +269,11 @@
     </thead>
     <tbody>
       {% for s in subscriptions %}
-      <tr id="subscription-{{ s.id }}" data-subscription-id="{{ s.id }}"{% if s.is_binding %} class="row-binding"{% endif %}>
+      {% set catalogue_row = s.catalogue_only | default(false) %}
+      {% if catalogue_row and (loop.first or not subscriptions[loop.index0 - 1].catalogue_only | default(false)) %}
+      <tr class="catalogue-divider"><td colspan="3">Catalogue only · excluded from active capacity · readings retained as history</td></tr>
+      {% endif %}
+      <tr id="subscription-{{ s.id }}" data-subscription-id="{{ s.id }}"{% if catalogue_row %} data-catalogue-only="true"{% endif %}{% if s.is_binding %} class="row-binding"{% endif %}>
         <td class="sub-ident">
           <div class="ident-row">
             <span class="provider-icon" aria-hidden="true">{{ s.icon or "🤖" }}</span>
@@ -277,12 +283,17 @@
                Pro  C`). Shown only when the label does not already name it. #}
             {% if s.account_badge and s.account_badge not in (s.label or "") %}
             <span class="account-badge" title="Local credential label">{{ s.account_badge }}</span>{% endif %}
-            {% if s.is_binding %}<span class="binding-tag" title="This subscription is the fleet's binding constraint right now">binding</span>{% endif %}
+            {% if s.is_binding %}<span class="binding-tag" title="This subscription is this proxy's binding constraint right now">binding</span>{% endif %}
             {# The verdict belongs beside the name it judges. It used to sit in
                the last column of a 1560px table — 1200px from the row it
                describes, which is a head-turn per row while scanning. #}
             <span class="lane-status lane-{{ s.status | replace(' ', '-') }}" {% if s.detail %}title="{{ s.detail }}"{% endif %}><span aria-hidden="true">{{ s.status_icon or "❔" }}</span> {{ s.status }}</span>
           </div>
+          {% if s.enrollment | default('') %}<div class="im-caption">Native enrollment: {{ s.enrollment }}</div>{% endif %}
+          {% if s.catalogue_reason | default('') %}<div class="im-caption">{{ s.catalogue_reason }}</div>{% endif %}
+          {% if s.sample_age_s | default(none) is not none %}
+          <div class="im-caption">Source sample {{ s.sample_age_s | int }}s old{% if s.sample_observed_at %} · {{ s.sample_observed_at }}{% endif %}{% if s.sample_interval_s %} · every {{ s.sample_interval_s | int }}s{% endif %}</div>
+          {% endif %}
           <div class="ident-meta">
             <span class="im-family">{{ s.family or "unknown family" }}</span>
             {% if s.plan %}<span class="im-sep">·</span><span class="im-plan" title="Observed provider plan">{{ s.plan }}</span>{% endif %}

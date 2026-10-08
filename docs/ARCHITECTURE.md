@@ -1,6 +1,7 @@
 # Architecture
 
-`anthropic-throttle-proxy` is one aiohttp binary with two operating modes:
+**Throttler** exposes `throttler-gateway` and `throttler-ingress`. The gateway
+has two operating modes; the ingress routes across configured lanes:
 
 - **local**: a host-local `ANTHROPIC_BASE_URL` target for Claude Code,
   opencode, codex, and SDK clients. It can forward to a central tier and fall
@@ -9,7 +10,7 @@
   per-bearer AIMD ceiling, upstream retry handling, and telemetry surfaces.
 
 The same process can serve `/__throttle/health`, `/metrics`, `/ui`, and the
-proxy path. The hot path never depends on the optional GROQ advisor or HTMX UI.
+proxy path. The hot path uses raw aiohttp, without vendor SDKs or a dependency on the HTMX UI.
 
 ```text
 Claude clients
@@ -27,7 +28,8 @@ api.anthropic.com
 
 ## Request Path
 
-1. The client sends an Anthropic-compatible request to the proxy.
+1. The client sends a supported protocol request to the configured gateway
+   or ingress (Anthropic Messages, OpenAI-compatible Chat Completions/Responses).
 2. The proxy derives a bearer id from the `Authorization` header without
    storing or logging the token.
 3. Local mode optionally forwards to the configured central URL. If central is

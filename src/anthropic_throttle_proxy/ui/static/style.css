@@ -228,6 +228,7 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
 /* "THROTTLED for 12m" — duration is what separates a transient from an
    outage, and the verdict alone never said it. */
 .hero .since { font-family: var(--mono); font-size: var(--fs-body); color: var(--ctp-subtext0); }
+.verdict-scope { font-size: var(--fs-body); color: var(--ctp-subtext0); }
 .hero-detail {
   grid-column: 1;
   grid-row: 2;
@@ -559,6 +560,8 @@ col.c-burn  { width: 11rem; }
 .lane-ok        { color: var(--ok); }
 .lane-stale     { color: var(--warn); }
 .lane-unknown   { color: var(--ctp-subtext0); }
+.lane-not-enrolled { color: var(--ctp-subtext0); }
+.catalogue-divider td { color: var(--ctp-subtext0); font-size: var(--fs-meta); padding-top: 1rem; }
 .lane-unseen    { color: var(--ctp-subtext0); }
 .lane-locked    { color: var(--warn); }
 /* A full meter refuses just as hard as a rejected window — same weight. */

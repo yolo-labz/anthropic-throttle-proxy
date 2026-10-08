@@ -35,7 +35,7 @@ Runtime guidance docs:
 Follow-up TODOs: (none)
 -->
 
-# anthropic-throttle-proxy Constitution
+# Throttler Constitution
 
 ## Core Principles
 
@@ -178,7 +178,7 @@ single tab and immune to JS supply-chain attacks.
 ## Governance
 
 This constitution supersedes all other practices in the
-`anthropic-throttle-proxy` repository. CLAUDE.md remains the
+Throttler repository. CLAUDE.md remains the
 operational guidance document (commands, recipes, incident logs);
 this constitution captures the non-negotiable principles CLAUDE.md
 must remain compatible with.

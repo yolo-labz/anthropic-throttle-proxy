@@ -1,6 +1,9 @@
 # Deploy on Dokku
 
-End-to-end deploy of `anthropic-throttle-proxy` to a Dokku host via the Dockerfile builder.
+Deploy **Throttler** to a Dokku host via the Dockerfile builder, which runs
+`throttler-gateway`. The examples below create a new app/domain `throttler`.
+For an existing deployment use its actual app/domain and git remote; this
+source migration does not rename remote GitHub, registry, Dokku or DNS resources.
 
 Tested against Dokku ≥ 0.34 (Dockerfile + `app.json` healthchecks). Pedro's home server runs Dokku at `dokku.home301server.com.br` over Tailscale.
 
@@ -20,9 +23,9 @@ ssh dokku@your.host
 
 ```sh
 # inside the Dokku host shell
-dokku apps:create anthropic-throttle
-dokku ports:add anthropic-throttle http:80:8765
-dokku config:set anthropic-throttle \
+dokku apps:create throttler
+dokku ports:add throttler http:80:8765
+dokku config:set throttler \
   CLAUDE_API_THROTTLE_MAX=3 \
   THROTTLE_QUEUE_MODE=fair \
   THROTTLE_MIN_DISPATCH_GAP_MS=50 \
@@ -30,16 +33,14 @@ dokku config:set anthropic-throttle \
   THROTTLE_UPSTREAM_HEALTH_TIMEOUT=10 \
   THROTTLE_HOST=0.0.0.0 \
   THROTTLE_PORT=8765
-dokku checks:enable anthropic-throttle
-# Optional: enable the GROQ advisor (Anthropic-independent diagnosis on throttle)
-# dokku config:set anthropic-throttle ADVISOR_ENABLED=true GROQ_API_KEY=gsk_…
+dokku checks:enable throttler
 ```
 
 ## Push + deploy
 
 ```sh
 # from your laptop, inside the repo clone
-git remote add dokku dokku@your.host:anthropic-throttle
+git remote add dokku dokku@your.host:throttler
 git push dokku main
 ```
 
@@ -54,8 +55,8 @@ After deployment, verify the background egress probe is using the non-blocking
 deadline and advancing successfully:
 
 ```sh
-dokku config:get anthropic-throttle THROTTLE_UPSTREAM_HEALTH_TIMEOUT  # 10
-curl -fsS https://anthropic-throttle.<host>/__throttle/health \
+dokku config:get throttler THROTTLE_UPSTREAM_HEALTH_TIMEOUT  # 10
+curl -fsS https://throttler.<host>/__throttle/health \
   | jq '{upstream_egress_ok,upstream_egress_error,upstream_egress_last_check}'
 ```
 
@@ -65,7 +66,7 @@ For Pedro's setup, the proxy is reachable only over Tailscale. Two patterns:
 
 ### A. Bind Dokku's nginx to the tailnet IP
 
-Edit the Dokku nginx vhost template (e.g. via `dokku-tailscale` plugin) so the `listen` directive uses the tailnet IP instead of `0.0.0.0`. Browsers / clients hit the proxy through `http://anthropic-throttle.<tailnet-host>`. Public DNS resolves to a Tailscale IP that only logged-in tailnet peers can reach.
+Edit the Dokku nginx vhost template (e.g. via `dokku-tailscale` plugin) so the `listen` directive uses the tailnet IP instead of `0.0.0.0`. Browsers / clients hit the proxy through `http://throttler.<tailnet-host>`. Public DNS resolves to a Tailscale IP that only logged-in tailnet peers can reach.
 
 ### B. Skip Dokku's port-mapping entirely
 
@@ -75,7 +76,7 @@ If `dokku-tailscale` isn't available, drop `dokku ports:add` and instead bind th
 
 ```sh
 # global env in your shell rc
-export ANTHROPIC_BASE_URL=https://anthropic-throttle.<your-host>
+export ANTHROPIC_BASE_URL=https://throttler.<your-host>
 ```
 
 That single line turns the proxy on for `claude-code`, `opencode`, `codex`, the Anthropic Python/Node SDKs, and any other client that honours `ANTHROPIC_BASE_URL`. No token rewriting; the client's `Authorization: Bearer …` flows through unchanged.
@@ -84,14 +85,14 @@ That single line turns the proxy on for `claude-code`, `opencode`, `codex`, the 
 
 | Action | Command |
 |---|---|
-| Tail logs | `dokku logs anthropic-throttle --tail` |
-| Restart | `dokku ps:restart anthropic-throttle` |
-| Bump knob | `dokku config:set anthropic-throttle CLAUDE_API_THROTTLE_MAX=3` (auto-restarts) |
-| Stop (clients fall back to direct upstream via the local proxy's circuit-breaker) | `dokku ps:scale anthropic-throttle web=0` |
-| Resume | `dokku ps:scale anthropic-throttle web=1` |
-| Inspect health | `curl https://anthropic-throttle.<host>/__throttle/health \| jq` |
-| Prometheus | `curl https://anthropic-throttle.<host>/metrics` — scrape into Grafana |
-| Open dashboard | `https://anthropic-throttle.<host>/ui` |
+| Tail logs | `dokku logs throttler --tail` |
+| Restart | `dokku ps:restart throttler` |
+| Bump knob | `dokku config:set throttler CLAUDE_API_THROTTLE_MAX=3` (auto-restarts) |
+| Stop (clients fall back to direct upstream via the local proxy's circuit-breaker) | `dokku ps:scale throttler web=0` |
+| Resume | `dokku ps:scale throttler web=1` |
+| Inspect health | `curl https://throttler.<host>/__throttle/health \| jq` |
+| Prometheus | `curl https://throttler.<host>/metrics` — scrape into Grafana |
+| Open dashboard | `https://throttler.<host>/ui` |
 
 ## Troubleshooting
 
@@ -105,9 +106,9 @@ That single line turns the proxy on for `claude-code`, `opencode`, `codex`, the 
 Dokku keeps the previous image. Roll back with:
 
 ```sh
-dokku ps:rebuild anthropic-throttle  # rebuild from current git
+dokku ps:rebuild throttler  # rebuild from current git
 # or
-dokku releases:rollback anthropic-throttle 1   # one release back
+dokku releases:rollback throttler 1   # one release back
 ```
 
-If a config tweak misbehaves, revert via `dokku config:unset anthropic-throttle THROTTLE_MIN_DISPATCH_GAP_MS` — auto-restarts back into the previous config.
+If a config tweak misbehaves, revert via `dokku config:unset throttler THROTTLE_MIN_DISPATCH_GAP_MS` — auto-restarts back into the previous config.
