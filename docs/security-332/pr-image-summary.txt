@@ -1,0 +1,51 @@
+docker build (throwaway)	Pre Harden runner	2026-10-08T02:33:34.4581916Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+docker build (throwaway)	Build image	2026-10-08T02:33:45.8946275Z #2 resolve image config for docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+docker build (throwaway)	Build image	2026-10-08T02:33:46.2171988Z #2 resolve image config for docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+docker build (throwaway)	Build image	2026-10-08T02:33:46.6100871Z #4 docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+docker build (throwaway)	Build image	2026-10-08T02:33:46.6101642Z #4 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e done
+docker build (throwaway)	Build image	2026-10-08T02:33:46.6102267Z #4 sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e 8.40kB / 8.40kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:46.6102799Z #4 sha256:b5f3b260a9678e1d83d2fce86eeddf79420b79147eaba2a25986f47133d73720 482B / 482B done
+docker build (throwaway)	Build image	2026-10-08T02:33:46.6103354Z #4 sha256:68ebc061390d9a7d6e194f9d58309c754a53cb8b4e3b0d89593920f42f4a9da4 1.26kB / 1.26kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:46.6103887Z #4 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 11.98MB / 11.98MB 0.1s
+docker build (throwaway)	Build image	2026-10-08T02:33:46.7592973Z #4 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 11.98MB / 11.98MB 0.1s done
+docker build (throwaway)	Build image	2026-10-08T02:33:46.7594890Z #4 extracting sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 0.1s
+docker build (throwaway)	Build image	2026-10-08T02:33:46.9828362Z #4 extracting sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 0.1s done
+docker build (throwaway)	Build image	2026-10-08T02:33:46.9829259Z #5 [internal] load metadata for docker.io/library/python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
+docker build (throwaway)	Build image	2026-10-08T02:33:47.2928388Z #7 [internal] load metadata for ghcr.io/astral-sh/uv:0.9.2@sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867
+docker build (throwaway)	Build image	2026-10-08T02:33:47.5282363Z #5 [internal] load metadata for docker.io/library/python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
+docker build (throwaway)	Build image	2026-10-08T02:33:47.7467043Z #7 [internal] load metadata for ghcr.io/astral-sh/uv:0.9.2@sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9850291Z #10 [stage-1 1/6] FROM docker.io/library/python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9851009Z #10 resolve docker.io/library/python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c done
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9851659Z #10 sha256:65a67aec859c5fafe6ca38c2ed07825c97acf3febdcf62b79441a1bfca4f3a4a 0B / 1.29MB 0.1s
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9852200Z #10 sha256:3a5db7051419a594a866378c5d2c422e3d282d69e6792b3213772cb1349da446 11.92MB / 11.92MB 0.1s
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9852792Z #10 sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c 10.37kB / 10.37kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9853352Z #10 sha256:8fb4cfa1a2616d7b8e0c2175cc6ad68f5729c34ea8488c0b360d2934b7be9024 1.75kB / 1.75kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9853869Z #10 sha256:ce3ff9524414289fc922d9d5dc1de87abc77a39ff2ff5007435839f2af1d7569 5.51kB / 5.51kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:47.9854659Z #10 sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e 0B / 29.84MB 0.1s
+docker build (throwaway)	Build image	2026-10-08T02:33:48.1849700Z #10 sha256:65a67aec859c5fafe6ca38c2ed07825c97acf3febdcf62b79441a1bfca4f3a4a 1.29MB / 1.29MB 0.2s done
+docker build (throwaway)	Build image	2026-10-08T02:33:48.1850417Z #10 sha256:3a5db7051419a594a866378c5d2c422e3d282d69e6792b3213772cb1349da446 11.92MB / 11.92MB 0.1s done
+docker build (throwaway)	Build image	2026-10-08T02:33:48.1850988Z #10 sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e 29.84MB / 29.84MB 0.3s
+docker build (throwaway)	Build image	2026-10-08T02:33:48.1851527Z #10 sha256:2f5b06adfd9138ef928aaf8b34f3fecf122b137a537133dfe421509dd57b4a47 250B / 250B 0.3s
+docker build (throwaway)	Build image	2026-10-08T02:33:48.3651366Z #10 sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e 29.84MB / 29.84MB 0.3s done
+docker build (throwaway)	Build image	2026-10-08T02:33:48.3652218Z #10 sha256:2f5b06adfd9138ef928aaf8b34f3fecf122b137a537133dfe421509dd57b4a47 250B / 250B 0.3s done
+docker build (throwaway)	Build image	2026-10-08T02:33:48.3652802Z #10 extracting sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e 0.1s
+docker build (throwaway)	Build image	2026-10-08T02:33:49.0601763Z #10 extracting sha256:ecc510c1e359bdc007b39802570bb7e4dec7d6ebccf357c3201a74299113e05e 0.7s done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.0603172Z #10 extracting sha256:65a67aec859c5fafe6ca38c2ed07825c97acf3febdcf62b79441a1bfca4f3a4a 0.1s done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6384059Z #11 FROM ghcr.io/astral-sh/uv:0.9.2@sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6385180Z #11 resolve ghcr.io/astral-sh/uv:0.9.2@sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867 done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6386150Z #11 sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867 2.19kB / 2.19kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6387029Z #11 sha256:0178fbb205ada6c94ddbd45828f770a2d607cfa7c090276c69b8468a983da557 669B / 669B done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6387892Z #11 sha256:9975e13073f7261df32f473473ff4597cfaabe5fe2046684d03ad2da3f0828f8 1.30kB / 1.30kB done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6388833Z #11 sha256:e005778c86e3d15dfa8aa8fa2423abd21299570a7d175f8bc048e7428f9ae3ed 21.78MB / 21.78MB 1.1s done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6389767Z #11 sha256:92e55b92a5196c2d693943242d6daf87e53ac1b557770402e6ea29e7eeed693a 98B / 98B 0.5s done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6390640Z #11 extracting sha256:e005778c86e3d15dfa8aa8fa2423abd21299570a7d175f8bc048e7428f9ae3ed 0.3s done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.6391430Z #11 extracting sha256:92e55b92a5196c2d693943242d6daf87e53ac1b557770402e6ea29e7eeed693a done
+docker build (throwaway)	Build image	2026-10-08T02:33:49.7887579Z #10 [stage-1 1/6] FROM docker.io/library/python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
+docker build (throwaway)	Build image	2026-10-08T02:33:49.9661115Z #10 extracting sha256:3a5db7051419a594a866378c5d2c422e3d282d69e6792b3213772cb1349da446
+docker build (throwaway)	Build image	2026-10-08T02:33:50.5283422Z #10 extracting sha256:3a5db7051419a594a866378c5d2c422e3d282d69e6792b3213772cb1349da446 0.4s done
+docker build (throwaway)	Build image	2026-10-08T02:33:50.6414125Z #10 extracting sha256:2f5b06adfd9138ef928aaf8b34f3fecf122b137a537133dfe421509dd57b4a47
+docker build (throwaway)	Build image	2026-10-08T02:33:50.8125927Z #10 extracting sha256:2f5b06adfd9138ef928aaf8b34f3fecf122b137a537133dfe421509dd57b4a47 done
+docker build (throwaway)	Build image	2026-10-08T02:33:59.9860681Z #15 [builder 3/7] COPY --from=ghcr.io/astral-sh/uv:0.9.2@sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867 /uv /usr/local/bin/uv
+docker build (throwaway)	Build image	2026-10-08T02:34:00.9740444Z #17 0.679  + multidict==6.9.1
+docker build (throwaway)	Build image	2026-10-08T02:34:02.5285397Z #23 exporting to image
+docker build (throwaway)	Build image	2026-10-08T02:34:03.0308376Z #23 writing image sha256:158b7171dcfe3a47efab994365faba0678bbb02bd7adda080fc166b32c5cc5f5 done

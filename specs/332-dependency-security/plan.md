@@ -20,9 +20,10 @@ the source report, not dismissed to inflate a score.
 ## Plan / tasks
 
 - [x] Preserve old worktree and PR315; create fresh feature worktree.
-- [ ] Save canonical advisory and registry receipts; run failing baseline tests.
-- [ ] Update only multidict in uv.lock to 6.9.1; pin Docker image digests.
-- [ ] Run targeted regressions, full admitted pytest, Ruff and normal hooks.
+- [x] Save canonical advisory and registry receipts; six baseline tests fail.
+- [x] Update only multidict in uv.lock to 6.9.1; pin Docker image digests.
+- [x] Patched CI: six regressions + 2,146 full tests, Ruff, image build and normal
+      hooks pass. CodeQL/OSV at e79cd22d each have zero PR results; no dismissals.
 - [ ] Run actual exact-head CI/security scans, verify unresolved reviews and
       protected safe-class permissions, ordinary PR + squash merge.
 - [ ] Publish source report and canonical SAVE-STATE in isolated Notes worktree.

@@ -70,6 +70,25 @@ Use existing GitHub CI for actual patched-package/full-test/build/security scans
 Pending receipts must remain pending until executed; a green report-only job is
 not a clean vulnerability/type report.
 
+### Actual patched-package acceptance
+
+PR [#329](https://github.com/yolo-labz/anthropic-throttle-proxy/pull/329), source
+head `da26d07b909b08f007264be20cc3e603ccc767bb`: all checks passed. The
+coverage job explicitly installed **multidict 6.9.1**, ran the new module's
+**six tests successfully**, and passed **2,146 total tests** (290 warnings,
+98.99s). Actual CodeQL and OSV analyses at GitHub merge checkout
+`e79cd22d65bb5d5c8d9c03e11c7f77be5ab20a41` each report **0 results**;
+that PR's open-alert list is empty. The throwaway Docker build passed using
+the pinned digests. Slop/alignment passed through normal hooks and CI.
+Raw exact-revision run/security/build receipts are in `security-332/pr-*`.
+This is real green-after acceptance, not a report-only job's status alone.
+Existing main CodeQL/Scorecard findings remain separate, without dismissals.
+
+Evidence-only follow-up commits require their own current-head checks before
+merge. Post-merge main OSV/Scorecard results must be read before claiming the
+historical alert #55 or image findings globally cleared; the held PR315 can
+still contain its old lock. Runtime activation remains unperformed.
+
 Delivery target: normal protected safe-class PR + squash merge, all required
 checks/review threads satisfied; no Actions edits, no admin merge, force-push or
 hook bypass. Actual deployment/activation is not performed. Rollback after merge:
