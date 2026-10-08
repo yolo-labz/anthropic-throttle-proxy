@@ -1,4 +1,4 @@
-# anthropic-throttle-proxy · Brand Spec
+# Throttler · Brand Spec
 
 > Captured: 2026-05-22
 > Source: grown from the shipped `/ui` dashboard (Catppuccin Mocha + JetBrains Mono).
@@ -30,9 +30,8 @@ runs on every bearer.
 
 ### Lockup
 - File: `assets/brand/lockup.svg` (mark + wordmark + tagline, 560×122)
-- The wordmark colours the verb: `anthropic`/`proxy` in subtext, **`throttle`**
-  in teal — the product *is* the throttle. Hyphens in overlay0.
-- Tagline: `fleet-wide pacing in front of api.anthropic.com`.
+- The canonical wordmark is **Throttler** in teal.
+- Tagline: `fleet-wide pacing and admission`.
 
 ## 🎨 Palette — Catppuccin Mocha
 

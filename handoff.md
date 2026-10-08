@@ -6,6 +6,27 @@ host activation. Latest incident first.
 
 ---
 
+## 08/10/2026 — Throttler canonical source migration (2719, source delivery)
+
+Base: merged proxy `515f67d`. Product **Throttler**; distribution/import package
+`throttler-gateway` / `throttler_gateway`; canonical commands `throttler-gateway`
+and `throttler-ingress` delegate to the existing gateway/ingress runtime.
+Legacy console aliases and `anthropic_throttle_proxy` imports remain. Existing
+settings, state directories, root probes, metrics and wire headers remain
+compatible; provider adapters/account metadata retain their truthful identities.
+UI/brand/current docs and new-install operational samples use the product name;
+actual repository/registry/existing Dokku/domain coordinates are not renamed.
+
+Root owns Nix integration, pin and live migration. No live controls/settings,
+provider requests, workflows or CODEOWNERS changes. Acceptance: **2,200 full tests**, **333 focused tests**, ruff lint/format,
+plus **11 installed checks each** for the wheel and sdist-rebuilt wheel outside
+the checkout. Wheel payloads match byte-for-byte. Exact source SHA, final PR/CI
+and merge receipts are recorded in `specs/2719-generic-gateway/` and the unique secret-free
+`/home/notroot/.local/state/throttler-recovery/2026-10-08-2704/2719-generic-agent-status.json`.
+Only the admitted desktop small lane with one thread is available to this seat.
+Source acceptance is separate from live activation. Source rollback: one revert PR
+of the eventual squash commit.
+
 ## 03/10/2026 — Prospective dispatch integration, default off
 
 One app-owned runtime now joins the ledger, explicit source/endpoint/model

@@ -1,16 +1,16 @@
 <p align="center">
-  <img src="assets/brand/lockup.svg" alt="anthropic-throttle-proxy — fleet-wide pacing in front of api.anthropic.com" width="460">
+  <img src="assets/brand/lockup.svg" alt="Throttler — fleet-wide pacing and admission" width="460">
 </p>
 
-# anthropic-throttle-proxy
+# Throttler
 
-Self-hosted reverse-proxy in front of `api.anthropic.com` that smooths request bursts and enforces a single per-bearer concurrency cap across an entire fleet of Claude Code / opencode / codex / Claude SDK clients.
+Self-hosted gateway and ingress for fleet-wide pacing, request admission and subscription capacity. Configurable upstream lanes support the existing Anthropic Messages, OpenAI-compatible Chat Completions and Responses adapters; provider-specific protocols and account metadata remain explicit.
 
 Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-code/issues/53915) — Anthropic's per-account concurrent-stream cap does not scale with the Max tier, so running 15+ parallel Claude TUIs through a single OAuth bearer produces a retry storm at the HTTP layer. This proxy puts the cap **once**, fairly, in a place you control.
 
 ## Features
 
-- **Single-binary aiohttp proxy** — drop-in for `ANTHROPIC_BASE_URL`. Transparent forward to `https://api.anthropic.com`.
+- **aiohttp gateway and ingress** — `throttler-gateway` runs a configurable upstream lane; `throttler-ingress` selects among existing lanes. The default gateway remains compatible with `ANTHROPIC_BASE_URL` and `https://api.anthropic.com`.
 - **Subscription-only request contract** — callers of the unified `:8760` ingress can require a positively attested subscription lane per request; direct/pay-go, malformed requirements, and unknown routes fail closed (403 policy refusal) rather than receiving spill traffic, and constrained 2xx responses carry an ingress-authored `credential-mode: subscription` receipt.
 - **Two roles, same binary** — `local` (per-device passthrough, optional central fanout) and `central` (fleet-wide single semaphore).
 - **Fair per-bearer concurrency** — round-robin across distinct client TCPs so no Claude TUI starves the others.
@@ -29,7 +29,7 @@ Born out of [anthropics/claude-code#53915](https://github.com/anthropics/claude-
 git clone https://github.com/yolo-labz/anthropic-throttle-proxy.git
 cd anthropic-throttle-proxy
 uv sync
-uv run python -m anthropic_throttle_proxy
+uv run throttler-gateway
 # proxy listening on http://127.0.0.1:8765
 # dashboard at http://127.0.0.1:8765/ui
 ```
@@ -38,8 +38,28 @@ Point your clients at it:
 
 ```sh
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
-claude       # or opencode / codex / any SDK
+claude       # an Anthropic-protocol client
 ```
+
+## Canonical commands and compatibility
+
+The Python distribution is `throttler-gateway`; its import package is
+`throttler_gateway`. `uv run throttler-gateway` (or `python -m throttler_gateway`)
+starts the gateway. `uv run throttler-ingress` (or
+`python -m throttler_gateway.ingress`) starts the separate ingress on its existing
+configured port, using the existing lane configuration and routing policy.
+
+The distribution also ships `anthropic-throttle-proxy`,
+`anthropic-throttle-ingress` and the `anthropic_throttle_proxy` implementation
+package for existing clients/services. These entry points share the same runtime;
+no routing, provider enrollment or setting changes follow from the product name.
+Replace the old distribution instead of co-installing it, since both own the
+compatibility package. Nix integration, pin and live service migration are separate.
+
+Existing `THROTTLE_*` / `INGRESS_*` / `CLAUDE_API_THROTTLE_MAX` configuration,
+`x-anthropic-throttle-*` wire contracts, metrics, root-probe bodies and state
+paths remain compatible. The repository, published image coordinates and existing
+Dokku app/domain names retain their actual external names until migrated explicitly.
 
 ## Dashboard presentation (YAML)
 
@@ -97,24 +117,25 @@ produced by this proxy; a central/container without it stays unknown.
 
 ## Deploy to Dokku
 
-See [`docs/DEPLOY-DOKKU.md`](docs/DEPLOY-DOKKU.md). One-time:
+See [`docs/DEPLOY-DOKKU.md`](docs/DEPLOY-DOKKU.md). New-install example
+using app/domain `throttler`; use the actual names for an existing deployment:
 
 ```sh
 ssh dokku@your.host
-dokku apps:create anthropic-throttle
-dokku ports:add anthropic-throttle http:80:8765
-dokku config:set anthropic-throttle \
+dokku apps:create throttler
+dokku ports:add throttler http:80:8765
+dokku config:set throttler \
   CLAUDE_API_THROTTLE_MAX=3 \
   THROTTLE_QUEUE_MODE=fair \
   THROTTLE_MIN_DISPATCH_GAP_MS=50 \
   THROTTLE_MAX_HOLD_RETRY_AFTER_S=60 \
   THROTTLE_HOST=0.0.0.0 \
   THROTTLE_PORT=8765
-git remote add dokku dokku@your.host:anthropic-throttle
+git remote add dokku dokku@your.host:throttler
 git push dokku main
 ```
 
-Then point your devices at `https://anthropic-throttle.your.host`.
+Then point your devices at `https://throttler.your.host`.
 
 ## Config reference
 

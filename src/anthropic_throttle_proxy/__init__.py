@@ -1,4 +1,4 @@
-"""anthropic-throttle-proxy — self-hosted throttle proxy for api.anthropic.com.
+"""Throttler's compatibility implementation package.
 
 See README + CLAUDE.md for design + deploy.
 """

@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 122" width="560" height="122" role="img" aria-label="anthropic-throttle-proxy">
-  <title>anthropic-throttle-proxy</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 122" width="560" height="122" role="img" aria-label="Throttler">
+  <title>Throttler</title>
   <!-- mark -->
   <g transform="translate(13,13) scale(0.96)">
     <rect x="1" y="1" width="98" height="98" rx="22" fill="#1e1e2e" stroke="#313244" stroke-width="1.5"/>
@@ -10,9 +10,9 @@
     <circle cx="31" cy="50" r="3.4" fill="#fab387"/>
     <circle cx="50" cy="34" r="3.4" fill="#fab387"/>
   </g>
-  <!-- wordmark: the verb 'throttle' carries the accent -->
+  <!-- canonical product wordmark -->
   <text x="126" y="58" font-family="'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,monospace" font-size="29" font-weight="600" letter-spacing="-0.5">
-    <tspan fill="#a6adc8" font-weight="400">anthropic</tspan><tspan fill="#6c7086" font-weight="400">-</tspan><tspan fill="#94e2d5">throttle</tspan><tspan fill="#6c7086" font-weight="400">-</tspan><tspan fill="#a6adc8" font-weight="400">proxy</tspan>
+    <tspan fill="#94e2d5">Throttler</tspan>
   </text>
-  <text x="127" y="84" font-family="'JetBrains Mono','Fira Code',ui-monospace,monospace" font-size="12.5" fill="#6c7086" letter-spacing="0.2">fleet-wide pacing in front of api.anthropic.com</text>
+  <text x="127" y="84" font-family="'JetBrains Mono','Fira Code',ui-monospace,monospace" font-size="12.5" fill="#6c7086" letter-spacing="0.2">fleet-wide pacing and admission</text>
 </svg>

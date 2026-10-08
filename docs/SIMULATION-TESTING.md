@@ -39,7 +39,7 @@ THROTTLE_AIMD_INITIAL_CONCURRENT=1 \
 THROTTLE_PRIORITY_RESERVE_SLOTS=0 \
 THROTTLE_ACCOUNT_CRED_PATHS="A:/tmp/claude-a.json,B:/tmp/claude-b.json" \
 THROTTLE_ACCOUNT_ROUTING=least_loaded \
-uv run anthropic-throttle-proxy
+uv run throttler-gateway
 ```
 
 Run the workload:

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ 'anthropic-throttle-proxy' if show_local | default(true) else 'Subscription capacity' }}</title>
+  <title>{{ 'Throttler' if show_local | default(true) else 'Throttler · Subscription capacity' }}</title>
   <link rel="icon" href="/ui/static/favicon.svg?v={{ asset_v }}" type="image/svg+xml">
   <link rel="stylesheet" href="/ui/static/style.css?v={{ asset_v }}">
   <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
@@ -11,7 +11,7 @@
 <body>
   <header>
     <div class="brand">
-      <h1>{{ 'anthropic-throttle-proxy' if show_local | default(true) else 'Subscription capacity' }}</h1>
+      <h1>Throttler</h1>
       {% if not show_local | default(true) %}
         <span class="role">{% if workload_label | default(false) %}{{ workload_label }} workload · {% endif %}read-only account meters</span>
       {% elif central_url != "(direct)" %}
