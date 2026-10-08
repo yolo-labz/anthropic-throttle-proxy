@@ -1,0 +1,7 @@
+{
+  "scope": "exact deployed reader/UI + native real-journal arithmetic; no runtime patches",
+  "ui_cached_endpoint": "not exposed; rate checked against cache-valid window bounds",
+  "completed": false,
+  "reader_sha256": "4872db12cf6ea500fc39299f605d0a8651290677c96f14df06b07d8e92736464",
+  "failure": "[Errno 2] No such file or directory: '/proc/2200060/environ'"
+}

@@ -1,0 +1,11 @@
+{
+  "recorded_at_brt": "07/10/2026 23:46:29 BRT",
+  "effective_metadata": "ActiveState=active\nSubState=running\nFragmentPath=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service\nDropInPaths=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99z-combined-throughput-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf\nMainPID=2200060\nExecStart={ path=/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[Wed 2026-10-07 23:28:49 -03] ; stop_time=[n/a] ; pid=2200060 ; code=(null) ; status=0/0 }\n",
+  "persistent_last_exec_start": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy",
+  "running_import_root": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+  "persistent_effective_imported_agree": true,
+  "qa_lifecycle_mutations": 0,
+  "accepted_source": "c4bd3ce6f203220683e18504a629343d5d53b12b",
+  "filtered_hash": "sha256-7qAtPZ0YKisS2YIcjEfWIkvPl38ZJyE1pM/mzgjEMto=",
+  "pV_fingerprints_reference": "NixOS-2683-throttle-ui-runtime/meta/2683-combined-source-fingerprints.json"
+}

@@ -1,0 +1,9 @@
+{
+  "head": "dd63e3f",
+  "request": "heavy admitted uv sync/ruff/full pytest, timeout170; intended qa-dd63-full-pytest.txt",
+  "result": "pre-execution refusal",
+  "message": "Failed to start transient service unit: Unit desktop-job-slot.service was already loaded or has a fragment file.",
+  "exit_code": 1,
+  "executed": false,
+  "scope": "Does not invalidate the successful separate admitted exact939 live packet or exact head CI; no local full-pytest result inferred, no small-lane fallback or slot manipulation."
+}

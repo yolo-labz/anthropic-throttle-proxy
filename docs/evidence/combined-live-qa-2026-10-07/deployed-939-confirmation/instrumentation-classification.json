@@ -1,0 +1,7 @@
+{
+  "classification": "QA host-PID visibility assumption failed; not a UI/journal verdict or pass",
+  "proof": "Admitted jobs intentionally cannot see host PIDs; systemd via user bus reports host MainPID2200060, which is absent from this admitted /proc namespace. Prior pV native visibility receipt explicitly documented this boundary.",
+  "verified_subset": "Both-width1366/390 geometry/AX/quota, keyboard horizontal scroll, native touch sibling + keyboard local, real HTMX focus/details per document, unchanged accepted reader/UI/CSS bytes passed. Full packet aborted before native arithmetic.",
+  "repair": "Bind native Python/journal routing to effective systemd ExecStart/Environment and the immutable Nix wrapper shebang. Run isolated deployed reader inside the admitted budget. No nsenter, lifecycle changes or admission/namespace workaround.",
+  "next_result": "Separate admitted final directory; preserve this failed command and receipt."
+}

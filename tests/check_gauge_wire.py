@@ -140,7 +140,7 @@ async def launch(engine):
     )
 
 
-async def deployed(out, expected_build):
+async def deployed(out, expected_build, *, combined=False):
     """Read-only real service acceptance; never patch live caches/collectors."""
     from playwright.async_api import async_playwright
 
@@ -168,7 +168,9 @@ async def deployed(out, expected_build):
             browser = await launch(engine)
             try:
                 receipt["browser"] = browser.version
-                page = await browser.new_page(viewport={"width": 1366, "height": 844})
+                page = await browser.new_page(
+                    viewport={"width": 1366, "height": 844}, has_touch=combined
+                )
                 page.set_default_timeout(10000)
                 polls, errors, unexpected = [], [], []
                 page.on("pageerror", lambda error: errors.append(sanitize(str(error))))
@@ -183,7 +185,8 @@ async def deployed(out, expected_build):
                     "request",
                     lambda r: (
                         unexpected.append(r.url)
-                        if not (
+                        if r.method not in {"GET", "HEAD"}
+                        or not (
                             r.url.startswith("http://127.0.0.1:8765/")
                             or r.url.startswith("https://unpkg.com/htmx.org@1.9.12")
                         )
@@ -234,10 +237,45 @@ async def deployed(out, expected_build):
                     receipt.setdefault("quota_accessibility", {})[
                         str(width)
                     ] = await quota_accessibility(page)
+                    if combined:
+                        await page.locator(".tps-panel").scroll_into_view_if_needed()
                     dims = await capture(page, out, f"deployed-{width}")
                     receipt["viewports"].append(dims)
                     assert dims["width"] == dims["content"], dims
                     assert not dims["duplicate_ids"] and not dims["unnamed_inputs"], dims
+                    if combined:
+                        assert not dims["gauge_clip"] and not dims["overflow"], dims
+                        assert dims["main_landmarks"] == dims["h1_count"] == 1, dims
+                if combined:
+                    receipt["keyboard_scroll"] = await check_keyboard_scroll(page)
+                    await page.locator('.workload-picker a[href="/ui?source=mimo"]').tap()
+                    await page.wait_for_url("**/ui?source=mimo")
+                    await page.wait_for_function("window.htmx !== undefined")
+                    # Native navigation creates a new checkbox; its contract is poll persistence.
+                    await page.locator("#show-details").check()
+                    region = page.locator("#subs-scroll")
+                    await region.focus()
+                    before = len(polls)
+                    await page.wait_for_timeout(2400)
+                    assert len(polls) > before and all("source=mimo" in p for p in polls[before:])
+                    assert await page.evaluate("document.activeElement.id") == "subs-scroll"
+                    assert await page.locator("#show-details").is_checked()
+                    assert (
+                        "Combined output throughput"
+                        in await page.locator(".tps-side").text_content()
+                    )
+                    await page.locator(".tps-panel").scroll_into_view_if_needed()
+                    await capture(page, out, "deployed-sibling-390")
+                    await page.locator('.workload-picker a[href="/ui?source=local"]').focus()
+                    await page.keyboard.press("Enter")
+                    await page.wait_for_url("**/ui?source=local")
+                    assert (
+                        "Combined output throughput"
+                        in await page.locator(".tps-side").text_content()
+                    )
+                    receipt["source_interaction"] = (
+                        "touch sibling + keyboard local; HTMX/focus/details per document"
+                    )
                 receipt["polls"] = len(polls)
                 receipt["console_errors"], receipt["unexpected_requests"] = errors, unexpected
                 assert not errors and not unexpected

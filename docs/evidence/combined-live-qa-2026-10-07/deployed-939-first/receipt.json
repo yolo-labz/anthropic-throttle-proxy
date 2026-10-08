@@ -1,0 +1,425 @@
+{
+  "scope": "deployed desktop; read-only, no synthetic runtime patches",
+  "build": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+  "ui_sha256": {
+    "routes.py": "f5739abfbd4b56b46ca2474be910219b33aba5df1315c09283a7cb08808cbb4d",
+    "presentation.py": "4ba93b22753e8f4451a4d72e8937f6d75ea627c5b2cd49c0b4503ff1d7faee47",
+    "signals.py": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0",
+    "__init__.py": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7",
+    "templates/dashboard.html": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9",
+    "static/style.css": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+    "templates/partials/config.html": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
+    "templates/partials/stats.html": "3297ea5f7d8bb2a38adf3e4f1df04f7c84e9705fe79860e7b2c4673f5a131f4d"
+  },
+  "browser": "152.0.7977.82",
+  "viewports": [
+    {
+      "width": 1366,
+      "content": 1366,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 946,
+          "content": 946,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 566.4375,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 566.4375,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 849.890625,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 377,
+          "content": 377,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        },
+        {
+          "id": "bearers-scroll",
+          "width": 377,
+          "content": 377,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "THEAD",
+              "cls": null,
+              "right": 973.640625,
+              "containing_block": "bearers-scroll",
+              "contained": true,
+              "clip": "auto"
+            }
+          ]
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.875,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 29.1875,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 15.265625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    },
+    {
+      "width": 390,
+      "content": 390,
+      "scroll_regions": [
+        {
+          "id": "subs-scroll",
+          "width": 366,
+          "content": 480,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            },
+            {
+              "tag": "SPAN",
+              "cls": "sr-only",
+              "right": 472.75,
+              "containing_block": "subs-scroll",
+              "contained": true,
+              "clip": "rect(0px, 0px, 0px, 0px)"
+            }
+          ]
+        },
+        {
+          "id": "providers-scroll",
+          "width": 366,
+          "content": 426,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": []
+        },
+        {
+          "id": "bearers-scroll",
+          "width": 366,
+          "content": 366,
+          "position": "relative",
+          "overflowX": "auto",
+          "positioned": [
+            {
+              "tag": "THEAD",
+              "cls": null,
+              "right": 13.25,
+              "containing_block": "bearers-scroll",
+              "contained": true,
+              "clip": "auto"
+            }
+          ]
+        }
+      ],
+      "duplicate_ids": [],
+      "main_landmarks": 1,
+      "h1_count": 1,
+      "unnamed_inputs": [],
+      "small_targets": [
+        {
+          "tag": "INPUT",
+          "id": "show-details",
+          "width": 13,
+          "height": 13
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 25.875,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 29.1875,
+          "height": 16.875
+        },
+        {
+          "tag": "A",
+          "id": "",
+          "width": 15.265625,
+          "height": 16.875
+        }
+      ],
+      "overflow": [],
+      "gauge_clip": []
+    }
+  ],
+  "desktop_quota": {
+    "generatedAt": "2026-10-08T02:32:21Z",
+    "age_s": 15.402873,
+    "unit": "percent",
+    "window": "weekly",
+    "used": 23.799999999999997,
+    "remaining": 76.2,
+    "display": "\u24c2\ufe0f\nMiMo Desktop\n\u2705 OK\nchinese-frontier\n\u00b7\nDesktop subscription \u00b7 weekly quota\n\u00b7\nPi meter report\n\u00b7\nmimo:desktop-subscription\n\t\n\ud83d\udccaweekly\n24%\nused of weekly quota\n76.2% left\nresets 4d 19h\n12/10/2026 22:27 UTC\n\t\u2014\nno window"
+  },
+  "quota_accessibility": {
+    "1366": [
+      {
+        "text": "used of codex quota",
+        "accessible": true
+      },
+      {
+        "text": "used of codex quota",
+        "accessible": true
+      },
+      {
+        "text": "used of codex quota",
+        "accessible": true
+      },
+      {
+        "text": "used of 7d quota",
+        "accessible": true
+      },
+      {
+        "text": "used of 5h quota",
+        "accessible": true
+      },
+      {
+        "text": "used of premium_interactions quota",
+        "accessible": true
+      },
+      {
+        "text": "used of monthly quota",
+        "accessible": true
+      },
+      {
+        "text": "used of seat quota",
+        "accessible": true
+      },
+      {
+        "text": "used of seat quota",
+        "accessible": true
+      },
+      {
+        "text": "used of weekly quota",
+        "accessible": true
+      }
+    ],
+    "390": [
+      {
+        "text": "used of codex quota",
+        "accessible": true
+      },
+      {
+        "text": "used of codex quota",
+        "accessible": true
+      },
+      {
+        "text": "used of codex quota",
+        "accessible": true
+      },
+      {
+        "text": "used of 7d quota",
+        "accessible": true
+      },
+      {
+        "text": "used of 5h quota",
+        "accessible": true
+      },
+      {
+        "text": "used of premium_interactions quota",
+        "accessible": true
+      },
+      {
+        "text": "used of monthly quota",
+        "accessible": true
+      },
+      {
+        "text": "used of seat quota",
+        "accessible": true
+      },
+      {
+        "text": "used of seat quota",
+        "accessible": true
+      },
+      {
+        "text": "used of weekly quota",
+        "accessible": true
+      }
+    ]
+  },
+  "keyboard_scroll": {
+    "width": 366,
+    "content": 480,
+    "scrolled": 1,
+    "focused": true,
+    "document_width": 390,
+    "viewport": 390
+  },
+  "failure": ""
+}
