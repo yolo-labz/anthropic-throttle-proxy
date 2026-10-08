@@ -1,0 +1,59 @@
+Read-only control metadata after targeted task section; unrelated ledger dump deliberately not retained.
+--- owned worktree ---
+/home/notroot/NixOS-2683-throttle-ui-runtime
+
+--- source branches / PRs ---
+/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-324-ui-runtime-delivery                                                                10d1ea2 [324-ui-runtime-delivery]
+/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-325-ui-qa-final                                                                        a6a59a3 [325-ui-qa-final]
+/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-326-combined-throughput                                                                42e5e69 [326-combined-throughput]
+/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-327-combined-qa                                                                        42e5e69 [327-combined-qa]
+[{"headRefName":"325-ui-qa-final","headRefOid":"a6a59a3e464f8ac38bba885d791add75a9f7c603","number":324,"title":"test(ui): verify final-source and deployed build","updatedAt":"2026-10-07T22:28:08Z"},{"headRefName":"314-static-analysis","headRefOid":"c0fe94da7878293faefd60e76390a438c8cd0095","number":315,"title":"ci(sonar): fail closed and publish Community main only","updatedAt":"2026-10-07T19:39:55Z"}]
+
+--- effective service security metadata ---
+ActiveState=active
+SubState=running
+FragmentPath=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service
+DropInPaths=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf
+MainPID=1096484
+ExecStart={ path=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+RootDirectory=
+RootImage=
+User=
+Group=
+DynamicUser=no
+ReadWritePaths=/home/notroot/.local/state/anthropic-throttle-proxy
+ReadOnlyPaths=
+InaccessiblePaths=
+ProtectHome=read-only
+ProtectSystem=strict
+BindPaths=
+BindReadOnlyPaths=
+
+--- accounting path metadata ---
+f: /home/notroot/.local/state/pi-harness/usage.jsonl
+drwxr-xr-x nobody  nogroup /
+drwxr-xr-x nobody  nogroup home
+drwx------ notroot users   notroot
+drwx------ notroot users   .local
+drwx------ notroot users   state
+drwxr-xr-x notroot users   pi-harness
+-rw-r--r-- notroot users   usage.jsonl
+
+--- quota and sibling state ---
+Result=success
+ExecMainStartTimestamp=Wed 2026-10-07 19:42:06 -03
+ExecMainExitTimestamp=Wed 2026-10-07 19:42:13 -03
+ExecMainStatus=0
+ActiveState=active
+UnitFileState=alias
+LastTriggerUSec=Wed 2026-10-07 19:42:06 -03
+anthropic-throttle-proxy=1096484
+mimo-desktop-subscription=1181854
+mimo-throttle-proxy=3873577
+zai-throttle-proxy=3842786
+mimo-tokenplan-shim=1980
+          Finished with result: success
+Main processes terminated with: code=exited, status=0/SUCCESS
+               Service runtime: 1.506s
+             CPU time consumed: 946ms
+                   Memory peak: 21.8M (swap: 0B)

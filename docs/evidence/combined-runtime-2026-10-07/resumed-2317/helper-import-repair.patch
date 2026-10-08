@@ -1,0 +1,59 @@
+--- initial/helper.py
++++ final/helper.py
+@@ -1,9 +1,11 @@
+ """Read-only actual UI/journal verification; never patch the running collector."""
+ 
++import argparse
+ import ast
+ import datetime
+ import hashlib
+ import html
++import importlib
+ import itertools
+ import json
+ import pathlib
+@@ -13,11 +15,17 @@
+ import subprocess
+ import sys
+ import time
++from urllib.request import urlopen
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent
+ PKG = pathlib.Path("/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0")
+ UNIT = "anthropic-throttle-proxy.service"
+ BEFORE = json.loads((ROOT / "2683-combined-before-2317.json").read_text())
++parser = argparse.ArgumentParser(description=__doc__)
++parser.add_argument(
++    "--output", type=pathlib.Path, default=ROOT / "2683-combined-runtime-verification.json"
++)
++options = parser.parse_args()
+ 
+ 
+ def command(*args):
+@@ -67,15 +75,13 @@
+             for path in paths:
+                 site.addsitedir(path)
+ sys.path.insert(0, str(PKG / "lib/python3.14/site-packages"))
+-from anthropic_throttle_proxy import output_usage  # noqa: E402
+-from anthropic_throttle_proxy.ui import signals  # noqa: E402
++output_usage = importlib.import_module("anthropic_throttle_proxy.output_usage")
++signals = importlib.import_module("anthropic_throttle_proxy.ui.signals")
+ 
+ assert pathlib.Path(output_usage.__file__).is_relative_to(PKG)
+ assert pathlib.Path(signals.__file__).is_relative_to(PKG)
+ 
+ # Fetch actual served fragments only once; keep only gauge-safe data, not account DOM.
+-from urllib.request import urlopen  # noqa: E402
+-
+ views = []
+ for source in ("local", "mimo", "zai"):
+     begin = time.time()
+@@ -282,7 +288,7 @@
+         "no inference or running collector mutation."
+     ),
+ }
+-(ROOT / "2683-combined-runtime-verification.json").write_text(json.dumps(receipt, indent=2) + "\n")
++options.output.write_text(json.dumps(receipt, indent=2) + "\n")
+ print("PASS actual combined cached gauge:", views[0]["signature"][0], "tokens/s")
+ print(
+     "PASS exact common60s output/bucket/geometry/provider arithmetic:",

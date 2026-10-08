@@ -1,0 +1,89 @@
+Running as unit: desktop-job-small-3.service
+
+--- fetch only own worktree refs ---
+From github.com:yolo-labz/anthropic-throttle-proxy
+ * branch            main       -> FETCH_HEAD
+From github.com:phsb5321/NixOS
+ * branch              main       -> FETCH_HEAD
+ * branch              2683-throttle-ui-runtime -> FETCH_HEAD
+
+--- retained owner upstream additions ---
+> 3b32ce09 fix(throttler): preserve the accepted UI during collector adoption
+> 65c8905c chore: integrate main before collector adoption Host: desktop Co-Authored-By: Codex (OpenAI) <noreply@openai.com>
+> 2927ecd0 fix(code-slop-gate): materialize only eligible code in scoped snapshots (#2687)
+> 55002927 fix(pi): emit native session usage join keys (#2675)
+
+--- current source main ---
+4d8851b fix(security): remediate multidict leak and pin Docker inputs (#329)
+859ba6c test(ui): verify combined completion accounting (#328)
+bc8d411 docs(ui): hand off combined accounting runtime (#326)
+c4bd3ce feat(ui): combine accounted output throughput (#327)
+353d30a test(ui): verify final-source and deployed build (#324)
+
+--- superseding delivery paths (read-only git) ---
+af6ae31f fix(throttler): enroll paid GPT accounts and deploy weekly Desktop routing (#2681)
+ meta/2681-checks.txt                               |  34 +++
+ meta/2681-commit-hooks-final.txt                   | 102 +++++++++
+ meta/2681-commit-hooks.txt                         |  61 ++++++
+ meta/2681-integration/SAVE-STATE.md                | 139 ++++++++++++
+ meta/2681-integration/effective-producer.txt       |  43 ++++
+ meta/2681-integration/report-and-unit-hashes.txt   |   8 +
+ meta/2681-integration/verified-provenance.txt      |  23 ++
+ meta/2681-mimo-desktop-subscription.md             | 209 ++++++++++++++++++
+ meta/2681-retry-light.txt                          |   7 +
+ meta/2683-after-activation-health.json             |   8 +
+ meta/2683-before-runtime.json                      |  45 ++++
+ meta/2683-combined-control-metadata.txt            |  59 +++++
+ meta/2683-combined-native-process-visibility.json  |  12 ++
+ meta/2683-combined-preservation-check.json         |  53 +++++
+ meta/2683-combined-retained-rollback-check.txt     |   1 +
+ meta/2683-combined-runtime-handoff.md              | 112 ++++++++++
+ meta/2683-combined-throughput-preflight.json       | 116 ++++++++++
+ meta/2683-delivery-hook-failures.md                |  23 ++
+ meta/2683-desktop-pid-change.json                  |  19 ++
+ meta/2683-desktop-wiring-check-final.txt           |   6 +
+ meta/2683-desktop-wiring-check.txt                 | 139 ++++++++++++
+ meta/2683-final-desktop-wiring-check.txt           |  12 ++
+ meta/2683-final-native-wiring-log.txt              |   2 +
+ meta/2683-final-override-store.txt                 |   1 +
+ meta/2683-final-package-build.txt                  |   3 +
+ meta/2683-final-package-log.txt                    |  72 +++++++
+ meta/2683-final-source-hash.txt                    |  12 ++
+ meta/2683-mimo-desktop-quota-report.service.in     |  22 ++
+ meta/2683-mimo-desktop-quota-report.timer          |  11 +
+ meta/2683-package-build-candidate.txt              |   8 +
+ meta/2683-package-hash.txt                         | 139 ++++++++++++
+ meta/2683-plan.md                                  |  55 +++++
+ meta/2683-proc-cmdline.json                        |  10 +
+ meta/2683-producer-first-timer-sample.json         |  28 +++
+ meta/2683-producer-second-tick.json                |  29 +++
+ meta/2683-producer-service-store.txt               |   1 +
+ meta/2683-producer-timer-store.txt                 |   1 +
+ meta/2683-rollback-preflight.txt                   |   1 +
+ meta/2683-runtime-activated-verification.json      | 171 +++++++++++++++
+ meta/2683-runtime-activated-verification.txt       |  11 +
+ ...runtime-verification-proc-namespace-failure.txt |  11 +
+ meta/2683-runtime-verifier-final-check.txt         |   4 +
+ meta/2683-source-323-delivery.json                 |   1 +
+ meta/2683-source-325-delivery.json                 |   1 +
+ meta/2683-source-325-review-threads.json           |   1 +
+ meta/2683-throttle-ui-runtime.md                   | 135 ++++++++++++
+ meta/2683-ui-runtime-override-candidate.conf       |   4 +
+ meta/2683-ui-runtime-override.conf.in              |   4 +
+ meta/2683-ui-runtime-rollback.sh                   |  42 ++++
+ meta/2683-verification-diagnosis.json              |  40 ++++
+ meta/2683-verify-runtime.py                        | 240 +++++++++++++++++++++
+ meta/2691-codex-subscription-enrollment.md         |  69 ++++++
+ meta/2692-desktop-routing-automation.md            | 102 +++++++++
+ meta/2693-collector-adoption.md                    |  10 +
+ meta/2695-ci-recovery.md                           |  68 ++++++
+ meta/99-ui-runtime-2026-10-07.conf                 |   4 +
+ meta/mimo-desktop-quota-report.service             |  22 ++
+ meta/mimo-desktop-quota-report.timer               |  11 +
+ modules/home/mimo-dashboard.nix                    |  45 +++-
+ pkgs/anthropic-throttle-proxy/default.nix          |   7 +-
+ 60 files changed, 2626 insertions(+), 3 deletions(-)
+fc3b5e09 fix(throttler): include canonical registry in scoped runtime bundle (#2689)
+ meta/2698-throttler-registry-projection.md | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+

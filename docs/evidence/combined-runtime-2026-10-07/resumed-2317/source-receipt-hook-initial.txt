@@ -1,0 +1,12 @@
+── code-slop gate ─────────────────────────────
+aislop : score 96 · 0 error(s) · 2 warning(s)
+jscpd  : 0.7084044837438923% duplication · 18 clone(s) · 419 line(s)
+ratchet: 1 relevant · 0 inherited · 1 regression(s)
+findings:
+  WARNING  docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:58  ruff/S603 — `subprocess` call: check for execution of untrusted input
+  WARNING  docs/evidence/combined-runtime-2026-10-07/resumed-2317/verifier-recheck/2683-verify-combined-runtime.py:58  ruff/S603 — `subprocess` call: check for execution of untrusted input
+clone regressions:
+  python · 1836 token(s) · docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py ↔ docs/evidence/combined-runtime-2026-10-07/resumed-2317/verifier-recheck/2683-verify-combined-runtime.py
+───────────────────────────────────────────────
+✗ FAIL
+  jscpd: 1 new, expanded, or additional clone occurrence(s)

@@ -1,0 +1,56 @@
+{
+  "recordedAt": "2026-10-08T14:37:45.352017+00:00",
+  "reason": "RESUME_2697; retained receipt-only continuation",
+  "glmPlan": {
+    "mode": "direct",
+    "reason": "inseparable",
+    "extraAgents": 0
+  },
+  "ownerPrStates": {
+    "2682": {
+      "headRefOid": "3b32ce09ccec6ce5ecc82079884de99c638bd39a",
+      "mergeCommit": null,
+      "mergedAt": null,
+      "number": 2682,
+      "state": "CLOSED",
+      "updatedAt": "2026-10-08T13:23:04Z"
+    },
+    "2681": {
+      "headRefOid": "87ccd34ab81a0832a0be59dd014c5adcbc552e6b",
+      "mergeCommit": {
+        "oid": "af6ae31f9c097ad12152974377819922a840aa49"
+      },
+      "mergedAt": "2026-10-08T14:03:20Z",
+      "number": 2681,
+      "state": "MERGED",
+      "updatedAt": "2026-10-08T14:03:23Z"
+    },
+    "2689": {
+      "headRefOid": "753ea97b19851e6a9f2b2b15655a00d8e2cf1bf6",
+      "mergeCommit": {
+        "oid": "fc3b5e097fe02d2126ce22119c124cc5595370f4"
+      },
+      "mergedAt": "2026-10-08T14:17:12Z",
+      "number": 2689,
+      "state": "MERGED",
+      "updatedAt": "2026-10-08T14:17:16Z"
+    }
+  },
+  "currentPids": {
+    "anthropic-throttle-proxy.service": "2200060",
+    "mimo-desktop-subscription.service": "0",
+    "mimo-throttle-proxy.service": "3873577",
+    "zai-throttle-proxy.service": "3842786",
+    "mimo-tokenplan-shim.service": "1980"
+  },
+  "deployedUiPackage": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0",
+  "runtimeMutationIssued": false,
+  "nixContinuation": "2682 closed/integrated into2681;2681 and2689 merged/deployed by owner. No repeat build/pin/activation. Local retained WIP unchanged except exclusive historical receipt-helper fix.",
+  "currentWork": "Finish source328 runtime receipt hooks/exact-head CI/normal protected PR only.",
+  "successorBridge": {
+    "ActiveState": "active",
+    "SubState": "running",
+    "MainPID": "3703360"
+  },
+  "interimBridgeDisposition": "mimo-desktop-subscription.service MainPID0 is the retired interim name; successor active under2681 owner. Historical preservation receipts are not claims about current lifecycle."
+}

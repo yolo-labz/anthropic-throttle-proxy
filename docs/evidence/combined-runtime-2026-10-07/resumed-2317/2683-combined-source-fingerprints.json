@@ -1,0 +1,51 @@
+{
+  "package": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0",
+  "acceptedRevision": "c4bd3ce6f203220683e18504a629343d5d53b12b",
+  "filteredHash": "sha256-7qAtPZ0YKisS2YIcjEfWIkvPl38ZJyE1pM/mzgjEMto=",
+  "files": [
+    {
+      "path": "src/anthropic_throttle_proxy/desktop_report.py",
+      "sha256": "c892fea995414d47e23f741e955eb15ae25c3465758a21e758b595fb99bc0cc6"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/lanes.py",
+      "sha256": "165811aceb9c73fabd74d6db3254b0690c91b002203854c190c35fb48135626f"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/output_usage.py",
+      "sha256": "4872db12cf6ea500fc39299f605d0a8651290677c96f14df06b07d8e92736464"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/__init__.py",
+      "sha256": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/presentation.py",
+      "sha256": "4ba93b22753e8f4451a4d72e8937f6d75ea627c5b2cd49c0b4503ff1d7faee47"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/routes.py",
+      "sha256": "f5739abfbd4b56b46ca2474be910219b33aba5df1315c09283a7cb08808cbb4d"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/signals.py",
+      "sha256": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/static/style.css",
+      "sha256": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/templates/dashboard.html",
+      "sha256": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/templates/partials/config.html",
+      "sha256": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095"
+    },
+    {
+      "path": "src/anthropic_throttle_proxy/ui/templates/partials/stats.html",
+      "sha256": "3297ea5f7d8bb2a38adf3e4f1df04f7c84e9705fe79860e7b2c4673f5a131f4d"
+    }
+  ]
+}

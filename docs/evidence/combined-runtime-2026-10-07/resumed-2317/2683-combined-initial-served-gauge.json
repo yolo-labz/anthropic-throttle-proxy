@@ -1,0 +1,19 @@
+{
+  "recordedAt": "2026-10-08T02:32:50.470500+00:00",
+  "gaugeText": "1114 tokens/s Combined output throughput last 60s \u00b7 10s peak 1725 \u00b7 scale 2000 tokens/s exact output / 60 wall-clock seconds \u00b7 accounted at completion Partial coverage \u00b7 Pi on this host only \u00b7 4 provider labels in window \u00b7 non-Pi / other hosts unmeasured Accounted throughput \u00b7 not a subscription quota \u00b7 sample 5s old",
+  "selectedEnvironment": {
+    "THROTTLE_MIMO_REPORT": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-plan.json",
+    "THROTTLE_CENTRAL_URL": "",
+    "THROTTLE_UPSTREAM": "http://127.0.0.1:1",
+    "THROTTLE_MIMO_DESKTOP_REPORT": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-desktop.json",
+    "THROTTLE_PI_USAGE_PATH": "/home/notroot/.local/state/pi-harness/usage.jsonl"
+  },
+  "currentPids": {
+    "anthropic-throttle-proxy.service": "2200060",
+    "mimo-desktop-subscription.service": "3253694",
+    "mimo-throttle-proxy.service": "3873577",
+    "zai-throttle-proxy.service": "3842786",
+    "mimo-tokenplan-shim.service": "1980"
+  },
+  "source": "actual GET /ui/stats?source=local; no cached fixture/production mutation"
+}

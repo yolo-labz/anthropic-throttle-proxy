@@ -1,78 +1,13 @@
 # Combined throughput runtime delivery — 07/10/2026
 
-## Retained receipt continuation — 08/10/2026 11:40 BRT
-
-RESUME_2697 is receipt-only. Native `glm_plan` recorded direct/inseparable,
-no extra agents. Current owner receipts confirm Nix **#2682 CLOSED/integrated
-into #2681**, **#2681 MERGEDaf6ae31f** and **#2689 MERGEDfc3b5e09**;
-accepted c4 revision/measured hash are already on Nix main. **No repeat build,
-repin, reload/restart, canary, deployment, credential or fleet action.**
-Only exclusive328 source receipt files and historical2683 helper are touched.
-Closed Nix branch WIP/main and all sibling worktrees stay preserved.
-
-Current read-only unit metadata: UI2200060 still939; TokenPlan3873577,
-Z.AI3842786/shim1980. Interim `mimo-desktop-subscription.service` is now retired
-(MainPID0); owner's durable successor `mimo-desktop-subscription-bridge.service`
-is active/running, PID3703360. The old3253694 preservation receipt below proves
-only07/10 activation, not unchanged bridge state after authorized2681 adoption.
-Do not re-run the historical baseline oracle or rollback against changed owner
-state without fresh lifecycle authorization and complete prerequisites.
-
-The retained final step was blocked by alignment's three E402 suppression
-findings, then a control admission refusal (nothing executed). Fixed the cause:
-standard `importlib.import_module` after immutable dependency setup, normal
-stdlib import placement, **no noqa/exclusion/threshold changes**. Historical
-helper diff and initial clone/alignment failures remain separate receipts.
-Added optional `--output` to preserve original results during future authorized
-rechecks. A network/lifecycle-free static self-check verifies the helper's
-cat/show-only bounded admission (exact unit/property allowlists, one shell-free
-5s call site, refusal by exception). Its first admitted run on 08/10 20:29:18
-BRT was correctly refused by the universal code-slop gate over the earlier
-exec-based harness (`security/python-exec`, `ai-slop/swallowed-exception`); the
-harness was replaced by that static check, not suppressed. No new throughput
-implementation or live probe. S603 variable-argv advisory remains honestly
-recorded with exact unit/property allowlists and5s shell-free subprocess bounds.
-Normal hooks/current-head CI, protected receipt-PR merge remain this slice's
-finish line.
-
-Current reconciliation and helper checks live at
-`docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/`;
-07/10 results remain in `resumed-2317/`. Canonical duplicates were removed only
-with byte-identical SHA-256 references; original/failed evidence retained,
-including `code-slop-gate-self-check-failure.txt` and the read-only
-`post-rename-context.json` that records the later main/unit/package
-supersession (canonical Throttler gateway and ingress, #334).
-Later Nix delivery is owner-completed, so the historical OPEN/gated passages
-below are superseded, not a reason to reopen or redeploy #2682.
-
-### Exact stopping gate — 08/10/2026
-
-The next requested heavy-admitted helper check/normal hook/commit/rebase payload
-was refused **before execution**: `Unit desktop-job-slot.service was already
-loaded or has a fragment file.` No new self-check, commit, rebase or CI run is
-claimed; no control-lane test/hook fallback, admission change, automatic retry,
-agent, lifecycle or new deployment. Per RESUME_2697, stop at this actual gate.
-Disposition evidence: `resume-2026-10-08/heavy-admission-blocker.json`.
-All unique durable results/failures and retained WIP remain in the owned source/
-Nix/vault paths, not disposable scratch. Next allowed continuation is exactly
-this receipt-only admitted check/commit—not the already-delivered runtime.
-
-Later the same day the shared job pool stayed saturated by sibling sessions
-(measured: every `desktop-job-small-*` slot and the heavy slot loaded or
-running), so each admitted step queued behind ordinary host admission. No
-admission change, bypass, extra worker or control-lane fallback was used. The
-first admitted attempt (20:29:18 BRT) then hit the code-slop gate recorded
-above.
-
 **Current verified status — 23:41 BRT:** accepted protected source #327c4bd3ce
 is activated only on:8765 in canonical rooted **939kr6a...**, PID2200060.
 Persisted/effective/imported/native cmdline/served CSS and11source fingerprints
 agree. Actual cached combined1638tokens/s was reproduced from real authoritative
 journal arithmetic **98,271/60=1,637.85**, across local/mimo/zai source choices.
 All current sibling PIDs, inherited unit/quota bytes and fresh quota timer are
-preserved. Independent pW live browser/arithmetic packet **PASS at23:46 BRT**
-for this same939 build; separately cited below, not relabeled runtime/source
-fixtures. Earlier pending-source notes below are
+preserved. Independent admitted pW browser acceptance is a separate receipt;
+not claimed by this runtime check. Earlier pending-source notes below are
 historical and superseded, not a current deployment blocker.
 
 Owner: thr-ui-runtime / pV. Source implementation remains solely pT's
@@ -255,17 +190,9 @@ At23:36 the runnable read-only verifier passed:
 
 Runnable check:
 `python ~/NixOS-2683-throttle-ui-runtime/meta/2683-verify-combined-runtime.py`.
-Independent pW live browser/HTMX/AX/focus acceptance **PASS at23:46 BRT**:
-`anthropic-throttle-proxy-331-combined-live-qa/docs/COMBINED-LIVE-QA-2026-10-07.md`,
-`docs/evidence/combined-live-qa-2026-10-07/deployed-939-final/{receipt,combined-live}.json`.
-Read both final JSON packets: completed=true, exact939 build,1366/1366+390/390,
-7polls, full quota AX, keyboard/touch/focus, no console/unexpected requests.
-Independent native fixed-window100047/60=1667.45; its UI1674 is explicitly a
-separate cache-compatible sample, never falsely asserted same-endpoint. No
-browser launched by pV, no QA service/config/provider mutation. This remains a
-separate admitted receipt rather than relabeled source tests. Actual package/root
-was handed off through UI-TEAM at23:28; shared QA checkpoint and final runtime
-persistence/rollback receipt updated by23:52.
+Independent admitted pW combined browser/HTMX/AX/focus acceptance remains its own
+packet; this seat launched no browser and does not turn source tests into that
+verdict. Actual package/root was handed off through UI-TEAM at23:28 and23:41.
 
 ### Immutable combined-only reversal
 
@@ -281,26 +208,4 @@ Evidence in `docs/evidence/combined-runtime-2026-10-07/resumed-2317/` and native
 `NixOS-2683/meta/2683-combined-*`. Preserve every refusal/mismatch/failed receipt.
 Nix #2682 remains unprotected-base/shared-pin **OPEN/gated**; no autonomous merge,
 switch, other host activation, global GC or shared-worktree/cache sweep. Separate
-security PR329 is not folded into or claimed fixed by this acceptedc4 build;
-its live normal merge4d8851b is recorded as adjacent delivery, not silently
-repinned or activated here.
-
-## Preserved delivery instrumentation — 23:52 BRT
-
-The pre-commit update attempt correctly refused a rebase with unstaged receipt
-changes. No stash/checkout/reset/bypass: normal receipt commit comes first, then
-rebase to currentmain before push. Initial helper Ruff diagnostics retained in
-`2683-combined-verifier-initial-lint.txt`: pairwise/format/line-length findings
-corrected; read-only systemctl command helper narrowed to exact units, properties,
-cat/show only, shell-free/5s bounded. Remaining S603 is the static analyzer's
-variable-argv warning, preserved without ignore/noqa/config exclusions or false
-lint-green claim; hook/CI treatment remains unchanged.
-
-At23:54 a fresh **heavy-admitted** formatted runnable recheck passed actual
-cached1713/common60s arithmetic and all persistence/quota/sibling checks;
-original23:36 result retained separately. Normal hook then correctly rejected a
-1836-token duplicate of that same helper copied into the recheck receipt folder.
-Root cause fixed by deleting **only the two verified byte-identical owned helper
-copies** (source+Nix); one canonical runnable helper, both result packets and
-SHA-256 pointers remain. Failed hook log retained as
-`source-receipt-hook-initial.txt`; no clone exclusion or hook bypass.
+security PR329 is not folded into or claimed fixed by this acceptedc4 build.

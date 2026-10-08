@@ -1,0 +1,3 @@
+PASS actual combined cached gauge: 1638 tokens/s
+PASS exact common60s output/bucket/geometry/provider arithmetic: 1 matching time intervals
+PASS persisted/effective/imported/served CSS, quota and every current sibling PID

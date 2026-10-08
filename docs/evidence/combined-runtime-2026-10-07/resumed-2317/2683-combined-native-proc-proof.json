@@ -1,0 +1,12 @@
+{
+  "observedBetweenBrt": ["07/10/2026 23:28:50", "07/10/2026 23:32:50"],
+  "method": "Native read of /proc/2200060/cmdline and status; no raw environment or credentials. The admitted control namespace hides host PIDs.",
+  "pid": "2200060",
+  "state": "S (sleeping)",
+  "uid": [1000, 1000, 1000, 1000],
+  "gid": [100, 100, 100, 100],
+  "argv": [
+    "/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14",
+    "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/.anthropic-throttle-proxy-wrapped"
+  ]
+}

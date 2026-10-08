@@ -1,0 +1,12 @@
+[
+  {
+    "removedCopy": "before-runtime.json",
+    "canonicalRelativePath": "2683-combined-before-2317.json",
+    "sha256": "e8bff9319dd7b1ec1902d231d434ed96853b1ea740242affa0420715799de8a3"
+  },
+  {
+    "removedCopy": "verifier-recheck/2683-combined-before-2317.json",
+    "canonicalRelativePath": "2683-combined-before-2317.json",
+    "sha256": "e8bff9319dd7b1ec1902d231d434ed96853b1ea740242affa0420715799de8a3"
+  }
+]

@@ -1,0 +1,1 @@
+PASS: exact combined delta and predecessor identity; idle/closed runtime; reversal not executed.

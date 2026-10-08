@@ -1,0 +1,27 @@
+{
+  "status": "PASS independently observed final pW receipts",
+  "report": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-331-combined-live-qa/docs/COMBINED-LIVE-QA-2026-10-07.md",
+  "files": {
+    "deployed-939-final/receipt.json": {
+      "path": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-331-combined-live-qa/docs/evidence/combined-live-qa-2026-10-07/deployed-939-final/receipt.json",
+      "sha256": "90e0707b2fbb49c54dee74b092ef8976699a648611213a702d314ca9b6badca7",
+      "inspected": true
+    },
+    "deployed-939-final/combined-live.json": {
+      "path": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-331-combined-live-qa/docs/evidence/combined-live-qa-2026-10-07/deployed-939-final/combined-live.json",
+      "sha256": "48eaf4df0fc22d4f39b0cc303e1c8a1ca9f2d37dc13539e918208f29d01e0862",
+      "inspected": true
+    },
+    "runtime-after.json": {
+      "path": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-331-combined-live-qa/docs/evidence/combined-live-qa-2026-10-07/runtime-after.json",
+      "sha256": "8f1fcd4b4c134cc22af05eca4f51112932de21329fa212a5e88f3f47a4fc945b",
+      "inspected": true
+    },
+    "native-process-after.json": {
+      "path": "/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-331-combined-live-qa/docs/evidence/combined-live-qa-2026-10-07/native-process-after.json",
+      "sha256": "d81a361820fdab5ba067ec99b52bddff6fe68c155d7174b467cd152396d68ea6",
+      "inspected": true
+    }
+  },
+  "copiedBrowserDomOrPrivateData": false
+}

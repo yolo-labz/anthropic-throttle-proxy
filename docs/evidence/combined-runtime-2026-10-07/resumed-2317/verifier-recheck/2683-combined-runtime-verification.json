@@ -1,0 +1,103 @@
+{
+  "recordedAt": "2026-10-08T02:54:53.027012+00:00",
+  "acceptedRevision": "c4bd3ce6f203220683e18504a629343d5d53b12b",
+  "package": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0",
+  "effective": "ActiveState=active\nSubState=running\nFragmentPath=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service\nDropInPaths=/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99z-combined-throughput-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf\nMainPID=2200060\nExecMainStartTimestamp=Wed 2026-10-07 23:28:49 -03\nExecStart={ path=/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; argv[]=/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/anthropic-throttle-proxy ; ignore_errors=no ; start_time=[Wed 2026-10-07 23:28:49 -03] ; stop_time=[n/a] ; pid=2200060 ; code=(null) ; status=0/0 }\n",
+  "health": {
+    "build": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "upstream": "http://127.0.0.1:1",
+    "central_url": "",
+    "inflight": 0,
+    "queue_mode": "fair"
+  },
+  "selectedSystemdEnvironment": {
+    "THROTTLE_MIMO_REPORT": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-plan.json",
+    "THROTTLE_CENTRAL_URL": "",
+    "THROTTLE_UPSTREAM": "http://127.0.0.1:1",
+    "THROTTLE_MIMO_DESKTOP_REPORT": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-desktop.json",
+    "THROTTLE_PI_USAGE_PATH": "/home/notroot/.local/state/pi-harness/usage.jsonl"
+  },
+  "currentPids": {
+    "anthropic-throttle-proxy.service": "2200060",
+    "mimo-desktop-subscription.service": "3253694",
+    "mimo-throttle-proxy.service": "3873577",
+    "zai-throttle-proxy.service": "3842786",
+    "mimo-tokenplan-shim.service": "1980"
+  },
+  "allSiblingPidsPreserved": true,
+  "inheritedUnitAndQuotaBytesPreserved": true,
+  "servedSourceChoices": [
+    {
+      "source": "local",
+      "requestStart": 1791428092.203346,
+      "requestEnd": 1791428092.2365835,
+      "signature": [
+        "1713",
+        "2165",
+        "5000",
+        "0.0,4.6 19.2,0.0 38.4,9.2 57.6,0.7 76.8,7.1 96.0,3.6",
+        4
+      ]
+    },
+    {
+      "source": "mimo",
+      "requestStart": 1791428092.2373233,
+      "requestEnd": 1791428092.2432692,
+      "signature": [
+        "1713",
+        "2165",
+        "5000",
+        "0.0,4.6 19.2,0.0 38.4,9.2 57.6,0.7 76.8,7.1 96.0,3.6",
+        4
+      ]
+    },
+    {
+      "source": "zai",
+      "requestStart": 1791428092.2434046,
+      "requestEnd": 1791428092.24846,
+      "signature": [
+        "1713",
+        "2165",
+        "5000",
+        "0.0,4.6 19.2,0.0 38.4,9.2 57.6,0.7 76.8,7.1 96.0,3.6",
+        4
+      ]
+    }
+  ],
+  "sameCachedGaugeAcrossChoices": true,
+  "matchingSameWindowIntervals": [
+    {
+      "sampledAtLowerInclusive": 1791428088.885,
+      "sampledAtUpperExclusive": 1791428089.068,
+      "windowSeconds": 60,
+      "reportedOutputTokens": 102763,
+      "exactTokensPerWallSecond": 1712.7166666666667,
+      "tenSecondOutputBuckets": [
+        16706,
+        21651,
+        11731,
+        20918,
+        13963,
+        17794
+      ],
+      "providerLabelCount": 4
+    }
+  ],
+  "windowBinding": "Actual sampled_at is not exported. Exact real-output numerator, peak, scale, six-bucket spark and provider count match these possible cached60s intervals; no claim of an unexposed precise timestamp.",
+  "journal": {
+    "path": "/home/notroot/.local/state/pi-harness/usage.jsonl",
+    "device": 66305,
+    "inode": 10908162,
+    "boundedBytes": 2097110
+  },
+  "quota": {
+    "generatedAt": "2026-10-08T02:52:21Z",
+    "ageSeconds": 152.02,
+    "mode": "0600",
+    "status": "ok"
+  },
+  "timer": "ActiveState=active\nUnitFileState=alias\nLastTriggerUSec=Wed 2026-10-07 23:52:15 -03\n",
+  "servedCssSha256": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+  "browserAcceptance": "Independent admitted pW packet; no browser launched by this receipt.",
+  "privacy": "No raw journal, costs, seats, user/account DOM or credentials retained; no inference or running collector mutation."
+}
