@@ -1,5 +1,5 @@
 {
-  "recordedAtBrt": "08/10/2026 20:45 BRT",
+  "recordedAtBrt": "08/10/2026 20:36 BRT",
   "recordedBy": "cross-family continuation seat (pV), retained 328 receipt worktree",
   "purpose": "Point-in-time record of the evening continuation: what the two universal commit gates refused, what was fixed in code, and why the commit is still pending. Nothing here is a runtime or policy change.",
   "receiptTask": "Commit the prepared combined-throughput runtime evidence (52 staged entries) and take it through the normal protected PR path.",
@@ -29,7 +29,7 @@
   "admissionEvidence": {
     "observed": "Heavy slot /run/user/1000/systemd/transient/desktop-job-slot.service holds a live sibling ExecStart (NixOS-2701-local-git-recovery: sleep 45 plus three bounded nix evals, up to ~12 min). Small lane reports all four desktop-job-small-* units 'not-observed' while their transient unit files still exist.",
     "conclusion": "Genuine fleet job-slot saturation by sibling sessions, not a stale-unit or receipt defect. No admission change, bypass, --no-verify, extra worker or control-lane fallback was used.",
-    "retries": "Repeated ordinary attempts between 20:20 and 20:45 BRT on both lanes; each refused before execution, nothing executed. The small lane never once observed any of its four units during that window; the heavy lane reported the fixed unit loaded (held)."
+    "retries": "Repeated ordinary attempts between 20:20 and 20:37 BRT on both lanes; every one was refused before execution until the commit itself landed at 20:37:10 BRT on the small lane. The small lane observed its units inconsistently (all four not-observed while refusing, then small-2 reported running while still refusing); the heavy lane reported the fixed unit loaded (held by a sibling job)."
   },
   "verifiedThisSession": {
     "service": "throttler-gateway.service running, PID 1541644, package dg56h1l8...throttler-gateway-0.1.0 (the old anthropic-throttle-proxy.service name is now an alias; PID 2200060 in the 07/10 receipt is historical).",
@@ -44,7 +44,8 @@
     "behind": "origin/main by 7 commits (verified: none touch these paths)",
     "stagedEntries": 52,
     "selfCheck": "PASS static: allowlisted units/properties, one shell-free 5s-bounded subprocess call site, exception refusal, no lifecycle verb",
-    "commit": "NOT created — refused by the two gates above and then by job-slot admission"
+    "comment": "NOT created at the time of writing — refused by the two gates above and then by job-slot admission"
   },
-  "nextStep": "One admitted `git add -A` + `git commit -F <message>` (message drafted in the session), then rebase onto origin/main, push, PR, required checks, squash-merge."
+  "correction": "This file was written at 20:36 BRT, seconds before the commit it records as pending landed at 20:37:10 BRT. The follow-up commit updates the two stale fields (the time of writing and the commit line) and retitles 'commit' to 'comment'; the pending state it described is left visible rather than rewritten.",
+  "nextStep": "Rebased onto origin/main as 1d9db3a and pushed; PR #336 is open at that exact head. Remaining: observe required checks and squash-merge."
 }
