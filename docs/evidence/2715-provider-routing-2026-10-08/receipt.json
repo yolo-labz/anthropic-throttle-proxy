@@ -1,0 +1,460 @@
+{
+  "receipt_id": "2715-provider-routing-2026-10-08",
+  "observed_at": "08/10/2026 14:54 BRT",
+  "baseline": "9b2db9529b514620ba15a1cb84d67164884663a0",
+  "runtime_activated": false,
+  "provider_requests": 0,
+  "routes": [
+    {
+      "port": 8765,
+      "unit": {
+        "ActiveState": "active",
+        "FragmentPath": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service",
+        "DropInPaths": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99z-combined-throughput-2026-10-07.conf /home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf",
+        "MainPID": "2200060"
+      },
+      "health": {
+        "build": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+        "upstream": "http://127.0.0.1:1",
+        "central_url": "",
+        "central_status": "unknown",
+        "served": 0,
+        "inflight": 0,
+        "queued": 0,
+        "max_concurrent": 5,
+        "queue_mode": "fair",
+        "upstream_egress_ok": true,
+        "upstream_egress_last_check": 1791482034.191196,
+        "upstream_auth_ok": null,
+        "admission_closed": false,
+        "config_override_drift": {}
+      },
+      "admission": {
+        "allow": false,
+        "state": "capped",
+        "reason": "0/1 bearers serving",
+        "serving": 0,
+        "total": 1,
+        "lane": {
+          "open": true,
+          "detail": "ok"
+        }
+      },
+      "source_files": {
+        "config.py": {
+          "sha256": "83aa748296351f8c05046a6f85f1b2df58c28f8541761fc1d322b4d161baf701",
+          "matches_baseline": false
+        },
+        "proxy.py": {
+          "sha256": "55a49c89141e7a07608a8ae6542b174dca77789eb958db805e455d867b471d46",
+          "matches_baseline": true
+        },
+        "forwarding.py": {
+          "sha256": "40e7963d50d7cfa519ac3917f4465ad5edd775a001b5cfb977d332d91fb648f7",
+          "matches_baseline": true
+        },
+        "routing.py": {
+          "sha256": "aefdd03934cb1b19c26232cbadfbdb0d554d603a6b5f8ec0c18e66fdd997e9f0",
+          "matches_baseline": true
+        },
+        "lanes.py": {
+          "sha256": "165811aceb9c73fabd74d6db3254b0690c91b002203854c190c35fb48135626f",
+          "matches_baseline": true
+        },
+        "metrics.py": {
+          "sha256": "a027303ece58c328d77805636dd821740bcf3ce028b09dab721e4eeae2275004",
+          "matches_baseline": true
+        }
+      },
+      "bearers": {
+        "666a53af": {
+          "credential_ok": false,
+          "status_7d": null,
+          "retry_after_until": 0.0,
+          "queue_allow_first_waiter": null
+        },
+        "47f0b262": {
+          "credential_ok": false,
+          "status_7d": null,
+          "retry_after_until": null,
+          "queue_allow_first_waiter": null
+        },
+        "api-key": {
+          "credential_ok": false,
+          "status_7d": null,
+          "retry_after_until": null,
+          "queue_allow_first_waiter": null
+        },
+        "b144f62f": {
+          "credential_ok": false,
+          "status_7d": null,
+          "retry_after_until": null,
+          "queue_allow_first_waiter": null
+        },
+        "f4b26209": {
+          "credential_ok": false,
+          "status_7d": null,
+          "retry_after_until": null,
+          "queue_allow_first_waiter": null
+        }
+      }
+    },
+    {
+      "port": 8766,
+      "unit": {
+        "ActiveState": "active",
+        "FragmentPath": "/home/notroot/.config/systemd/user/zai-throttle-proxy.service",
+        "DropInPaths": "/home/notroot/.config/systemd/user/zai-throttle-proxy.service.d/90-throttler-7236d96.conf",
+        "MainPID": "3842786"
+      },
+      "health": {
+        "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+        "upstream": "https://api.z.ai",
+        "central_url": "",
+        "central_status": "unknown",
+        "served": 8020,
+        "inflight": 0,
+        "queued": 0,
+        "max_concurrent": 12,
+        "queue_mode": "fair",
+        "upstream_egress_ok": true,
+        "upstream_egress_last_check": 1791482033.6814,
+        "upstream_auth_ok": null,
+        "config_override_drift": {}
+      },
+      "admission": {
+        "allow": false,
+        "state": "capped",
+        "reason": "lane closed: no-usable-bearer",
+        "serving": 0,
+        "total": 1,
+        "lane": {
+          "open": false,
+          "detail": "no-usable-bearer"
+        }
+      },
+      "source_files": {
+        "config.py": {
+          "sha256": "37327f67fb34ab5b1ab9588d3671b203d59ffb90120a023435e7a8c959b163cf",
+          "matches_baseline": false
+        },
+        "proxy.py": {
+          "sha256": "40af9eae93aa175d91e26df3c094ed57317808ff338237f84935236af3764ac4",
+          "matches_baseline": false
+        },
+        "forwarding.py": {
+          "sha256": "761bf26e35f71b51b9358e7c90b0f3e033cc81fafc8f01f1931b9fbc3ced637f",
+          "matches_baseline": false
+        },
+        "routing.py": {
+          "sha256": "aefdd03934cb1b19c26232cbadfbdb0d554d603a6b5f8ec0c18e66fdd997e9f0",
+          "matches_baseline": true
+        },
+        "lanes.py": {
+          "sha256": "dce659165ce6b9f97be3b58d66cadad616674474bca958ff56cbf9a36b8308fb",
+          "matches_baseline": false
+        },
+        "metrics.py": {
+          "sha256": "1d4de08a10663195d2befd32ad3ab91add62056e5eb73c98210b486b169a3346",
+          "matches_baseline": false
+        }
+      },
+      "bearers": {
+        "1affd614": {
+          "credential_ok": null,
+          "status_7d": null,
+          "retry_after_until": 1791908392.4333434,
+          "queue_allow_first_waiter": null
+        },
+        "_anon": {
+          "credential_ok": null,
+          "status_7d": null,
+          "retry_after_until": 0.0,
+          "queue_allow_first_waiter": null
+        }
+      }
+    },
+    {
+      "port": 8773,
+      "unit": {
+        "ActiveState": "active",
+        "FragmentPath": "/home/notroot/.config/systemd/user/mimo-throttle-proxy.service",
+        "DropInPaths": "/home/notroot/.config/systemd/user/mimo-throttle-proxy.service.d/90-throttler-7236d96.conf",
+        "MainPID": "3873577"
+      },
+      "health": {
+        "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+        "upstream": "https://token-plan-sgp.xiaomimimo.com",
+        "central_url": "",
+        "central_status": "unknown",
+        "served": 2081,
+        "inflight": 0,
+        "queued": 0,
+        "max_concurrent": 20,
+        "queue_mode": "fair",
+        "upstream_egress_ok": true,
+        "upstream_egress_last_check": 1791482044.4481988,
+        "upstream_auth_ok": null,
+        "config_override_drift": {}
+      },
+      "admission": {
+        "allow": false,
+        "state": "capped",
+        "reason": "0/2 bearers serving",
+        "serving": 0,
+        "total": 2,
+        "lane": {
+          "open": true,
+          "detail": "ok"
+        }
+      },
+      "source_files": {
+        "config.py": {
+          "sha256": "37327f67fb34ab5b1ab9588d3671b203d59ffb90120a023435e7a8c959b163cf",
+          "matches_baseline": false
+        },
+        "proxy.py": {
+          "sha256": "40af9eae93aa175d91e26df3c094ed57317808ff338237f84935236af3764ac4",
+          "matches_baseline": false
+        },
+        "forwarding.py": {
+          "sha256": "761bf26e35f71b51b9358e7c90b0f3e033cc81fafc8f01f1931b9fbc3ced637f",
+          "matches_baseline": false
+        },
+        "routing.py": {
+          "sha256": "aefdd03934cb1b19c26232cbadfbdb0d554d603a6b5f8ec0c18e66fdd997e9f0",
+          "matches_baseline": true
+        },
+        "lanes.py": {
+          "sha256": "dce659165ce6b9f97be3b58d66cadad616674474bca958ff56cbf9a36b8308fb",
+          "matches_baseline": false
+        },
+        "metrics.py": {
+          "sha256": "1d4de08a10663195d2befd32ad3ab91add62056e5eb73c98210b486b169a3346",
+          "matches_baseline": false
+        }
+      },
+      "bearers": {
+        "07c7ae8a": {
+          "credential_ok": null,
+          "status_7d": null,
+          "retry_after_until": 1791304922.516268,
+          "queue_allow_first_waiter": null
+        },
+        "6994af7a": {
+          "credential_ok": null,
+          "status_7d": null,
+          "retry_after_until": 0.0,
+          "queue_allow_first_waiter": null
+        },
+        "_anon": {
+          "credential_ok": null,
+          "status_7d": null,
+          "retry_after_until": 0.0,
+          "queue_allow_first_waiter": null
+        }
+      }
+    },
+    {
+      "port": 8774,
+      "unit": {
+        "ActiveState": "active",
+        "FragmentPath": "/home/notroot/.config/systemd/user/mimo-desktop-subscription-queue.service",
+        "DropInPaths": "",
+        "MainPID": "2808043"
+      },
+      "health": {
+        "build": "/nix/store/371dbd204kagy582zgr5zccw6wjmxkq0-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+        "upstream": "http://127.0.0.1:8100",
+        "central_url": "",
+        "central_status": "unknown",
+        "served": 58,
+        "inflight": 1,
+        "queued": 1,
+        "max_concurrent": 1,
+        "queue_mode": "fair",
+        "upstream_egress_ok": true,
+        "upstream_egress_last_check": 1791482028.6816213,
+        "upstream_auth_ok": null,
+        "admission_closed": false,
+        "config_override_drift": {}
+      },
+      "admission": {
+        "allow": true,
+        "state": "open",
+        "reason": "1/1 bearers serving",
+        "serving": 1,
+        "total": 1,
+        "lane": {
+          "open": true,
+          "detail": "ok"
+        }
+      },
+      "source_files": {
+        "config.py": {
+          "sha256": "ee180cd4cbc4f32857130d55254719d9ab29b3beb445206cad7103c18bc5d4cf",
+          "matches_baseline": true
+        },
+        "proxy.py": {
+          "sha256": "55a49c89141e7a07608a8ae6542b174dca77789eb958db805e455d867b471d46",
+          "matches_baseline": true
+        },
+        "forwarding.py": {
+          "sha256": "40e7963d50d7cfa519ac3917f4465ad5edd775a001b5cfb977d332d91fb648f7",
+          "matches_baseline": true
+        },
+        "routing.py": {
+          "sha256": "aefdd03934cb1b19c26232cbadfbdb0d554d603a6b5f8ec0c18e66fdd997e9f0",
+          "matches_baseline": true
+        },
+        "lanes.py": {
+          "sha256": "165811aceb9c73fabd74d6db3254b0690c91b002203854c190c35fb48135626f",
+          "matches_baseline": true
+        },
+        "metrics.py": {
+          "sha256": "a027303ece58c328d77805636dd821740bcf3ce028b09dab721e4eeae2275004",
+          "matches_baseline": true
+        }
+      },
+      "bearers": {
+        "89e50664": {
+          "credential_ok": null,
+          "status_7d": null,
+          "retry_after_until": 0.0,
+          "queue_allow_first_waiter": true
+        }
+      }
+    }
+  ],
+  "reports": [
+    {
+      "source": "local meter",
+      "path": "/run/user/1000/throttle-lanes.json",
+      "generatedAt": "2026-10-08T17:40:28Z",
+      "intervalSeconds": 900,
+      "lanes": [
+        {
+          "id": "zai:plan",
+          "kind": "zai",
+          "status": "ok",
+          "meters": [
+            {
+              "limitId": "5h",
+              "usedPercent": 0,
+              "remaining": 28000,
+              "resetsAt": null
+            },
+            {
+              "limitId": "7d",
+              "usedPercent": 100,
+              "remaining": 0,
+              "resetsAt": 1791908377.975
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "monthly MiMo",
+      "path": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-plan.json",
+      "generatedAt": "2026-10-08T17:53:19Z",
+      "intervalSeconds": 900,
+      "lanes": [
+        {
+          "id": "mimo:plan",
+          "kind": "mimo",
+          "status": "exhausted",
+          "meters": [
+            {
+              "limitId": "monthly",
+              "usedPercent": 100.04424839756099,
+              "remaining": 0,
+              "resetsAt": 1792799999.0
+            }
+          ]
+        },
+        {
+          "id": "mimo:team-owner",
+          "kind": "mimo",
+          "status": "exhausted",
+          "meters": [
+            {
+              "limitId": "seat",
+              "usedPercent": 100.13220624390244,
+              "remaining": 0,
+              "resetsAt": 1793404799.0
+            }
+          ]
+        },
+        {
+          "id": "mimo:team-b",
+          "kind": "mimo",
+          "status": "exhausted",
+          "meters": [
+            {
+              "limitId": "seat",
+              "usedPercent": 100.03219540487804,
+              "remaining": 0,
+              "resetsAt": 1793404799.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "source": "weekly MiMo",
+      "path": "/home/notroot/.local/state/anthropic-throttle-proxy/mimo-desktop.json",
+      "generatedAt": "2026-10-08T17:50:07Z",
+      "intervalSeconds": 300,
+      "lanes": [
+        {
+          "id": "mimo:desktop-subscription",
+          "kind": "mimo",
+          "status": "ok",
+          "meters": [
+            {
+              "limitId": "weekly",
+              "usedPercent": 29.799999999999997,
+              "remainingPercent": 70.2,
+              "resetsAt": 1791844029
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "ingress": {
+    "default_lane": "http://127.0.0.1:8765",
+    "served": 72,
+    "lanes": {
+      "codex": {
+        "open": true,
+        "detail": "no-bearers-proxy-owns-key",
+        "checked_ago_s": 3.3,
+        "credential_mode": "unknown",
+        "credential_mode_reason": "fields-absent"
+      },
+      "glm": {
+        "open": true,
+        "detail": "ok",
+        "checked_ago_s": 3.3,
+        "credential_mode": "proxy_key"
+      },
+      "anthropic": {
+        "open": true,
+        "detail": "ok",
+        "checked_ago_s": 3.3,
+        "credential_mode": "proxy_key"
+      }
+    }
+  },
+  "protected_pids": {
+    "anthropic-throttle-proxy": 2200060,
+    "zai-throttle-proxy": 3842786,
+    "mimo-throttle-proxy": 3873577,
+    "mimo-desktop-subscription-queue": 2808043,
+    "mimo-desktop-subscription-bridge": 3703360,
+    "mimo-tokenplan-shim": 1980,
+    "ingress-throttle-proxy": 3843155
+  }
+}

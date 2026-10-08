@@ -368,6 +368,7 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
     - ``limiter.retry_after_until`` in the future (Retry-After active), OR
     - any aggregate/5h/7d unified status is ``rejected`` (budget exhausted), OR
     - either live utilization is >= 1.0 even if the accompanying status lags.
+    - ``credential.ok`` is explicitly false (credential quarantined).
 
     Lanes without Anthropic-style unified gauges (Kimi/GLM) simply have no
     ``rejected`` field, so a reachable bearer with no retry-after is usable —
@@ -377,6 +378,8 @@ def bearer_usable(bearer: dict, now: float | None = None) -> bool:
     a lock — see ``unified_live_view``.
     """
     now = time.time() if now is None else now
+    if (bearer.get("credential") or {}).get("ok") is False:
+        return False
     limiter = bearer.get("limiter") or {}
     # Defensive parse: a malformed (non-numeric) ``retry_after_until`` must not
     # crash request handling — treat unparseable as "not set" (0 = not paused).
@@ -400,8 +403,9 @@ def lane_usable(
 ) -> tuple[bool, str]:
     """Lane-level verdict from a ``/__throttle/health`` body.
 
-    Returns ``(open, detail)``. Open requires the lane can reach its upstream
-    (``upstream_egress_ok``). A proxy-owns-key lane (Kimi :8767) injects its own
+    Returns ``(open, detail)``. Open requires upstream DNS to resolve
+    (``upstream_egress_ok``) and admission not to be quiesced. The unauthenticated
+    probe slot is not a serving credential. A proxy-owns-key lane (Kimi :8767) injects its own
     credential and legitimately tracks zero per-client bearers, so an empty
     ``bearers`` map is OPEN for it (it had falsely closed Kimi → bulk spilled to
     GLM, which needs a client key the tabs don't have). A client-provides-key
@@ -409,6 +413,8 @@ def lane_usable(
     through it, so traffic would 401. A lane that tracks bearers is open iff
     ≥1 bearer is usable (retry-aftered/rejected → skip).
     """
+    if health_json.get("admission_closed") is True:
+        return False, "admission-closed"
     if not health_json.get("upstream_egress_ok", False):
         return False, "upstream-egress-down"
     # DNS resolving says nothing about whether the lane's own key still works.
@@ -417,7 +423,9 @@ def lane_usable(
     # rule below then held the lane OPEN — so a spill would 401 the caller.
     if health_json.get("upstream_auth_ok") is False:
         return False, "upstream-auth-rejected"
-    bearers = health_json.get("bearers") or {}
+    bearers = {
+        bid: bearer for bid, bearer in (health_json.get("bearers") or {}).items() if bid != "_anon"
+    }
     if not bearers:
         return (True, "no-bearers-proxy-owns-key") if proxy_owns_key else (False, "no-bearers")
     now = time.time() if now is None else now

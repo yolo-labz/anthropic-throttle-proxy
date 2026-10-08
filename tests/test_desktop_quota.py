@@ -80,6 +80,28 @@ def test_independent_weekly_units_and_no_inferred_pace(tmp_path, monkeypatch):
     assert meter["window_mins"] is None
 
 
+def test_merged_rows_keep_their_independent_source_clocks(tmp_path, monkeypatch):
+    weekly = payload()
+    weekly["generatedAt"] = datetime.fromtimestamp(NOW - 120, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    read(tmp_path, monkeypatch, weekly)
+    monthly = tmp_path / "monthly.json"
+    raw = json.loads((tmp_path / "base.json").read_text())
+    raw.update(
+        generatedAt=datetime.fromtimestamp(NOW - 600, UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        intervalSeconds=900,
+    )
+    monthly.write_text(json.dumps(raw))
+    monkeypatch.setenv("THROTTLE_MIMO_REPORT", str(monthly))
+    lanes._cache = None
+    rows = {row["id"]: row for row in lanes.view(NOW)["lanes"]}
+    assert rows[LANE_ID]["sample_age_s"] == 120
+    assert rows[LANE_ID]["sample_interval_s"] == 300
+    assert rows[LANE_ID]["sample_observed_at"] == "07/10/2026 20:58 UTC"
+    assert rows["mimo:plan"]["sample_age_s"] == 600
+    assert rows["mimo:plan"]["sample_interval_s"] == 900
+    assert rows["mimo:plan"]["sample_observed_at"] == "07/10/2026 20:50 UTC"
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

@@ -5314,11 +5314,14 @@ async def _serve(request: web.Request) -> web.StreamResponse:
 
 
 async def _check_upstream_egress() -> tuple[bool, str]:
-    parsed = urlsplit(config.UPSTREAM)
-    host = parsed.hostname
-    if not host:
-        return True, ""
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        parsed = urlsplit(config.UPSTREAM)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return False, "invalid upstream URL"
+    if parsed.scheme not in {"http", "https"} or not host:
+        return False, "invalid upstream URL"
     loop = asyncio.get_running_loop()
     try:
         await asyncio.wait_for(
