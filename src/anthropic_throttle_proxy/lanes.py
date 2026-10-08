@@ -87,6 +87,7 @@ _MIMO_TEAM_LANE_ID = "mimo:team-owner"
 # owner seat or the individual plan row. Spelling follows spec 279 G2.
 _MIMO_TEAM_B_LANE_ID = "mimo:team-b"
 
+_SAMPLE_DISPLAY_FORMAT = "%d/%m/%Y %H:%M UTC"
 _cache: tuple[float, dict[str, Any]] | None = None
 
 
@@ -438,7 +439,7 @@ def _normalize(
         "reason": reason,
         "sample_age_s": sample_age_s,
         "sample_observed_at": datetime.fromtimestamp(now - sample_age_s, UTC).strftime(
-            "%d/%m/%Y %H:%M UTC"
+            _SAMPLE_DISPLAY_FORMAT
         )
         if sample_age_s is not None
         else None,
@@ -567,7 +568,7 @@ def _read(now: float, path: str | None = None) -> dict[str, Any]:
         "age_s": age,
         "stale": stale,
         "interval_s": interval,
-        "observed_at": datetime.fromtimestamp(now - age, UTC).strftime("%d/%m/%Y %H:%M UTC")
+        "observed_at": datetime.fromtimestamp(now - age, UTC).strftime(_SAMPLE_DISPLAY_FORMAT)
         if age is not None
         else None,
         "next_sample_in_s": max(0, interval - age)
@@ -627,7 +628,7 @@ def _desktop_row(path: str, now: float) -> dict[str, Any]:
     # Only measured percent/reset leave this trust boundary. No allowance,
     # money, window duration or producer-provided arbitrary labels/notes.
     stale = age > interval * _STALE_INTERVALS
-    observed = datetime.fromtimestamp(now - age, UTC).strftime("%d/%m/%Y %H:%M UTC")
+    observed = datetime.fromtimestamp(now - age, UTC).strftime(_SAMPLE_DISPLAY_FORMAT)
     status = "ok" if remaining > 0 else "exhausted"
     if stale:
         status = "stale"

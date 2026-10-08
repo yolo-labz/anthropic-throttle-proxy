@@ -95,6 +95,12 @@ reported 129 files already formatted. Admitted desktop small-slot limits:
 1 CPU, 512 MiB, no swap, 120 s; measured peak 161.8 MiB, CPU time 26.687 s.
 No server work and no vendor requests.
 
+The first hosted scan analyzed exact head `d2c0abf` and found one concrete
+S1192 defect: the same sample display format was repeated three times. New
+coverage was 93.6%, duplication 0.0%. Reused one format constant; no Sonar
+settings, workflow or issue-status edits. Subsequent CI identity is in the
+final delivery export, not inferred from the first head's passing checks.
+
 Running the corrected pure helper on observed health closes Anthropic and
 Z.AI (`no-usable-bearer`); weekly remains open. Monthly health alone still
 cannot prove quota: its fresh authoritative admission refuses 0/2 serving,
