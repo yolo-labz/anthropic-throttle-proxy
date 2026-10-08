@@ -1,0 +1,18 @@
+{
+  "scope": "synthetic journals / actual reader+UI; not deployed or live inference",
+  "ignored_local_proxy_bucket_outputs": 9000,
+  "source_sha256": {
+    "output_usage.py": "5172d8bc6076c1200b0bfd673dec59d3c3833b2ad47838cf9ff4689f08e7d6c9",
+    "ui/routes.py": "f5739abfbd4b56b46ca2474be910219b33aba5df1315c09283a7cb08808cbb4d",
+    "ui/presentation.py": "4ba93b22753e8f4451a4d72e8937f6d75ea627c5b2cd49c0b4503ff1d7faee47",
+    "ui/signals.py": "cf99b9b10c075e0fb061ff306c3f69dcabd4b599febe1f0f2f184bc05836c4f0",
+    "ui/__init__.py": "636e458d44c3b5900c9d3dad4cb0049f65ee942c0aaff7a7123528921c5452b7",
+    "ui/templates/dashboard.html": "8957018b5bc748e0bc5798d91271b0e290cde68c9a6d2edc65a47a60c346f9c9",
+    "ui/static/style.css": "089fa2f57d487afb379f09aa4fb50eb63471b87ea26aa0a9ee15f72be641a6c6",
+    "ui/templates/partials/config.html": "eb88af5ee11035f22d660790b08f666e599a3e9daf35fa83c4894c3414e1a095",
+    "ui/templates/partials/stats.html": "d16380b9fd7e8b800c9363c7367a98920ea59b56611cc42167f6337dbbf6ca2e"
+  },
+  "viewports": [],
+  "quota_accessibility": {},
+  "failure": ""
+}

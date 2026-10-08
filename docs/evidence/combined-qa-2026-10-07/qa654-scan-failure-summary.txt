@@ -1,0 +1,3 @@
+2026-10-07T23:38:25.7711950Z 23:38:25.770 INFO  ------------- Check Quality Gate status
+2026-10-07T23:38:31.5445485Z 23:38:31.543 ERROR QUALITY GATE STATUS: FAILED - View details on https://sonarqube.home301server.com.br/dashboard?id=yolo-labz_anthropic-throttle-proxy
+2026-10-07T23:38:32.1995308Z ##[error]Action failed: The process '/opt/hostedtoolcache/sonar-scanner-cli/8.0.1.6346/linux-x64/bin/sonar-scanner' failed with exit code 3

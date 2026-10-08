@@ -1,0 +1,23 @@
+{
+  "scope": "independent bounded observed journal aggregate; not pT-reader/browser/live-dial acceptance",
+  "captured_at": "2026-10-07T22:49:07.416287+00:00",
+  "window_seconds": 60,
+  "domain": "single Pi client completion journal; no proxy counters added",
+  "tail_bytes": 2097062,
+  "file_bytes": 49887333,
+  "events_in_window": 92,
+  "output_tokens": 89813,
+  "output_tokens_per_second": 1496.8833333333334,
+  "observed_providers": [
+    "codex-a",
+    "codex-b",
+    "codex-c",
+    "mimo-desktop-subscription",
+    "openai-codex",
+    "zai"
+  ],
+  "invalid_tail_rows": 0,
+  "trailing_line_complete": true,
+  "tail_covers_60s": true,
+  "coverage": "observed Pi on this host only; non-Pi/other-host unknown"
+}
