@@ -60,5 +60,4 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 EXPOSE 8765
 
-# Use `python -m` so __main__ is the entry — avoids hidden console-scripts.
-CMD ["python", "-m", "anthropic_throttle_proxy"]
+CMD ["throttler-gateway"]

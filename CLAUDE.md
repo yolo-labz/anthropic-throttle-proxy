@@ -8,11 +8,12 @@ Repo-local rules for Claude Code / opencode / codex sessions touching this codeb
 
 ## Project context
 
-Self-hosted reverse-proxy in front of `api.anthropic.com`. Born from [anthropics/claude-code#53915](https://github.com/anthropics/claude-code/issues/53915). Lives standalone in `yolo-labz/` (was `~/NixOS/pkgs/anthropic-throttle-proxy/` until 20/05/2026 — see git history of `phsb5321/NixOS` for the rationale tree).
+Throttler is a self-hosted gateway and ingress for configurable provider lanes.
+The default lane targets `api.anthropic.com`; the project originated from [anthropics/claude-code#53915](https://github.com/anthropics/claude-code/issues/53915). Lives standalone in `yolo-labz/` (was `~/NixOS/pkgs/anthropic-throttle-proxy/` until 20/05/2026 — see git history of `phsb5321/NixOS` for the rationale tree).
 
-**Two roles, same binary:**
+**Gateway roles (`throttler-gateway`), plus separate `throttler-ingress`:**
 1. **local** — per-device proxy. Default `THROTTLE_QUEUE_MODE=off`. Optional fanout to a central instance via `THROTTLE_CENTRAL_URL`.
-2. **central** — fleet-wide single semaphore. Runs on Dokku (`anthropic-throttle.<your-host>`). `THROTTLE_QUEUE_MODE=fair`.
+2. **central** — fleet-wide single semaphore. Runs on Dokku (new-install example `throttler.<your-host>`; existing app/domain names stay unchanged). `THROTTLE_QUEUE_MODE=fair`.
 
 ## Stack
 
@@ -46,7 +47,11 @@ Single-process aiohttp app, wired in `proxy.py::main()`:
 - **UI** (`ui/routes.py::attach_ui`) — HTMX 1.x dashboard at `/ui`, jinja2 templates in `ui/templates/`. Three optional dashboard panels (all UI-only, failure-tolerant, hidden when their env var is unset): **Accounts** (`THROTTLE_ACCOUNT_CRED_PATHS`, per-account 5h/7d usage via `/api/oauth/usage`), **Fleet** (`THROTTLE_FLEET_HEALTH=LABEL:url,...` cross-fetches sibling proxies' `/__throttle/health` so the z.ai `:8766` instance shows in one pane), **Copilot** (`THROTTLE_COPILOT_ORGS` + `THROTTLE_COPILOT_TOKEN` reads `/orgs/{org}/copilot/billing` — subscription/seats only; the individual-user usage API does not exist).
 - **Metrics** — `prometheus_client` with a process-local `CollectorRegistry` (NOT the default global), exposed at `/metrics`. Health JSON at `/__throttle/health` includes per-bearer `limiter.queued_per_client` for live starvation debugging.
 
-Entry: `python -m anthropic_throttle_proxy` → `__main__.py` → `proxy.main()`. Dockerfile uses the same CMD.
+Distribution: `throttler-gateway`. Entry: `throttler-gateway` /
+`python -m throttler_gateway` → the existing `proxy.main()`.
+`throttler-ingress` / `python -m throttler_gateway.ingress` → existing ingress.
+Dockerfile/Procfile use `throttler-gateway`. Legacy commands,
+`anthropic_throttle_proxy` imports, wire contracts and state remain compatible.
 
 ## Load-bearing invariants
 
@@ -324,7 +329,7 @@ When authoring or editing the skills above:
 
 ```sh
 uv sync
-uv run python -m anthropic_throttle_proxy   # proxy :8765, dashboard /ui, metrics /metrics, health /__throttle/health
+uv run throttler-gateway                   # proxy :8765, dashboard /ui, metrics /metrics, health /__throttle/health
 uv run pytest                                # full suite (proxy/forwarding/pacing/unified)
 uv run pytest tests/test_pacing.py::test_yyy # single test
 uv run ruff check src tests                  # lint
