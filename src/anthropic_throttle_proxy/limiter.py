@@ -1119,7 +1119,38 @@ class FairBearerLimiter:
         effective, _lease = await self.acquire_lease(client_id, priority=priority)
         return effective
 
-    async def acquire_lease(self, client_id: str, *, priority: bool = False) -> tuple[bool, int]:
+    def _check_queue_admission(
+        self, client_id: str, priority: bool, max_wait: float | None
+    ) -> None:
+        """Check prediction under the enqueue lock; the context owns the timer."""
+        if max_wait is None:
+            return
+        estimate = self.drain_estimate(max_wait, priority=priority, client_id=client_id)
+        if not estimate.rejects:
+            return
+        first_waiter = (
+            config.QUEUE_ALLOW_FIRST_WAITER
+            and not priority
+            and estimate.slots == 1
+            and estimate.busy == 1
+            and estimate.queued == 0
+            and math.isfinite(max_wait)
+            and max_wait > 0
+        )
+        decision = "queue-first-waiter" if first_waiter else "queue-depth-reject"
+        log(
+            f"{decision} bid={self.bearer_id} cid={client_id} "
+            f"slots={estimate.slots} busy={estimate.busy} queued={estimate.queued} "
+            f"ahead={estimate.ahead} service_s={estimate.service_time_s:g} "
+            f"source={estimate.source} est_wait_s={estimate.wait_s:g} "
+            f"max_wait_s={estimate.max_wait_s:g} max_depth={estimate.max_depth}"
+        )
+        if not first_waiter:
+            raise QueueWaitTimeout(max_wait, pre_queue=True, estimate=estimate)
+
+    async def acquire_lease(
+        self, client_id: str, *, priority: bool = False, max_wait: float | None = None
+    ) -> tuple[bool, int]:
         """Acquire one slot for ``client_id``, queueing fairly if necessary.
 
         In non-queue modes this just bumps ``inflight`` and returns. In queue
@@ -1133,6 +1164,9 @@ class FairBearerLimiter:
         demotes the call to normal traffic) and the slot's LEASE. Callers must
         pass both back to :meth:`release` so lane accounting and service-time
         bookkeeping stay symmetric.
+
+        ``max_wait`` checks predictive admission under the enqueue lock; the
+        slot context owns the actual timeout. Bare acquires omit this check.
         """
         priority = priority and config.PRIORITY_RESERVE_SLOTS > 0
         if not self.queue_enabled:
@@ -1146,6 +1180,7 @@ class FairBearerLimiter:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         async with self._lock:
+            self._check_queue_admission(client_id, priority, max_wait)
             if priority:
                 q = self._priority_queues.setdefault(client_id, collections.deque())
                 q.append(fut)
@@ -1348,6 +1383,7 @@ class FairBearerLimiter:
             "max_concurrent": self.max_concurrent,
             "hard_max": self.hard_max,
             "queue_mode": self.queue_mode,
+            "queue_allow_first_waiter": config.QUEUE_ALLOW_FIRST_WAITER,
             "queue_enabled": self.queue_enabled,
             "observe_enabled": self.observe_enabled,
             "last_throttle_at": self._last_throttle_at,
@@ -1429,35 +1465,15 @@ class _FairSlotContext:
 
     async def __aenter__(self) -> _FairSlotContext:
         bounded = bool(self.max_wait) and self.limiter.queue_enabled
-        if bounded:
-            # Bounding the WAIT does not bound the DEPTH: a queue deeper than
-            # this lane drains at its own measured service rate parks a request
-            # whose estimated wait is already past the budget, burns the whole
-            # patience window in silence, and answers too late to be useful
-            # (01/09/2026 :8766 — 2 slots held 113.7 s / 221.2 s, 3 queued,
-            # 30 s budget, 4 retries into the same wall). Refuse up front, with
-            # the arithmetic attached, while the transport is wide open.
-            #
-            # The check and the enqueue below are one event-loop step: every
-            # `_lock` critical section in this class is synchronous, so
-            # `acquire`'s lock take never yields and a simultaneous burst is
-            # serialized rather than all passing one stale estimate.
-            estimate = self._estimate()
-            if estimate.rejects:
-                log(
-                    f"queue-depth-reject bid={self.limiter.bearer_id} cid={self.client_id} "
-                    f"slots={estimate.slots} busy={estimate.busy} queued={estimate.queued} "
-                    f"ahead={estimate.ahead} service_s={estimate.service_time_s:g} "
-                    f"source={estimate.source} est_wait_s={estimate.wait_s:g} "
-                    f"max_wait_s={estimate.max_wait_s:g} max_depth={estimate.max_depth}"
-                )
-                raise QueueWaitTimeout(self.max_wait, pre_queue=True, estimate=estimate)
         # acquire_lease() echoes the EFFECTIVE lane (reserve 0 demotes to
         # normal) and the slot's lease; remember both so __aexit__ releases the
         # same pool and returns the same lease, even if the knob is retuned
-        # mid-flight. Created only once the request is admitted, so a rejection
-        # leaves no un-awaited coroutine behind.
-        acquire = self.limiter.acquire_lease(self.client_id, priority=self.priority)
+        # mid-flight. Predictive rejection runs inside this awaited coroutine.
+        # Admission and enqueue share the lock: wait_for can schedule several
+        # acquires before any runs, so a pre-check here races simultaneous arrivals.
+        acquire = self.limiter.acquire_lease(
+            self.client_id, priority=self.priority, max_wait=self.max_wait if bounded else None
+        )
         if bounded:
             # wait_for cancels the parked acquire on timeout; its
             # CancelledError path (_cancel_cleanup) rolls the queue entry —
