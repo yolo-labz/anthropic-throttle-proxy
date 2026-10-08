@@ -1,0 +1,2 @@
+PASS: shared package; distinct monthly/weekly files; bounded 15-minute console and five-minute read-only Desktop samplers
+PASS: 27 exact-identity report fixtures; 2|3 rows, fail-closed otherwise

@@ -1,0 +1,60 @@
+Preserved failure — universal code-slop gate refused the receipt commit
+=======================================================================
+
+When: 08/10/2026 20:29:18 BRT (desktop-job-small-3, ordinary admission)
+What: `git commit` of the combined-throughput receipt (50 staged entries).
+Result: commit did NOT happen. HEAD stayed at 859ba6c; the index stayed staged.
+Cause: two ERRORS raised by code-slop-gate --staged against the 08/10 helper
+self-check script (helper-self-check.py), i.e. the check itself, not the
+receipt helper and not the runtime:
+
+  docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/helper-self-check.py:14
+    ERROR  security/python-exec — Use of exec() can execute arbitrary code
+  docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/helper-self-check.py:37
+    ERROR  ai-slop/swallowed-exception — Bare except with pass swallows errors silently
+  (warnings, allowed: ruff/S102 on the same exec; ruff/S603 on the retained
+   2683-verify-combined-runtime.py:66 subprocess call site)
+
+Why retained: the fleet forbids routing around this gate (no --no-verify, no
+noqa, no exclusion or threshold change). The finding is correct: the dynamic
+harness extracted command() from the helper with exec() and swallowed
+ValueError with a bare pass.
+
+Fix, applied in the same slice: the check was rewritten as a static AST
+verification (no exec, no swallowed exception) that proves the same admission
+properties — exact unit/property allowlists, exactly one shell-free subprocess
+call site with a 5 s timeout, refusal by exception for anything else, and no
+lifecycle verb. The draft also asserted the helper's suppression-freedom by
+name; the alignment gate then read that assertion itself as an added lint
+suppression (align/lint-suppressed), so the assertion was removed rather than
+reworded or hidden — suppression-freedom on changed files is already enforced
+by the universal gates themselves. Second refusal, same session:
+
+── alignment gate ─────────────────────────────
+scanned: 3 changed code file(s) · 1 error(s) · 0 warning(s)
+findings:
+  ERROR align/lint-suppressed      docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/helper-self-check.py:120 lint suppression added (goal-hacking)
+───────────────────────────────────────────────
+✗ FAIL — finish the work / tighten scope before claiming done.
+
+Verbatim gate output from the refused commit
+--------------------------------------------
+── code-slop gate ─────────────────────────────
+aislop : score 76 · 2 error(s) · 2 warning(s)
+jscpd  : 0.21730272986554394% duplication · 17 clone(s) · 128 line(s)
+ratchet: 0 relevant · 0 inherited · 0 regression(s)
+findings:
+  WARNING  docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/helper-self-check.py:14  ruff/S102 — Use of `exec` detected
+  WARNING  docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:66  ruff/S603 — `subprocess` call: check for execution of untrusted input
+  ERROR  docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/helper-self-check.py:37  ai-slop/swallowed-exception — Bare except with pass swallows errors silently
+  ERROR  docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/helper-self-check.py:14  security/python-exec — Use of exec() can execute arbitrary code
+───────────────────────────────────────────────
+✗ FAIL
+  aislop: 2 error(s) > max 0
+
+Earlier dynamic-harness run (before the gate saw it), same session, verbatim:
+
+  PASS: bounded shell-free cat/show only; invalid commands never execute; no lint suppression
+
+That run is retained as evidence of the dynamic behaviour; the committed check
+is the static one, and this file records why the dynamic harness was replaced.

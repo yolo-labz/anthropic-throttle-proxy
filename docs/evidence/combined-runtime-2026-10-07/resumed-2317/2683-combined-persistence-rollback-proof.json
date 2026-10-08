@@ -1,0 +1,101 @@
+{
+  "recordedAt": "2026-10-08T02:41:43.522485+00:00",
+  "uiPid": "2200060",
+  "nativeProcProof": {
+    "observedBetweenBrt": [
+      "07/10/2026 23:28:50",
+      "07/10/2026 23:32:50"
+    ],
+    "method": "Native read of /proc/2200060/cmdline and status; no raw environment or credentials. The admitted control namespace hides host PIDs.",
+    "pid": "2200060",
+    "state": "S (sleeping)",
+    "uid": [
+      1000,
+      1000,
+      1000,
+      1000
+    ],
+    "gid": [
+      100,
+      100,
+      100,
+      100
+    ],
+    "argv": [
+      "/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14",
+      "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/bin/.anthropic-throttle-proxy-wrapped"
+    ]
+  },
+  "persistentChain": [
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service",
+      "target": "/nix/store/glvrzlxwg52ds2zc6x1icn446s5nircm-anthropic-throttle-proxy.service/anthropic-throttle-proxy.service",
+      "sha256": "3a1fa1a7c72d778d81d3d97bdfe353015fcb56e02b368fcd954cb7cd62646d76"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/40-direct-route-incident.conf",
+      "sha256": "8722e97ed6367041a34774fdc495ce4c4d1e454778bcf4910b21dae7a2c199d7"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/90-throttler-7236d96.conf",
+      "sha256": "cd4213c881a463cb4b97fdb2e626ac950114925ef074420a6517753e54884b67"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/95-cancelled-offline-upstream.conf",
+      "sha256": "ace484e8c4cc135101a52f3518fefc74ecab8722ab3a6ccdaaf6f1428c652ee2"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99-ui-runtime-2026-10-07.conf",
+      "target": "/nix/store/fkabv7iwwlvv16iqdyrpgs6spz6mv6fn-99-ui-runtime-2026-10-07.conf",
+      "sha256": "a3c8435d4ad75ae79fc8adaae785e951147b92d6262839e62852dc3c4b2153d7"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/99z-combined-throughput-2026-10-07.conf",
+      "target": "/nix/store/79slywzvsyhdna951w1jv73wp4damm91-99z-combined-throughput-2026-10-07.conf",
+      "sha256": "aefae2a5e55133f59f8d410058ef37684770f5bdb0223f5f27b66701291d41fb"
+    },
+    {
+      "path": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf",
+      "target": "/home/notroot/.config/systemd/user/anthropic-throttle-proxy.service.d/queue-wait.conf",
+      "sha256": "3fede87470cedb173548c9aa233d73783dc591aff0b37dc403c7bdb6b4cbe1ef"
+    }
+  ],
+  "enabledQuotaTimerWantedByLink": {
+    "path": "/home/notroot/.config/systemd/user/timers.target.wants/mimo-desktop-quota-report.timer",
+    "target": "/nix/store/bcw2i45r1n8wcn4gyfshdd5qfhmmqhfy-mimo-desktop-quota-report.timer"
+  },
+  "retainedRoots": {
+    "throttler-combined-c4bd3ce-runtime": {
+      "path": "/home/notroot/.local/state/nix/gcroots/throttler-combined-c4bd3ce-runtime",
+      "target": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0"
+    },
+    "throttler-combined-predecessor-rollback": {
+      "path": "/home/notroot/.local/state/nix/gcroots/throttler-combined-predecessor-rollback",
+      "target": "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0"
+    },
+    "throttler-combined-override": {
+      "path": "/home/notroot/.local/state/nix/gcroots/throttler-combined-override",
+      "target": "/nix/store/79slywzvsyhdna951w1jv73wp4damm91-99z-combined-throughput-2026-10-07.conf"
+    },
+    "throttler-combined-rollback-script": {
+      "path": "/home/notroot/.local/state/nix/gcroots/throttler-combined-rollback-script",
+      "target": "/nix/store/ff54fxyd678a3xy5qkli2c25siwb9w1d-2683-combined-rollback.sh"
+    },
+    "throttler-desktop-quota-service": {
+      "path": "/home/notroot/.local/state/nix/gcroots/throttler-desktop-quota-service",
+      "target": "/nix/store/4axdcrdffbp0qi48k51inkh4xfpb6civ-mimo-desktop-quota-report.service"
+    },
+    "throttler-desktop-quota-timer": {
+      "path": "/home/notroot/.local/state/nix/gcroots/throttler-desktop-quota-timer",
+      "target": "/nix/store/bcw2i45r1n8wcn4gyfshdd5qfhmmqhfy-mimo-desktop-quota-report.timer"
+    }
+  },
+  "environmentFileJournalOverrideCheck": [],
+  "rollbackImmutablePath": "/nix/store/ff54fxyd678a3xy5qkli2c25siwb9w1d-2683-combined-rollback.sh",
+  "actualRollbackExecuted": false,
+  "onlyInstalledDelta": "99z-combined-throughput-2026-10-07.conf",
+  "allOtherUnitAndQuotaHashes": "Preserved by before/after verifier; no rewrite."
+}

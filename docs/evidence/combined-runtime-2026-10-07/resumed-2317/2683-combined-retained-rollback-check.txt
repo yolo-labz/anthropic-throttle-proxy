@@ -1,0 +1,1 @@
+PASS: exact additive override and idle/closed runtime; rollback not executed.

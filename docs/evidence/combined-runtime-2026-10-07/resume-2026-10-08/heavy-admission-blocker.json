@@ -1,0 +1,24 @@
+{
+  "dateBrt": "08/10/2026",
+  "request": "RESUME_2697",
+  "operation": "Retained source receipt helper self-check, normal commit hooks and pre-push rebase",
+  "resourceTier": "heavy",
+  "timeoutSeconds": 120,
+  "toolError": "Failed to start transient service unit: Unit desktop-job-slot.service was already loaded or has a fragment file.",
+  "exitCode": 1,
+  "payloadExecuted": false,
+  "selfCheckExecuted": false,
+  "commitOrRebaseExecuted": false,
+  "runtimeMutationExecuted": false,
+  "extraAgents": 0,
+  "fallbackOrAdmissionChange": false,
+  "automaticRetry": false,
+  "disposition": "Actual host-admission gate. Stop per RESUME_2697. Preserve retained numbered worktree/WIP and historical delivery evidence; next permitted admitted step is the same receipt-only check/commit, not a new deployment.",
+  "completedElsewhere": "Nix2682 CLOSED/integrated into MERGED2681;2689 MERGED. No repeat Nix merge, build, pin or activation.",
+  "durableFiles": [
+    "docs/UI-COMBINED-RUNTIME-2026-10-07.md",
+    "docs/evidence/combined-runtime-2026-10-07/resumed-2317/",
+    "docs/evidence/combined-runtime-2026-10-07/resume-2026-10-08/",
+    "NixOS-2683-throttle-ui-runtime/meta/2683-combined-*"
+  ]
+}

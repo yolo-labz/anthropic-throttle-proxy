@@ -1,0 +1,9 @@
+S603 `subprocess` call: check for execution of untrusted input
+  --> docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:66:12
+   |
+64 |         raise ValueError("unsupported read-only receipt command")
+65 |     # No shell, user-provided executable, lifecycle verb or unconstrained arguments.
+66 |     return subprocess.check_output(args, text=True, timeout=5)
+   |            ^^^^^^^^^^^^^^^^^^^^^^^
+
+Found 1 error.

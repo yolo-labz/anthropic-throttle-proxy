@@ -1,0 +1,80 @@
+S603 `subprocess` call: check for execution of untrusted input
+  --> meta/2683-verify-combined-runtime.py:26:12
+   |
+24 |     if args[0] not in {"systemctl", "git"}:
+25 |         raise ValueError("unsupported read-only receipt command")
+26 |     return subprocess.check_output(args, text=True)
+   |            ^^^^^^^^^^^^^^^^^^^^^^^
+
+B905 `zip()` without an explicit `strict=` parameter
+  --> meta/2683-verify-combined-runtime.py:92:20
+   |
+90 | boundaries = sorted(boundaries)
+91 | matches = []
+92 | for left, right in zip(boundaries, boundaries[1:]):
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+93 |     sampled_at = (left + right) / 2
+94 |     counts = [0] * 6
+   |
+help: Add explicit value for parameter `strict=`
+
+UP031 Use format specifiers instead of percent format
+   --> meta/2683-verify-combined-runtime.py:102:9
+    |
+100 |     gauge = signals.tps_gauge([[count, 0] for count in counts])._replace(value=sum(counts) / 60)
+101 |     signature = (
+102 |         "%.0f" % gauge.value,
+    |         ^^^^^^^^^^^^^^^^^^^^
+103 |         "%.0f" % gauge.peak,
+104 |         "%.0f" % gauge.scale,
+    |
+help: Replace with format specifiers
+
+UP031 Use format specifiers instead of percent format
+   --> meta/2683-verify-combined-runtime.py:103:9
+    |
+101 |     signature = (
+102 |         "%.0f" % gauge.value,
+103 |         "%.0f" % gauge.peak,
+    |         ^^^^^^^^^^^^^^^^^^^
+104 |         "%.0f" % gauge.scale,
+105 |         gauge.spark.points,
+    |
+help: Replace with format specifiers
+
+UP031 Use format specifiers instead of percent format
+   --> meta/2683-verify-combined-runtime.py:104:9
+    |
+102 |         "%.0f" % gauge.value,
+103 |         "%.0f" % gauge.peak,
+104 |         "%.0f" % gauge.scale,
+    |         ^^^^^^^^^^^^^^^^^^^^
+105 |         gauge.spark.points,
+106 |         len(providers),
+    |
+help: Replace with format specifiers
+
+E501 Line too long (222 > 100)
+   --> meta/2683-verify-combined-runtime.py:217:101
+    |
+215 | …
+216 | …
+217 | …le, six-bucket spark and provider count match these possible cached60s intervals; no claim of an unexposed precise timestamp.",
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+218 | …
+219 | …
+    |
+
+E501 Line too long (133 > 100)
+   --> meta/2683-verify-combined-runtime.py:244:101
+    |
+242 |     "servedCssSha256": hashlib.sha256(css).hexdigest(),
+243 |     "browserAcceptance": "Independent admitted pW packet; no browser launched by this receipt.",
+244 |     "privacy": "No raw journal, costs, seats, user/account DOM or credentials retained; no inference or running collector mutation.",
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+245 | }
+246 | (ROOT / "2683-combined-runtime-verification.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    |
+
+Found 7 errors.
+No fixes available (4 hidden fixes can be enabled with the `--unsafe-fixes` option).

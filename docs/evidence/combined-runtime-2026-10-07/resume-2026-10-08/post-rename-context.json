@@ -1,0 +1,24 @@
+{
+  "recordedAtBrt": "08/10/2026 20:30 BRT",
+  "recordedBy": "cross-family continuation seat, retained 328 receipt worktree (pV)",
+  "why": "The receipt body of docs/UI-COMBINED-RUNTIME-2026-10-07.md is dated 07/10/2026-08/10/2026 and its 'Current verified status' claims describe that activation. Source main has since evolved, so this note records the naming/unit/package supersession instead of editing the historical receipt body.",
+  "observed": {
+    "mainCommit": "c4a6282a43caac2c496f26338581e40229ea966c",
+    "mainSubject": "feat: publish canonical Throttler gateway and ingress (#334)",
+    "mainWorktreeProjectName": "throttler-gateway (pyproject), README titled 'Throttler'",
+    "persistedUnit": "~/.config/systemd/user/anthropic-throttle-proxy.service now resolves to the gateway unit: Requires=throttler-gateway.socket, Alias=anthropic-throttle-proxy.service, ExecStart=/nix/store/dg56h1l8migbq7yvs7xnpal5y9kwkv1m-throttler-gateway-0.1.0/bin/throttler-gateway",
+    "runningUnit": "throttler-gateway.service",
+    "runningPid": "1541644",
+    "runningCmdline": "python3.14 /nix/store/dg56h1l8migbq7yvs7xnpal5y9kwkv1m-throttler-gateway-0.1.0/bin/.throttler-gateway-wrapped",
+    "oldUnitCgroup": "absent: /sys/fs/cgroup/.../anthropic-throttle-proxy.service does not exist, so PID 2200060 in the receipt body is a historical activation, not the current process",
+    "combinedModuleStillShipped": "anthropic_throttle_proxy/output_usage.py is present inside throttler-gateway-0.1.0",
+    "siblingLanesObserved": [
+      "zai-throttle-proxy.service pid 3842786",
+      "mimo-throttle-proxy.service pid 3873577",
+      "mimo-desktop-subscription-bridge pid 3703360"
+    ]
+  },
+  "method": "Read-only native reads of /proc (1, self, 1541644, 3703360, 3842786, 3873577), /sys/fs/cgroup cgroup.procs, /proc/stat and /nix/store package files. No systemctl verb, no daemon reload, no restart, no credential, no client prompt, no provider call, no admission-policy change.",
+  "notClaimed": "Not a redeployment, not a re-verification of the 07/10 arithmetic, and not a claim that the gateway build is behaviorally identical to the 939kr6a receipt target. It records only that naming, unit and package moved on while the combined-throughput module is still shipped.",
+  "retainedTask": "Receipt-only commit of the prepared evidence. No runtime mutation was performed to complete it."
+}

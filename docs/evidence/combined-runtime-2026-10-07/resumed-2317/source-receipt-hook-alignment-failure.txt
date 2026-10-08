@@ -1,0 +1,16 @@
+── code-slop gate ─────────────────────────────
+aislop : score 99 · 0 error(s) · 1 warning(s)
+jscpd  : 0.21748364624925667% duplication · 17 clone(s) · 128 line(s)
+ratchet: 0 relevant · 0 inherited · 0 regression(s)
+findings:
+  WARNING  docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:58  ruff/S603 — `subprocess` call: check for execution of untrusted input
+───────────────────────────────────────────────
+✓ PASS — no code-slop over threshold.
+── alignment gate ─────────────────────────────
+scanned: 2 changed code file(s) · 3 error(s) · 0 warning(s)
+findings:
+  ERROR align/lint-suppressed      docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:70 lint suppression added (goal-hacking)
+  ERROR align/lint-suppressed      docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:71 lint suppression added (goal-hacking)
+  ERROR align/lint-suppressed      docs/evidence/combined-runtime-2026-10-07/resumed-2317/2683-verify-combined-runtime.py:77 lint suppression added (goal-hacking)
+───────────────────────────────────────────────
+✗ FAIL — finish the work / tighten scope before claiming done.

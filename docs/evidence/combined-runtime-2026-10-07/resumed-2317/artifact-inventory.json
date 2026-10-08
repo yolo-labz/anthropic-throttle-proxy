@@ -1,0 +1,169 @@
+{
+  "acceptedSource": "c4bd3ce6f203220683e18504a629343d5d53b12b",
+  "files": [
+    {
+      "path": "2683-accepted327.json",
+      "bytes": 2865
+    },
+    {
+      "path": "2683-combined-activated-health.json",
+      "bytes": 521
+    },
+    {
+      "path": "2683-combined-before-2317.json",
+      "bytes": 5954
+    },
+    {
+      "path": "2683-combined-control-metadata.txt",
+      "bytes": 3517
+    },
+    {
+      "path": "2683-combined-initial-served-gauge.json",
+      "bytes": 1180
+    },
+    {
+      "path": "2683-combined-native-proc-proof.json",
+      "bytes": 552
+    },
+    {
+      "path": "2683-combined-native-process-visibility.json",
+      "bytes": 1091
+    },
+    {
+      "path": "2683-combined-native-wiring-log.txt",
+      "bytes": 195
+    },
+    {
+      "path": "2683-combined-native-wiring.txt",
+      "bytes": 3780
+    },
+    {
+      "path": "2683-combined-override-store.txt",
+      "bytes": 84
+    },
+    {
+      "path": "2683-combined-package-build.txt",
+      "bytes": 280
+    },
+    {
+      "path": "2683-combined-package-log.txt",
+      "bytes": 4157
+    },
+    {
+      "path": "2683-combined-persistence-rollback-proof.json",
+      "bytes": 5011
+    },
+    {
+      "path": "2683-combined-preservation-check.json",
+      "bytes": 2172
+    },
+    {
+      "path": "2683-combined-retained-rollback-check.txt",
+      "bytes": 78
+    },
+    {
+      "path": "2683-combined-rollback-preflight.txt",
+      "bytes": 97
+    },
+    {
+      "path": "2683-combined-rollback-store.txt",
+      "bytes": 70
+    },
+    {
+      "path": "2683-combined-rollback.sh",
+      "bytes": 2396
+    },
+    {
+      "path": "2683-combined-runtime-handoff.md",
+      "bytes": 13973
+    },
+    {
+      "path": "2683-combined-runtime-verification.json",
+      "bytes": 4625
+    },
+    {
+      "path": "2683-combined-runtime-verification.txt",
+      "bytes": 222
+    },
+    {
+      "path": "2683-combined-source-fingerprints.json",
+      "bytes": 2031
+    },
+    {
+      "path": "2683-combined-source-hash.txt",
+      "bytes": 8061
+    },
+    {
+      "path": "2683-combined-throughput-preflight.json",
+      "bytes": 7666
+    },
+    {
+      "path": "2683-combined-verifier-final-lint.txt",
+      "bytes": 402
+    },
+    {
+      "path": "2683-combined-verifier-initial-lint.txt",
+      "bytes": 3032
+    },
+    {
+      "path": "2683-receipt326-merge.json",
+      "bytes": 2865
+    },
+    {
+      "path": "2683-receipt326-review.json",
+      "bytes": 197
+    },
+    {
+      "path": "2683-source-328-qa-state.json",
+      "bytes": 2844
+    },
+    {
+      "path": "2683-source-329-adjacent-active.json",
+      "bytes": 4027
+    },
+    {
+      "path": "2683-verify-combined-runtime.py",
+      "bytes": 11207
+    },
+    {
+      "path": "99z-combined-throughput-2026-10-07.conf",
+      "bytes": 209
+    },
+    {
+      "path": "deduplicated-receipt-references.json",
+      "bytes": 421
+    },
+    {
+      "path": "helper-import-repair.patch",
+      "bytes": 2079
+    },
+    {
+      "path": "independent-live-qa-binding.json",
+      "bytes": 1561
+    },
+    {
+      "path": "source-receipt-hook-alignment-failure.txt",
+      "bytes": 1532
+    },
+    {
+      "path": "source-receipt-hook-initial.txt",
+      "bytes": 1112
+    },
+    {
+      "path": "verifier-recheck/2683-combined-runtime-verification.json",
+      "bytes": 4636
+    },
+    {
+      "path": "verifier-recheck/check.txt",
+      "bytes": 222
+    },
+    {
+      "path": "verifier-recheck/rollback-check.txt",
+      "bytes": 97
+    },
+    {
+      "path": "verifier-recheck/verifier-identity.txt",
+      "bytes": 284
+    }
+  ]
+}

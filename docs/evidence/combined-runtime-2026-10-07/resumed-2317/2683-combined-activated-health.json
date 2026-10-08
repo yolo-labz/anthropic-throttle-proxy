@@ -1,0 +1,16 @@
+{
+  "recordedAt": "2026-10-08T02:28:50.439970+00:00",
+  "uiPid": "2200060",
+  "health": {
+    "build": "/nix/store/939kr6a14jdl692yn675lih7n2b12d42-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "inflight": 0,
+    "upstream": "http://127.0.0.1:1",
+    "central_url": "",
+    "served": 0,
+    "queue_mode": "fair"
+  },
+  "changedServices": [
+    "anthropic-throttle-proxy.service"
+  ],
+  "quotaAndSiblings": "No restart or configuration change issued; exact post-check next."
+}
