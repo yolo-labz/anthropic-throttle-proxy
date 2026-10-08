@@ -1119,6 +1119,35 @@ class FairBearerLimiter:
         effective, _lease = await self.acquire_lease(client_id, priority=priority)
         return effective
 
+    def _check_queue_admission(
+        self, client_id: str, priority: bool, max_wait: float | None
+    ) -> None:
+        """Check prediction under the enqueue lock; the context owns the timer."""
+        if max_wait is None:
+            return
+        estimate = self.drain_estimate(max_wait, priority=priority, client_id=client_id)
+        if not estimate.rejects:
+            return
+        first_waiter = (
+            config.QUEUE_ALLOW_FIRST_WAITER
+            and not priority
+            and estimate.slots == 1
+            and estimate.busy == 1
+            and estimate.queued == 0
+            and math.isfinite(max_wait)
+            and max_wait > 0
+        )
+        decision = "queue-first-waiter" if first_waiter else "queue-depth-reject"
+        log(
+            f"{decision} bid={self.bearer_id} cid={client_id} "
+            f"slots={estimate.slots} busy={estimate.busy} queued={estimate.queued} "
+            f"ahead={estimate.ahead} service_s={estimate.service_time_s:g} "
+            f"source={estimate.source} est_wait_s={estimate.wait_s:g} "
+            f"max_wait_s={estimate.max_wait_s:g} max_depth={estimate.max_depth}"
+        )
+        if not first_waiter:
+            raise QueueWaitTimeout(max_wait, pre_queue=True, estimate=estimate)
+
     async def acquire_lease(
         self, client_id: str, *, priority: bool = False, max_wait: float | None = None
     ) -> tuple[bool, int]:
@@ -1151,28 +1180,7 @@ class FairBearerLimiter:
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
         async with self._lock:
-            if max_wait is not None:
-                estimate = self.drain_estimate(max_wait, priority=priority, client_id=client_id)
-                if estimate.rejects:
-                    first_waiter = (
-                        config.QUEUE_ALLOW_FIRST_WAITER
-                        and not priority
-                        and estimate.slots == 1
-                        and estimate.busy == 1
-                        and estimate.queued == 0
-                        and math.isfinite(max_wait)
-                        and max_wait > 0
-                    )
-                    decision = "queue-first-waiter" if first_waiter else "queue-depth-reject"
-                    log(
-                        f"{decision} bid={self.bearer_id} cid={client_id} "
-                        f"slots={estimate.slots} busy={estimate.busy} queued={estimate.queued} "
-                        f"ahead={estimate.ahead} service_s={estimate.service_time_s:g} "
-                        f"source={estimate.source} est_wait_s={estimate.wait_s:g} "
-                        f"max_wait_s={estimate.max_wait_s:g} max_depth={estimate.max_depth}"
-                    )
-                    if not first_waiter:
-                        raise QueueWaitTimeout(max_wait, pre_queue=True, estimate=estimate)
+            self._check_queue_admission(client_id, priority, max_wait)
             if priority:
                 q = self._priority_queues.setdefault(client_id, collections.deque())
                 q.append(fut)

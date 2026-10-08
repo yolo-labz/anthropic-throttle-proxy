@@ -46,7 +46,8 @@ exception and publish the enabled option in the limiter snapshot.
 - [x] Prove actual timeout and cancellation remove the waiter without a slot or
   service-sample leak, and a later first waiter can park again.
 - [x] Prove default-off, multi-slot and priority paths retain predictive refusal.
-- [ ] Run admitted focused checks, normal full-suite CI and hooks.
+- [x] Run admitted focused checks and normal hooks.
+- [ ] Pass normal full-suite CI and Sonar at the final source head.
 - [ ] Squash merge proxy PR and export exact source/pin handoff to root.
 
 This is source delivery only. No live activation, Nix edits, shared CI restart,
@@ -61,3 +62,18 @@ the observed service/residual math is checked at 236.319/234.54 seconds against
 All 53 first-waiter, existing wait and existing drain-admission tests passed
 (2.62s pytest, 3.384s admitted job, 50.5 MiB peak, zero swap). Full-source Ruff
 lint and format passed for 128 files. Normal PR full-suite CI remains required.
+
+The first PR head passed all 2,155 tests in normal CI, but Sonar reported one
+`python:S3776` finding: adding predictive admission raised `acquire_lease`'s
+cognitive complexity to 21 (limit 15). Extract only that synchronous admission
+check into a focused helper, still called under the same enqueue lock. Keep the
+existing behavioral acceptance and rerun it, hooks and normal exact-head CI.
+
+After that extraction, the same 53 focused tests passed once (2.85s) in root's
+exclusively reserved server allocation (CPU 100%, MemoryMax 1536 MiB, TasksMax
+64). CI's exact Ruff lint and format targets (`src tests`) passed. The broader
+directory lint additionally found an inherited S603 in the unchanged #325
+receipt `docs/evidence/ui-runtime-2026-10-07/2683-verify-runtime.py:28`; it is
+outside those native CI targets and is recorded for follow-up. The normal
+pre-commit hooks use the existing exact gate packages built on the server;
+signature checking, hooks and admission remain enabled. Final-head CI required.
