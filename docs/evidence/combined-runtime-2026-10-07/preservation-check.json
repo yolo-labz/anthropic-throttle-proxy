@@ -1,0 +1,53 @@
+{
+  "recordedAt": "2026-10-07T22:48:55.940654+00:00",
+  "directoryReadPrerequisites": [
+    {
+      "path": "/home/notroot",
+      "uid": 1000,
+      "mode": "0o700",
+      "traversableByUid1000": true
+    },
+    {
+      "path": "/home/notroot/.local",
+      "uid": 1000,
+      "mode": "0o700",
+      "traversableByUid1000": true
+    },
+    {
+      "path": "/home/notroot/.local/state",
+      "uid": 1000,
+      "mode": "0o700",
+      "traversableByUid1000": true
+    },
+    {
+      "path": "/home/notroot/.local/state/pi-harness",
+      "uid": 1000,
+      "mode": "0o755",
+      "traversableByUid1000": true
+    }
+  ],
+  "retainedRoots": {
+    "newPackage": {
+      "root": "/home/notroot/.local/state/nix/gcroots/throttler-ui-45b7d0e-runtime",
+      "target": "/nix/store/95ll5i712vsrzri85hsv675ljjr09kk2-anthropic-throttle-proxy-0.1.0"
+    },
+    "rollbackPackage": {
+      "root": "/home/notroot/.local/state/nix/gcroots/throttler-6ac87f1-runtime",
+      "target": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0"
+    },
+    "override": {
+      "root": "/home/notroot/.local/state/nix/gcroots/throttler-ui-runtime-override",
+      "target": "/nix/store/fkabv7iwwlvv16iqdyrpgs6spz6mv6fn-99-ui-runtime-2026-10-07.conf"
+    },
+    "producerUnit": {
+      "root": "/home/notroot/.local/state/nix/gcroots/throttler-desktop-quota-service",
+      "target": "/nix/store/4axdcrdffbp0qi48k51inkh4xfpb6civ-mimo-desktop-quota-report.service"
+    }
+  },
+  "existingRollbackScriptSha256": "96af0189439158bb427d043ec70a704381cefc642d84be90f9a6bf88b7c3b260",
+  "currentQuotaProducerTarget": "/nix/store/4axdcrdffbp0qi48k51inkh4xfpb6civ-mimo-desktop-quota-report.service",
+  "currentQuotaTimerTarget": "/nix/store/bcw2i45r1n8wcn4gyfshdd5qfhmmqhfy-mimo-desktop-quota-report.timer",
+  "preCombinedOverrideTarget": "/nix/store/fkabv7iwwlvv16iqdyrpgs6spz6mv6fn-99-ui-runtime-2026-10-07.conf",
+  "combinedOnlyRollback": "Remove only newly-installed99z-combined-throughput-2026-10-07.conf after its exact identity+idle check; inherited99 then resolves95ll5i7 with quota environment/timer unchanged. New delta not yet installed.",
+  "changedByThisPreflight": []
+}
