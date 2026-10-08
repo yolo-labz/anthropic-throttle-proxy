@@ -1,0 +1,8 @@
+{
+  "base_sha": "859ba6c62d3846d0ee3751b5368351f27c58c84d",
+  "baseline_lock_sha256": "5514e066010b415806b3a600e66893ded3818cf6f52ce7196b896e2c5ba3f85c",
+  "candidate_lock_sha256": "7ac6eb588a64591d69f1709ea2dd8737c2a289f04499a03a6ca649bd718dbfe9",
+  "baseline_multidict": "6.7.1",
+  "candidate_multidict": "6.9.1",
+  "no_other_package_version_changes": true
+}
