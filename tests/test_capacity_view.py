@@ -213,7 +213,7 @@ def test_binding_windows_come_only_from_current_evidence():
 
 
 def test_unassigned_seats_and_unread_rows_are_never_usable():
-    """A configured row with no reading is an unassigned seat: unknown."""
+    """Unmatched catalogue entries stay outside active capacity counts."""
     cfg = {
         "subscriptions": [
             {"id": "team-seat", "label": "Unassigned team seat", "family": "chinese-frontier"}
@@ -226,7 +226,8 @@ def test_unassigned_seats_and_unread_rows_are_never_usable():
     summary = _summary(rows)
     assert presentation.row_capacity_class(placeholder) == "unknown"
     assert summary["counts"]["usable"] == 0
-    assert summary["counts"]["unknown"] == 2
+    assert summary["counts"]["unknown"] == 1
+    assert summary["total"] == 1 and summary["catalogue_total"] == 1
 
 
 # ── FR-7: Copilot premium exhaustion never condemns unlimited products ──────

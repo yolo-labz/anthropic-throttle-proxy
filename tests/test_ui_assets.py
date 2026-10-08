@@ -26,3 +26,19 @@ def test_asset_version_tracks_content(tmp_path):
 def test_asset_version_survives_missing_static_dir(tmp_path):
     # UI failure must never take the proxy down at import time.
     assert routes._asset_version(tmp_path / "nope")
+
+
+def test_asset_version_tracks_catalogue_rendering_code(tmp_path, monkeypatch):
+    here = tmp_path / "ui"
+    here.mkdir()
+    for module in ("routes.py", "signals.py", "presentation.py"):
+        (here / module).write_text("# synthetic renderer")
+    (tmp_path / "output_usage.py").write_text("# synthetic journal")
+    catalogue = tmp_path / "fleet_ui_config.py"
+    catalogue.write_text("# original catalogue")
+    monkeypatch.setattr(routes, "_HERE", here)
+    before = routes._asset_version(here, here, here / "routes.py")
+    # The catalogue is outside the directories hashed above.
+    catalogue.write_text("# changed catalogue")
+    after = routes._asset_version(here, here, here / "routes.py")
+    assert before != after

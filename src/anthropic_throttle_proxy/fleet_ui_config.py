@@ -17,7 +17,9 @@ parse/validation failure falls back to the LAST GOOD config plus a
 
 from __future__ import annotations
 
+import json
 import os
+import stat
 import threading
 from pathlib import Path
 from typing import Any
@@ -183,6 +185,54 @@ def reset_cache() -> None:
         _cache.clear()
 
 
+def _registry_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate registry field")
+        result[key] = value
+    return result
+
+
+def native_codex_meters(path: Path | None = None) -> frozenset[str] | None:
+    """Native Codex enrollment, never quota, auth or routing permission.
+
+    Read only schema and meter membership from the existing Nix-generated
+    registry. Missing/invalid metadata is unknown, not an empty enrollment.
+    Other providers have independent sources; absence here says nothing about
+    their subscriptions. No credentials or account identity are read.
+    """
+    path = path or Path(
+        os.environ.get("THROTTLE_LANE_REGISTRY_FILE")
+        or Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+        / "subscription-lanes.json"
+    )
+    try:
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                return None
+            raw = source.read(16_385)
+        if len(raw) > 16_384:
+            return None
+        registry = json.loads(raw, object_pairs_hook=_registry_fields)
+        if (
+            not isinstance(registry, dict)
+            or type(registry.get("schema")) is not int
+            or registry["schema"] != 1
+            or not isinstance(registry.get("lanes"), dict)
+        ):
+            return None
+        codex = registry["lanes"].get("codex", {"meters": []})
+        meters = codex.get("meters") if isinstance(codex, dict) else None
+        if not isinstance(meters, list) or any(
+            not isinstance(m, str) or not m.startswith("codex:") or len(m) <= 6 for m in meters
+        ):
+            return None
+        return frozenset(meters) if len(set(meters)) == len(meters) else None
+    except (OSError, ValueError, RecursionError):
+        return None
+
+
 def _row_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Every key a config entry may use to find a live row."""
     by_key: dict[str, dict[str, Any]] = {}
@@ -238,6 +288,8 @@ def _placeholder_row(entry: dict[str, Any], emoji_by_family: dict[str, str]) -> 
         "detail": "configured; no live reading",
         "billing": None,
         "configured": True,
+        "live_source": False,
+        "lane_id": (entry.get("lane") or entry["id"]).removeprefix("lane:"),
     }
 
 
@@ -266,6 +318,7 @@ def _merge_entry(match: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
         configured_plan and observed_plan and observed_plan not in configured_plan
     )
     match["configured"] = True
+    match["live_source"] = True
     return match
 
 
@@ -284,11 +337,37 @@ def _unconfigured_rows(
             r = dict(r)
             if not r.get("icon"):
                 r["icon"] = emoji_by_family.get(r.get("family") or "", "🤖")
+            r["live_source"] = True
             out.append(r)
     return out
 
 
-def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, Any]:
+def _mark_enrollment(row: dict[str, Any], native_meters: frozenset[str] | None) -> None:
+    sid = row.get("lane_id") or row["id"]
+    row["catalogue_only"] = not row["live_source"] or row.get("status") == "unassigned"
+    row["catalogue_reason"] = "configured; no live source" if not row["live_source"] else ""
+    if not sid.startswith("codex:"):
+        return
+    row["enrollment"] = "unknown" if native_meters is None else "enrolled"
+    if native_meters is None:
+        return
+    if sid in native_meters:
+        row["catalogue_only"] = False
+        row["catalogue_reason"] = ""
+        return
+    row["enrollment"] = row["status"] = "not enrolled"
+    row["status_icon"] = "⏸️"
+    row["catalogue_only"] = True
+    row["catalogue_reason"] = "Absent from native Codex meter enrollment; outside active capacity"
+    row["pace"], row["pace_warn"], row["eta"] = None, False, ""
+
+
+def decorate(
+    rows: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    native_meters: frozenset[str] | None = None,
+) -> dict[str, Any]:
     """Merge the declarative config onto the live rows.
 
     A configured subscription finds its live row (by id, or lane id) and
@@ -302,7 +381,11 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
     "no reading" state and an EMPTY ``plan`` (nothing was observed — the
     YAML string is the caption, not a reading); live rows absent from the
     config keep their default emoji and sort after the configured ones.
-    Config order is render order. Source rows are copied, never mutated.
+    Config order is render order within the active and catalogue-only groups.
+    Unmatched sources stay in the catalogue; native Codex enrollment can keep
+    a declared source active/unknown even before its first reading, or exclude
+    an unenrolled source while retaining its historical measurements.
+    Source rows are copied, never mutated.
 
     Matching is ``_entry_match``, the no-reading row ``_placeholder_row``,
     the merge ``_merge_entry``, the leftovers ``_unconfigured_rows``.
@@ -322,4 +405,6 @@ def decorate(rows: list[dict[str, Any]], config: dict[str, Any]) -> dict[str, An
         consumed.add(id(match))
         decorated.append(_merge_entry(match, entry))
     decorated.extend(_unconfigured_rows(rows, consumed, emoji_by_family))
+    for row in decorated:
+        _mark_enrollment(row, native_meters)
     return {"rows": decorated, "config_error": config.get("config_error")}
