@@ -70,7 +70,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return default
 
 
-def _parse_health(body: Any) -> dict[str, Any]:
+def _parse_health(body: Any, status: int = 200) -> dict[str, Any]:
     """Flatten the sibling's ``/__throttle/health`` JSON to display fields.
 
     Only the stable, fleet-relevant fields are kept — the dashboard does not
@@ -81,8 +81,9 @@ def _parse_health(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         return {"ok": False, "status": 200, "err": "non-json health body"}
     return {
-        "ok": True,
-        "status": 200,
+        "ok": status == 200,
+        "status": status,
+        "err": str(body.get("upstream_egress_error") or f"http {status}") if status != 200 else "",
         "inflight": _safe_int(body.get("inflight")),
         "queued": _safe_int(body.get("queued")),
         "served": _safe_int(body.get("served")),
@@ -131,8 +132,8 @@ async def _refresh_one(name: str, url: str, now: float) -> dict[str, Any]:
         if hit is not None:
             return {"name": name, "url": url, **hit}
         status, body = await _fetch_json(url)
-        if status == 200 and isinstance(body, dict):
-            view = _parse_health(body)
+        if status in {200, 503} and isinstance(body, dict):
+            view = _parse_health(body, status)
         elif status == 200:
             view = {"ok": False, "status": 200, "err": "non-json health body"}
         else:

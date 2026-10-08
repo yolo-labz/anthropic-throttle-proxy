@@ -252,7 +252,7 @@ def test_invalid_utf8_error_diagnostics_do_not_reflect_credentials(
 
 
 async def test_check_upstream_egress_no_host_short_circuits(monkeypatch) -> None:
-    """``http:///`` (no host) must NOT call getaddrinfo — empty error, ok=True."""
+    """A URL without a host fails closed before DNS."""
     monkeypatch.setattr(config, "UPSTREAM", "http:///some-path")
     # Mark the loop's getaddrinfo as a tripwire — must NOT be reached.
     loop = asyncio.get_running_loop()
@@ -263,8 +263,8 @@ async def test_check_upstream_egress_no_host_short_circuits(monkeypatch) -> None
     monkeypatch.setattr(loop, "getaddrinfo", tripwire)
 
     ok, err = await proxy._check_upstream_egress()
-    assert ok is True
-    assert err == ""
+    assert ok is False
+    assert err == "invalid upstream URL"
 
 
 async def test_check_upstream_egress_returns_false_on_gaierror(monkeypatch) -> None:

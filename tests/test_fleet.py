@@ -66,6 +66,28 @@ async def test_refresh_empty_when_unset():
     assert await fleet.refresh(0.0) == []
 
 
+async def test_health_503_retains_diagnosis_without_claiming_healthy(monkeypatch):
+    monkeypatch.setattr(config, "FLEET_HEALTH_URLS", "z:http://h/__throttle/health")
+
+    async def fake(url):
+        return 503, {
+            "upstream": "https://example.invalid",
+            "served": 42,
+            "upstream_egress_ok": False,
+            "upstream_egress_error": "resolver unavailable",
+            "upstream_auth_ok": None,
+        }
+
+    monkeypatch.setattr(fleet, "_fetch_json", fake)
+    row = (await fleet.refresh(0.0))[0]
+    assert row["ok"] is False and row["status"] == 503
+    assert row["upstream"] == "https://example.invalid"
+    assert row["served"] == 42
+    assert row["upstream_egress_ok"] is False
+    assert row["upstream_auth_ok"] is None
+    assert row["err"] == "resolver unavailable"
+
+
 async def test_refresh_returns_env_order_and_marks_down_sibling(monkeypatch):
     monkeypatch.setattr(
         config,

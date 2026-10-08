@@ -405,6 +405,28 @@ def test_lane_usable_all_bearers_locked_is_closed() -> None:
     assert open_ is False and detail == "no-usable-bearer"
 
 
+@pytest.mark.parametrize(
+    "bearer", [{"credential": {"ok": False}}, {"limiter": {"retry_after_until": 2000}}]
+)
+def test_unauthenticated_probe_cannot_reopen_a_refused_lane(bearer):
+    health = {"upstream_egress_ok": True, "bearers": {"_anon": {}, "a": bearer}}
+    assert lane_usable(health, now=1000) == (False, "no-usable-bearer")
+    health["bearers"]["b"] = {"credential": {"ok": True}}
+    assert lane_usable(health, now=1000)[0] is True
+
+
+def test_anon_only_is_not_a_client_credential_but_owned_key_rule_survives():
+    health = {"upstream_egress_ok": True, "bearers": {"_anon": {}}}
+    assert lane_usable(health) == (False, "no-bearers")
+    assert lane_usable(health, proxy_owns_key=True) == (True, "no-bearers-proxy-owns-key")
+
+
+def test_quiesced_lane_stays_closed_even_with_a_usable_owned_key():
+    assert lane_usable(
+        {"admission_closed": True, "upstream_egress_ok": True}, proxy_owns_key=True
+    ) == (False, "admission-closed")
+
+
 # ─── Spec 093 S4 — model-remap + session key ────────────────────────────────
 
 

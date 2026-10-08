@@ -401,11 +401,18 @@ def _lane_identity(kind: str, lane_id: str, provider: str) -> str:
     return provider
 
 
-def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
+def _normalize(
+    lane: dict[str, Any],
+    stale: bool,
+    now: float,
+    *,
+    sample_age_s: float | None = None,
+    sample_interval_s: float | None = None,
+) -> dict[str, Any]:
     kind = str(lane.get("kind") or "?")
     lane_id = str(lane.get("id") or "?")
     status = str(lane.get("status") or "unknown")
-    if stale and status == "ok":
+    if stale and status in {"ok", "exhausted"}:
         status = "stale"
     meters = _lane_meters(lane, kind, now)
     plan = _plan_text(lane)
@@ -429,6 +436,13 @@ def _normalize(lane: dict[str, Any], stale: bool, now: float) -> dict[str, Any]:
         "meters": meters,
         "binding_pct": binding_pct,
         "reason": reason,
+        "sample_age_s": sample_age_s,
+        "sample_observed_at": datetime.fromtimestamp(now - sample_age_s, UTC).strftime(
+            "%d/%m/%Y %H:%M UTC"
+        )
+        if sample_age_s is not None
+        else None,
+        "sample_interval_s": sample_interval_s,
     }
 
 
@@ -495,10 +509,22 @@ def _lane_rows(raw: dict[str, Any], *, stale: bool, error: str, now: float) -> l
     for source in raw["lanes"]:
         if not isinstance(source, dict):
             continue
-        lane = _normalize(source, stale or bool(error), now)
-        if error and source.get("status") == "ok":
+        clock = raw
+        if "sampledAt" in source:
+            clock = {**raw, "generatedAt": source["sampledAt"]}
+        interval, age, row_error = _sample_clock(clock, now)
+        row_error = " · ".join(dict.fromkeys(filter(None, [error, row_error])))
+        row_stale = age is not None and interval is not None and age > interval * _STALE_INTERVALS
+        lane = _normalize(
+            source,
+            stale or row_stale or bool(row_error),
+            now,
+            sample_age_s=age,
+            sample_interval_s=interval,
+        )
+        if row_error and source.get("status") in {"ok", "exhausted"}:
             lane["status"] = "unknown"
-            lane["reason"] = " · ".join(filter(None, [lane.get("reason"), error]))
+            lane["reason"] = " · ".join(filter(None, [lane.get("reason"), row_error]))
         lanes.append(lane)
     # Family first so the review-family grouping the dashboard relies on is a
     # property of the payload, not of the renderer.
@@ -622,6 +648,8 @@ def _desktop_row(path: str, now: float) -> dict[str, Any]:
         },
         stale,
         now,
+        sample_age_s=age,
+        sample_interval_s=interval,
     )
     row["meters"][0]["note"] = f"{remaining:g}% weekly remaining"
     row["meters"][0]["remaining"] = f"{remaining:g}%"

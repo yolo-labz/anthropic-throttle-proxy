@@ -342,6 +342,40 @@ def test_stale_full_meter_reads_stale_not_exhausted(tmp_path, monkeypatch):
     assert lanes.view(NOW)["lanes"][0]["status"] == "stale"
 
 
+@pytest.mark.parametrize("status", ["ok", "exhausted"])
+@pytest.mark.parametrize(
+    ("sampled_at", "expected"),
+    [
+        ("2026-08-03T20:00:00Z", "stale"),
+        ("2026-08-03T21:00:01Z", "unknown"),
+        ("invalid", "unknown"),
+    ],
+)
+def test_row_clock_cannot_borrow_fresh_report_clock(
+    tmp_path, monkeypatch, status, sampled_at, expected
+):
+    payload = _codex_lane(100)
+    payload["lanes"][0].update(id="codex:a", status=status, sampledAt=sampled_at)
+    payload["lanes"].append({"id": "codex:c", "kind": "codex", "status": "ok", "meters": []})
+    _write(tmp_path, monkeypatch, payload)
+    rows = {row["id"]: row for row in lanes.view(NOW)["lanes"]}
+    assert rows["codex:a"]["status"] == expected
+    assert rows["codex:c"]["status"] == "ok"
+    assert lanes.plan_meter_used_percent("codex:a", NOW) is None
+    assert rows["codex:a"]["sample_interval_s"] == 900
+    assert rows["codex:a"]["sample_age_s"] == (3600 if expected == "stale" else None)
+    assert rows["codex:a"]["sample_observed_at"] == (
+        "03/08/2026 20:00 UTC" if expected == "stale" else None
+    )
+
+
+def test_expired_explicit_exhaustion_is_not_current_quota(tmp_path, monkeypatch):
+    payload = _codex_lane(100)
+    payload["lanes"][0]["status"] = "exhausted"
+    _write(tmp_path, monkeypatch, payload, age_s=1801)
+    assert lanes.view(NOW)["lanes"][0]["status"] == "stale"
+
+
 def test_unlimited_quota_keeps_a_lane_out_of_exhausted(tmp_path, monkeypatch):
     """Copilot burns premium to 0 while chat/completions keep serving.
 
