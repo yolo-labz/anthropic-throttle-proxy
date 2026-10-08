@@ -1,0 +1,6 @@
+code-slop + alignment	Pre Harden runner	2026-10-08T02:33:35.1949338Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+code-slop + alignment	Quality gates on the PR diff	2026-10-08T02:33:50.5172043Z 18 vulnerabilities (1 low, 3 moderate, 12 high, 2 critical)
+code-slop + alignment	Quality gates on the PR diff	2026-10-08T02:33:53.0048565Z aislop : score 100 · 0 error(s) · 0 warning(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-08T02:33:53.0051189Z ratchet: 0 relevant · 0 inherited · 0 regression(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-08T02:33:53.5906130Z scanned: 1 changed code file(s) · 0 error(s) · 0 warning(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-08T02:33:54.3048467Z 3 moderate severity vulnerabilities

@@ -1,16 +1,16 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # Multi-stage uv build per Astral's official Docker pattern.
-# Optimised for Dokku: Dockerfile builder, EXPOSE 8765, /health checked
+# Optimised for Dokku: Dockerfile builder, EXPOSE 8765, /__throttle/health checked
 # by Dokku's app.json.
 
-FROM python:3.13-slim AS builder
+FROM python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.9.2 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.9.2@sha256:6dbd7c42a9088083fa79e41431a579196a189bcee3ae68ba904ac2bf77765867 /uv /usr/local/bin/uv
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -30,14 +30,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
 
-FROM python:3.13-slim
+FROM python:3.13-slim@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
 
 # Build provenance — injected by CI via --build-arg, surfaced in logs.
 ARG APP_VERSION=0.1.0
 ARG GIT_SHA=unknown
 ARG BUILD_DATE=unknown
 
-# curl is required by the Dokku app.json healthcheck (curl -fsS /health).
+# curl is required by the Dokku app.json healthcheck (curl -fsS /__throttle/health).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \

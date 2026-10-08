@@ -1,0 +1,3 @@
+OSV-Scanner	Pull ghcr.io/google/osv-scanner-action:v2.3.5	2026-10-08T02:33:47.5400011Z Digest: sha256:512bc221cb77a33325bc92cf45c0c8a45f2689be8593dc4e541058590f4ce09f
+OSV-Scanner	Pre Harden runner	2026-10-08T02:33:48.5395216Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+OSV-Scanner	Upload SARIF	2026-10-08T02:33:57.2591260Z Successfully uploaded results

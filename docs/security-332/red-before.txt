@@ -1,0 +1,118 @@
+FFFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_multidict_items_view_does_not_retain_operand_values[reflected_union-CIMultiDict] _
+
+factory = <class 'multidict._multidict.CIMultiDict'>
+operation = 'reflected_union'
+
+    @pytest.mark.parametrize("factory", [CIMultiDict, MultiDict])
+    @pytest.mark.parametrize("operation", ["reflected_union", "subtraction"])
+    def test_multidict_items_view_does_not_retain_operand_values(factory, operation):
+        value = object()
+        operand = [("untrusted-header", value)]
+        view = factory({"existing-header": "existing-value"}).items()
+        before = sys.getrefcount(value)
+        result = operand | view if operation == "reflected_union" else view - operand
+        del result
+>       assert sys.getrefcount(value) == before
+E       assert 4 == 3
+E        +  where 4 = <built-in function getrefcount>(<object object at 0x7477cd9821e0>)
+E        +    where <built-in function getrefcount> = sys.getrefcount
+
+tests/test_dependency_security.py:23: AssertionError
+_ test_multidict_items_view_does_not_retain_operand_values[reflected_union-MultiDict] _
+
+factory = <class 'multidict._multidict.MultiDict'>
+operation = 'reflected_union'
+
+    @pytest.mark.parametrize("factory", [CIMultiDict, MultiDict])
+    @pytest.mark.parametrize("operation", ["reflected_union", "subtraction"])
+    def test_multidict_items_view_does_not_retain_operand_values(factory, operation):
+        value = object()
+        operand = [("untrusted-header", value)]
+        view = factory({"existing-header": "existing-value"}).items()
+        before = sys.getrefcount(value)
+        result = operand | view if operation == "reflected_union" else view - operand
+        del result
+>       assert sys.getrefcount(value) == before
+E       assert 4 == 3
+E        +  where 4 = <built-in function getrefcount>(<object object at 0x7477cd983590>)
+E        +    where <built-in function getrefcount> = sys.getrefcount
+
+tests/test_dependency_security.py:23: AssertionError
+_ test_multidict_items_view_does_not_retain_operand_values[subtraction-CIMultiDict] _
+
+factory = <class 'multidict._multidict.CIMultiDict'>, operation = 'subtraction'
+
+    @pytest.mark.parametrize("factory", [CIMultiDict, MultiDict])
+    @pytest.mark.parametrize("operation", ["reflected_union", "subtraction"])
+    def test_multidict_items_view_does_not_retain_operand_values(factory, operation):
+        value = object()
+        operand = [("untrusted-header", value)]
+        view = factory({"existing-header": "existing-value"}).items()
+        before = sys.getrefcount(value)
+        result = operand | view if operation == "reflected_union" else view - operand
+        del result
+>       assert sys.getrefcount(value) == before
+E       assert 4 == 3
+E        +  where 4 = <built-in function getrefcount>(<object object at 0x7477cd983600>)
+E        +    where <built-in function getrefcount> = sys.getrefcount
+
+tests/test_dependency_security.py:23: AssertionError
+_ test_multidict_items_view_does_not_retain_operand_values[subtraction-MultiDict] _
+
+factory = <class 'multidict._multidict.MultiDict'>, operation = 'subtraction'
+
+    @pytest.mark.parametrize("factory", [CIMultiDict, MultiDict])
+    @pytest.mark.parametrize("operation", ["reflected_union", "subtraction"])
+    def test_multidict_items_view_does_not_retain_operand_values(factory, operation):
+        value = object()
+        operand = [("untrusted-header", value)]
+        view = factory({"existing-header": "existing-value"}).items()
+        before = sys.getrefcount(value)
+        result = operand | view if operation == "reflected_union" else view - operand
+        del result
+>       assert sys.getrefcount(value) == before
+E       assert 4 == 3
+E        +  where 4 = <built-in function getrefcount>(<object object at 0x7477cd983240>)
+E        +    where <built-in function getrefcount> = sys.getrefcount
+
+tests/test_dependency_security.py:23: AssertionError
+_______________ test_locked_multidict_is_outside_affected_range ________________
+
+    def test_locked_multidict_is_outside_affected_range():
+        lock = tomllib.loads((ROOT / "uv.lock").read_text())
+        package = next(p for p in lock["package"] if p["name"] == "multidict")
+>       assert tuple(map(int, package["version"].split("."))) >= (6, 9, 1)
+E       AssertionError: assert (6, 7, 1) >= (6, 9, 1)
+E        +  where (6, 7, 1) = tuple(<map object at 0x7477cbcc7dc0>)
+E        +    where <map object at 0x7477cbcc7dc0> = map(int, ['6', '7', '1'])
+E        +      where ['6', '7', '1'] = <built-in method split of str object at 0x7477cbb6f4e0>('.')
+E        +        where <built-in method split of str object at 0x7477cbb6f4e0> = '6.7.1'.split
+
+tests/test_dependency_security.py:29: AssertionError
+________________ test_docker_external_images_are_digest_pinned _________________
+
+    def test_docker_external_images_are_digest_pinned():
+        external = [
+            line.split()[1] if line.startswith("FROM ") else line.split("--from=", 1)[1].split()[0]
+            for line in (ROOT / "Dockerfile").read_text().splitlines()
+            if line.startswith("FROM ") or line.startswith("COPY --from=")
+        ]
+        for image in external:
+            if image != "builder":
+>               assert re.fullmatch(r".+@sha256:[0-9a-f]{64}", image), image
+E               AssertionError: python:3.13-slim
+E               assert None
+E                +  where None = <function fullmatch at 0x7477cd44bba0>('.+@sha256:[0-9a-f]{64}', 'python:3.13-slim')
+E                +    where <function fullmatch at 0x7477cd44bba0> = re.fullmatch
+
+tests/test_dependency_security.py:40: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_dependency_security.py::test_multidict_items_view_does_not_retain_operand_values[reflected_union-CIMultiDict]
+FAILED tests/test_dependency_security.py::test_multidict_items_view_does_not_retain_operand_values[reflected_union-MultiDict]
+FAILED tests/test_dependency_security.py::test_multidict_items_view_does_not_retain_operand_values[subtraction-CIMultiDict]
+FAILED tests/test_dependency_security.py::test_multidict_items_view_does_not_retain_operand_values[subtraction-MultiDict]
+FAILED tests/test_dependency_security.py::test_locked_multidict_is_outside_affected_range
+FAILED tests/test_dependency_security.py::test_docker_external_images_are_digest_pinned
+6 failed in 0.11s
