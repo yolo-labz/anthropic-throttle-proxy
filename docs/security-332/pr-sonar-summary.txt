@@ -1,0 +1,10 @@
+scan	Pre Harden runner	2026-10-08T02:33:36.5312160Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+scan	Set up uv + Python 3.13	2026-10-08T02:33:45.9974850Z Successfully installed uv version 0.9.2
+scan	Install dependencies (locked)	2026-10-08T02:33:48.9905790Z  + multidict==6.9.1
+scan	Run tests with coverage	2026-10-08T02:33:58.4023371Z tests/test_dependency_security.py ......                                 [ 14%]
+scan	Run tests with coverage	2026-10-08T02:35:29.5674913Z TOTAL                                                      8531    544    94%
+scan	Run tests with coverage	2026-10-08T02:35:29.8741907Z ================ 2146 passed, 290 warnings in 98.99s (0:01:38) =================
+scan	SonarQube scan	2026-10-08T02:35:31.4668991Z Successfully imported key from hkps://keyserver.ubuntu.com
+scan	SonarQube scan	2026-10-08T02:35:31.5663164Z ✓ GPG signature verification passed
+scan	SonarQube scan	2026-10-08T02:37:11.0287834Z 02:37:11.027 INFO  SCM revision ID 'da26d07b909b08f007264be20cc3e603ccc767bb'
+scan	SonarQube scan	2026-10-08T02:37:19.8823697Z 02:37:19.881 INFO  QUALITY GATE STATUS: PASSED - View details on https://sonarqube.home301server.com.br/dashboard?id=yolo-labz_anthropic-throttle-proxy
