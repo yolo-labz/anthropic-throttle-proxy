@@ -66,8 +66,21 @@ other services/producers were not altered by QA. Source rollback: normal
 - All older AX/layout/scanner/clone/admission refusals stay in their original
   chronology/evidence; no shared worktree/cache cleanup.
 
-## Receipt delivery
+## Receipt delivery — 23:55 BRT checkpoint
 
-Branch331-combined-live-qa adds QA only, plan/tasks and durable sanitized evidence.
-Normal hooks/exact-head CI/protected receipt-PR delivery remains the final step;
-source PR328 is already verified MERGED and live acceptance above is established.
+PR **#330**, branch331-combined-live-qa, adds QA only, plan/tasks and durable
+sanitized evidence. Integrated newer protected main4d8851b (dependency-security
+PR329) without changing any `src/` bytes or the accepted runtime. Normal hooks
+passed100/zero relevant clone regressions/zero alignment findings. Admitted full
+local pytest atdd63e3f passed **2148 tests**,290 existing warnings,93.75s; ruff lint
+and all127 format checks passed. A prior pre-execution slot-load refusal remains
+in `qa-dd63-full-admission.json`; successful run uses separate
+`qa-dd63-full-pytest.txt` and did not use a small-lane fallback.
+
+At this checkpoint required CI fordd63 had ruff/pytest and quality gates green;
+scan was still running. This receipt commit changes documentation/evidence only,
+so **its new exact head requires fresh checks**, not reuse ofdd63/65fa09a status.
+Protected final state/head/required checks/threads/merge receipt is recorded in
+canonical `Throttler/UI-TEAM-2026-10-07.md` after delivery, rather than asserted
+before it exists. Safe QA reversal is one `git revert <PR330 squash>` PR; runtime
+stays pV-owned. Source PR328 and separately proven live acceptance already stand.

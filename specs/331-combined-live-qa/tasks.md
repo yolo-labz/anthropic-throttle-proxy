@@ -10,4 +10,10 @@
   10 targeted self-checks pass. Two QA instrumentation failures preserved.
 - [x] Persistent/effective/imported939 agree; actual native2200060 cmdline/UID and
   Python3.14.7 match, accepted reader4872/UI/CSS bytes verified; zero lifecycle changes.
-- [ ] Publish durable exact source/live receipts and UI-TEAM through normal CI/merge.
+- [x] Publish durable exact source/live receipts and UI-TEAM checkpoint; normal
+  hooks pass100/zero regressions/findings,2148 full pytest + ruff pass atdd63.
+  Receipt PR330 carries QA only against integrated protected main4d8851b.
+
+Delivery tracking (not a premature completed claim): final exact-head required
+CI/threads/protected squash and receipt are recorded in canonical UI-TEAM after
+GitHub verifies MERGED. Source328/local live acceptance already have receipts.
