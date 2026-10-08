@@ -323,6 +323,11 @@ def _finite_env_float(name: str, default: str, fallback: float) -> float:
 
 
 QUEUE_MAX_WAIT_S = _finite_env_float("THROTTLE_QUEUE_MAX_WAIT_S", "30", 30.0)
+# Weekly MiMo opt-in: one normal waiter on a one-slot lane may outlive a
+# pessimistic prediction, but never its finite actual wait budget. Env-only.
+QUEUE_ALLOW_FIRST_WAITER = (
+    os.environ.get("THROTTLE_QUEUE_ALLOW_FIRST_WAITER", "false").strip().lower() == "true"
+)
 # FLOOR for the Retry-After attached to the queue-wait-timeout 503, and the
 # value used when the lane cannot estimate anything worse. The real interval is
 # the limiter's drain estimate (see QUEUE_DRAIN_DEFAULT_S); this only keeps the
