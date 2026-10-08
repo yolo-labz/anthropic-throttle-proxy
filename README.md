@@ -60,6 +60,22 @@ configuration and display an alert on every refresh, even with no rows.
 Replace with `subscriptions: []` to clear customization. The file is limited
 to 32,768 characters. A missing source displays **no reading**, not 0% usage.
 
+The dashboard separates unmatched catalogue entries from active capacity.
+Codex enrollment comes from the existing Nix-generated
+`$XDG_CONFIG_HOME/subscription-lanes.json` (default `~/.config/`), or
+`THROTTLE_LANE_REGISTRY_FILE`. Only schema-1 Codex meter membership is read;
+this does not read credentials, verify authentication or enable a provider.
+An enrolled source with no reading remains unknown. An unenrolled source is
+marked **not enrolled**, retains any historical meter readings, and is excluded
+from active capacity counts and destination capacity chips. A missing or invalid
+registry leaves enrollment unknown. Other providers keep their independent
+report contracts; absence from this native registry does not disable them.
+
+The headline names its local proxy or selected workload scope. Local credential
+refusal remains CRIT even when another provider reports quota headroom; the
+headline does not assert fleet-wide exhaustion. The local report timestamp is
+separate from independently sampled sources.
+
 **This config does not add accounts to credential election, enable providers,
 or generate telemetry.** A `codex:c` row needs a lane probe that actually
 measures that account; YAML alone cannot complete that integration.

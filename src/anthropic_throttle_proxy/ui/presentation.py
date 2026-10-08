@@ -121,6 +121,8 @@ def apply_display(view: dict, config: dict) -> dict:
     defaults = config.get("defaults") or {}
     hidden = _hidden_families(defaults)
     result["subscriptions"] = _visible_subscriptions(result.get("subscriptions", []), hidden)
+    # Stable within each group: configured order remains authoritative.
+    result["subscriptions"].sort(key=lambda row: bool(row.get("catalogue_only")))
     lanes = result.get("lanes") or {}
     lanes["registry"] = _visible_lane_registry(lanes, hidden)
     result["lanes"] = lanes
@@ -287,14 +289,16 @@ def _measured_throughput(tps: object) -> dict | None:
 def capacity_summary(view: dict) -> dict:
     """At-a-glance board truth (FR-1/FR-2/FR-4), from the projected rows.
 
-    Counts are SEATS, never a summed budget: unlike percentages, units and
-    windows are listed per binding window and never added into a fictitious
+    Counts are active SOURCES, never a summed budget: unmatched catalogue
+    entries and unenrolled sources are counted separately. Unlike percentages,
+    units and windows are listed per binding window and never added into a fictitious
     total. Binding windows are named only where the evidence is current — a
     stale 100 % is untrusted, not proven binding. The live line and the
     throughput belong to this local proxy, so they ride the ``show_local``
     scope; an unmeasured throughput is absent, not zero.
     """
-    rows = [r for r in (view.get("subscriptions") or []) if isinstance(r, dict)]
+    all_rows = [r for r in (view.get("subscriptions") or []) if isinstance(r, dict)]
+    rows = [r for r in all_rows if not r.get("catalogue_only")]
     counts = dict.fromkeys(_CAPACITY_CLASSES, 0)
     windows: list[dict] = []
     for row in rows:
@@ -306,6 +310,7 @@ def capacity_summary(view: dict) -> dict:
     summary: dict = {
         "counts": counts,
         "total": len(rows),
+        "catalogue_total": len(all_rows) - len(rows),
         "windows": windows,
         "live": None,
         # Stable shape: None when unmeasured — the template must never read a
@@ -334,7 +339,7 @@ def _row_tokens(row: dict) -> set[str]:
     the subscriptions share a family and nothing else, and a family join would
     paint ChatGPT exhaustion onto an unrelated routing row.
     """
-    rid = str(row.get("id") or "")
+    rid = str(row.get("lane_id") or row.get("id") or "")
     head = rid.split(":", 1)[0] if ":" in rid else rid
     return {t for t in {_norm_token(head), _norm_token(row.get("provider"))} if len(t) >= 2}
 
@@ -358,7 +363,7 @@ def attach_provider_capacity(providers: list, rows: list) -> None:
     ``mimo`` joins both individual and Team rows without collapsing them. A
     join that finds no seat is unmeasured; connectivity never implies quota.
     """
-    seats = [r for r in (rows or []) if isinstance(r, dict)]
+    seats = [r for r in (rows or []) if isinstance(r, dict) and not r.get("catalogue_only")]
     for provider in providers or []:
         if not isinstance(provider, dict):
             continue

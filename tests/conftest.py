@@ -39,6 +39,7 @@ def _isolate_fleet_ui_config(monkeypatch, tmp_path):
     path = tmp_path / "test-fleet-ui.yaml"
     path.write_text("subscriptions: []\n", encoding="utf-8")
     monkeypatch.setenv("FLEET_UI_CONFIG", str(path))
+    monkeypatch.setenv("THROTTLE_LANE_REGISTRY_FILE", str(tmp_path / "absent-native-registry.json"))
     fleet_ui_config.reset_cache()
     yield
     fleet_ui_config.reset_cache()
