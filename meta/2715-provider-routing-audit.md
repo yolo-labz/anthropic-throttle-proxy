@@ -36,8 +36,8 @@ environment-derived routing. No SDK or dependency additions.
   being ignored by unconstrained routing.
 - [x] T004 Run focused acceptance and lint in an admitted desktop small slot;
   run full pytest through repository CI. Never use the occupied server reserve.
-- [ ] T005 Normal hooks, PR, exact-head CI, review findings and squash merge.
-- [ ] T006 Export merged source identity and scoped Nix adapter to root;
+- [x] T005 Normal hooks, PR, exact-head CI, review findings and squash merge.
+- [x] T006 Export merged source identity and scoped Nix adapter to root;
   provide one receipt and short canonical Notes handoff text through root.
 
 ## Read-only findings
@@ -137,5 +137,12 @@ Canonical Notes handoff text for root:
 > and ruff pass in admitted desktop limits. Four-module scoped consumption is
 > root-owned; original seven PIDs unchanged, no live activation/provider calls.
 
-Source merge/CI identity and exact exports accompany the final result; this
-receipt does not claim activation or provider recovery.
+## Merged delivery
+
+PR #332 `fix(health): preserve routing and quota evidence` squash-merged onto
+main as `515f67dabed260a36d75ddcf506eece1eb8b94c8` (08/10/2026 18:08 UTC).
+All nine required checks green: ruff+pytest, Analyze, CodeQL, OSV-Scanner,
+mypy (report-only), docker build (throwaway), scan, code-slop+alignment.
+`runtime_activated` stays false — none of the four modules was activated, so
+root-owned activation is the only remaining external step. This receipt does
+not claim activation or provider recovery.
