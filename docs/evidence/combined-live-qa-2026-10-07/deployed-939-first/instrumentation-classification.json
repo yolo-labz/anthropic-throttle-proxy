@@ -1,0 +1,7 @@
+{
+  "classification": "QA oracle overreach; not a deployed source defect or pass",
+  "proof": "dashboard.html checkbox has no checked/persisted value; template explicitly places it outside #stats for per-document polling persistence. Native source links perform full navigation, not a stats swap; no local/session storage or extra JS is implemented/requested.",
+  "failure": "New live assertion expected #show-details to remain checked across a fresh native-source document. Earlier local HTMX preference/focus and both-width geometry/AX/real quota checks passed, but packet aborted before native journal arithmetic.",
+  "repair": "Re-enable checkbox on the new sibling document and retain its HTMX persistence assertion; do not alter backend/CSS or falsely promise cross-document preference storage.",
+  "next_result": "Separate admitted confirmation directory; preserve this failed receipt/command unchanged."
+}

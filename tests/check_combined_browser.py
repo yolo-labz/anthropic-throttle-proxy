@@ -11,6 +11,7 @@ import json
 import math
 import re
 import tempfile
+import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ from check_gauge_wire import (
     quota_accessibility,
     render_app,
 )
+from live_journal_oracle import compatible_rates, events, native_read
 from ui_render import workload_snapshot
 
 from anthropic_throttle_proxy import history, output_usage
@@ -216,14 +218,14 @@ async def source(out):
 
 async def live(out, build):
     receipt = {
-        "scope": "exact deployed reader/UI; actual journal, no runtime patches; "
-        "live numeric window not independently reproduced",
+        "scope": "exact deployed reader/UI + native real-journal arithmetic; no runtime patches",
+        "ui_cached_endpoint": "not exposed; rate checked against cache-valid window bounds",
         "completed": False,
     }
     await asyncio.to_thread(out.mkdir, parents=True, exist_ok=True)
     try:
         # Retain previous exact UI/CSS, quota, geometry, AX, focus/network oracles.
-        await deployed(out, build)
+        await deployed(out, build, combined=True)
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
             async with session.get("http://127.0.0.1:8765/__throttle/health") as response:
                 root = Path((await response.json())["build"])
@@ -233,8 +235,11 @@ async def live(out, build):
                 hashlib.sha256(deployed_bytes).digest() == hashlib.sha256(expected_bytes).digest()
             )
             receipt["reader_sha256"] = hashlib.sha256(expected_bytes).hexdigest()
+            arithmetic, journal = await native_read(root)
+            receipt["native_fixed_window"] = arithmetic
             receipt["workloads"] = []
-            for selected in ("local", "mimo"):
+            started, monotonic_start = time.time(), time.monotonic()
+            for selected in ("local", "mimo", "local"):
                 async with session.get(
                     f"http://127.0.0.1:8765/ui/stats?source={selected}"
                 ) as response:
@@ -250,14 +255,34 @@ async def live(out, build):
                         assert "last 60s" in html and "accounted at completion" in html
                     else:
                         assert "Output throughput unknown" in html and "not a measured zero" in html
+                    arc = re.search(r'<svg class="tps-arc".*?aria-label="([^"]+)"', html, re.S)
+                    assert arc
                     receipt["workloads"].append(
                         {
                             "selected": selected,
                             "displayed": value,
                             "window_s": 60,
+                            "arc_label": arc.group(1),
                             "measurement": "unknown" if value == "—" else "completion-accounted",
                         }
                     )
+            ended = time.time()
+            assert time.monotonic() - monotonic_start < 2, "triplet crossed collector period"
+            brackets = [(r["displayed"], r["arc_label"]) for r in receipt["workloads"]]
+            assert brackets[1] in (brackets[0], brackets[2]), "source selection narrowed gauge"
+            rows, _, _ = await asyncio.to_thread(events, journal)
+            possible = compatible_rates(rows, started - 15, ended)
+            for row in receipt["workloads"]:
+                assert row["displayed"] != "—", "live combined counter unverified/unknown"
+                assert row["displayed"] in possible, "UI rate has no valid real common60s window"
+            receipt["ui_window_bounds"] = {
+                "start": started - 15,
+                "end": ended,
+                "candidate_rounded_rates": sorted(possible),
+                "scope": "bounds, not an exposed in-process sample timestamp",
+            }
+            async with session.get("http://127.0.0.1:8765/__throttle/health") as response:
+                assert (await response.json())["build"] == str(root), "build changed during packet"
         receipt["completed"] = True
     except Exception as error:
         receipt["failure"] = str(error)

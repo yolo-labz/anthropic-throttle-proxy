@@ -1,0 +1,92 @@
+{
+  "scope": "exact deployed reader/UI + native real-journal arithmetic; no runtime patches",
+  "ui_cached_endpoint": "not exposed; rate checked against cache-valid window bounds",
+  "completed": true,
+  "reader_sha256": "4872db12cf6ea500fc39299f605d0a8651290677c96f14df06b07d8e92736464",
+  "native_fixed_window": {
+    "scope": "real native journal / deployed reader interpreter; not synthetic inference",
+    "sampled_at": 1791427344.3512843,
+    "window_s": 60,
+    "output_tokens": 100047,
+    "output_tokens_per_second": 1667.45,
+    "completion_events": 97,
+    "observed_provider_labels": [
+      "codex-a",
+      "codex-b",
+      "codex-c",
+      "openai-codex"
+    ],
+    "read_bytes": 2096942,
+    "source_identity_matches": true,
+    "runtime_interpreter": "/nix/store/b5bpi6zfajzzrwwpgba2q6li3nnya4bs-python3-3.14.7/bin/python3.14",
+    "interpreter_binding": "systemd ExecStart + immutable wrapper; no host namespace join",
+    "coverage": "Pi on this host only; non-Pi/other-host unmeasured"
+  },
+  "workloads": [
+    {
+      "selected": "local",
+      "displayed": "1674",
+      "window_s": 60,
+      "arc_label": "1674 output tokens per second over the last 60 seconds, peak 10-second bucket 2548; combined Pi on this host, partial fleet coverage",
+      "measurement": "completion-accounted"
+    },
+    {
+      "selected": "mimo",
+      "displayed": "1674",
+      "window_s": 60,
+      "arc_label": "1674 output tokens per second over the last 60 seconds, peak 10-second bucket 2548; combined Pi on this host, partial fleet coverage",
+      "measurement": "completion-accounted"
+    },
+    {
+      "selected": "local",
+      "displayed": "1674",
+      "window_s": 60,
+      "arc_label": "1674 output tokens per second over the last 60 seconds, peak 10-second bucket 2548; combined Pi on this host, partial fleet coverage",
+      "measurement": "completion-accounted"
+    }
+  ],
+  "ui_window_bounds": {
+    "start": 1791427329.5445547,
+    "end": 1791427344.5587106,
+    "candidate_rounded_rates": [
+      "1573",
+      "1590",
+      "1600",
+      "1602",
+      "1607",
+      "1613",
+      "1620",
+      "1627",
+      "1634",
+      "1644",
+      "1646",
+      "1647",
+      "1648",
+      "1649",
+      "1650",
+      "1651",
+      "1654",
+      "1657",
+      "1658",
+      "1661",
+      "1663",
+      "1667",
+      "1668",
+      "1669",
+      "1670",
+      "1671",
+      "1674",
+      "1676",
+      "1677",
+      "1681",
+      "1690",
+      "1693",
+      "1696",
+      "1697",
+      "1708",
+      "1717",
+      "1721"
+    ],
+    "scope": "bounds, not an exposed in-process sample timestamp"
+  }
+}

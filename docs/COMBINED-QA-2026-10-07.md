@@ -1,5 +1,17 @@
 # Independent combined-output QA — 07/10/2026
 
+## Latest continuation — 23:46 BRT
+
+PR **#328 MERGED `859ba6c`**, exact head `4915322`, current required checks
+PASS/zero threads/normal protected squash. Accepted-c4bd3ce new live build
+**`939kr6a14…`** independently passed admitted Chromium plus native real-journal
+arithmetic: **100047 output /60 =1667.45 tokens/s** (97 completions, fixed sample
+23:42:24 BRT). Actual UI1674 was unchanged local→mimo→local and independently
+compatible with its15s cache bounds; exact cached endpoint is not exposed.
+See `COMBINED-LIVE-QA-2026-10-07.md` and its separate durable packet. This
+supersedes historical pending/source-only status below; all old evidence remains.
+
+
 ## Verified separate slice
 
 - Fresh `327-combined-qa`, from main `42e5e69`, then fast-forwarded to `353d30a`.

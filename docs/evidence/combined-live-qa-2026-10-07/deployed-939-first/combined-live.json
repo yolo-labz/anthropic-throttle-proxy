@@ -1,0 +1,6 @@
+{
+  "scope": "exact deployed reader/UI + native real-journal arithmetic; no runtime patches",
+  "ui_cached_endpoint": "not exposed; rate checked against cache-valid window bounds",
+  "completed": false,
+  "failure": ""
+}
