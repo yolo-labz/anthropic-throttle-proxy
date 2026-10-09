@@ -4130,6 +4130,11 @@ def _record_usage(
             if count <= 0:
                 continue
             M_TOKENS.labels(model=model_label, kind=kind).inc(count)
+            if rates is None:
+                # Unknown model: tokens count, USD is never guessed (S2a — the
+                # old Opus fallback made MiMo flash report 107x/268x its real
+                # cost; see pricing._pricing_for).
+                continue
             cost = (count / 1_000_000.0) * rates[kind]
             M_COST.labels(model=model_label, kind=kind).inc(cost)
             spend_usd += cost
