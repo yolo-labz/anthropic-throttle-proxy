@@ -1,0 +1,99 @@
+{
+ "captured_at": "2026-10-09T16:00:24-0300",
+ "lanes": {
+  "gateway": {
+   "admission_closed": false,
+   "bearer_util_max": null,
+   "bearers": 5,
+   "bearers_rejected": 0,
+   "bearers_retry_after": 0,
+   "build": "/nix/store/dg56h1l8migbq7yvs7xnpal5y9kwkv1m-throttler-gateway-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+   "central_status": "unknown",
+   "inflight": 0,
+   "metrics_lines": 6,
+   "metrics_sample": [
+    "anthropic_inflight 0.0",
+    "anthropic_queued 0.0",
+    "anthropic_client_disconnects_total 0.0",
+    "anthropic_client_disconnects_created 1.7915638283557901e+09",
+    "anthropic_upstream_retries_total 0.0",
+    "anthropic_upstream_retries_created 1.791563828355814e+09"
+   ],
+   "port": 8765,
+   "queue_mode": "fair",
+   "served": 0,
+   "upstream_auth_ok": null,
+   "upstream_egress_ok": true
+  },
+  "glm": {
+   "admission_closed": null,
+   "bearer_util_max": null,
+   "bearers": 0,
+   "bearers_rejected": 0,
+   "bearers_retry_after": 0,
+   "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+   "central_status": "unknown",
+   "inflight": 0,
+   "metrics_lines": 6,
+   "metrics_sample": [
+    "anthropic_inflight 0.0",
+    "anthropic_queued 0.0",
+    "anthropic_client_disconnects_total 0.0",
+    "anthropic_client_disconnects_created 1.791563828355731e+09",
+    "anthropic_upstream_retries_total 0.0",
+    "anthropic_upstream_retries_created 1.7915638283557556e+09"
+   ],
+   "port": 8766,
+   "queue_mode": "fair",
+   "served": 0,
+   "upstream_auth_ok": null,
+   "upstream_egress_ok": true
+  },
+  "ingress": {
+   "admission_closed": null,
+   "bearer_util_max": null,
+   "bearers": 0,
+   "bearers_rejected": 0,
+   "bearers_retry_after": 0,
+   "build": null,
+   "central_status": null,
+   "inflight": null,
+   "metrics_lines": 0,
+   "metrics_sample": [],
+   "port": 8760,
+   "queue_mode": null,
+   "served": 17,
+   "upstream_auth_ok": null,
+   "upstream_egress_ok": null
+  },
+  "kimi": {
+   "health_error": "<urlopen error [Errno 111] Connection refused>",
+   "metrics_error": "<urlopen error [Errno 111] Connection refused>",
+   "port": 8767
+  },
+  "mimo": {
+   "admission_closed": null,
+   "bearer_util_max": null,
+   "bearers": 0,
+   "bearers_rejected": 0,
+   "bearers_retry_after": 0,
+   "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+   "central_status": "unknown",
+   "inflight": 0,
+   "metrics_lines": 6,
+   "metrics_sample": [
+    "anthropic_inflight 0.0",
+    "anthropic_queued 0.0",
+    "anthropic_client_disconnects_total 0.0",
+    "anthropic_client_disconnects_created 1.791563828355697e+09",
+    "anthropic_upstream_retries_total 0.0",
+    "anthropic_upstream_retries_created 1.7915638283557394e+09"
+   ],
+   "port": 8773,
+   "queue_mode": "fair",
+   "served": 0,
+   "upstream_auth_ok": null,
+   "upstream_egress_ok": true
+  }
+ }
+}

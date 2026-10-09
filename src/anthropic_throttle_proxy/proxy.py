@@ -144,6 +144,7 @@ from .metrics import (
     M_QUEUED,
     M_QUEUED_BEARER,
     M_REQUESTS,
+    M_SPEND,
     M_START_TIME,
     M_TOKENS,
     M_UPSTREAM_RETRIES,
@@ -259,6 +260,7 @@ __all__ = [
     "M_QUEUED",
     "M_QUEUED_BEARER",
     "M_REQUESTS",
+    "M_SPEND",
     "M_START_TIME",
     "M_TOKENS",
     "M_UPSTREAM_RETRIES",
@@ -4079,7 +4081,20 @@ async def _aimd_grow(bid: str, limiter: FairBearerLimiter) -> None:
         log(f"aimd-grow bid={bid} max_concurrent={new_max}")
 
 
-def _record_usage(model: str, model_label: str, captured: bytearray, path: str) -> None:
+def _spend_lane_label() -> str:
+    """Spec 337: lane name for spend attribution (one proxy process per lane)."""
+    return os.environ.get("THROTTLE_LANE_NAME", "").strip() or "local"
+
+
+def _record_usage(
+    model: str,
+    model_label: str,
+    captured: bytearray,
+    path: str,
+    *,
+    seat: str = "",
+    lane: str = "",
+) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
     Both vocabularies land here: Anthropic `/v1/messages` streams
@@ -4091,12 +4106,19 @@ def _record_usage(model: str, model_label: str, captured: bytearray, path: str) 
     try:
         usage = _parse_sse_usage(bytes(captured))
         rates = _pricing_for(model)
+        spend_usd = 0.0
         for kind, count in usage.items():
             if count <= 0:
                 continue
             M_TOKENS.labels(model=model_label, kind=kind).inc(count)
             cost = (count / 1_000_000.0) * rates[kind]
             M_COST.labels(model=model_label, kind=kind).inc(cost)
+            spend_usd += cost
+        if spend_usd > 0 and (lane or seat):
+            # Spec 337: per-lane/seat spend — what is being spent, by whom.
+            M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
+                spend_usd
+            )
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
@@ -4365,7 +4387,9 @@ async def _finalize(
         and request.method == "POST"
         and (MESSAGES_SUBPATH in path or COMPLETIONS_SUBPATH in path)
     ):
-        _record_usage(model, model_label, attempt.captured, path)
+        _record_usage(
+            model, model_label, attempt.captured, path, seat=bid, lane=_spend_lane_label()
+        )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
     safe_path = _bounded_error_field(path, 256)
