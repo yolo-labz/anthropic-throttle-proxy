@@ -1,0 +1,142 @@
+# HELP anthropic_proxy_start_time_seconds Unix start time of the proxy process; a step change = a restart.
+# TYPE anthropic_proxy_start_time_seconds gauge
+anthropic_proxy_start_time_seconds 1.7915638284147813e+09
+# HELP anthropic_requests_total Requests processed by the throttle proxy, labeled by HTTP method, status, and model.
+# TYPE anthropic_requests_total counter
+anthropic_requests_total{method="POST",model="mimo-v2.6-pro",status="200"} 24.0
+# HELP anthropic_requests_created Requests processed by the throttle proxy, labeled by HTTP method, status, and model.
+# TYPE anthropic_requests_created gauge
+anthropic_requests_created{method="POST",model="mimo-v2.6-pro",status="200"} 1.7915639808804753e+09
+# HELP anthropic_prospective_refusals_total Strict local admission refusals, separate from provider pushback.
+# TYPE anthropic_prospective_refusals_total counter
+# HELP anthropic_prospective_observations_total Bounded shadow outcomes; unknown/dropped samples are not measured headroom.
+# TYPE anthropic_prospective_observations_total counter
+# HELP anthropic_prospective_calibration_samples_total Observe attempt usage quality and independent terminal outcome; no content labels.
+# TYPE anthropic_prospective_calibration_samples_total counter
+# HELP anthropic_prospective_calibration_tokens_total Paired comparable samples only; output_bound is a ceiling, not a prediction.
+# TYPE anthropic_prospective_calibration_tokens_total counter
+# HELP anthropic_prospective_calibration_input_ratio Reported full input / estimated input, comparable single-scope observe attempts only.
+# TYPE anthropic_prospective_calibration_input_ratio histogram
+# HELP anthropic_tokens_total Tokens parsed from Anthropic SSE usage blocks.
+# TYPE anthropic_tokens_total counter
+# HELP anthropic_cost_usd_total Estimated USD cost (from claude.com rate table) per token kind.
+# TYPE anthropic_cost_usd_total counter
+# HELP anthropic_request_duration_seconds Wall-clock duration of forwarded requests (excluding queue wait).
+# TYPE anthropic_request_duration_seconds histogram
+anthropic_request_duration_seconds_bucket{le="0.1",model="mimo-v2.6-pro"} 0.0
+anthropic_request_duration_seconds_bucket{le="0.25",model="mimo-v2.6-pro"} 0.0
+anthropic_request_duration_seconds_bucket{le="0.5",model="mimo-v2.6-pro"} 0.0
+anthropic_request_duration_seconds_bucket{le="1.0",model="mimo-v2.6-pro"} 0.0
+anthropic_request_duration_seconds_bucket{le="2.5",model="mimo-v2.6-pro"} 0.0
+anthropic_request_duration_seconds_bucket{le="5.0",model="mimo-v2.6-pro"} 0.0
+anthropic_request_duration_seconds_bucket{le="10.0",model="mimo-v2.6-pro"} 3.0
+anthropic_request_duration_seconds_bucket{le="25.0",model="mimo-v2.6-pro"} 12.0
+anthropic_request_duration_seconds_bucket{le="60.0",model="mimo-v2.6-pro"} 16.0
+anthropic_request_duration_seconds_bucket{le="120.0",model="mimo-v2.6-pro"} 21.0
+anthropic_request_duration_seconds_bucket{le="300.0",model="mimo-v2.6-pro"} 24.0
+anthropic_request_duration_seconds_bucket{le="600.0",model="mimo-v2.6-pro"} 24.0
+anthropic_request_duration_seconds_bucket{le="+Inf",model="mimo-v2.6-pro"} 24.0
+anthropic_request_duration_seconds_count{model="mimo-v2.6-pro"} 24.0
+anthropic_request_duration_seconds_sum{model="mimo-v2.6-pro"} 1395.4133703708649
+# HELP anthropic_request_duration_seconds_created Wall-clock duration of forwarded requests (excluding queue wait).
+# TYPE anthropic_request_duration_seconds_created gauge
+anthropic_request_duration_seconds_created{model="mimo-v2.6-pro"} 1.7915639808805149e+09
+# HELP anthropic_inflight Current in-flight requests.
+# TYPE anthropic_inflight gauge
+anthropic_inflight 0.0
+# HELP anthropic_queued Current queued requests waiting for the proxy limiter.
+# TYPE anthropic_queued gauge
+anthropic_queued 0.0
+# HELP anthropic_inflight_per_bearer Current in-flight requests per bearer (8-hex sha256 of Authorization).
+# TYPE anthropic_inflight_per_bearer gauge
+anthropic_inflight_per_bearer{bearer="89e50664"} 0.0
+# HELP anthropic_queued_per_bearer Current queued requests per bearer.
+# TYPE anthropic_queued_per_bearer gauge
+anthropic_queued_per_bearer{bearer="89e50664"} 0.0
+# HELP anthropic_client_disconnects_total Client disconnections during response stream (claude gave up / network blip).
+# TYPE anthropic_client_disconnects_total counter
+anthropic_client_disconnects_total 0.0
+# HELP anthropic_client_disconnects_created Client disconnections during response stream (claude gave up / network blip).
+# TYPE anthropic_client_disconnects_created gauge
+anthropic_client_disconnects_created 1.7915638283558927e+09
+# HELP anthropic_queue_wait_timeouts_total Requests failed fast with 503 after waiting QUEUE_MAX_WAIT_S without a slot.
+# TYPE anthropic_queue_wait_timeouts_total counter
+anthropic_queue_wait_timeouts_total{bearer="89e50664"} 1.0
+# HELP anthropic_queue_wait_timeouts_created Requests failed fast with 503 after waiting QUEUE_MAX_WAIT_S without a slot.
+# TYPE anthropic_queue_wait_timeouts_created gauge
+anthropic_queue_wait_timeouts_created{bearer="89e50664"} 1.7915647240524893e+09
+# HELP anthropic_upstream_retries_total Upstream-error retries (via=central failover OR direct-upstream resilience).
+# TYPE anthropic_upstream_retries_total counter
+anthropic_upstream_retries_total 0.0
+# HELP anthropic_upstream_retries_created Upstream-error retries (via=central failover OR direct-upstream resilience).
+# TYPE anthropic_upstream_retries_created gauge
+anthropic_upstream_retries_created 1.791563828355932e+09
+# HELP anthropic_central_status Central-tier health: 1=up, 0=down, -1=unknown (no central configured).
+# TYPE anthropic_central_status gauge
+anthropic_central_status -1.0
+# HELP anthropic_account_usage_fraction Per-account unified-window utilization (0..1) from /api/oauth/usage.
+# TYPE anthropic_account_usage_fraction gauge
+# HELP anthropic_account_resets_at_seconds Per-account unified-window reset instant (epoch s) from /api/oauth/usage.
+# TYPE anthropic_account_resets_at_seconds gauge
+# HELP anthropic_account_scoped_utilization Per-account weekly SCOPED (per-model) window utilization 0..1 from limits[].
+# TYPE anthropic_account_scoped_utilization gauge
+# HELP anthropic_accounts_identity_distinct 1=credential files belong to distinct accounts, 0=COLLAPSED to one, -1=unknown.
+# TYPE anthropic_accounts_identity_distinct gauge
+anthropic_accounts_identity_distinct 0.0
+# HELP anthropic_account_identity_collisions Credential stores resolving to a VERIFIED non-unique account identity (duplicate-account collision; mutually revokes refresh tokens). 0=none verified.
+# TYPE anthropic_account_identity_collisions gauge
+anthropic_account_identity_collisions 0.0
+# HELP anthropic_account_identity_suspected Credential stores in a SUSPECTED shared-account group (shared email with an unverified member — stale label or dead token) pending live-probe verification.
+# TYPE anthropic_account_identity_suspected gauge
+anthropic_account_identity_suspected 0.0
+# HELP subscription_lane_used_percent Per-lane meter fill 0..100 from the out-of-process lane report.
+# TYPE subscription_lane_used_percent gauge
+# HELP subscription_lane_report_age_seconds Age of the lane report file. Grows without bound when the probe timer dies.
+# TYPE subscription_lane_report_age_seconds gauge
+subscription_lane_report_age_seconds 0.0
+# HELP anthropic_aimd_max_concurrent Current AIMD ceiling (mutable per-bearer max_concurrent).
+# TYPE anthropic_aimd_max_concurrent gauge
+anthropic_aimd_max_concurrent{bearer="89e50664"} 1.0
+# HELP anthropic_aimd_shrinks_total AIMD multiplicative-decrease events triggered by upstream rate pushback (429/503).
+# TYPE anthropic_aimd_shrinks_total counter
+# HELP anthropic_aimd_grows_total AIMD additive-increase events after sustained successes past cooldown.
+# TYPE anthropic_aimd_grows_total counter
+# HELP anthropic_overload_total Upstream 529 overloaded events (Anthropic-side capacity, not your usage). Does NOT shrink the ceiling; retry-after is still honored.
+# TYPE anthropic_overload_total counter
+# HELP anthropic_oauth_entitlement_refusals_total Masked 429s from Anthropic's OAuth entitlement gate: the request's first system block was not the Claude Code identity string, so a subscription bearer is refused regardless of quota. Never shrinks, pauses, or retries.
+# TYPE anthropic_oauth_entitlement_refusals_total counter
+# HELP anthropic_credential_nudge_total Local 401 nudges sent to stale tabs after a captive-broker account swap, so claude re-reads the swapped credential and adopts the live account.
+# TYPE anthropic_credential_nudge_total counter
+# HELP anthropic_body_shrink_trimmed_total POST /v1/messages bodies trimmed by the proxy to fit under Anthropic's 32MB cap.
+# TYPE anthropic_body_shrink_trimmed_total counter
+# HELP anthropic_body_shrink_bytes_saved_total Bytes removed from POST /v1/messages bodies by tool_result trimming.
+# TYPE anthropic_body_shrink_bytes_saved_total counter
+# HELP anthropic_chat_body_fitted_total Z.AI coding chat-completions bodies whose oldest turns were dropped to fit this lane's unpublished request budget.
+# TYPE anthropic_chat_body_fitted_total counter
+anthropic_chat_body_fitted_total 0.0
+# HELP anthropic_chat_body_fitted_created Z.AI coding chat-completions bodies whose oldest turns were dropped to fit this lane's unpublished request budget.
+# TYPE anthropic_chat_body_fitted_created gauge
+anthropic_chat_body_fitted_created 1.7915638283562841e+09
+# HELP anthropic_chat_body_unfittable_total Z.AI coding chat-completions bodies left over budget after every droppable turn was dropped, and therefore forwarded unchanged.
+# TYPE anthropic_chat_body_unfittable_total counter
+anthropic_chat_body_unfittable_total 0.0
+# HELP anthropic_chat_body_unfittable_created Z.AI coding chat-completions bodies left over budget after every droppable turn was dropped, and therefore forwarded unchanged.
+# TYPE anthropic_chat_body_unfittable_created gauge
+anthropic_chat_body_unfittable_created 1.7915638283563013e+09
+# HELP anthropic_ratelimit_requests_remaining Last-seen anthropic-ratelimit-requests-remaining header value.
+# TYPE anthropic_ratelimit_requests_remaining gauge
+# HELP anthropic_ratelimit_tokens_remaining Last-seen anthropic-ratelimit-tokens-remaining header value.
+# TYPE anthropic_ratelimit_tokens_remaining gauge
+# HELP anthropic_ratelimit_unified_5h_utilization OAuth 5-hour rolling window utilization (0..1).
+# TYPE anthropic_ratelimit_unified_5h_utilization gauge
+# HELP anthropic_ratelimit_unified_7d_utilization OAuth 7-day weekly window utilization (0..1).
+# TYPE anthropic_ratelimit_unified_7d_utilization gauge
+# HELP anthropic_ratelimit_unified_warnings_total Binding unified window crossed THROTTLE_UTILIZATION_WARN while still 'allowed' — the early signal before a 'rejected'/429. Counted once per (bearer, window) reset cycle. Warn-only: does NOT shrink the ceiling.
+# TYPE anthropic_ratelimit_unified_warnings_total counter
+# HELP anthropic_util_brake_enabled 1 when the utilization brake (THROTTLE_UTILIZATION_TARGET>0) is active, else 0.
+# TYPE anthropic_util_brake_enabled gauge
+anthropic_util_brake_enabled 0.0
+# HELP anthropic_util_brake_disabled_hot_total Early-warnings fired while the brake was DISABLED — an account crossed the warn line with no glide and will hard-lock at 1.0 into a multi-day lockout.
+# TYPE anthropic_util_brake_disabled_hot_total counter
+# HELP anthropic_keepalive_holds_total SSE keepalive-holds fired for TRANSIENT throttle on streaming requests. outcome=streamed: upstream eventually returned 200 through the open response. outcome=errored: wait-budget exhausted; SSE error event sent instead of banner.
+# TYPE anthropic_keepalive_holds_total counter

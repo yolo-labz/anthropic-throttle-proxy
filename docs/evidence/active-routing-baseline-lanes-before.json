@@ -1,0 +1,387 @@
+{
+ "captured_at": "2026-10-09T16:05:13-0300",
+ "lanes": {
+  "ingress": {
+   "health": {
+    "status": "ok",
+    "ingress": true,
+    "default_lane": "http://127.0.0.1:8765",
+    "host": "127.0.0.1",
+    "port": 8760,
+    "served": 17,
+    "uptime_s": 8885.5,
+    "enforcement": {
+     "credential_mode": true,
+     "contract": "adr6a-credential-mode/1",
+     "subscription_upstreams_count": 1,
+     "subscription_upstreams_digest": "0e4a7f621b27"
+    },
+    "lanes": {
+     "codex": {
+      "open": true,
+      "detail": "no-bearers-proxy-owns-key",
+      "checked_ago_s": 4.3,
+      "credential_mode": "unknown",
+      "credential_mode_reason": "fields-absent"
+     },
+     "glm": {
+      "open": false,
+      "detail": "no-bearers",
+      "checked_ago_s": 4.3,
+      "credential_mode": "proxy_key"
+     },
+     "anthropic": {
+      "open": false,
+      "detail": "no-usable-bearer",
+      "checked_ago_s": 4.3,
+      "credential_mode": "proxy_key"
+     }
+    }
+   },
+   "metrics_lines": 0,
+   "metrics": []
+  },
+  "local": {
+   "health": {
+    "build": "/nix/store/dg56h1l8migbq7yvs7xnpal5y9kwkv1m-throttler-gateway-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "version": "0.1.0",
+    "inflight": 0,
+    "queued": 0,
+    "served": 0,
+    "keepalive_holds_active": 0,
+    "admitted_holds": 0,
+    "admission_closed": false,
+    "client_disconnects": 0,
+    "upstream_retries": 0,
+    "max_concurrent": 5,
+    "queue_mode": "fair",
+    "config_override_drift": {},
+    "min_dispatch_gap_ms": 100,
+    "upstream": "http://127.0.0.1:1",
+    "upstream_egress_ok": true,
+    "upstream_egress_error": "",
+    "upstream_egress_last_check": 1791572709.2221165,
+    "upstream_auth_ok": null,
+    "upstream_auth_error": "",
+    "upstream_auth_last_check": 0,
+    "central_url": "",
+    "central_status": "unknown",
+    "account_identity": {
+     "collapsed": false,
+     "email": null,
+     "known": 1,
+     "distinct": 1,
+     "duplicates": {},
+     "suspected": {}
+    },
+    "brake": {
+     "enabled": true,
+     "target": 0.9,
+     "warn": 0.9
+    },
+    "api_key": {
+     "enabled": false,
+     "routing": "off",
+     "label": "metered-api",
+     "max_concurrent": 8
+    },
+    "central_last_check": 0,
+    "bearers": {
+     "666a53af": {
+      "inflight": 0,
+      "queued": 0,
+      "served": 0,
+      "last_ratelimit": null,
+      "unified": null,
+      "clients": {},
+      "limiter": {
+       "inflight": 0,
+       "max_concurrent": 5,
+       "hard_max": 5,
+       "queue_mode": "fair",
+       "queue_allow_first_waiter": false,
+       "queue_enabled": true,
+       "observe_enabled": true,
+       "last_throttle_at": 0.0,
+       "successes_since_throttle": 0,
+       "retry_after_until": 0.0,
+       "retry_probe_required": true,
+       "retry_probe_inflight": false,
+       "retry_probe_blocks_routing": false,
+       "queued_total": 0,
+       "priority_inflight": 0,
+       "priority_queued": 0,
+       "queued_per_client": {},
+       "rr_order": [],
+       "recent_shrinks": 0,
+       "storm_mode": false,
+       "effective_ramp_after": 6,
+       "drain": {
+        "slots": 5,
+        "busy": 0,
+        "free": 5,
+        "queued": 0,
+        "ahead": 0,
+        "service_time_s": 0.107,
+        "residual_s": 0.0,
+        "samples": 8,
+        "source": "measured",
+        "evidenced": true,
+        "max_wait_s": 5.0,
+        "enforced": true,
+        "rounds": 0,
+        "wait_s": 0.0,
+        "max_depth": 234,
+        "admits": true,
+        "rejects": false,
+        "retry_after_s": 5
+       }
+      },
+      "credential": {
+       "detail": "",
+       "last_checked": 1789241125.8591597,
+       "ok": false,
+       "reason": "streak-3",
+       "since": 1789090997.6439142,
+       "status": 403
+      }
+     },
+     "47f0b262": {
+      "credential": {
+       "detail": "",
+       "last_checked": 1788555503.550866,
+       "ok": false,
+       "reason": "streak-3",
+       "since": 1787518028.886615,
+       "status": 403
+      }
+     },
+     "api-key": {
+      "credential": {
+       "detail": "invalid x-api-key",
+       "last_checked": 1786130353.4243824,
+       "ok": false,
+       "reason": "status-401",
+       "since": 1786130353.4243824,
+       "status": 401
+      }
+     },
+     "b144f62f": {
+      "credential": {
+       "detail": "",
+       "last_checked": 1788555728.44608,
+       "ok": false,
+       "reason": "streak-3",
+       "since": 1788555728.44608,
+       "status": 403
+      }
+     },
+     "f4b26209": {
+      "credential": {
+       "detail": "",
+       "last_checked": 1789128832.4426603,
+       "ok": false,
+       "reason": "status-401",
+       "since": 1789128832.4426603,
+       "status": 401
+      }
+     }
+    }
+   },
+   "metrics_lines": 3,
+   "metrics": [
+    "anthropic_request_duration_seconds_count{model=\"unknown\"} 8.0",
+    "anthropic_request_duration_seconds_sum{model=\"unknown\"} 0.8189759254455566",
+    "anthropic_requests_total{method=\"GET\",model=\"unknown\",status=\"502\"} 8.0"
+   ]
+  },
+  "central": {
+   "health": {
+    "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "version": "0.1.0",
+    "inflight": 0,
+    "queued": 0,
+    "served": 0,
+    "keepalive_holds_active": 0,
+    "client_disconnects": 0,
+    "upstream_retries": 0,
+    "max_concurrent": 12,
+    "queue_mode": "fair",
+    "config_override_drift": {},
+    "min_dispatch_gap_ms": 0,
+    "upstream": "https://api.z.ai",
+    "upstream_egress_ok": true,
+    "upstream_egress_error": "",
+    "upstream_egress_last_check": 1791572707.168991,
+    "upstream_auth_ok": null,
+    "upstream_auth_error": "",
+    "upstream_auth_last_check": 0,
+    "central_url": "",
+    "central_status": "unknown",
+    "account_identity": null,
+    "brake": {
+     "enabled": false,
+     "target": 0.0,
+     "warn": 0.9
+    },
+    "api_key": {
+     "enabled": false,
+     "routing": "off",
+     "label": "API",
+     "max_concurrent": 12
+    },
+    "central_last_check": 0,
+    "bearers": {}
+   },
+   "metrics_lines": 0,
+   "metrics": []
+  },
+  "mimo": {
+   "health": {
+    "build": "/nix/store/jmak9s5hhv33bp53npypcnlkcrjn2cxz-anthropic-throttle-proxy-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "version": "0.1.0",
+    "inflight": 0,
+    "queued": 0,
+    "served": 0,
+    "keepalive_holds_active": 0,
+    "client_disconnects": 0,
+    "upstream_retries": 0,
+    "max_concurrent": 20,
+    "queue_mode": "fair",
+    "config_override_drift": {},
+    "min_dispatch_gap_ms": 250,
+    "upstream": "https://token-plan-sgp.xiaomimimo.com",
+    "upstream_egress_ok": true,
+    "upstream_egress_error": "",
+    "upstream_egress_last_check": 1791572690.169587,
+    "upstream_auth_ok": null,
+    "upstream_auth_error": "",
+    "upstream_auth_last_check": 0,
+    "central_url": "",
+    "central_status": "unknown",
+    "account_identity": {
+     "collapsed": false,
+     "email": null,
+     "known": 0,
+     "distinct": 0,
+     "duplicates": {},
+     "suspected": {}
+    },
+    "brake": {
+     "enabled": false,
+     "target": 0.0,
+     "warn": 0.9
+    },
+    "api_key": {
+     "enabled": false,
+     "routing": "off",
+     "label": "API",
+     "max_concurrent": 20
+    },
+    "central_last_check": 0,
+    "bearers": {}
+   },
+   "metrics_lines": 0,
+   "metrics": []
+  },
+  "mimo-sub": {
+   "health": {
+    "build": "/nix/store/dg56h1l8migbq7yvs7xnpal5y9kwkv1m-throttler-gateway-0.1.0/lib/python3.14/site-packages/anthropic_throttle_proxy",
+    "version": "0.1.0",
+    "inflight": 0,
+    "queued": 0,
+    "served": 22,
+    "keepalive_holds_active": 0,
+    "admitted_holds": 0,
+    "admission_closed": false,
+    "client_disconnects": 0,
+    "upstream_retries": 0,
+    "max_concurrent": 1,
+    "queue_mode": "fair",
+    "config_override_drift": {},
+    "min_dispatch_gap_ms": 1000,
+    "upstream": "http://127.0.0.1:8100",
+    "upstream_egress_ok": true,
+    "upstream_egress_error": "",
+    "upstream_egress_last_check": 1791572709.8754795,
+    "upstream_auth_ok": null,
+    "upstream_auth_error": "",
+    "upstream_auth_last_check": 0,
+    "central_url": "",
+    "central_status": "unknown",
+    "account_identity": null,
+    "brake": {
+     "enabled": false,
+     "target": 0.0,
+     "warn": 0.9
+    },
+    "api_key": {
+     "enabled": false,
+     "routing": "off",
+     "label": "API",
+     "max_concurrent": 1
+    },
+    "central_last_check": 0,
+    "bearers": {
+     "89e50664": {
+      "inflight": 0,
+      "queued": 0,
+      "served": 24,
+      "last_ratelimit": null,
+      "unified": null,
+      "clients": {},
+      "limiter": {
+       "inflight": 0,
+       "max_concurrent": 1,
+       "hard_max": 1,
+       "queue_mode": "fair",
+       "queue_allow_first_waiter": true,
+       "queue_enabled": true,
+       "observe_enabled": true,
+       "last_throttle_at": 0.0,
+       "successes_since_throttle": 24,
+       "retry_after_until": 0.0,
+       "retry_probe_required": false,
+       "retry_probe_inflight": false,
+       "retry_probe_blocks_routing": false,
+       "queued_total": 0,
+       "priority_inflight": 0,
+       "priority_queued": 0,
+       "queued_per_client": {},
+       "rr_order": [],
+       "recent_shrinks": 0,
+       "storm_mode": false,
+       "effective_ramp_after": 10,
+       "drain": {
+        "slots": 1,
+        "busy": 0,
+        "free": 1,
+        "queued": 0,
+        "ahead": 0,
+        "service_time_s": 158.039,
+        "residual_s": 0.0,
+        "samples": 24,
+        "source": "measured",
+        "evidenced": true,
+        "max_wait_s": 180.0,
+        "enforced": true,
+        "rounds": 0,
+        "wait_s": 0.0,
+        "max_depth": 1,
+        "admits": true,
+        "rejects": false,
+        "retry_after_s": 5
+       }
+      }
+     }
+    }
+   },
+   "metrics_lines": 3,
+   "metrics": [
+    "anthropic_request_duration_seconds_count{model=\"mimo-v2.6-pro\"} 24.0",
+    "anthropic_request_duration_seconds_sum{model=\"mimo-v2.6-pro\"} 1395.4133703708649",
+    "anthropic_requests_total{method=\"POST\",model=\"mimo-v2.6-pro\",status=\"200\"} 24.0"
+   ]
+  }
+ }
+}

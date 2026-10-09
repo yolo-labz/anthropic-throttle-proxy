@@ -1,0 +1,103 @@
+{
+ "url": "http://127.0.0.1:8766/api/coding/paas/v4/chat/completions",
+ "n": 8,
+ "concurrency": 4,
+ "wall_s": 0.0137,
+ "status_counts": {
+  "429": 8
+ },
+ "total_s": {
+  "p50": 0.0019,
+  "p95": 0.0103,
+  "max": 0.0103
+ },
+ "ttfb_s": {
+  "p50": 0.0019,
+  "p95": 0.0102,
+  "max": 0.0102
+ },
+ "records": [
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0099,
+   "total_s": 0.01,
+   "seq": 0
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.01,
+   "total_s": 0.01,
+   "seq": 1
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0101,
+   "total_s": 0.0101,
+   "seq": 2
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0102,
+   "total_s": 0.0103,
+   "seq": 3
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0019,
+   "total_s": 0.0019,
+   "seq": 4
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0016,
+   "total_s": 0.0016,
+   "seq": 5
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0015,
+   "total_s": 0.0015,
+   "seq": 6
+  },
+  {
+   "status": 429,
+   "retry_after": "900",
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": null,
+   "ttfb_s": 0.0016,
+   "total_s": 0.0016,
+   "seq": 7
+  }
+ ],
+ "probe_id": "7b5c43a54c90",
+ "generated_at": "2026-10-09T16:08:42-0300"
+}
