@@ -249,3 +249,38 @@ class TestIngressSeam:
         assert ingress._retry_after_seconds(_Resp("Wed, 21 Oct 2026 07:28:00 GMT")) is None
         assert ingress._retry_after_seconds(_Resp("")) is None
         assert ingress._retry_after_seconds(_Resp("-3")) is None
+
+    def test_burst_selection_spreads_and_never_blocks(self, monkeypatch):
+        """Burst proof (spec 337 measurement): a rapid burst of selections with a
+        pushed-back chain head never picks the cooled lane and never queues —
+        every call returns immediately, in-memory (no waiting on any lane)."""
+        monkeypatch.setenv("INGRESS_ACTIVE_ROUTING", "on")
+        from anthropic_throttle_proxy import ingress, routing
+
+        chain = list(ingress._effective_chain("bulk"))
+        assert len(chain) >= 2
+        monkeypatch.setattr(
+            ingress,
+            "lane_state",
+            {lid: routing.LaneState(open=True, checked_at=NOW) for lid in chain},
+        )
+        saved = ingress._active_cooldowns
+        try:
+            ingress._active_cooldowns = CooldownTable()
+            started = time.perf_counter()
+            picks = []
+            for i in range(30):
+                if i % 5 == 0:
+                    # Upstream pushback lands mid-burst: the lane cools down.
+                    ingress._active_cooldowns.observe(
+                        Candidate(lane_id=chain[0]),
+                        OUTCOME_RETRYABLE,
+                        now=time.time(),
+                        retry_after_s=30.0,
+                    )
+                picks.append(ingress._active_pick("bulk", set()))
+            elapsed = time.perf_counter() - started
+            assert all(p == chain[1] for p in picks)
+            assert elapsed < 1.0  # 30 in-memory selections: no stall possible here
+        finally:
+            ingress._active_cooldowns = saved
