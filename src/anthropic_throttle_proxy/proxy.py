@@ -3304,11 +3304,12 @@ async def _keepalive_attempt_verdict(
 
 
 class _RetryAfterArmed(Exception):
-    """A pushback 429 armed a too-long Retry-After on the bearer we dispatched on.
+    """A pushback handed the request back to the routing gate for failover.
 
-    Raised instead of returning the fast-fail so the dispatch loop can hand the
-    slot back and re-enter the routing gate, which reroutes onto a healthy
-    bearer and only fast-fails when none is better.
+    Raised instead of returning the fast-fail (long Retry-After) or waiting the
+    pause out on the same bearer (generic pushback) so the dispatch loop can
+    hand the slot back and re-enter the routing gate, which reroutes onto a
+    healthy bearer and only fast-fails when none is better.
 
     Why this matters: the request that discovers a still-capped account IS a
     real user request. ``try_begin_retry_probe`` volunteers the first caller
@@ -3592,6 +3593,24 @@ async def _pushback_retry_step(
         # see remaining<=0 and re-probe this same bearer forever. Recording
         # it also arms `require_retry_probe(block_while_retry=True)`, which
         # is what makes the pre-dispatch reroute branch fire on re-entry.
+        limiter.note_retry_after(pause)
+        raise _RetryAfterArmed(pause)
+    if _account_routing_enabled():
+        # ACTIVE ROUTING (S1, docs/ACTIVE-ROUTING-DESIGN-2026-10-09.md): a
+        # generic pushback is handed back to the routing gate instead of
+        # AIMD-wait-and-retry on the same bearer, so the retry lands on a
+        # healthier sibling NOW and the turn does not serialise behind this
+        # bearer's pause ("spread the usage on more keys"). When nothing is
+        # better the gate re-dispatches on this same bearer and the limiter
+        # honors the latched window first — the same-bearer wait survives as
+        # the safety net, never the schedule. Latching BOTH real and synthetic
+        # pauses keeps the re-entry loop bounded (an unlatched synthetic pause
+        # could ping-pong between two pushing-back bearers past the per-call
+        # `RATE_PUSHBACK_RETRIES` budget, which resets on every `_forward_with_retry`)
+        # and enforces the cooldown the pause exists to represent. AIMD and
+        # metrics run exactly once via the handler's finalize on the raise
+        # path — the same contract as the armed-Retry-After branch above — so
+        # this raise happens BEFORE `_aimd_feedback`, never after.
         limiter.note_retry_after(pause)
         raise _RetryAfterArmed(pause)
     await _aimd_feedback(bid, limiter, attempt)
