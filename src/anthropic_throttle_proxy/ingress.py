@@ -29,9 +29,22 @@ from typing import Final
 
 import aiohttp
 from aiohttp import web
-from prometheus_client import CollectorRegistry, Counter, generate_latest
+from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
 
 from . import provider_registry, routing
+from .active_routing import (
+    OUTCOME_FATAL,
+    OUTCOME_RETRYABLE,
+    OUTCOME_SUCCESS,
+    Candidate,
+    CooldownTable,
+    Gauge,
+    active_routing_enabled,
+    policy_from_env,
+)
+from .active_routing import (
+    rank as active_rank,
+)
 from .prospective_refusal import (
     PROVENANCE_BUDGET_HEADER,
     PROVENANCE_CLASS_HEADER,
@@ -195,6 +208,84 @@ GENERATE_QUEUE_RETRY_DELAY_S: Final[float] = float(
 # change than either #182 or #184 asked for.
 _SPILL_ON_429_ROLES: Final[frozenset[str]] = frozenset({"generate", "code"})
 
+# --- Spec 337 active routing (default OFF) ---------------------------------
+# Measured candidate ranking + cooldown memory. ``INGRESS_ACTIVE_ROUTING=on``
+# opts in; with the flag off every helper short-circuits and the legacy
+# first-open chain walk is unchanged. Selection never waits — the bounded fair
+# queue stays the safety net (``queue_mode`` untouched).
+_active_cooldowns = CooldownTable()
+
+
+def _active_policy():
+    return policy_from_env()
+
+
+def _retry_after_seconds(upstream: aiohttp.ClientResponse) -> float | None:
+    """Numeric Retry-After (seconds) from an upstream response; None when absent
+    or an HTTP-date (coarse forms fall back to exponential cooldown)."""
+    try:
+        value = float(upstream.headers.get("Retry-After", ""))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _active_observe(lane_id: str, outcome: str, retry_after_s: float | None = None) -> None:
+    """Feed the cooldown table with one attempt outcome (spec 337). No-op off."""
+    if not active_routing_enabled():
+        return
+    # Steering state only; never break forwarding on it.
+    with contextlib.suppress(Exception):
+        _active_cooldowns.observe(
+            Candidate(lane_id=lane_id),
+            outcome,
+            now=time.time(),
+            retry_after_s=retry_after_s,
+            policy=_active_policy(),
+        )
+
+
+def _active_pick(role: str, tried: set[str]) -> str | None:
+    """Rank the remaining open chain candidates by measured state (spec 337).
+
+    Returns the best lane id, or None to fall back to the legacy first-open
+    path (flag off, no ranked candidate, or any error — fail-open to today's
+    behavior). Never proposes a lane already in ``tried``.
+    """
+    if not active_routing_enabled():
+        return None
+    try:
+        started = time.perf_counter()
+        candidates: list[Candidate] = []
+        for chain_rank, lane_id in enumerate(_effective_chain(role)):
+            if lane_id in tried:
+                continue
+            state = lane_state.get(lane_id)
+            if state is not None and state.open:
+                candidates.append(Candidate(lane_id=lane_id, chain_rank=chain_rank))
+        if not candidates:
+            return None
+        gauges = {
+            (c.lane_id, c.credential_id): Gauge(
+                error_rate=_active_cooldowns.error_rate.get((c.lane_id, c.credential_id), 0.0)
+            )
+            for c in candidates
+        }
+        ordered = active_rank(
+            candidates,
+            gauges,
+            _active_policy(),
+            now=time.time(),
+            cooldowns=_active_cooldowns,
+        )
+        chosen = ordered[0].lane_id if ordered else None
+        if chosen:
+            M_SELECTION_SECONDS.labels(lane=chosen).observe(time.perf_counter() - started)
+        return chosen
+    except Exception:
+        return None  # ranking is steering, never a gate
+
+
 # --- S3: lane registry + gauge polling --------------------------------------
 # The three-lane fleet (Spec 093). Built once at import from env-overridable URLs.
 LANES: dict[str, Lane] = default_lanes()
@@ -301,6 +392,22 @@ _session_lane: dict[str, str] = {}
 # signal; Kimi-balance polling is a documented follow-up (needs the Moonshot key
 # + a dedicated poll loop).
 REGISTRY = CollectorRegistry()
+
+# Spec 337: failover + selection observability (ingress-side steering events).
+M_FAILOVER_HOPS = Counter(
+    "ingress_failover_hops_total",
+    "Attempts that moved to the next lane candidate after a retryable upstream outcome.",
+    ["lane"],
+    registry=REGISTRY,
+)
+M_SELECTION_SECONDS = Histogram(
+    "ingress_selection_seconds",
+    "Time spent ranking lane candidates (active routing selection).",
+    ["lane"],
+    buckets=(0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1),
+    registry=REGISTRY,
+)
+
 M_ROUTE_DECISIONS = Counter(
     "ingress_route_decisions_total",
     "Requests routed by the unified ingress, by inferred role and chosen lane.",
@@ -951,7 +1058,7 @@ def _select_lane_once(
         lane_id = _pinned_lane_choice(role, sess_key, tried)
         used_pin = True
     if lane_id is None:
-        lane_id = _select_open_lane(role)
+        lane_id = _active_pick(role, tried) or _select_open_lane(role)
         if lane_id is not None and lane_id in tried:
             lane_id = None
         elif lane_id is not None and sess_key is not None:
@@ -1333,12 +1440,15 @@ async def _attempt_lane(
         return upstream, generate_retries
     saturation_503 = _queue_timeout_503(upstream)
     if _is_retryable_response(upstream, role, saturation_503) and spillable:
+        _active_observe(lane.id, OUTCOME_RETRYABLE, _retry_after_seconds(upstream))
+        M_FAILOVER_HOPS.labels(lane=lane.id).inc()
         upstream.release()
         tried.add(lane.id)
         return await _spill_or_requeue(
             role, lane.id, tried, required_mode, saturation_503, generate_retries
         )
     # Not a saturation-503 (or not spillable) → stream the response through.
+    _active_observe(lane.id, OUTCOME_SUCCESS if upstream.status < 400 else OUTCOME_FATAL)
     return (
         await _relay_response(request, upstream, role, lane.id, required_mode),
         generate_retries,

@@ -117,6 +117,14 @@ M_DURATION = Histogram(
     buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 60.0, 120.0, 300.0, 600.0),
     registry=REGISTRY,
 )
+# Spec 337 (active routing): cost accounting per lane/seat + failover observability.
+# Appended-only; the historical model/kind counters above are untouched.
+M_SPEND = Counter(
+    "anthropic_spend_usd_total",
+    "Estimated USD spend parsed from upstream usage blocks, by lane and seat.",
+    ["lane", "seat", "model"],
+    registry=REGISTRY,
+)
 M_INFLIGHT = Gauge("anthropic_inflight", "Current in-flight requests.", registry=REGISTRY)
 M_QUEUED = Gauge(
     "anthropic_queued",
