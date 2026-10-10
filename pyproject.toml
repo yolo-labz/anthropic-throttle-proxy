@@ -59,4 +59,8 @@ testpaths = ["tests"]
 # relative_files is REQUIRED so SonarQube matches coverage.xml paths to its
 # source tree — absolute paths silently report 0% coverage in CI.
 relative_files = true
-source = ["src/anthropic_throttle_proxy"]
+source = ["src/anthropic_throttle_proxy", "scripts", "specs"]
+
+[tool.coverage.report]
+# Acceptance tools live in non-package spec directories; count them even unimported.
+include_namespace_packages = true

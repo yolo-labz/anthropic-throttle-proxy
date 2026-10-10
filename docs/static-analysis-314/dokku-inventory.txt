@@ -1,0 +1,73 @@
+=====> My Apps
+admin-dev
+alertmanager
+alloy
+anthropic-throttle
+authelia
+baserow
+blog
+bridgeserver-dev
+cadvisor
+customer-dev
+delicasa-unified
+dozzle
+exec-job-board
+flatnotes
+glitchtip
+glm-critic
+grafana
+healthchecks
+infisical
+languagetool
+li-radar
+loki
+miniflux
+minio
+n8n
+n8n-worker
+node-exporter
+partner-dev
+paste
+plausible
+portfolio
+postgres-exporter
+prometheus
+proso-api
+proso-log-gateway
+pushgateway
+reactflux
+rss-extract
+sonarqube
+sparkyfitness-backend
+sparkyfitness-frontend
+tempo
+voxscribe
+wa-burocracy
+wa-personal
+=====> sonarqube ps information
+       Deployed:                         true
+       Processes:                        1
+       Ps can scale:                     true
+       Ps computed dockerfile start cmd:
+       Ps computed procfile path:        Procfile
+       Ps computed restart policy:       on-failure:10
+       Ps computed skip deploy:          false
+       Ps computed start cmd:
+       Ps computed stop timeout seconds: 30
+       Ps dockerfile start cmd:
+       Ps global procfile path:
+       Ps global restart policy:
+       Ps global skip deploy:
+       Ps global stop timeout seconds:
+       Ps procfile path:
+       Ps restart policy:
+       Ps skip deploy:
+       Ps start cmd:
+       Ps stop timeout seconds:
+       Restore:                          true
+       Running:                          true
+       Status web 1:                     running (CID: bc66afeb5d7)
+dokku/sonarqube:latest
+dokku/reactflux:latest
+dokku/languagetool:latest
+dokku/glm-critic:latest

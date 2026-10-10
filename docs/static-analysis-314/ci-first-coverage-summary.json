@@ -1,0 +1,13 @@
+{
+  "run": 37674868147,
+  "run_head": "9da2aa8ba1040103fb5921394ed2dd84ae820151",
+  "coverage_sha256": "724c6562b1f8993e646b065d2e4e642b6a0d01691e9d8a57af76574b259f4083",
+  "counts": {
+    "python_files": 42,
+    "lines_valid": 9091,
+    "lines_covered": 8083
+  },
+  "coverage_pct": 88.91211087889121,
+  "initial_verdict": "FAIL: checker compared a 4-significant-digit rate to an unrounded fraction",
+  "scope": "first candidate, not acceptance of subsequent code"
+}

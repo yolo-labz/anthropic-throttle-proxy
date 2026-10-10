@@ -1,0 +1,422 @@
+[
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/codeql.yml:analyze",
+    "environment": "{\"language\":\"python\"}",
+    "category": "/language:python",
+    "error": "",
+    "created_at": "2026-10-05T15:44:31Z",
+    "results_count": 4,
+    "rules_count": 49,
+    "id": 1894591232,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1894591232",
+    "sarif_id": "a7a70ce0-c0d3-11f1-9080-d65316a180b2",
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/osv-scanner.yml:scan",
+    "environment": "{}",
+    "category": ".github/workflows/osv-scanner.yml:scan",
+    "error": "",
+    "created_at": "2026-10-05T15:43:03Z",
+    "results_count": 0,
+    "rules_count": 0,
+    "id": 1894580531,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1894580531",
+    "sarif_id": "73257650-c0d3-11f1-9cc6-39437e1cb219",
+    "tool": {
+      "name": "osv-scanner",
+      "guid": null,
+      "version": "2.3.5"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/online-scm",
+    "error": "",
+    "created_at": "2026-10-05T09:51:05Z",
+    "results_count": 4,
+    "rules_count": 11,
+    "id": 1892273472,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1892273472",
+    "sarif_id": "47f60c82-c0a2-11f1-9348-0acb17b3a3f8",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/local",
+    "error": "",
+    "created_at": "2026-10-05T09:51:05Z",
+    "results_count": 2,
+    "rules_count": 6,
+    "id": 1892273451,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1892273451",
+    "sarif_id": "47f60c82-c0a2-11f1-9348-0acb17b3a3f8",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/branch-protection",
+    "error": "",
+    "created_at": "2026-10-05T09:51:05Z",
+    "results_count": 1,
+    "rules_count": 1,
+    "id": 1892273436,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1892273436",
+    "sarif_id": "47f60c82-c0a2-11f1-9348-0acb17b3a3f8",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/codeql.yml:analyze",
+    "environment": "{\"language\":\"python\"}",
+    "category": "/language:python",
+    "error": "",
+    "created_at": "2026-10-04T19:18:04Z",
+    "results_count": 4,
+    "rules_count": 49,
+    "id": 1889544676,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889544676",
+    "sarif_id": "5225e90e-c028-11f1-86d7-ec3544041f2c",
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/online-scm",
+    "error": "",
+    "created_at": "2026-10-04T19:17:45Z",
+    "results_count": 4,
+    "rules_count": 11,
+    "id": 1889544032,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889544032",
+    "sarif_id": "46d7095c-c028-11f1-8721-241872cf6f2e",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/local",
+    "error": "",
+    "created_at": "2026-10-04T19:17:45Z",
+    "results_count": 2,
+    "rules_count": 6,
+    "id": 1889544027,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889544027",
+    "sarif_id": "46d7095c-c028-11f1-8721-241872cf6f2e",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/branch-protection",
+    "error": "",
+    "created_at": "2026-10-04T19:17:45Z",
+    "results_count": 1,
+    "rules_count": 1,
+    "id": 1889544022,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889544022",
+    "sarif_id": "46d7095c-c028-11f1-8721-241872cf6f2e",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/pull/312/merge",
+    "commit_sha": "2d3c277e673150db4e4750d401e602eddd9bb46c",
+    "analysis_key": ".github/workflows/codeql.yml:analyze",
+    "environment": "{\"language\":\"python\"}",
+    "category": "/language:python",
+    "error": "",
+    "created_at": "2026-10-04T19:13:30Z",
+    "results_count": 0,
+    "rules_count": 49,
+    "id": 1889534657,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889534657",
+    "sarif_id": "af05f93a-c027-11f1-848f-89444aa5d028",
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/pull/312/merge",
+    "commit_sha": "2d3c277e673150db4e4750d401e602eddd9bb46c",
+    "analysis_key": ".github/workflows/osv-scanner.yml:scan",
+    "environment": "{}",
+    "category": ".github/workflows/osv-scanner.yml:scan",
+    "error": "",
+    "created_at": "2026-10-04T19:12:47Z",
+    "results_count": 0,
+    "rules_count": 0,
+    "id": 1889532931,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889532931",
+    "sarif_id": "9566c19e-c027-11f1-86a7-1b888ef16751",
+    "tool": {
+      "name": "osv-scanner",
+      "guid": null,
+      "version": "2.3.5"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "96a8536b7beb17b8f8bbde6ea8ef7c8b29f9f069",
+    "analysis_key": ".github/workflows/codeql.yml:analyze",
+    "environment": "{\"language\":\"python\"}",
+    "category": "/language:python",
+    "error": "",
+    "created_at": "2026-10-04T19:02:58Z",
+    "results_count": 4,
+    "rules_count": 49,
+    "id": 1889509694,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889509694",
+    "sarif_id": "3666e792-c026-11f1-8eb6-f223b6eea423",
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "96a8536b7beb17b8f8bbde6ea8ef7c8b29f9f069",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/online-scm",
+    "error": "",
+    "created_at": "2026-10-04T19:02:37Z",
+    "results_count": 4,
+    "rules_count": 11,
+    "id": 1889508908,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889508908",
+    "sarif_id": "2975c954-c026-11f1-9ab3-d9e53d42ab76",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "96a8536b7beb17b8f8bbde6ea8ef7c8b29f9f069",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/local",
+    "error": "",
+    "created_at": "2026-10-04T19:02:36Z",
+    "results_count": 2,
+    "rules_count": 6,
+    "id": 1889508900,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889508900",
+    "sarif_id": "2975c954-c026-11f1-9ab3-d9e53d42ab76",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "96a8536b7beb17b8f8bbde6ea8ef7c8b29f9f069",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/branch-protection",
+    "error": "",
+    "created_at": "2026-10-04T19:02:36Z",
+    "results_count": 1,
+    "rules_count": 1,
+    "id": 1889508892,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889508892",
+    "sarif_id": "2975c954-c026-11f1-9ab3-d9e53d42ab76",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/pull/311/merge",
+    "commit_sha": "9b9649a82271ac15aedc9c5f484844b6fb1ef9bd",
+    "analysis_key": ".github/workflows/codeql.yml:analyze",
+    "environment": "{\"language\":\"python\"}",
+    "category": "/language:python",
+    "error": "",
+    "created_at": "2026-10-04T18:58:16Z",
+    "results_count": 0,
+    "rules_count": 49,
+    "id": 1889500300,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889500300",
+    "sarif_id": "8df953ba-c025-11f1-8e37-a79e8cb3cd47",
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/pull/311/merge",
+    "commit_sha": "9b9649a82271ac15aedc9c5f484844b6fb1ef9bd",
+    "analysis_key": ".github/workflows/osv-scanner.yml:scan",
+    "environment": "{}",
+    "category": ".github/workflows/osv-scanner.yml:scan",
+    "error": "",
+    "created_at": "2026-10-04T18:57:48Z",
+    "results_count": 0,
+    "rules_count": 0,
+    "id": 1889499332,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889499332",
+    "sarif_id": "7dc0c94c-c025-11f1-8b09-a27dce389590",
+    "tool": {
+      "name": "osv-scanner",
+      "guid": null,
+      "version": "2.3.5"
+    },
+    "deletable": true,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "e8c8fa5cdc3be7383b2d06b824b2b5eae8fb8dc9",
+    "analysis_key": ".github/workflows/codeql.yml:analyze",
+    "environment": "{\"language\":\"python\"}",
+    "category": "/language:python",
+    "error": "",
+    "created_at": "2026-10-04T18:25:39Z",
+    "results_count": 4,
+    "rules_count": 49,
+    "id": 1889429344,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889429344",
+    "sarif_id": "ffb268b6-c020-11f1-9300-3a53f1e92f90",
+    "tool": {
+      "name": "CodeQL",
+      "guid": null,
+      "version": "2.27.1"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "e8c8fa5cdc3be7383b2d06b824b2b5eae8fb8dc9",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/online-scm",
+    "error": "",
+    "created_at": "2026-10-04T18:25:14Z",
+    "results_count": 4,
+    "rules_count": 11,
+    "id": 1889428318,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889428318",
+    "sarif_id": "ef744f00-c020-11f1-8542-9f492d5b2480",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  },
+  {
+    "ref": "refs/heads/main",
+    "commit_sha": "e8c8fa5cdc3be7383b2d06b824b2b5eae8fb8dc9",
+    "analysis_key": ".github/workflows/scorecard.yml:analysis",
+    "environment": "{}",
+    "category": "supply-chain/local",
+    "error": "",
+    "created_at": "2026-10-04T18:25:13Z",
+    "results_count": 2,
+    "rules_count": 6,
+    "id": 1889428267,
+    "url": "https://api.github.com/repos/yolo-labz/anthropic-throttle-proxy/code-scanning/analyses/1889428267",
+    "sarif_id": "ef744f00-c020-11f1-8542-9f492d5b2480",
+    "tool": {
+      "name": "Scorecard",
+      "guid": null,
+      "version": "v5.3.0"
+    },
+    "deletable": false,
+    "warning": ""
+  }
+]
