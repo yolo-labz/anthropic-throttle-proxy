@@ -1,0 +1,183 @@
+{
+ "url": "https://api.xiaomimimo.com/v1/chat/completions",
+ "n": 8,
+ "concurrency": 4,
+ "wall_s": 8.7119,
+ "status_counts": {
+  "200": 8
+ },
+ "total_s": {
+  "p50": 3.5337,
+  "p95": 5.1751,
+  "max": 5.1751
+ },
+ "ttfb_s": {
+  "p50": 3.5336,
+  "p95": 5.175,
+  "max": 5.175
+ },
+ "records": [
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 11
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 5.1603,
+   "total_s": 5.1604,
+   "seq": 0
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 5.1457,
+   "total_s": 5.1458,
+   "seq": 1
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 7
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 5.175,
+   "total_s": 5.1751,
+   "seq": 2
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 3.9503,
+   "total_s": 3.9505,
+   "seq": 3
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 7
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 3.0466,
+   "total_s": 3.0467,
+   "seq": 4
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 1.9272,
+   "total_s": 1.9273,
+   "seq": 5
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 7,
+    "prompt_tokens": 14,
+    "total_tokens": 21,
+    "completion_tokens_details": {
+     "reasoning_tokens": 4
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 2.0056,
+   "total_s": 2.0057,
+   "seq": 6
+  },
+  {
+   "status": 200,
+   "retry_after": null,
+   "queue_timeout": null,
+   "oauth_entitlement": null,
+   "usage": {
+    "completion_tokens": 8,
+    "prompt_tokens": 14,
+    "total_tokens": 22,
+    "completion_tokens_details": {
+     "reasoning_tokens": 8
+    },
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   },
+   "ttfb_s": 3.5336,
+   "total_s": 3.5337,
+   "seq": 7
+  }
+ ],
+ "probe_id": "9c89a2d4da26",
+ "generated_at": "2026-10-10T01:12:34-0300"
+}
