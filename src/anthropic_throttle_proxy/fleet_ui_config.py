@@ -62,6 +62,10 @@ def _validate_defaults(defaults: Any) -> None:
         hidden = defaults["hidden_families"]
         if not isinstance(hidden, list) or any(not isinstance(f, str) for f in hidden):
             raise ValueError("defaults.hidden_families must be a list of strings")
+    if "hidden_subscriptions" in defaults:
+        hidden = defaults["hidden_subscriptions"]
+        if not isinstance(hidden, list) or any(not isinstance(s, str) or not s for s in hidden):
+            raise ValueError("defaults.hidden_subscriptions must be a list of non-empty strings")
     if "show_primary" in defaults and not isinstance(defaults["show_primary"], bool):
         raise ValueError("defaults.show_primary must be a boolean")
     if "workload" in defaults and (
@@ -142,6 +146,7 @@ def _parse(path: Path) -> dict[str, Any]:
             # accounts_hidden()/show_primary for every loaded config
             # while the load test only looked at subscriptions+emoji.
             "hidden_families": list(raw_defaults.get("hidden_families") or []),
+            "hidden_subscriptions": list(raw_defaults.get("hidden_subscriptions") or []),
             "show_primary": raw_defaults.get("show_primary", True),
             **({"workload": raw_defaults["workload"]} if "workload" in raw_defaults else {}),
         },

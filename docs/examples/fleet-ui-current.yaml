@@ -1,0 +1,43 @@
+# Display inventory, not routing, billing verification or model eligibility.
+# Live planType/plan observations win; do not hardcode tier/model captions here.
+subscriptions:
+  - id: codex:a
+    label: Codex A
+    emoji: 🌀
+    family: openai
+    lane: codex:a
+  - id: codex:c
+    label: Codex C
+    emoji: 🌀
+    family: openai
+    lane: codex:c
+  - id: zai:plan
+    label: Z.AI
+    emoji: ✨
+    family: chinese-frontier
+    lane: zai:plan
+  - id: copilot:personal
+    label: Copilot
+    emoji: 🐙
+    family: github
+    lane: copilot:personal
+  - id: mimo:plan
+    label: MiMo individual
+    provider: MiMo
+    family: chinese-frontier
+  - id: mimo:team-owner
+    label: MiMo Team owner
+    provider: MiMo
+    family: chinese-frontier
+  - id: mimo:team-b
+    label: MiMo Team B
+    provider: MiMo
+    family: chinese-frontier
+defaults:
+  hidden_families: [anthropic]
+  hidden_subscriptions:
+    - mimo:desktop-subscription
+    - deepseek
+    - codex:b
+    - mimo:team-unassigned
+  show_primary: false

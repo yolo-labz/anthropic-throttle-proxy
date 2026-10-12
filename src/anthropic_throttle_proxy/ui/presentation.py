@@ -32,8 +32,15 @@ def _hidden_families(defaults: dict) -> set[str]:
     return {_family(name) for name in defaults.get("hidden_families", [])}
 
 
-def _visible_subscriptions(rows: list[dict], hidden: set[str]) -> list[dict]:
-    return [row for row in rows if _family(row.get("family") or "") not in hidden]
+def _visible_subscriptions(
+    rows: list[dict], hidden: set[str], hidden_subscriptions: set[str]
+) -> list[dict]:
+    return [
+        row
+        for row in rows
+        if _family(row.get("family") or "") not in hidden
+        and not hidden_subscriptions.intersection({row.get("id"), row.get("lane_id")})
+    ]
 
 
 def _visible_lane_registry(lanes: dict, hidden: set[str]) -> list[dict]:
@@ -120,7 +127,9 @@ def apply_display(view: dict, config: dict) -> dict:
     result = deepcopy(view)
     defaults = config.get("defaults") or {}
     hidden = _hidden_families(defaults)
-    result["subscriptions"] = _visible_subscriptions(result.get("subscriptions", []), hidden)
+    result["subscriptions"] = _visible_subscriptions(
+        result.get("subscriptions", []), hidden, set(defaults.get("hidden_subscriptions", []))
+    )
     # Stable within each group: configured order remains authoritative.
     result["subscriptions"].sort(key=lambda row: bool(row.get("catalogue_only")))
     lanes = result.get("lanes") or {}
