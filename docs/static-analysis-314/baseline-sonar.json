@@ -1,0 +1,1041 @@
+{
+  "version": "26.3.0.120487",
+  "navigation": {
+    "canAdmin": true,
+    "globalPages": [
+      {
+        "key": "cayc/stats",
+        "name": "Focusing on new code"
+      }
+    ],
+    "settings": {
+      "sonar.lf.enableGravatar": "false",
+      "sonar.lf.gravatarServerUrl": "https://secure.gravatar.com/avatar/{EMAIL_MD5}.jpg?s={SIZE}&d=identicon",
+      "sonar.technicalDebt.ratingGrid": "0.05,0.1,0.2,0.5",
+      "sonar.developerAggregatedInfo.disabled": "false",
+      "sonar.ui.forceOldNavigation": "false",
+      "sonar.updatecenter.activate": "true"
+    },
+    "qualifiers": [
+      "TRK"
+    ],
+    "version": "26.3.0.120487",
+    "versionEOL": "2026-06-08",
+    "productionDatabase": true,
+    "instanceUsesDefaultAdminCredentials": false,
+    "edition": "community",
+    "needIssueSync": false,
+    "standalone": true,
+    "documentationUrl": "https://docs.sonarsource.com/sonarqube-community-build"
+  },
+  "plugins": {
+    "plugins": [
+      {
+        "key": "csharp",
+        "name": "C# Code Quality and Security",
+        "description": "Code Analyzer for C#",
+        "version": "10.19 (build 132793)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/csharp.html",
+        "issueTrackerUrl": "https://github.com/SonarSource/sonar-dotnet/issues",
+        "implementationBuild": "0cda5ff30c75dfb5592de4e28477eb7b8cafdec0",
+        "filename": "sonar-csharp-plugin-10.19.0.132793.jar",
+        "hash": "2b72d8af19f5d808f8401b7820178b86",
+        "sonarLintSupported": false,
+        "updatedAt": 1775661504591,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "cs"
+        ]
+      },
+      {
+        "key": "cayc",
+        "name": "Clean as You Code",
+        "description": "Demonstrates the value of Clean as You Code methodology",
+        "version": "2.6 (build 3665)",
+        "license": "GNU LGPL 3",
+        "editionBundled": false,
+        "homepageUrl": "https://docs.sonarsource.com/sonarqube-server/latest/extension-guide/developing-a-plugin/plugin-basics/sonar-cayc-plugin/",
+        "issueTrackerUrl": "https://sonarsource.atlassian.net/jira/software/c/projects/CAYCPLUGIN",
+        "implementationBuild": "55c5ecf4a75806328950c2526ed2660a69e5376b",
+        "filename": "sonar-cayc-plugin-2.6.0.3665.jar",
+        "hash": "9621b3acc1db2f6f8504fa95a774eb9e",
+        "sonarLintSupported": false,
+        "updatedAt": 1775661504588,
+        "type": "BUNDLED",
+        "requiredForLanguages": []
+      },
+      {
+        "key": "flex",
+        "name": "Flex Code Quality and Security",
+        "description": "Code Quality and Security for Flex / ActionScript",
+        "version": "2.16 (build 6009)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/flex.html",
+        "issueTrackerUrl": "http://jira.sonarsource.com/browse/SONARFLEX",
+        "implementationBuild": "0744c7c016f9a139d4440b200715bddef86da8d4",
+        "filename": "sonar-flex-plugin-2.16.0.6009.jar",
+        "hash": "3e33ee29959fd9f9e91f6368950bbb10",
+        "sonarLintSupported": false,
+        "documentationPath": "static/documentation.md",
+        "updatedAt": 1775661504592,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "flex"
+        ]
+      },
+      {
+        "key": "go",
+        "name": "Go Code Quality and Security",
+        "description": "Code Analyzer for Go",
+        "version": "1.33.0.5387",
+        "license": "GNU LGPL 3",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/go.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARGO",
+        "implementationBuild": "51480ad48b9197f7d397be98eb8ff6559fafc8bb",
+        "filename": "sonar-go-plugin-1.33.0.5387.jar",
+        "hash": "786685a42f0514dc8fef3a0307d77808",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504589,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "go"
+        ]
+      },
+      {
+        "key": "web",
+        "name": "HTML Code Quality and Security",
+        "description": "Code analyzer for HTML",
+        "version": "3.24 (build 7341)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/web.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARHTML",
+        "implementationBuild": "a14e4c2e9307b6649ee4ed1dae05cf4a8dea1461",
+        "filename": "sonar-html-plugin-3.24.0.7341.jar",
+        "hash": "54f399d6d57afab4b774ca254f128ef3",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504592,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "web",
+          "jsp",
+          "js",
+          "php"
+        ]
+      },
+      {
+        "key": "iac",
+        "name": "IaC Code Quality and Security",
+        "description": "Code Analyzer for IaC",
+        "version": "2.6.1.19203",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "https://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://docs.sonarqube.org/display/PLUG/Plugin+Library/iac/sonar-iac-plugin",
+        "issueTrackerUrl": "https://jira.sonarsource.com/projects/SONARIAC",
+        "filename": "sonar-iac-plugin-2.6.1.19203.jar",
+        "hash": "592caf803a7847546fe8f1b2b904c08f",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504590,
+        "type": "BUNDLED",
+        "requiredForLanguages": []
+      },
+      {
+        "key": "jacoco",
+        "name": "JaCoCo",
+        "description": "JaCoCo XML report importer",
+        "version": "1.4.0 (build 4946)",
+        "license": "GNU LGPL 3",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/JACOCO",
+        "implementationBuild": "6f20b27e834345cfd11e45e0425ca4b791ac9749",
+        "filename": "sonar-jacoco-plugin-1.4.0.4946.jar",
+        "hash": "03705f5bf527881a2b1d4e2b265eb5cc",
+        "sonarLintSupported": false,
+        "updatedAt": 1775661504589,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "groovy",
+          "java",
+          "scala",
+          "kotlin"
+        ]
+      },
+      {
+        "key": "javasymbolicexecution",
+        "name": "Java Advanced Code Quality Analyzer",
+        "description": "Symbolic execution analyzer for Java",
+        "version": "8.16.3 (build 1589)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/java.html/java-se/sonar-java-symbolic-execution-plugin",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/JAVASE",
+        "implementationBuild": "5adbbee8f35af5b7671a7e04b7fe9682187ee7c6",
+        "filename": "sonar-java-symbolic-execution-plugin-8.16.3.1589.jar",
+        "hash": "6153ff870f91a7bbdc1fc91d754d78a4",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504593,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "java",
+          "jsp"
+        ]
+      },
+      {
+        "key": "java",
+        "name": "Java Code Quality and Security",
+        "description": "Code Analyzer for Java",
+        "version": "8.24 (build 42567)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/java.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARJAVA",
+        "implementationBuild": "9444b205639f9873645b17975648d824b1780fc7",
+        "filename": "sonar-java-plugin-8.24.0.42567.jar",
+        "hash": "1672f018296864217cd3304e241ffb75",
+        "sonarLintSupported": true,
+        "documentationPath": "static/documentation.md",
+        "updatedAt": 1775661504591,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "java",
+          "jsp"
+        ]
+      },
+      {
+        "key": "javascript",
+        "name": "JavaScript/TypeScript/CSS Code Quality and Security",
+        "description": "Code Analyzer for JavaScript/TypeScript/CSS",
+        "version": "11.8 (build 37897)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "https://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/javascript.html",
+        "issueTrackerUrl": "https://github.com/SonarSource/sonar-javascript/issues",
+        "implementationBuild": "c22075fe2504fd2dcf76e69232fe1b55a8bd1542",
+        "filename": "sonar-javascript-plugin-11.8.0.37897-multi.jar",
+        "hash": "1d980d201ac7142a804352bade2082cc",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504590,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "css",
+          "web",
+          "js",
+          "ts",
+          "yaml"
+        ]
+      },
+      {
+        "key": "kotlin",
+        "name": "Kotlin Code Quality and Security",
+        "description": "Code Analyzer for Kotlin",
+        "version": "3.4.0 (build 8957)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "https://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "https://redirect.sonarsource.com/plugins/kotlin.html",
+        "issueTrackerUrl": "https://sonarsource.atlassian.net/browse/SONARKT",
+        "implementationBuild": "1283949fe4a89873c8414529bf4421403aa4bfeb",
+        "filename": "sonar-kotlin-plugin-3.4.0.8957.jar",
+        "hash": "0af8528afa667da13f01a7159c0a7e1d",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504589,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "kotlin"
+        ]
+      },
+      {
+        "key": "php",
+        "name": "PHP Code Quality and Security",
+        "description": "Analyzer for PHP Files",
+        "version": "3.54.0.15452",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "https://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "https://sonarsource.atlassian.net/browse/SONARPHP",
+        "issueTrackerUrl": "https://sonarsource.atlassian.net/browse/SONARPHP",
+        "filename": "sonar-php-plugin-3.54.0.15452.jar",
+        "hash": "72143cd96e8519cc4d6e59dcf41668dd",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504592,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "php"
+        ]
+      },
+      {
+        "key": "python",
+        "name": "Python Code Quality and Security",
+        "description": "Code Analyzer for Python",
+        "version": "5.18 (build 31561)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/python.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARPY",
+        "implementationBuild": "8d44684a869ce9601dfe0f9fc03882af9f5536b7",
+        "filename": "sonar-python-plugin-5.18.0.31561.jar",
+        "hash": "125ee203d0aa0f0683e331b73e28cd6b",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504586,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "py",
+          "ipynb"
+        ]
+      },
+      {
+        "key": "ruby",
+        "name": "Ruby Code Quality and Security",
+        "description": "Code Analyzer for Ruby",
+        "version": "1.22.0 (build 1992)",
+        "license": "SONAR Source-Available License v1.0",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/ruby.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARRUBY",
+        "implementationBuild": "0fc5990784a5d40863a40ce21cd4258a0c05e4a1",
+        "filename": "sonar-ruby-plugin-1.22.0.1992.jar",
+        "hash": "0c7930d3518d467393fc40ed093a8641",
+        "sonarLintSupported": true,
+        "documentationPath": "static/documentation.md",
+        "updatedAt": 1775661504590,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "ruby"
+        ]
+      },
+      {
+        "key": "rust",
+        "name": "Rust Code Quality and Security",
+        "version": "1.3.0.2446",
+        "organizationName": "SonarSource",
+        "editionBundled": false,
+        "filename": "sonar-rust-plugin-1.3.0.2446.jar",
+        "hash": "4df61e4a37960e053e9f6a0a391156e6",
+        "sonarLintSupported": false,
+        "updatedAt": 1775661504591,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "rust"
+        ]
+      },
+      {
+        "key": "sonarscala",
+        "name": "Scala Code Quality and Security",
+        "description": "Code Analyzer for Scala",
+        "version": "1.21.0 (build 1997)",
+        "license": "SONAR Source-Available License v1.0",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/scala.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARSCALA",
+        "implementationBuild": "1791ad800245ba133bce689b6650f95330c035eb",
+        "filename": "sonar-scala-plugin-1.21.0.1997.jar",
+        "hash": "f07eccd9f3215977a886a5a68fc223ff",
+        "sonarLintSupported": true,
+        "documentationPath": "static/documentation.md",
+        "updatedAt": 1775661504591,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "scala"
+        ]
+      },
+      {
+        "key": "text",
+        "name": "Text Code Quality and Security",
+        "description": "Analyzer for Text Files",
+        "version": "2.41.0.10709",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "https://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "https://sonarsource.atlassian.net/browse/SONARTEXT",
+        "issueTrackerUrl": "https://sonarsource.atlassian.net/browse/SONARTEXT",
+        "filename": "sonar-text-plugin-2.41.0.10709.jar",
+        "hash": "37596c66de462a7b614a23777fe6b081",
+        "sonarLintSupported": true,
+        "updatedAt": 1775661504593,
+        "type": "BUNDLED",
+        "requiredForLanguages": []
+      },
+      {
+        "key": "vbnet",
+        "name": "VB.NET Code Quality and Security",
+        "description": "Code Analyzer for VB.NET",
+        "version": "10.19 (build 132793)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/vbnet.html",
+        "issueTrackerUrl": "https://github.com/SonarSource/sonar-dotnet/issues",
+        "implementationBuild": "0cda5ff30c75dfb5592de4e28477eb7b8cafdec0",
+        "filename": "sonar-vbnet-plugin-10.19.0.132793.jar",
+        "hash": "1dabc5eed2699b0984868287c70e52d8",
+        "sonarLintSupported": false,
+        "updatedAt": 1775661504593,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "vbnet"
+        ]
+      },
+      {
+        "key": "xml",
+        "name": "XML Code Quality and Security",
+        "description": "Code Analyzer for XML",
+        "version": "2.16 (build 7616)",
+        "license": "SSALv1",
+        "organizationName": "SonarSource",
+        "organizationUrl": "http://www.sonarsource.com",
+        "editionBundled": false,
+        "homepageUrl": "http://redirect.sonarsource.com/plugins/xml.html",
+        "issueTrackerUrl": "https://jira.sonarsource.com/browse/SONARXML",
+        "implementationBuild": "3a1ad4a42cbdde65f7943b28e4ff3b86a2033f50",
+        "filename": "sonar-xml-plugin-2.16.0.7616.jar",
+        "hash": "f37d515b15e705952c18e5a0e3aa6dcf",
+        "sonarLintSupported": true,
+        "documentationPath": "static/documentation.md",
+        "updatedAt": 1775661504592,
+        "type": "BUNDLED",
+        "requiredForLanguages": [
+          "xml"
+        ]
+      }
+    ]
+  },
+  "branches": {
+    "branches": [
+      {
+        "name": "main",
+        "isMain": true,
+        "type": "BRANCH",
+        "status": {
+          "qualityGateStatus": "OK"
+        },
+        "analysisDate": "2026-10-04T19:19:32+0000",
+        "excludedFromPurge": true,
+        "branchId": "2bf1ca1d-9aaa-421e-9a46-f4eeed2a6108"
+      }
+    ]
+  },
+  "analyses": {
+    "paging": {
+      "pageIndex": 1,
+      "pageSize": 5,
+      "total": 73
+    },
+    "analyses": [
+      {
+        "key": "1a83ed53-44d3-4ffc-88dd-bf216d9eca95",
+        "date": "2026-10-04T19:19:32+0000",
+        "events": [
+          {
+            "key": "20736364-9521-4ac5-85de-3f29043246e1",
+            "category": "VERSION",
+            "name": "not provided"
+          }
+        ],
+        "projectVersion": "not provided",
+        "manualNewCodePeriodBaseline": false,
+        "revision": "3c64a535ea6902f00245173696d1005d5114eb0a",
+        "detectedCI": "Github Actions"
+      },
+      {
+        "key": "b97f2c1b-eec2-4531-806f-f9fba9f750b1",
+        "date": "2026-10-04T19:14:54+0000",
+        "events": [],
+        "projectVersion": "not provided",
+        "manualNewCodePeriodBaseline": false,
+        "revision": "7cee7ebc72b2da8d2cc9827a89172ac83fb664bf",
+        "detectedCI": "Github Actions"
+      },
+      {
+        "key": "654d74ab-4622-4ea3-80fb-69708a538c3c",
+        "date": "2026-10-04T19:04:10+0000",
+        "events": [],
+        "projectVersion": "not provided",
+        "manualNewCodePeriodBaseline": false,
+        "revision": "96a8536b7beb17b8f8bbde6ea8ef7c8b29f9f069",
+        "detectedCI": "Github Actions"
+      },
+      {
+        "key": "0673672d-fe49-4c44-96d3-c21ed755a9e8",
+        "date": "2026-10-04T18:59:36+0000",
+        "events": [],
+        "projectVersion": "not provided",
+        "manualNewCodePeriodBaseline": false,
+        "revision": "805037e674d37a90f01e990463fef249813e493e",
+        "detectedCI": "Github Actions"
+      },
+      {
+        "key": "9e884eef-96bc-4c4b-878a-8647d49a8657",
+        "date": "2026-10-04T18:27:01+0000",
+        "events": [],
+        "projectVersion": "not provided",
+        "manualNewCodePeriodBaseline": false,
+        "revision": "e8c8fa5cdc3be7383b2d06b824b2b5eae8fb8dc9",
+        "detectedCI": "Github Actions"
+      }
+    ]
+  },
+  "gate_status": {
+    "projectStatus": {
+      "status": "OK",
+      "conditions": [
+        {
+          "status": "OK",
+          "metricKey": "new_coverage",
+          "comparator": "LT",
+          "errorThreshold": "80",
+          "actualValue": "93.5"
+        },
+        {
+          "status": "OK",
+          "metricKey": "new_duplicated_lines_density",
+          "comparator": "GT",
+          "errorThreshold": "3",
+          "actualValue": "0.0"
+        },
+        {
+          "status": "OK",
+          "metricKey": "new_violations",
+          "comparator": "GT",
+          "errorThreshold": "0",
+          "actualValue": "0"
+        }
+      ],
+      "ignoredConditions": false,
+      "period": {
+        "mode": "PREVIOUS_VERSION",
+        "date": "2026-05-22T02:08:28+0000"
+      },
+      "caycStatus": "compliant"
+    }
+  },
+  "gate": {
+    "qualityGate": {
+      "name": "Sonar way",
+      "default": true
+    }
+  },
+  "measures": {
+    "component": {
+      "key": "yolo-labz_anthropic-throttle-proxy",
+      "name": "anthropic-throttle-proxy",
+      "qualifier": "TRK",
+      "measures": [
+        {
+          "metric": "coverage",
+          "value": "93.5",
+          "bestValue": false
+        },
+        {
+          "metric": "reliability_rating",
+          "value": "1.0",
+          "bestValue": true
+        },
+        {
+          "metric": "duplicated_lines_density",
+          "value": "0.0",
+          "bestValue": true
+        },
+        {
+          "metric": "code_smells",
+          "value": "0",
+          "bestValue": true
+        },
+        {
+          "metric": "security_rating",
+          "value": "1.0",
+          "bestValue": true
+        },
+        {
+          "metric": "new_coverage",
+          "period": {
+            "index": 1,
+            "value": "93.5",
+            "bestValue": false
+          }
+        },
+        {
+          "metric": "violations",
+          "value": "0",
+          "bestValue": true
+        },
+        {
+          "metric": "security_hotspots",
+          "value": "0",
+          "bestValue": true
+        },
+        {
+          "metric": "sqale_rating",
+          "value": "1.0",
+          "bestValue": true
+        },
+        {
+          "metric": "bugs",
+          "value": "0",
+          "bestValue": true
+        },
+        {
+          "metric": "lines_to_cover",
+          "value": "8260"
+        },
+        {
+          "metric": "uncovered_lines",
+          "value": "534",
+          "bestValue": false
+        },
+        {
+          "metric": "new_violations",
+          "period": {
+            "index": 1,
+            "value": "0",
+            "bestValue": true
+          }
+        },
+        {
+          "metric": "ncloc",
+          "value": "14434"
+        },
+        {
+          "metric": "vulnerabilities",
+          "value": "0",
+          "bestValue": true
+        },
+        {
+          "metric": "new_uncovered_lines",
+          "period": {
+            "index": 1,
+            "value": "500",
+            "bestValue": false
+          }
+        },
+        {
+          "metric": "line_coverage",
+          "value": "93.5",
+          "bestValue": false
+        },
+        {
+          "metric": "new_lines_to_cover",
+          "period": {
+            "index": 1,
+            "value": "7717"
+          }
+        },
+        {
+          "metric": "new_duplicated_lines_density",
+          "period": {
+            "index": 1,
+            "value": "0.0",
+            "bestValue": true
+          }
+        }
+      ]
+    }
+  },
+  "issues": {
+    "total": 0,
+    "p": 1,
+    "ps": 500,
+    "paging": {
+      "pageIndex": 1,
+      "pageSize": 500,
+      "total": 0
+    },
+    "effortTotal": 0,
+    "issues": [],
+    "components": [],
+    "facets": []
+  },
+  "new_issues": {
+    "total": 0,
+    "p": 1,
+    "ps": 500,
+    "paging": {
+      "pageIndex": 1,
+      "pageSize": 500,
+      "total": 0
+    },
+    "effortTotal": 0,
+    "issues": [],
+    "components": [],
+    "facets": []
+  },
+  "hotspots": {
+    "paging": {
+      "pageIndex": 1,
+      "pageSize": 500,
+      "total": 0
+    },
+    "hotspots": [],
+    "components": []
+  },
+  "files": {
+    "paging": {
+      "pageIndex": 1,
+      "pageSize": 500,
+      "total": 38
+    },
+    "baseComponent": {
+      "key": "yolo-labz_anthropic-throttle-proxy",
+      "name": "anthropic-throttle-proxy",
+      "qualifier": "TRK",
+      "tags": [],
+      "visibility": "private",
+      "isAiCodeFixEnabled": false
+    },
+    "components": [
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/__init__.py",
+        "name": "__init__.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/__init__.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/__init__.py",
+        "name": "__init__.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/__init__.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/__main__.py",
+        "name": "__main__.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/__main__.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/accounts.py",
+        "name": "accounts.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/accounts.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/body_shrink.py",
+        "name": "body_shrink.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/body_shrink.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/templates/partials/config.html",
+        "name": "config.html",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/templates/partials/config.html",
+        "language": "web"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/config.py",
+        "name": "config.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/config.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/copilot.py",
+        "name": "copilot.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/copilot.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/templates/dashboard.html",
+        "name": "dashboard.html",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/templates/dashboard.html",
+        "language": "web"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/fleet.py",
+        "name": "fleet.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/fleet.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/fleet_ui_config.py",
+        "name": "fleet_ui_config.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/fleet_ui_config.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/forwarding.py",
+        "name": "forwarding.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/forwarding.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/history.py",
+        "name": "history.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/history.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ingress.py",
+        "name": "ingress.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ingress.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/lanes.py",
+        "name": "lanes.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/lanes.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ledger.py",
+        "name": "ledger.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ledger.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/limiter.py",
+        "name": "limiter.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/limiter.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/metrics.py",
+        "name": "metrics.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/metrics.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/pacing.py",
+        "name": "pacing.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/pacing.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/presentation.py",
+        "name": "presentation.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/presentation.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/pricing.py",
+        "name": "pricing.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/pricing.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective.py",
+        "name": "prospective.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_admission.py",
+        "name": "prospective_admission.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_admission.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_calibration.py",
+        "name": "prospective_calibration.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_calibration.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_config.py",
+        "name": "prospective_config.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_config.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_lifecycle.py",
+        "name": "prospective_lifecycle.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_lifecycle.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_refusal.py",
+        "name": "prospective_refusal.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_refusal.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_runtime.py",
+        "name": "prospective_runtime.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_runtime.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/prospective_scope.py",
+        "name": "prospective_scope.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/prospective_scope.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/provider_registry.py",
+        "name": "provider_registry.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/provider_registry.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/proxy.py",
+        "name": "proxy.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/proxy.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ratelimit.py",
+        "name": "ratelimit.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ratelimit.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/routes.py",
+        "name": "routes.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/routes.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/routing.py",
+        "name": "routing.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/routing.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/signals.py",
+        "name": "signals.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/signals.py",
+        "language": "py"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/templates/partials/stats.html",
+        "name": "stats.html",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/templates/partials/stats.html",
+        "language": "web"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui/static/style.css",
+        "name": "style.css",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui/static/style.css",
+        "language": "css"
+      },
+      {
+        "key": "yolo-labz_anthropic-throttle-proxy:src/anthropic_throttle_proxy/ui_http.py",
+        "name": "ui_http.py",
+        "qualifier": "FIL",
+        "path": "src/anthropic_throttle_proxy/ui_http.py",
+        "language": "py"
+      }
+    ]
+  },
+  "new_code": {
+    "projectKey": "yolo-labz_anthropic-throttle-proxy",
+    "type": "PREVIOUS_VERSION",
+    "inherited": true
+  },
+  "observed_at": "2026-10-07T16:08:15-03:00",
+  "baseline_git_head": "3c64a535ea6902f00245173696d1005d5114eb0a",
+  "read_transport": "SSH ProxMox.Dokku -> loopback nginx (public URL returned HTTP 403)",
+  "gate_conditions": {
+    "name": "Sonar way",
+    "conditions": [
+      {
+        "id": "3445e454-f6e8-497a-8f8a-fa68a82bb23f",
+        "metric": "new_violations",
+        "op": "GT",
+        "error": "0",
+        "isCaycCondition": true
+      },
+      {
+        "id": "bd1635d6-bec5-436a-ab64-1e8eeea1a976",
+        "metric": "new_coverage",
+        "op": "LT",
+        "error": "80",
+        "isCaycCondition": true
+      },
+      {
+        "id": "7b6a49c1-141e-409b-8bb9-987c868acb2f",
+        "metric": "new_duplicated_lines_density",
+        "op": "GT",
+        "error": "3",
+        "isCaycCondition": true
+      },
+      {
+        "id": "2d93fc15-c051-437f-985e-5ec9e503e074",
+        "metric": "new_security_hotspots_reviewed",
+        "op": "LT",
+        "error": "100",
+        "isCaycCondition": true
+      }
+    ],
+    "isBuiltIn": true,
+    "actions": {
+      "rename": false,
+      "setAsDefault": false,
+      "copy": true,
+      "associateProjects": false,
+      "delete": false,
+      "manageConditions": false,
+      "delegate": false,
+      "manageAiCodeAssurance": false
+    },
+    "caycStatus": "compliant",
+    "isDefault": true,
+    "hasStandardConditions": false,
+    "hasMQRConditions": false,
+    "isAiCodeSupported": false
+  }
+}
