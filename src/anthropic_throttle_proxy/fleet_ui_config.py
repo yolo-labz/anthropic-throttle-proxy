@@ -44,6 +44,18 @@ def config_path() -> Path:
     return Path(os.environ.get(PATH_ENV) or DEFAULT_PATH)
 
 
+def _validate_hidden_lists(defaults: dict[str, Any]) -> None:
+    for key, non_empty in (("hidden_families", False), ("hidden_subscriptions", True)):
+        if key not in defaults:
+            continue
+        hidden = defaults[key]
+        if not isinstance(hidden, list) or any(
+            not isinstance(s, str) or (non_empty and not s) for s in hidden
+        ):
+            requirement = "non-empty strings" if non_empty else "strings"
+            raise ValueError(f"defaults.{key} must be a list of {requirement}")
+
+
 def _validate_defaults(defaults: Any) -> None:
     """Fail-closed check of the optional ``defaults`` block."""
     if not isinstance(defaults, dict):
@@ -58,10 +70,7 @@ def _validate_defaults(defaults: Any) -> None:
     # Validated only when present: a config written before these keys existed
     # must keep loading unchanged (backwards compatible). No default hide —
     # absent keys hide nothing.
-    if "hidden_families" in defaults:
-        hidden = defaults["hidden_families"]
-        if not isinstance(hidden, list) or any(not isinstance(f, str) for f in hidden):
-            raise ValueError("defaults.hidden_families must be a list of strings")
+    _validate_hidden_lists(defaults)
     if "show_primary" in defaults and not isinstance(defaults["show_primary"], bool):
         raise ValueError("defaults.show_primary must be a boolean")
     if "workload" in defaults and (
@@ -142,6 +151,7 @@ def _parse(path: Path) -> dict[str, Any]:
             # accounts_hidden()/show_primary for every loaded config
             # while the load test only looked at subscriptions+emoji.
             "hidden_families": list(raw_defaults.get("hidden_families") or []),
+            "hidden_subscriptions": list(raw_defaults.get("hidden_subscriptions") or []),
             "show_primary": raw_defaults.get("show_primary", True),
             **({"workload": raw_defaults["workload"]} if "workload" in raw_defaults else {}),
         },
