@@ -15,6 +15,7 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
+from prometheus_client.core import GaugeMetricFamily
 
 __all__ = [
     "CONTENT_TYPE_LATEST",
@@ -33,6 +34,7 @@ __all__ = [
     "M_UPSTREAM_RETRIES",
     "M_CENTRAL_STATUS",
     "M_AIMD_MAX",
+    "M_AIMD_FLOOR",
     "M_AIMD_SHRINKS",
     "M_AIMD_GROWS",
     "M_AIMD_OVERLOAD",
@@ -237,6 +239,45 @@ M_AIMD_MAX = Gauge(
     ["bearer"],
     registry=REGISTRY,
 )
+# Free-gate observability (19/10/2026 incident): the AIMD ceiling alone cannot
+# tell a *healthy* low ceiling from a *pinned* one. During the 18:57-19:06 go-gate
+# incident the shared bearer e574f38a shrank 8 -> 5 -> 3 -> 2 -> 1 in seven
+# minutes and then rested at the floor; every other request was refused 503
+# because the drain estimate (210-355 s) exceeded the 180 s client wait budget.
+# `anthropic_aimd_max_concurrent` showed `1` — a value that is equally correct
+# for a cold, idle bearer. Pairing it with the configured floor makes the
+# condition machine-checkable: `max_concurrent <= floor` sustained is a pin.
+#
+# The floor is read at SCRAPE time rather than set once, because
+# `THROTTLE_AIMD_MIN` is hot-tunable through the config-knob surface; a gauge
+# set at import would go stale the moment an operator raised the floor.
+M_AIMD_FLOOR_NAME = "anthropic_aimd_floor"
+
+
+class _AimdFloorCollector:
+    """Emit ``anthropic_aimd_floor{bearer}`` from live config at scrape time."""
+
+    def collect(self):  # noqa: D102 - prometheus Collector protocol
+        from . import config
+
+        floor = float(config.AIMD_MIN)
+        family = GaugeMetricFamily(
+            M_AIMD_FLOOR_NAME,
+            "Configured AIMD floor (THROTTLE_AIMD_MIN) the live ceiling must not "
+            "rest at or below; sustained max_concurrent <= floor is a pinned bearer.",
+            labels=["bearer"],
+        )
+        bearers = sorted(getattr(config, "bearer_limiters", {}) or {})
+        # Before the first request no bearer exists yet; publish the process-wide
+        # floor under the `_anon` slot so a watchdog has a value on a cold gate
+        # instead of an absent series (absent != healthy).
+        for bid in bearers or ["_anon"]:
+            family.add_metric([bid], floor)
+        yield family
+
+
+M_AIMD_FLOOR = _AimdFloorCollector()
+REGISTRY.register(M_AIMD_FLOOR)
 M_AIMD_SHRINKS = Counter(
     "anthropic_aimd_shrinks_total",
     "AIMD multiplicative-decrease events triggered by upstream rate pushback (429/503).",

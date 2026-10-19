@@ -1,0 +1,23 @@
+# Live run against the running gates (go :8770, zen :8774)
+# NOTE: the deployed store path throttler-gateway-0.1.0 predates this slice's
+#       metrics.py change, so /metrics has NO anthropic_aimd_floor series yet.
+#       The watchdog falls back to --floor for every bearer in that case.
+#       Once the metrics patch deploys, the per-bearer floor is read from the
+#       gate itself (go runs THROTTLE_AIMD_MIN=2, zen defaults to 1).
+
+$ python scripts/free-gate-watchdog.py --live --interval 5 --samples 3   # fallback floor 1
+free-gate-watchdog  mode=live
+  window   2026-10-19T19:34:41 -> 2026-10-19T19:34:51  (6 scrapes)
+  thresholds  pin>= 10 min at/below floor; pushback>= 3 / 5 min; 503>= 2 / min
+
+ALERTS: none
+
+$ python scripts/free-gate-watchdog.py --live --interval 5 --samples 3 --floor 2  # go-gate floor in force today
+free-gate-watchdog  mode=live
+  window   2026-10-19T19:34:51 -> 2026-10-19T19:35:01  (6 scrapes)
+  thresholds  pin>= 10 min at/below floor; pushback>= 3 / 5 min; 503>= 2 / min
+
+ALERTS: none
+
+$ curl -s http://127.0.0.1:8770/metrics | grep -E 'aimd_max_concurrent|aimd_floor'  # deployed = no floor series
+anthropic_aimd_max_concurrent{bearer="e574f38a"} 35.0

@@ -58,6 +58,7 @@ from aiohttp import web
 from . import __build__ as _build_identity
 from . import __version__ as _version
 from . import config
+from . import free_budget as _free_budget
 from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
@@ -2095,6 +2096,28 @@ async def _try_forward(
         attempt.meta = None
         attempt.captured = None
         return response, None
+    if _retry_after_blocks_path(request.path.lstrip("/")):
+        # Free-tier budget: ONE claim per upstream attempt, at the last point
+        # before transport (spec 335) — a request that queued, or died on the
+        # client, never spends a unit, while a request that goes out always
+        # counts. A refusal here is OUR minted policy, not pushback: the
+        # provenance flags below keep it out of retry, AIMD and fast-fail.
+        decision = _free_budget.admit_and_count(str(attempt.context.get("model", "")))
+        if not decision.allowed:
+            response = decision.response
+            log(
+                f"free-budget-refusal where=dispatch path={request.path.lstrip('/')} "
+                f"model={attempt.context.get('model')} reason={decision.reason} "
+                f"retry_after={decision.retry_after_s} budget={decision.budget_label} "
+                f"used={decision.used}/{decision.budget}"
+            )
+            attempt.local_prospective_refused = True
+            attempt.aimd_owned = True
+            attempt.final_status = response.status
+            attempt.response = response
+            attempt.meta = None
+            attempt.captured = None
+            return response, None
     from .prospective_refusal import local_refusal_response
     from .prospective_runtime import LocalProspectiveRefusal
 
@@ -3732,8 +3755,102 @@ def _plan_lane_siblings_have_headroom(now: float | None = None) -> bool:
     return seen
 
 
+def _unified_for_classification(
+    meta: Mapping[str, str] | None, bid: str
+) -> Mapping[str, object] | None:
+    """Unified windows for a pushback classification: the response, else a FRESH cache.
+
+    Split out of ``_budget_under_pressure`` (spec 334) so every consumer of the
+    pushback classification reads the same two sources in the same order. A
+    budget wall stops producing the header-bearing successes that refresh the
+    cache, so the cache is trusted ONLY while fresh (adversarial review
+    05/07/2026) — a stale sample must not keep a walled account classified as
+    concurrency.
+    """
+    unified = _parse_unified(meta)
+    if unified:
+        return unified
+    if not bid:
+        return None
+    # ``.get(bid)`` not ``[bid]``: never KeyError for a bearer not yet in
+    # bearer_state (defensive — the hot path initializes it first).
+    bstate = bearer_state.get(bid) or {}
+    cached = bstate.get("unified")
+    cached_at = bstate.get("unified_at")
+    if (
+        cached
+        and isinstance(cached_at, (int, float))
+        and (time.time() - cached_at) <= UNIFIED_CACHE_FRESH_S
+    ):
+        return cached
+    return None
+
+
+def _pushback_evidence(meta: Mapping[str, str] | None, bid: str = "") -> str:
+    """WHICH limit did this 429/503 come from? One classifier, one answer.
+
+    Returns ``"retry-after"`` | ``"budget"`` | ``"concurrency"`` | ``"unknown"``.
+
+    The whole point (spec 334) is that these four answers look identical on the
+    wire and have completely different correct reactions. Before this existed,
+    ``_budget_under_pressure`` answered a BOOLEAN and its fallback was
+    ``True`` — so a 429 with **no evidence at all** travelled as "budget", and
+    ``_aimd_apply_pushback``'s log labelled it ``budget/real-retry-after
+    pushback`` while shrinking the ceiling. The 19/10/2026 go-gate incident
+    prints exactly that: ``retry_after=0.0`` on every one of the four shrinks
+    that pinned bearer ``e574f38a`` at ``max_concurrent=1`` for 15.2 min. A
+    guess was wearing a measurement's label.
+
+    The classes, and what each is evidence of:
+
+    * ``retry-after`` — the upstream TOLD us when to come back. A hard limit.
+    * ``budget`` — positive evidence of an allowance wall: unified
+      ``allowed_warning``/``rejected``, a binding window at/over the warn line,
+      or a fresh, actually-measured plan meter at/over its line. The ceiling is
+      NOT the signal here; the window is already the gate.
+    * ``concurrency`` — positive evidence the windows are fine: unified
+      ``allowed`` below warn, or a measured plan meter with headroom. This is a
+      width signal and the one class where shrinking is honest.
+    * ``unknown`` — nothing was measured. Kept on the conservative (shrink)
+      path, because an opencode 429 with no headers IS that lane's rate limit
+      and must still shed width — but now it is LOGGED as unknown, so the next
+      incident does not have to re-derive that the old label was a guess.
+    """
+    if _parse_retry_after(meta) > 0:
+        return "retry-after"
+    unified = _unified_for_classification(meta, bid)
+    if unified:
+        statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
+        if any(s in ("allowed_warning", "rejected") for s in statuses):
+            return "budget"
+        binding = _binding_utilization(unified)
+        if binding is None or binding >= UTILIZATION_WARN:
+            return "budget"
+        return "concurrency"
+    # No unified headers on the response and no fresh cached sample. Without a
+    # configured plan meter there is nothing left to measure against, so this is
+    # genuinely UNKNOWN — not budget. With one, the fresh meter is real evidence.
+    #
+    # Declared free-tier budget (spec 335) joins here as POSITIVE evidence only:
+    # a lane whose own declared window is spent is at a budget wall whatever the
+    # headers say. Headroom is deliberately NOT promoted to "concurrency" — the
+    # declaration is an operator estimate and a vendor limit can be tighter, so
+    # an unmeasured 429 keeps its conservative answer.
+    if _free_budget.budget_blocks():
+        return "budget"
+    if not (config.PLAN_METER_LANE or config.METER_BINDINGS):
+        return "unknown"
+    return "concurrency" if _plan_lane_has_headroom(bid) else "budget"
+
+
 def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> bool:
     """True when the OAuth unified windows say a 429 is BUDGET, not concurrency.
+
+    Thin wrapper over :func:`_pushback_evidence` (spec 334). It keeps its
+    historical "budget **or unknown**" answer on purpose: every existing caller
+    uses it to choose the conservative pause, and an unmeasured 429 must stay
+    conservative there. The AIMD site, which needs to tell the two apart, reads
+    the evidence class directly instead.
 
     Anthropic returns 429-without-Retry-After for two very different reasons:
     a 5h/7d budget soft-throttle, and a per-account concurrency / rate cap.
@@ -3757,45 +3874,7 @@ def _budget_under_pressure(meta: Mapping[str, str] | None, bid: str = "") -> boo
     response nor the cache has unified data (API-key traffic) → assume budget so
     the historical conservative backoff is preserved.
     """
-    unified = _parse_unified(meta)
-    if not unified and bid:
-        # ``.get(bid)`` not ``[bid]``: never KeyError if classification runs for
-        # a bearer not yet in bearer_state (defensive — the hot path always
-        # initializes it first, but the helper must not assume that).
-        bstate = bearer_state.get(bid) or {}
-        cached = bstate.get("unified")
-        cached_at = bstate.get("unified_at")
-        # Trust the cache ONLY while fresh: a budget wall stops producing the
-        # header-bearing successes that refresh it, so a stale sample must NOT
-        # keep a walled account classified as concurrency (adversarial review
-        # 05/07/2026). Stale/absent → fall through to the conservative default.
-        if (
-            cached
-            and isinstance(cached_at, (int, float))
-            and (time.time() - cached_at) <= UNIFIED_CACHE_FRESH_S
-        ):
-            unified = cached
-    if not unified:
-        # No budget headers on the response AND no fresh cached sample. Two very
-        # different situations collapse into this branch, so consult the one
-        # budget source that is not a header: the lane report. A plan lane whose
-        # meter is fresh and far from its allowance cannot be at a budget wall —
-        # its 429 is concurrency/rate. (MiMo Token Plan, 23/09/2026: headerless
-        # 429 at ~6 % of an 82 B-credit month was read as budget, bought a 30 s
-        # synthetic hold and collapsed the lane to one slot under fleet load.)
-        # With a validated binding the read is EXACT-bearer (this bearer's own
-        # row only — never a sibling's headroom); without one it stays scoped
-        # to every same-provider allowance in play (see
-        # ``_plan_lane_has_headroom``). Unknown, stale or absent meter still
-        # means budget.
-        return not _plan_lane_has_headroom(bid)
-    statuses = (unified.get("status"), unified.get("status_5h"), unified.get("status_7d"))
-    if any(s in ("allowed_warning", "rejected") for s in statuses):
-        return True
-    binding = _binding_utilization(unified)
-    if binding is None:
-        return True
-    return binding >= UTILIZATION_WARN
+    return _pushback_evidence(meta, bid) in ("budget", "unknown")
 
 
 def _pushback_pause(meta: Mapping[str, str] | None, bid: str = "") -> tuple[float, bool]:
@@ -4052,19 +4131,44 @@ async def _aimd_apply_pushback(
     (``allowed_warning``/``rejected``/binding util ≥ warn). Sustained overload
     climbs util, which flips this gate True and re-arms shrink.
     """
-    is_concurrency_429 = retry_after <= 0 and not _budget_under_pressure(attempt.meta, bid)
+    evidence = _pushback_evidence(attempt.meta, bid)
     pause, synthetic_pause = _note_retry_after_if_set(limiter, attempt.meta, bid)
     new_max: int | None = None
-    if is_concurrency_429:
+    if evidence == "concurrency":
         label, reason = "concurrency-429", "no shrink — windows allowed"
     else:
+        # `retry-after`, `budget` and `unknown` all still shrink.
+        #
+        # `unknown` (nothing measured at all) is the class spec 334 considered
+        # sparing and deliberately does NOT. It is exactly the 19/10/2026 go-gate
+        # case — live `__throttle/health` proves `unified: null` on that upstream,
+        # and with no PLAN_METER_LANE and no METER_BINDINGS `_plan_lane_has_headroom`
+        # can only answer True, so `Headerless 429 == budget` there BY CONSTRUCTION
+        # (`docs/incidents/2026-10-19-free-lane-collapse.md` R2). The free-tier
+        # research measured those 429s as neither concurrency nor budget (they land
+        # at inflight 0-2, and free models do not count toward budgets at all), so
+        # the case for sparing the ceiling is genuinely good.
+        #
+        # But `unknown` is not a provider — it is the ABSENCE of evidence, shared
+        # with the zai quota-gate and spoofed-queue-timeout paths, and three
+        # regression pins require those to keep shrinking
+        # (test_zai_concurrency_1302_still_triggers_aimd_shrink,
+        # test_spoofed_queue_timeout_header_is_stripped_and_still_shrinks,
+        # test_sibling_tier_verdict_is_authoritative_both_ways). Narrowing that
+        # means revisiting those pins one at a time with per-gate meter evidence —
+        # not widening one branch here.
+        #
+        # What this change DOES fix is the label: the incident's four lines read
+        # `aimd-shrink … (budget/real-retry-after pushback)`, which made a guess
+        # look like a measurement and cost the next reader an hour of forensics.
+        # It now carries `evidence=unknown`.
         new_max = await limiter.shrink()
         M_AIMD_SHRINKS.labels(bearer=bid, status=str(final_status)).inc()
         if new_max is not None:
             M_AIMD_MAX.labels(bearer=bid).set(new_max)
-        label, reason = "aimd-shrink", "budget/real-retry-after pushback"
+        label, reason = "aimd-shrink", f"{evidence} pushback"
     log(
-        f"{label} bid={bid} status={final_status} "
+        f"{label} bid={bid} status={final_status} evidence={evidence} "
         f"max_concurrent={new_max if new_max is not None else limiter.max_concurrent} "
         f"retry_after={retry_after} pause={pause} "
         f"synthetic_pause={synthetic_pause} ({reason})"
@@ -4867,6 +4971,7 @@ async def _pre_dispatch_gate(
     cid: str,
     bid: str,
     headers: dict[str, str],
+    model: str = "",
     probe_lease: dict[str, str],
     finish_probe: _FinishProbe,
     try_reroute: _TryReroute,
@@ -4883,6 +4988,21 @@ async def _pre_dispatch_gate(
     """
     queue_mode, hard_max = _effective_admission(bid)
     limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
+    if _retry_after_blocks_path(path):
+        # Free-tier budget consult BEFORE the slot phase (spec 335): a request
+        # that cannot be dispatched inside this window must fail fast here, not
+        # buy a 180 s queue wait first. Generation paths only — probes/health
+        # stay free, exactly as Retry-After pauses already do. No unit is
+        # claimed (that happens immediately before transport), and the refusal
+        # never reaches AIMD: admission is upstream of pushback by construction.
+        decision = _free_budget.admit(model)
+        if not decision.allowed:
+            log(
+                f"free-budget-refusal where=pre-dispatch path={path} model={model} "
+                f"reason={decision.reason} retry_after={decision.retry_after_s} "
+                f"budget={decision.budget_label} used={decision.used}/{decision.budget}"
+            )
+            return limiter, bid, headers, decision.response, "answer"
     if not _meter_binding_allows(bid):
         # A fresh sibling may be temporarily unselectable while its cold probe
         # runs. Reuse the bounded alternate-probe wait before refusing this
@@ -5327,6 +5447,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
             cid=cid,
             bid=bid,
             headers=headers,
+            model=model_label,
             probe_lease=probe_lease,
             finish_probe=finish_probe,
             try_reroute=try_retry_after_reroute,
