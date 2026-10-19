@@ -26,38 +26,19 @@ exercise the production decision path without an HTTP round trip.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator
 
 import pytest
+from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, isolate_free_lane
 
-from anthropic_throttle_proxy import config, limiter, pacing
-
-# Live free-lane values (19/10/2026): warm start 12, floor 2, hard ceiling 1024.
-FREE_HARD_CEILING = 1024
-FREE_INITIAL = 12
-FREE_FLOOR = 2
+from anthropic_throttle_proxy import config, limiter
 
 
 @pytest.fixture(autouse=True)
 async def _isolate(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[None]:
-    """Free-lane AIMD knobs + a clean registry, on this test's own loop."""
-    config.bearer_limiters.clear()
-    config.bearer_state.clear()
-    monkeypatch.setattr(config, "MAX_CONCURRENT", FREE_HARD_CEILING, raising=True)
-    monkeypatch.setattr(config, "QUEUE_MODE", "off", raising=True)
-    monkeypatch.setattr(config, "AIMD_MIN", FREE_FLOOR, raising=True)
-    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", FREE_INITIAL, raising=True)
-    monkeypatch.setattr(config, "AIMD_DECREASE", 0.7, raising=True)
-    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 30.0, raising=True)
-    monkeypatch.setattr(config, "AIMD_RAMP_AFTER", 10, raising=True)
-    monkeypatch.setattr(config, "AIMD_RAMP_AFTER_FAST", 5, raising=True)
-    monkeypatch.setattr(config, "AIMD_STORM_THRESHOLD", 3, raising=True)
-    limiter.set_lock(asyncio.Lock())
-    pacing.set_lock(asyncio.Lock())
-    yield
-    config.bearer_limiters.clear()
-    config.bearer_state.clear()
+    """Free-lane AIMD knobs + a clean registry (shared helper, spec 333)."""
+    async with isolate_free_lane(monkeypatch, queue_mode="off"):
+        yield
 
 
 def _free_lane(

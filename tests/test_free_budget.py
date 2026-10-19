@@ -13,6 +13,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from _free_lane_env import patch_admission
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -179,19 +180,18 @@ async def _gate(
     remote = web.Application()
     remote.router.add_post("/v1/chat/completions", upstream)
     async with TestServer(remote) as origin:
-        for key, value in {
-            "UPSTREAM": str(origin.make_url("")).rstrip("/"),
-            "CENTRAL_URL": "",
-            "QUEUE_MODE": "fair",
-            "MAX_CONCURRENT": 4,
-            "AIMD_INITIAL_CONCURRENT": 4,
-            "PRIORITY_RESERVE_SLOTS": 0,
-            "RATE_PUSHBACK_RETRIES": 0,
-            "MIN_DISPATCH_GAP_S": 0,
-            "QUEUE_MAX_WAIT_S": 3,
-        }.items():
-            monkeypatch.setattr(config, key, value)
-        monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
+        patch_admission(
+            monkeypatch,
+            UPSTREAM=str(origin.make_url("")).rstrip("/"),
+            CENTRAL_URL="",
+            QUEUE_MODE="fair",
+            MAX_CONCURRENT=4,
+            AIMD_INITIAL_CONCURRENT=4,
+            PRIORITY_RESERVE_SLOTS=0,
+            RATE_PUSHBACK_RETRIES=0,
+            MIN_DISPATCH_GAP_S=0,
+            QUEUE_MAX_WAIT_S=3,
+        )
         declare(models=budget_models)
         results: list[SimpleNamespace] = []
         async with TestClient(TestServer(proxy_admission_app)) as client:
@@ -294,9 +294,7 @@ async def test_budget_pushback_never_drives_the_ceiling_below_the_floor(monkeypa
     assert seen[-1] == 3, f"must settle AT the floor, never below it: {seen}"
 
 
-async def test_budget_burst_is_capped_at_the_declared_allowance(
-    monkeypatch, proxy_admission_app
-):
+async def test_budget_burst_is_capped_at_the_declared_allowance(monkeypatch, proxy_admission_app):
     """Whatever seam refuses, the invariant is one: never spend past the line.
 
     Six arrivals against a declared allowance of 2 must produce at
