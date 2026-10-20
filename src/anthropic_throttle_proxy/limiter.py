@@ -812,14 +812,38 @@ class FairBearerLimiter:
         """
         return _FairSlotContext(self, client_id, priority, max_wait)
 
+    def aimd_floor(self) -> int:
+        """The lowest live ceiling AIMD is allowed to leave this lane resting at.
+
+        THE FLOOR IS A RESTING PLACE, NOT A DEAD END (spec 334, 19/10/2026 go-gate
+        incident). ``AIMD_MIN`` is the operator's declaration of the widest width
+        this lane can be trusted with even when every pushback says "less" — it
+        is the upstream-safe floor, not a target.
+
+        The hard ceiling wins whenever it sits BELOW the floor:
+        ``_retune_limiter_hard_max`` can hot-tune ``hard_max`` under ``AIMD_MIN``
+        (a ``/ui/config`` ``CLAUDE_API_THROTTLE_MAX`` drop, which clamps the live
+        cap down), and a bare ``max(AIMD_MIN, ...)`` then RAISED the cap back
+        above the ceiling it had just been clamped to — a 429 turning into a
+        capacity grant, with ``grow()`` unable to correct it because it only
+        ramps below ``hard_max``. Hard ceiling wins: the floor is a policy
+        default. Unchanged whenever ``AIMD_MIN <= hard_max``.
+
+        Named rather than inlined so every consumer — ``shrink``, the floor-dwell
+        ramp below and any future gate — answers "where is the floor" the same
+        way. A floor computed twice is a floor that drifts.
+        """
+        return min(self.hard_max, config.AIMD_MIN)
+
     async def shrink(self) -> int | None:
         """AIMD multiplicative-decrease. Called on upstream rate pushback (429/503).
 
-        Multiplies the live ceiling by ``AIMD_DECREASE`` (floor ``AIMD_MIN``),
-        records the throttle time, and resets the success counter. Always cuts
-        by at least one slot so a fractional decrease can't stall at the same
-        value. Already-inflight requests are NOT killed — they finish naturally
-        and ``inflight`` drops until it sinks below the new ceiling.
+        Multiplies the live ceiling by ``AIMD_DECREASE`` (floor
+        :meth:`aimd_floor`), records the throttle time, and resets the success
+        counter. Always cuts by at least one slot so a fractional decrease can't
+        stall at the same value. Already-inflight requests are NOT killed — they
+        finish naturally and ``inflight`` drops until it sinks below the new
+        ceiling.
 
         Returns the new ceiling, or ``None`` in ``off`` mode (no AIMD signal).
         """
@@ -830,7 +854,7 @@ class FairBearerLimiter:
             return None
         async with self._lock:
             scaled = int(self.max_concurrent * config.AIMD_DECREASE)
-            new_max = max(config.AIMD_MIN, min(scaled, self.max_concurrent - 1))
+            new_max = max(self.aimd_floor(), min(scaled, self.max_concurrent - 1))
             self.max_concurrent = new_max
             self._last_throttle_at = time.time()
             self._successes_since_throttle = 0
@@ -1013,7 +1037,7 @@ class FairBearerLimiter:
         return min(config.AIMD_RAMP_AFTER_FAST, slow)
 
     def _may_grow(self) -> bool:
-        """True when all four AIMD additive-increase guards currently hold.
+        """True when an AIMD additive-increase guard currently holds.
 
         Caller must hold ``self._lock``. Guards (all required): enough
         consecutive successes since the last shrink (threshold is adaptive —
@@ -1021,12 +1045,67 @@ class FairBearerLimiter:
         cooldown has elapsed; no open Retry-After window (we don't ramp while
         the server's explicit window is still open, even past the cooldown);
         and we are below the operator's hard ceiling.
+
+        THE FLOOR-DWELL RAMP (spec 334). Above the floor, recovery is paid in
+        successes — the ramp should learn from evidence. AT the floor that is a
+        deadlock, not a policy: the ceiling sets throughput, and throughput is
+        exactly the currency the ramp is paid in, so lowering the ceiling lowers
+        the recovery rate. On the go gate the arithmetic was terminal — floor 1
+        with ``service_s≈173`` earns one slot per ``AIMD_RAMP_AFTER_FAST``
+        successes ≈ 14.5 min, while a 429 arrived sooner, so the lane rested
+        15.2 min at the floor and every other arrival was refused a 503.
+
+        The gate is DWELL, not "at the floor". A lane that just reached the floor
+        under sustained pushback keeps the full success-count ramp — that is the
+        anti-oscillation policy ``tests/test_aimd_free_lane_policy.py`` pins, and
+        it is right: immediately re-probing a wall we just hit wastes the
+        shrink. But a lane that has SAT at the floor with no further pushback
+        cannot be told "keep waiting" by evidence it is structurally unable to
+        produce. So after ``AIMD_FLOOR_DWELL_S`` of quiet at the floor, one clean
+        success earns one slot.
+
+        Two deliberate choices:
+        * dwell is derived from the existing cooldown (``2 x AIMD_BACKOFF_S``)
+          rather than a new knob — it is one generation of patience, and it is
+          longer than the cooldown the sibling's pin elapses (31 s), so both
+          policies hold. It is read from ``config`` on every call, not frozen at
+          import, so a hot-tune of ``AIMD_BACKOFF_S`` moves the dwell with it.
+          ``ponytail:`` promote to a config knob only if an operator ever needs
+          to tune it independently.
+        * "resting at the floor" is the same predicate the free-gate watchdog
+          alerts on (``pinned``: ceiling <= floor for N minutes), so the fix and
+          its detector agree on what "pinned" means instead of drifting apart.
+
+        Above the floor nothing changes, and a floor pinned by ``hard_max``
+        still cannot grow (``max_concurrent < hard_max``).
+
+        COLD START IS NOT A RECOVERY. ``_last_throttle_at`` is ``0.0`` until the
+        first shrink, so ``now - self._last_throttle_at`` is a huge number on a
+        fresh limiter and the dwell would read as "has rested here forever".
+        On a lane whose ``AIMD_MIN`` equals its warm-start cap that made a
+        never-throttled bearer earn a free +1 on its first 2xx — a ramp with no
+        pushback to recover from. ``_last_throttle_at > 0`` is the difference
+        between "rested back down to the floor" and "never left it".
         """
         now = time.time()
+        cooled = now - self._last_throttle_at >= config.AIMD_BACKOFF_S
+        quiet = now >= self._retry_after_until
+        if (
+            self._last_throttle_at > 0.0
+            and cooled
+            and quiet
+            and self.max_concurrent < self.hard_max
+            and self.max_concurrent <= self.aimd_floor()
+            and now - self._last_throttle_at >= 2 * config.AIMD_BACKOFF_S
+        ):
+            # At the floor AND rested there: the normal success-count guard is
+            # replaced, not OR'd with, so the lane still has to show ONE clean
+            # request before it is widened again.
+            return self._successes_since_throttle >= 1
         return (
             self._successes_since_throttle >= self._effective_ramp_after(now)
-            and now - self._last_throttle_at >= config.AIMD_BACKOFF_S
-            and now >= self._retry_after_until
+            and cooled
+            and quiet
             and self.max_concurrent < self.hard_max
         )
 

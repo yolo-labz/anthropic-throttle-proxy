@@ -1,0 +1,9 @@
+# Control: same window on the zen gate (:8774) — healthy, must be silent
+
+$ python scripts/free-gate-watchdog.py --replay $EV/zen-gate-same-window-journal.log --floor 1
+free-gate-watchdog  mode=replay
+  window   2026-10-19T18:48:58 -> 2026-10-19T19:06:07  (13 scrapes)
+  journal extras: {'queue-depth-reject': 0.0, 'rate-pushback-retry': 1.0}
+  thresholds  pin>= 10 min at/below floor; pushback>= 3 / 5 min; 503>= 2 / min
+
+ALERTS: none

@@ -1,0 +1,31 @@
+# Demo run — replay of the go-gate incident (19/10/2026 18:45-19:12 BRT)
+
+$ date; date -u
+Mon Oct 19 07:33:59 PM -03 2026
+Mon Oct 19 10:33:59 PM UTC 2026
+
+$ python scripts/free-gate-watchdog.py --replay $EV/go-gate-incident-journal.log --floor 1 --show-series
+free-gate-watchdog  mode=replay
+  window   2026-10-19T18:45:13 -> 2026-10-19T19:11:46  (195 scrapes)
+  ceiling timeline:
+    2026-10-19T18:46:48  bearer=e574f38a  ceiling=1
+    2026-10-19T18:48:59  bearer=e574f38a  ceiling=12
+    2026-10-19T18:49:02  bearer=e574f38a  ceiling=8
+    2026-10-19T18:50:24  bearer=e574f38a  ceiling=5
+    2026-10-19T18:51:44  bearer=e574f38a  ceiling=3
+    2026-10-19T18:53:15  bearer=e574f38a  ceiling=2
+    2026-10-19T18:53:48  bearer=e574f38a  ceiling=1
+    2026-10-19T19:06:37  bearer=_anon  ceiling=12
+    2026-10-19T19:09:03  bearer=e574f38a  ceiling=2
+    2026-10-19T19:10:06  bearer=e574f38a  ceiling=12
+  journal extras: {'queue-depth-reject': 8.0, 'rate-pushback-retry': 8.0}
+  thresholds  pin>= 10 min at/below floor; pushback>= 3 / 5 min; 503>= 2 / min
+
+ALERTS (4):
+  2026-10-19T18:50:24  WARNING  pushback  bearer=e574f38a  3 budget-pushback AIMD shrink(s) in 3.0 min (threshold 3 / 5 min) — upstream free-tier budget pressure, ceiling about to collapse
+  2026-10-19T18:55:49  WARNING  pushback  bearer=e574f38a  3 budget-pushback AIMD shrink(s) in 4.1 min (threshold 3 / 5 min) — upstream free-tier budget pressure, ceiling about to collapse
+  2026-10-19T19:02:30  CRITICAL qtimeout  bearer=e574f38a  2 queue-wait-timeout 503(s) in 0.07 min (threshold 2/min) — clients are already being refused; pi panes will enter retry loops
+  2026-10-19T19:03:48  CRITICAL pinned    bearer=e574f38a  ceiling 1 <= floor 1 for 15.2 min (2026-10-19T18:53:48 -> 2026-10-19T19:09:03; dwell crossed 2026-10-19T19:03:48) — AIMD is pinned; a lane this slow cannot drain its own queue and every other request will 503
+
+PENDING / near-miss (1):
+  2026-10-19T18:46:48  pinned    bearer=e574f38a  ceiling 1 <= floor 1 for 2.2 min — below the 10 min dwell, not an alert
