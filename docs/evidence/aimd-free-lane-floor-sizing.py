@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from anthropic_throttle_proxy.limiter import _compute_drain  # noqa: E402
+from anthropic_throttle_proxy.limiter import _compute_drain
 
 GENERATION_S = 200.0  # observed free-lane generation, p90-ish (171-303 s band)
 MAX_WAIT_S = 180.0  # pi's queue_max_wait (client contract)

@@ -257,7 +257,8 @@ M_AIMD_FLOOR_NAME = "anthropic_aimd_floor"
 class _AimdFloorCollector:
     """Emit ``anthropic_aimd_floor{bearer}`` from live config at scrape time."""
 
-    def collect(self):  # noqa: D102 - prometheus Collector protocol
+    def collect(self):
+        """Prometheus Collector protocol entrypoint (gauge/counter snapshots)."""
         from . import config
 
         floor = float(config.AIMD_MIN)

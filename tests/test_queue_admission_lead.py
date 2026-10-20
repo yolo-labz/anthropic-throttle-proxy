@@ -48,7 +48,7 @@ async def test_shrink_never_rests_below_the_floor() -> None:
 async def test_aimd_floor_yields_to_the_operator_hard_ceiling() -> None:
     """A hot-tuned ceiling below AIMD_MIN must not be re-inflated by a 429."""
     lim = _lane()
-    await limiter._retune_limiter_hard_max("e574f38a", lim, 1)  # noqa: SLF001
+    await limiter._retune_limiter_hard_max("e574f38a", lim, 1)
     assert lim.aimd_floor() == 1
     for _ in range(5):
         assert await lim.shrink() == 1
@@ -68,7 +68,7 @@ async def test_lane_resting_at_the_floor_regains_a_slot_after_dwell() -> None:
     for _ in range(8):
         await lim.shrink()  # drive to the floor the incident's way
     assert lim.max_concurrent == FREE_FLOOR
-    lim._last_throttle_at = time.time() - (2 * config.AIMD_BACKOFF_S + 1.0)  # noqa: SLF001
+    lim._last_throttle_at = time.time() - (2 * config.AIMD_BACKOFF_S + 1.0)
 
     # `grow()` books the 2xx it is reporting, so the first call IS the one clean
     # success: it earns exactly one slot, not several.
@@ -93,7 +93,7 @@ async def test_cold_start_bearer_gets_no_free_ramp(
     # Warm start sits ON the floor, which is the shape that made the dwell ramp
     # dangerous: "rested here forever" and "never left" look identical.
     assert lim.max_concurrent == lim.aimd_floor() == 1
-    assert lim._last_throttle_at == 0.0  # noqa: SLF001
+    assert lim._last_throttle_at == 0.0
     assert await lim.grow() is None
     assert lim.max_concurrent == 1
 
@@ -109,8 +109,8 @@ async def test_cooldown_alone_is_not_enough_at_the_floor() -> None:
     lim = _lane()
     lim.max_concurrent = FREE_FLOOR
     await lim.shrink()
-    lim._last_throttle_at = time.time() - (config.AIMD_BACKOFF_S + 1.0)  # noqa: SLF001
-    assert lim._successes_since_throttle == 0  # noqa: SLF001
+    lim._last_throttle_at = time.time() - (config.AIMD_BACKOFF_S + 1.0)
+    assert lim._successes_since_throttle == 0
     assert await lim.grow() is None  # cooled, but has not RESTED at the floor
 
 
@@ -119,8 +119,8 @@ async def test_open_retry_after_window_blocks_the_dwell_ramp() -> None:
     lim = _lane()
     lim.max_concurrent = FREE_FLOOR
     await lim.shrink()
-    lim._last_throttle_at = time.time() - (2 * config.AIMD_BACKOFF_S + 1.0)  # noqa: SLF001
-    lim._retry_after_until = time.time() + 60.0  # noqa: SLF001
+    lim._last_throttle_at = time.time() - (2 * config.AIMD_BACKOFF_S + 1.0)
+    lim._retry_after_until = time.time() + 60.0
     assert await lim.grow() is None  # rested, but inside the upstream hold
     assert lim.max_concurrent == FREE_FLOOR
 

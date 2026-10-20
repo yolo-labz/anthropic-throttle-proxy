@@ -22,7 +22,7 @@ _REPO_SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 if _REPO_SRC.is_dir() and str(_REPO_SRC) not in sys.path:
     sys.path.insert(0, str(_REPO_SRC))
 
-from anthropic_throttle_proxy.free_gate_watchdog import main  # noqa: E402
+from anthropic_throttle_proxy.free_gate_watchdog import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -51,6 +51,15 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S"]
 ignore = ["S101"]  # asserts in tests
 
+[tool.ruff.lint.per-file-ignores]
+# Path-bootstrap scripts import after sys.path setup by design.
+"docs/evidence/*" = ["E402"]
+"scripts/*" = ["E402"]
+"specs/*/guard_tests/*" = ["E402"]
+# The watchdog polls the local gate metrics endpoints; urlopen is the stdlib
+# client and the URL is operator config, never request input.
+"src/anthropic_throttle_proxy/free_gate_watchdog.py" = ["S310"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

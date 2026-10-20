@@ -19,7 +19,7 @@ import pytest
 # src/anthropic_throttle_proxy/free_gate_policy.py.
 sys.path.insert(0, str(Path(__file__).parent))
 
-from free_gate_policy import (  # noqa: E402
+from free_gate_policy import (
     FreeGateSpillover,
     GateHealth,
     SpillDecision,

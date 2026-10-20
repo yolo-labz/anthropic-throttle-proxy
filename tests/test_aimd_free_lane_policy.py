@@ -47,7 +47,7 @@ def _elapse_cooldown(lim: limiter.FairBearerLimiter) -> None:
     wall-clock wait long enough to clear ``AIMD_BACKOFF_S`` would push them out
     of the ``2 x AIMD_BACKOFF_S`` lookback at the same moment.
     """
-    lim._last_throttle_at -= config.AIMD_BACKOFF_S + 1.0  # noqa: SLF001
+    lim._last_throttle_at -= config.AIMD_BACKOFF_S + 1.0
 
 
 def _age_all_timestamps(lim: limiter.FairBearerLimiter, seconds: float) -> None:
@@ -57,8 +57,8 @@ def _age_all_timestamps(lim: limiter.FairBearerLimiter, seconds: float) -> None:
     history lookback is ``2 x AIMD_BACKOFF_S`` (60 s) while a generation on
     these lanes measured 171-303 s.
     """
-    lim._last_throttle_at -= seconds  # noqa: SLF001
-    lim._shrink_history = type(lim._shrink_history)(  # noqa: SLF001
+    lim._last_throttle_at -= seconds
+    lim._shrink_history = type(lim._shrink_history)(
         (ts - seconds for ts in lim._shrink_history),
         maxlen=config.AIMD_STORM_THRESHOLD_MAX,
     )
@@ -128,7 +128,7 @@ async def test_pushback_never_raises_cap_above_a_hot_tuned_hard_ceiling() -> Non
     correct it (it only ramps below ``hard_max``).
     """
     lim = _free_lane()
-    await limiter._retune_limiter_hard_max("free-lane", lim, 1)  # noqa: SLF001
+    await limiter._retune_limiter_hard_max("free-lane", lim, 1)
     assert (lim.hard_max, lim.max_concurrent) == (1, 1)
 
     for _ in range(3):
@@ -144,7 +144,7 @@ async def test_pushback_never_raises_cap_above_a_hot_tuned_hard_ceiling() -> Non
 async def test_floor_still_floors_when_it_fits_under_the_ceiling() -> None:
     """The ceiling clamp must not weaken the floor in the normal regime."""
     lim = _free_lane()
-    await limiter._retune_limiter_hard_max("free-lane", lim, 6)  # noqa: SLF001
+    await limiter._retune_limiter_hard_max("free-lane", lim, 6)
     for _ in range(6):
         await lim.shrink()
     assert lim.max_concurrent == FREE_FLOOR
@@ -160,7 +160,7 @@ async def test_idle_bearer_at_floor_regains_width_after_fast_ramp() -> None:
     lim = _free_lane()
     await lim.shrink()
     _elapse_cooldown(lim)
-    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER_FAST  # noqa: SLF001
+    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER_FAST
 
     for _ in range(config.AIMD_RAMP_AFTER_FAST - 1):
         assert await lim.grow() is None
@@ -179,7 +179,7 @@ async def test_bearer_at_floor_recovers_on_the_slow_ramp() -> None:
         await lim.shrink()
     assert lim.max_concurrent == FREE_FLOOR
     _elapse_cooldown(lim)
-    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER  # noqa: SLF001
+    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER
 
     for _ in range(config.AIMD_RAMP_AFTER - 1):
         assert await lim.grow() is None
@@ -199,8 +199,8 @@ async def test_free_lane_generation_outlives_the_fast_ramp_window() -> None:
     lim = _free_lane()
     await lim.shrink()  # one isolated 429
     _age_all_timestamps(lim, 200.0)  # one generation of real time
-    assert lim._recent_shrinks() == 0  # noqa: SLF001
-    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER  # noqa: SLF001
+    assert lim._recent_shrinks() == 0
+    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER
 
 
 async def test_storm_pushback_requires_the_slow_ramp() -> None:
@@ -209,7 +209,7 @@ async def test_storm_pushback_requires_the_slow_ramp() -> None:
     for _ in range(config.AIMD_STORM_THRESHOLD):
         await lim.shrink()
     _elapse_cooldown(lim)
-    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER  # noqa: SLF001
+    assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER
 
     before = lim.max_concurrent
     for _ in range(config.AIMD_RAMP_AFTER - 1):

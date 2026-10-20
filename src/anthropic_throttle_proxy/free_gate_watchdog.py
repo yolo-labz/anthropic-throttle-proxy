@@ -211,7 +211,7 @@ def fetch_metrics(endpoint: str, *, timeout: float = 5.0, source: str = "") -> S
     no user input reaches this call, hence the S310 suppression.
     """
     url = endpoint.rstrip("/") + "/metrics"
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
         body = resp.read().decode("utf-8", "replace")
     return parse_prometheus(body, source=source or endpoint)
 
