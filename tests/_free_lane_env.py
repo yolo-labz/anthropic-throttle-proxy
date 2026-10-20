@@ -70,3 +70,17 @@ def free_lane_isolate(*, queue_mode: str = "off", hold_s: float | None = None):
             yield
 
     return _isolate
+
+
+def make_free_lane(
+    queue_mode: str = "fair",
+    hard_max: int = FREE_HARD_CEILING,
+    bearer_id: str = "free-lane",
+) -> limiter.FairBearerLimiter:
+    """Fresh bearer limiter on the free-lane baseline.
+
+    Lives here, not in either suite, so the two files cannot re-clone it: the
+    jscpd 50-token clone that failed PR #342's code-slop gate was exactly this
+    four-line helper duplicated once per suite.
+    """
+    return limiter.FairBearerLimiter(hard_max, queue_mode, bearer_id=bearer_id)

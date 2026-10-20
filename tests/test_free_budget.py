@@ -355,7 +355,12 @@ def test_snapshot_publishes_counts_without_secrets():
 def test_wiring_hooks_are_present_in_the_dispatch_path():
     import inspect
 
-    assert "_free_budget.admit(" in inspect.getsource(proxy._pre_dispatch_gate)
+    # The pre-dispatch budget hook lives in its own helper now (Sonar: cognitive
+    # complexity of _pre_dispatch_gate was 18 > 15). Pin BOTH halves: the gate
+    # must still delegate to it, and the helper must still make the call — that
+    # keeps the hook provably on the dispatch path rather than merely existing.
+    assert "_free_budget_gate(" in inspect.getsource(proxy._pre_dispatch_gate)
+    assert "_free_budget.admit(" in inspect.getsource(proxy._free_budget_gate)
     forward = inspect.getsource(proxy._try_forward)
     assert "_free_budget.admit_and_count(" in forward, "pre-transport claim missing"
     assert "attempt.local_prospective_refused = True" in forward

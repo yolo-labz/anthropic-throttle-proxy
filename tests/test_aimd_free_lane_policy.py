@@ -26,17 +26,17 @@ exercise the production decision path without an HTTP round trip.
 
 from __future__ import annotations
 
-from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, free_lane_isolate
+from _free_lane_env import (
+    FREE_FLOOR,
+    FREE_HARD_CEILING,
+    FREE_INITIAL,
+    free_lane_isolate,
+    make_free_lane,
+)
 
 from anthropic_throttle_proxy import config, limiter
 
 _isolate = free_lane_isolate(queue_mode="off")
-
-
-def _free_lane(
-    queue_mode: str = "fair", hard_max: int = FREE_HARD_CEILING
-) -> limiter.FairBearerLimiter:
-    return limiter.FairBearerLimiter(hard_max, queue_mode, bearer_id="free-lane")
 
 
 def _elapse_cooldown(lim: limiter.FairBearerLimiter) -> None:
@@ -71,7 +71,7 @@ def _age_all_timestamps(lim: limiter.FairBearerLimiter, seconds: float) -> None:
 
 def test_free_lane_warm_start_is_initial_cap_not_ceiling() -> None:
     """A restart must not open 1024 wide; AIMD discovers width from traffic."""
-    lim = _free_lane()
+    lim = make_free_lane()
     assert lim.max_concurrent == FREE_INITIAL
     assert lim.hard_max == FREE_HARD_CEILING
 
@@ -83,7 +83,7 @@ async def test_floor_pins_free_lane_under_sustained_pushback() -> None:
     at ``max_concurrent=1``, and with 171-303 s generations one slot is a
     503 factory.
     """
-    lim = _free_lane()
+    lim = make_free_lane()
     seen = [await lim.shrink() for _ in range(8)]
     assert seen[:4] == [8, 5, 3, 2]
     assert lim.max_concurrent == FREE_FLOOR
@@ -92,7 +92,7 @@ async def test_floor_pins_free_lane_under_sustained_pushback() -> None:
 
 async def test_single_budget_429_costs_one_step_not_a_collapse() -> None:
     """One pushback is metering, not a verdict: 12 -> 8, well above the floor."""
-    lim = _free_lane()
+    lim = make_free_lane()
     assert await lim.shrink() == 8
     assert lim.max_concurrent > FREE_FLOOR
 
@@ -107,7 +107,7 @@ async def test_shrink_still_cuts_at_least_one_slot_above_the_floor() -> None:
 
 async def test_observe_mode_shrinks_counters_and_still_respects_the_floor() -> None:
     """`observe` moves AIMD counters without a queue — the floor applies there too."""
-    lim = _free_lane(queue_mode="observe")
+    lim = make_free_lane(queue_mode="observe")
     for _ in range(5):
         await lim.shrink()
     assert lim.max_concurrent == FREE_FLOOR
@@ -127,7 +127,7 @@ async def test_pushback_never_raises_cap_above_a_hot_tuned_hard_ceiling() -> Non
     above the ceiling it had just been clamped to, with ``grow()`` unable to
     correct it (it only ramps below ``hard_max``).
     """
-    lim = _free_lane()
+    lim = make_free_lane()
     await limiter._retune_limiter_hard_max("free-lane", lim, 1)
     assert (lim.hard_max, lim.max_concurrent) == (1, 1)
 
@@ -143,7 +143,7 @@ async def test_pushback_never_raises_cap_above_a_hot_tuned_hard_ceiling() -> Non
 
 async def test_floor_still_floors_when_it_fits_under_the_ceiling() -> None:
     """The ceiling clamp must not weaken the floor in the normal regime."""
-    lim = _free_lane()
+    lim = make_free_lane()
     await limiter._retune_limiter_hard_max("free-lane", lim, 6)
     for _ in range(6):
         await lim.shrink()
@@ -157,7 +157,7 @@ async def test_floor_still_floors_when_it_fits_under_the_ceiling() -> None:
 
 async def test_idle_bearer_at_floor_regains_width_after_fast_ramp() -> None:
     """One isolated 429 ⇒ FAST ramp: AIMD_RAMP_AFTER_FAST clean 2xx earn a slot."""
-    lim = _free_lane()
+    lim = make_free_lane()
     await lim.shrink()
     _elapse_cooldown(lim)
     assert lim._effective_ramp_after() == config.AIMD_RAMP_AFTER_FAST
@@ -174,7 +174,7 @@ async def test_bearer_at_floor_recovers_on_the_slow_ramp() -> None:
     back, but a bearer that just took >= STORM_THRESHOLD hits ramps on the SLOW
     threshold so the lane does not oscillate into the same wall.
     """
-    lim = _free_lane()
+    lim = make_free_lane()
     for _ in range(8):
         await lim.shrink()
     assert lim.max_concurrent == FREE_FLOOR
@@ -196,7 +196,7 @@ async def test_free_lane_generation_outlives_the_fast_ramp_window() -> None:
     knob actually buys recovery width on these lanes: the FLOOR and
     ``AIMD_RAMP_AFTER``, not ``AIMD_RAMP_AFTER_FAST``.
     """
-    lim = _free_lane()
+    lim = make_free_lane()
     await lim.shrink()  # one isolated 429
     _age_all_timestamps(lim, 200.0)  # one generation of real time
     assert lim._recent_shrinks() == 0
@@ -205,7 +205,7 @@ async def test_free_lane_generation_outlives_the_fast_ramp_window() -> None:
 
 async def test_storm_pushback_requires_the_slow_ramp() -> None:
     """A storm (>= STORM_THRESHOLD shrinks) must not ramp at the FAST threshold."""
-    lim = _free_lane()
+    lim = make_free_lane()
     for _ in range(config.AIMD_STORM_THRESHOLD):
         await lim.shrink()
     _elapse_cooldown(lim)
@@ -218,7 +218,7 @@ async def test_storm_pushback_requires_the_slow_ramp() -> None:
 
 
 async def test_recovery_never_exceeds_the_hard_ceiling() -> None:
-    lim = _free_lane(hard_max=FREE_FLOOR)
+    lim = make_free_lane(hard_max=FREE_FLOOR)
     _elapse_cooldown(lim)
     for _ in range(3 * config.AIMD_RAMP_AFTER):
         await lim.grow()

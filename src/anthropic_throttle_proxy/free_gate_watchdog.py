@@ -57,12 +57,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import time
-import urllib.error
 import urllib.request
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -97,13 +97,23 @@ _SAMPLE_RE = re.compile(
     r"(?:\{(?P<labels>[^}]*)\})?"
     r"\s+(?P<value>[^\s]+)\s*$"
 )
-_LABEL_RE = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"')
+_LABEL_RE = re.compile(r'([a-zA-Z_]\w*)="((?:[^"\\]|\\.)*)"')
 _JOURNAL_TS_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z))"
 )
-_FIELD_RE = re.compile(r"([a-zA-Z_][a-zA-Z0-9_]*)=(\S+)")
+_FIELD_RE = re.compile(r"([a-zA-Z_]\w*)=(\S+)")
 #: `[anthropic-throttle] <kind> ...` — the proxy's structured log envelope.
-_ENVELOPE_RE = re.compile(r"\]\s+(?P<kind>[a-z][a-z0-9-]*)\s*(?P<rest>.*)$")
+#:
+#: ReDoS-safety (Sonar hotspot): every quantifier over a repeated group is
+#: POSSESSIVE (``\s++``, ``[a-z0-9-]*+``, ``\s*+``), so the engine consumes
+#: them once and can never backtrack into them — the search for ``]`` advances
+#: monotonically and each attempt runs in linear time in the line length. The
+#: only non-possessive quantifier is the terminal ``.*`` before the ``$``
+#: anchor, which cannot backtrack productively. The possessive rewrite is
+#: semantics-preserving here: ``\s`` and ``[a-z]`` are disjoint (giving back
+#: whitespace can never let ``[a-z]`` match), and ``[a-z0-9-]`` and ``\s``
+#: are disjoint the same way. Requires Python >=3.11; the repo pins >=3.13.
+_ENVELOPE_RE = re.compile(r"\]\s++(?P<kind>[a-z][a-z0-9-]*+)\s*+(?P<rest>.*)$")
 
 
 # ---------------------------------------------------------------------------
@@ -170,37 +180,55 @@ class Scrape:
         return out
 
 
+def _parse_labels(raw_labels: str | None) -> tuple[tuple[str, str], ...]:
+    """Unescape one ``{...}`` label block into a sorted tuple."""
+    if not raw_labels:
+        return ()
+    return tuple(
+        sorted(
+            (lk, lv.replace('\\"', '"').replace("\\\\", "\\"))
+            for lk, lv in _LABEL_RE.findall(raw_labels)
+        )
+    )
+
+
+def _parse_sample_line(line: str) -> Sample | None:
+    """Parse one exposition line, or ``None`` when it carries no signal.
+
+    Comments, blanks, ``_created`` bookkeeping series and non-finite values
+    are dropped here: a ``NaN`` ceiling would silently satisfy ``<= floor``
+    in the wrong direction, and ``_created`` is an artefact of the client
+    library, not a signal.
+    """
+    m = _SAMPLE_RE.match(line)
+    if not m:
+        return None
+    name = m.group("name")
+    if name.endswith("_created"):
+        return None
+    try:
+        value = float(m.group("value"))
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return Sample(name=name, labels=_parse_labels(m.group("labels")), value=value)
+
+
 def parse_prometheus(text: str, *, ts: float | None = None, source: str = "") -> Scrape:
     """Parse Prometheus text exposition into a :class:`Scrape`.
 
-    Comments (``#``), blank lines, ``_created`` bookkeeping series and
-    non-finite values are skipped: a ``NaN`` ceiling would silently satisfy
-    ``<= floor`` in the wrong direction, and ``_created`` is an artefact of the
-    client library, not a signal.
+    ``#`` comments and blank lines never reach :func:`_parse_sample_line`;
+    everything else that carries no signal is dropped there.
     """
     scrape = Scrape(ts=time.time() if ts is None else ts, source=source)
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        m = _SAMPLE_RE.match(line)
-        if not m:
-            continue
-        name = m.group("name")
-        if name.endswith("_created"):
-            continue
-        try:
-            value = float(m.group("value"))
-        except ValueError:
-            continue
-        if value != value or value in (float("inf"), float("-inf")):
-            continue
-        labels: list[tuple[str, str]] = []
-        raw_labels = m.group("labels")
-        if raw_labels:
-            for lk, lv in _LABEL_RE.findall(raw_labels):
-                labels.append((lk, lv.replace('\\"', '"').replace("\\\\", "\\")))
-        scrape.samples.append(Sample(name=name, labels=tuple(sorted(labels)), value=value))
+        sample = _parse_sample_line(line)
+        if sample is not None:
+            scrape.samples.append(sample)
     return scrape
 
 
@@ -252,7 +280,7 @@ def parse_journal_line(line: str) -> JournalEvent | None:
     if not env:
         return None
     kind = env.group("kind")
-    fields = {k: v for k, v in _FIELD_RE.findall(env.group("rest"))}
+    fields = dict(_FIELD_RE.findall(env.group("rest")))
     return JournalEvent(ts=ts, kind=kind, fields=fields, raw=line.rstrip("\n"))
 
 
@@ -309,52 +337,81 @@ class Reconstructor:
             return
         self.feed_event(event)
 
+    #: ``bearer-new`` and ``aimd-grow`` (and the ``max_concurrent`` carried by
+    #: ``aimd-shrink``) all mean the same thing to the replay: the lane's
+    #: ceiling is now this value. One recorder for all three.
+    def _record_ceiling(self, f: dict[str, str], bid: str | None) -> bool:
+        ceiling = _as_int(f.get("max_concurrent"))
+        if not bid or ceiling is None:
+            return False
+        self._ceiling[bid] = float(ceiling)
+        return True
+
+    def _record_shrink(self, f: dict[str, str], bid: str | None) -> bool:
+        if not bid:
+            return False
+        # The ceiling rides along on the shrink line, same as the others.
+        self._record_ceiling(f, bid)
+        status = f.get("status", "unknown")
+        key = (bid, status)
+        self._shrinks[key] = self._shrinks.get(key, 0.0) + 1.0
+        return True
+
+    def _record_timeout(self, f: dict[str, str], bid: str | None) -> bool:
+        if not bid:
+            return False
+        self._timeouts[bid] = self._timeouts.get(bid, 0.0) + 1.0
+        return True
+
+    def _record_pushback_retry(self, f: dict[str, str], bid: str | None) -> bool:
+        del f, bid
+        self.extra["rate-pushback-retry"] += 1.0
+        return False
+
+    def _record_restart(self, f: dict[str, str], bid: str | None) -> bool:
+        """A fresh process starts every counter at zero.
+
+        The 18:48:59 restart is inside the incident; without this the
+        pre-restart shrinks would be counted as if the new process had seen
+        them, inflating the replay's pushback rate.
+        """
+        del f, bid
+        self._shrinks.clear()
+        self._timeouts.clear()
+        self._requests.clear()
+        return True
+
+    def _record_depth_reject(self, f: dict[str, str], bid: str | None) -> bool:
+        del f, bid
+        self.extra["queue-depth-reject"] += 1.0
+        return False
+
+    def _record_done(self, f: dict[str, str], bid: str | None) -> bool:
+        del bid
+        status = f.get("status")
+        if status is not None:
+            self._requests[status] = self._requests.get(status, 0.0) + 1.0
+        return True
+
+    #: kind -> state recorder. Kinds absent here are pure noise for the replay
+    #: (e.g. ``queue-first-waiter`` is the accept twin of ``queue-depth-reject``
+    #: and moves no counter).
+    _RECORDERS: dict[str, Callable[[dict[str, str], str | None], bool]] = {
+        "bearer-new": _record_ceiling,
+        "aimd-grow": _record_ceiling,
+        "aimd-shrink": _record_shrink,
+        "queue-wait-timeout": _record_timeout,
+        "rate-pushback-retry": _record_pushback_retry,
+        "listening": _record_restart,
+        "queue-depth-reject": _record_depth_reject,
+        "done": _record_done,
+    }
+
     def feed_event(self, event: JournalEvent) -> None:
         kind, f = event.kind, event.fields
         bid = f.get("bid")
-        changed = False
-        if kind == "bearer-new":
-            ceiling = _as_int(f.get("max_concurrent"))
-            if bid and ceiling is not None:
-                self._ceiling[bid] = float(ceiling)
-                changed = True
-        elif kind == "aimd-shrink":
-            ceiling = _as_int(f.get("max_concurrent"))
-            status = f.get("status", "unknown")
-            if bid:
-                if ceiling is not None:
-                    self._ceiling[bid] = float(ceiling)
-                key = (bid, status)
-                self._shrinks[key] = self._shrinks.get(key, 0.0) + 1.0
-                changed = True
-        elif kind == "aimd-grow":
-            ceiling = _as_int(f.get("max_concurrent"))
-            if bid and ceiling is not None:
-                self._ceiling[bid] = float(ceiling)
-                changed = True
-        elif kind == "queue-wait-timeout":
-            if bid:
-                self._timeouts[bid] = self._timeouts.get(bid, 0.0) + 1.0
-                changed = True
-        elif kind == "rate-pushback-retry":
-            self.extra["rate-pushback-retry"] += 1.0
-        elif kind == "listening":
-            # A fresh process starts every counter at zero. The 18:48:59
-            # restart is inside the incident; without this the pre-restart
-            # shrinks would be counted as if the new process had seen them,
-            # inflating the replay's pushback rate.
-            self._shrinks.clear()
-            self._timeouts.clear()
-            self._requests.clear()
-            changed = True
-        elif kind in ("queue-depth-reject", "queue-first-waiter"):
-            if kind == "queue-depth-reject":
-                self.extra["queue-depth-reject"] += 1.0
-        elif kind == "done":
-            status = f.get("status")
-            if status is not None:
-                self._requests[status] = self._requests.get(status, 0.0) + 1.0
-            changed = True
+        recorder = self._RECORDERS.get(kind)
+        changed = recorder(self, f, bid) if recorder is not None else False
         # inflight/queued gauges ride along on every line that carries them.
         for attr, name in (("_inflight", "inflight"), ("_queued", "queued")):
             value = _as_int(f.get(name))
@@ -506,7 +563,6 @@ def evaluate(
     alerts.extend(
         _rule_rate(
             scrapes,
-            config,
             name=M_AIMD_SHRINKS,
             rule="pushback",
             severity="warning",
@@ -523,7 +579,6 @@ def evaluate(
     alerts.extend(
         _rule_rate(
             scrapes,
-            config,
             name=M_QUEUE_WAIT_TIMEOUTS,
             rule="qtimeout",
             severity="critical",
@@ -540,23 +595,54 @@ def evaluate(
     return alerts, pending
 
 
-def _rule_pinned(
-    scrapes: Sequence[Scrape], config: WatchdogConfig, pending: list[Pending]
-) -> list[Alert]:
-    """R1: ceiling at/below the configured floor for >= ``pin_dwell_s``.
+def _close_pin_runs(
+    open_runs: dict[str, dict[str, Any]], closed: list[dict[str, Any]], end_ts: float
+) -> None:
+    """Close every still-open run at ``end_ts`` (end of stream)."""
+    for run in open_runs.values():
+        run["ended"] = end_ts
+        closed.append(run)
 
-    Two passes: first collect each bearer's contiguous at-floor runs, then emit
-    one alert per run whose TOTAL length crossed the dwell. Emitting after the
-    run closes means the alert carries the real recovery instant instead of the
-    moment the dwell happened to be crossed — on the 19/10 replay that is the
-    difference between "pinned 10.8 min" and "pinned 15.3 min, recovered
-    19:09:03".
 
-    The floor comes from the scraped ``anthropic_aimd_floor`` series (falling
-    back to ``config.floor``) so the rule keeps working when
-    ``THROTTLE_AIMD_MIN`` is hot-tuned mid-run.
-    """
-    alerts: list[Alert] = []
+def _classify_pin_run(
+    run: dict[str, Any], config: WatchdogConfig, pending: list[Pending]
+) -> Alert | None:
+    """Alert when the run crossed the dwell, else record the near-miss."""
+    seconds = run["ended"] - run["started"]
+    if seconds < config.pin_dwell_s:
+        pending.append(
+            Pending(
+                rule="pinned",
+                bearer=run["bearer"],
+                started=run["started"],
+                ended=run["ended"],
+                detail=(
+                    f"ceiling {run['ceiling']:g} <= floor {run['floor']:g} for "
+                    f"{seconds / 60.0:.1f} min — below the "
+                    f"{config.pin_dwell_s / 60:.0f} min dwell, not an alert"
+                ),
+            )
+        )
+        return None
+    crossed = run["started"] + config.pin_dwell_s
+    return Alert(
+        rule="pinned",
+        severity="critical",
+        bearer=run["bearer"],
+        ts=crossed,
+        source=run["source"],
+        detail=(
+            f"ceiling {run['ceiling']:g} <= floor {run['floor']:g} for "
+            f"{seconds / 60.0:.1f} min "
+            f"({_iso(run['started'])} -> {_iso(run['ended'])}; dwell crossed "
+            f"{_iso(crossed)}) — AIMD is pinned; a lane this slow cannot drain "
+            "its own queue and every other request will 503"
+        ),
+    )
+
+
+def _collect_pin_runs(scrapes: Sequence[Scrape], config: WatchdogConfig) -> list[dict[str, Any]]:
+    """Collect each bearer's contiguous at-floor runs over the stream."""
     runs: dict[str, dict[str, Any]] = {}
     closed: list[dict[str, Any]] = []
     for scrape in scrapes:
@@ -578,51 +664,36 @@ def _rule_pinned(
                 run["ended"] = scrape.ts
                 closed.append(run)
                 runs.pop(bid, None)
-    # A run still open at end-of-stream closed at the last observed instant.
-    for run in runs.values():
-        run["ended"] = scrapes[-1].ts
-        closed.append(run)
+    _close_pin_runs(runs, closed, scrapes[-1].ts)
+    return closed
 
-    for run in closed:
-        seconds = run["ended"] - run["started"]
-        if seconds < config.pin_dwell_s:
-            pending.append(
-                Pending(
-                    rule="pinned",
-                    bearer=run["bearer"],
-                    started=run["started"],
-                    ended=run["ended"],
-                    detail=(
-                        f"ceiling {run['ceiling']:g} <= floor {run['floor']:g} for "
-                        f"{seconds / 60.0:.1f} min — below the "
-                        f"{config.pin_dwell_s / 60:.0f} min dwell, not an alert"
-                    ),
-                )
-            )
-            continue
-        crossed = run["started"] + config.pin_dwell_s
-        alerts.append(
-            Alert(
-                rule="pinned",
-                severity="critical",
-                bearer=run["bearer"],
-                ts=crossed,
-                source=run["source"],
-                detail=(
-                    f"ceiling {run['ceiling']:g} <= floor {run['floor']:g} for "
-                    f"{seconds / 60.0:.1f} min "
-                    f"({_iso(run['started'])} -> {_iso(run['ended'])}; dwell crossed "
-                    f"{_iso(crossed)}) — AIMD is pinned; a lane this slow cannot drain "
-                    "its own queue and every other request will 503"
-                ),
-            )
-        )
+
+def _rule_pinned(
+    scrapes: Sequence[Scrape], config: WatchdogConfig, pending: list[Pending]
+) -> list[Alert]:
+    """R1: ceiling at/below the configured floor for >= ``pin_dwell_s``.
+
+    Two passes: first collect each bearer's contiguous at-floor runs, then emit
+    one alert per run whose TOTAL length crossed the dwell. Emitting after the
+    run closes means the alert carries the real recovery instant instead of the
+    moment the dwell happened to be crossed — on the 19/10 replay that is the
+    difference between "pinned 10.8 min" and "pinned 15.3 min, recovered
+    19:09:03".
+
+    The floor comes from the scraped ``anthropic_aimd_floor`` series (falling
+    back to ``config.floor``) so the rule keeps working when
+    ``THROTTLE_AIMD_MIN`` is hot-tuned mid-run.
+    """
+    alerts: list[Alert] = []
+    for run in _collect_pin_runs(scrapes, config):
+        alert = _classify_pin_run(run, config, pending)
+        if alert is not None:
+            alerts.append(alert)
     return alerts
 
 
 def _rule_rate(
     scrapes: Sequence[Scrape],
-    config: WatchdogConfig,
     *,
     name: str,
     rule: str,
@@ -630,7 +701,7 @@ def _rule_rate(
     count_threshold: float,
     window_s: float,
     cooldown_s: float,
-    describe: Any,
+    describe: Callable[[float, float, float], str],
 ) -> list[Alert]:
     """Generic sliding-window counter-rate rule (R2 and R3 share it)."""
     alerts: list[Alert] = []
@@ -687,7 +758,10 @@ def poll(
         for name, endpoint in endpoints.items():
             try:
                 scrape = fetch_metrics(endpoint, timeout=timeout, source=name)
-            except (urllib.error.URLError, OSError, TimeoutError) as exc:
+            # URLError and TimeoutError are both OSError subclasses in py3; the
+            # base class alone covers refused connections, DNS failures and
+            # read timeouts, and any new OSError descendant stays covered.
+            except OSError as exc:
                 print(f"warn: {name} {endpoint} unreachable: {exc}", file=sys.stderr)
                 continue
             scrapes.append(scrape)
@@ -772,6 +846,88 @@ def _timeline(scrapes: Sequence[Scrape]) -> list[dict[str, Any]]:
     return out
 
 
+def _json_payload(
+    args: argparse.Namespace,
+    config: WatchdogConfig,
+    scrapes: Sequence[Scrape],
+    alerts: Sequence[Alert],
+    pending: Sequence[Pending],
+    recon: Reconstructor | None,
+) -> dict[str, Any]:
+    """Build the ``--json`` document (also the evidence artifact)."""
+    payload: dict[str, Any] = {
+        "mode": "replay" if args.replay else "live",
+        "source": args.replay or ",".join(config.endpoints),
+        "scrapes": len(scrapes),
+        "window": {
+            "start": _iso(scrapes[0].ts) if scrapes else None,
+            "end": _iso(scrapes[-1].ts) if scrapes else None,
+        },
+        "alerts": [a.to_dict() for a in alerts],
+        "pending": [
+            {
+                "rule": p.rule,
+                "bearer": p.bearer,
+                "started": _iso(p.started),
+                "ended": _iso(p.ended),
+                "seconds": round(p.seconds, 1),
+                "detail": p.detail,
+            }
+            for p in pending
+        ],
+    }
+    if recon is not None:
+        payload["timeline"] = _timeline(scrapes)
+        payload["extra"] = recon.extra
+    return payload
+
+
+def _print_findings(alerts: Sequence[Alert], pending: Sequence[Pending], *, indent: str) -> None:
+    """Print the ALERTS and PENDING sections."""
+    if alerts:
+        print(f"ALERTS ({len(alerts)}):")
+        for alert in sorted(alerts, key=lambda a: a.ts):
+            print(f"{indent}{alert}")
+    else:
+        print("ALERTS: none")
+    if pending:
+        print()
+        print(f"PENDING / near-miss ({len(pending)}):")
+        for item in pending:
+            print(
+                f"{indent}{_iso(item.started)}  {item.rule:9s} bearer={item.bearer}  {item.detail}"
+            )
+
+
+def _print_report(
+    args: argparse.Namespace,
+    config: WatchdogConfig,
+    scrapes: Sequence[Scrape],
+    alerts: Sequence[Alert],
+    pending: Sequence[Pending],
+    recon: Reconstructor | None,
+) -> None:
+    """Print the human-readable report (the default, non-``--json`` output)."""
+    print(f"free-gate-watchdog  mode={'replay' if args.replay else 'live'}")
+    if scrapes:
+        print(
+            f"  window   {_iso(scrapes[0].ts)} -> {_iso(scrapes[-1].ts)}  ({len(scrapes)} scrapes)"
+        )
+    if recon is not None and args.show_series:
+        print("  ceiling timeline:")
+        for row in _timeline(scrapes):
+            print(f"    {row['at']}  bearer={row['bearer']}  ceiling={row['ceiling']:g}")
+    if recon is not None:
+        print(f"  journal extras: {recon.extra}")
+    print(
+        f"  thresholds  pin>= {config.pin_dwell_s / 60:.0f} min at/below floor; "
+        f"pushback>= {config.pushback_count} / {config.pushback_window_s / 60:.0f} min; "
+        f"503>= {config.timeout_rate_per_min:g} / min"
+    )
+    print()
+    _print_findings(alerts, pending, indent="  ")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     config = _config_from_args(args)
@@ -795,61 +951,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     if args.json:
-        payload: dict[str, Any] = {
-            "mode": "replay" if args.replay else "live",
-            "source": args.replay or ",".join(config.endpoints),
-            "scrapes": len(scrapes),
-            "window": {
-                "start": _iso(scrapes[0].ts) if scrapes else None,
-                "end": _iso(scrapes[-1].ts) if scrapes else None,
-            },
-            "alerts": [a.to_dict() for a in alerts],
-            "pending": [
-                {
-                    "rule": p.rule,
-                    "bearer": p.bearer,
-                    "started": _iso(p.started),
-                    "ended": _iso(p.ended),
-                    "seconds": round(p.seconds, 1),
-                    "detail": p.detail,
-                }
-                for p in pending
-            ],
-        }
-        if recon is not None:
-            payload["timeline"] = _timeline(scrapes)
-            payload["extra"] = recon.extra
-        print(json.dumps(payload, indent=2))
-        return 1 if any(a.severity == "critical" for a in alerts) else 0
-
-    print(f"free-gate-watchdog  mode={'replay' if args.replay else 'live'}")
-    if scrapes:
-        print(
-            f"  window   {_iso(scrapes[0].ts)} -> {_iso(scrapes[-1].ts)}  ({len(scrapes)} scrapes)"
-        )
-    if recon is not None and args.show_series:
-        print("  ceiling timeline:")
-        for row in _timeline(scrapes):
-            print(f"    {row['at']}  bearer={row['bearer']}  ceiling={row['ceiling']:g}")
-    if recon is not None:
-        print(f"  journal extras: {recon.extra}")
-    print(
-        f"  thresholds  pin>= {config.pin_dwell_s / 60:.0f} min at/below floor; "
-        f"pushback>= {config.pushback_count} / {config.pushback_window_s / 60:.0f} min; "
-        f"503>= {config.timeout_rate_per_min:g} / min"
-    )
-    print()
-    if alerts:
-        print(f"ALERTS ({len(alerts)}):")
-        for alert in sorted(alerts, key=lambda a: a.ts):
-            print(f"  {alert}")
+        print(json.dumps(_json_payload(args, config, scrapes, alerts, pending, recon), indent=2))
     else:
-        print("ALERTS: none")
-    if pending:
-        print()
-        print(f"PENDING / near-miss ({len(pending)}):")
-        for item in pending:
-            print(f"  {_iso(item.started)}  {item.rule:9s} bearer={item.bearer}  {item.detail}")
+        _print_report(args, config, scrapes, alerts, pending, recon)
     return 1 if any(a.severity == "critical" for a in alerts) else 0
 
 

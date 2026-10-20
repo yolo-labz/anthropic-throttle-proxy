@@ -46,6 +46,8 @@ def test_parse_prometheus_reads_labels_and_skips_noise() -> None:
             'anthropic_requests_total{method="POST",status="429",model="x"} 5.0',
             'anthropic_aimd_grows_created{bearer="e574f38a"} 1.79e+09',
             "some_metric NaN",
+            "some_metric +inf",
+            "some_metric -inf",
             "",
         ]
     )
@@ -55,7 +57,9 @@ def test_parse_prometheus_reads_labels_and_skips_noise() -> None:
     assert "anthropic_aimd_grows_created" not in names, "_created is bookkeeping, not signal"
     assert scrape.value("anthropic_inflight") == 3.0
     assert scrape.bearers(fgw.M_AIMD_MAX) == {"e574f38a": 1.0, "ab12cd34": 12.0}
-    # A NaN ceiling would satisfy `<= floor` in the wrong direction.
+    # NaN and BOTH infinities must be dropped: isfinite() replaces the old
+    # `value != value or value in (+inf, -inf)` check and must drop the same set.
+    assert "some_metric" not in names
     assert all(s.value == s.value for s in scrape.samples)
 
 
@@ -84,6 +88,23 @@ def test_parse_journal_line_ignores_unstructured_lines() -> None:
     assert event.fields["max_concurrent"] == "5"
     for junk in ("", "   ", "Oct 19 18:50:01 desktop systemd[1]: Started foo."):
         assert fgw.parse_journal_line(junk) is None
+
+
+def test_envelope_regex_rejects_pathological_input_in_linear_time() -> None:
+    """ReDoS guard for the possessive rewrite of ``_ENVELOPE_RE``.
+
+    The old ``\s+...\s*`` pattern let the engine backtrack the whitespace run
+    against the kind at every ``]`` candidate. The possessive quantifiers make
+    each attempt commit its consumption, so a line with thousands of bracket
+    candidates and no valid kind must return None promptly — the test merely
+    completing (no hang) is the assertion; timing is left to the demo run.
+    """
+    hostile = "2026-10-19T18:45:13-03:00 x[1]: " + (" ]" * 20_000) + " !"
+    assert fgw.parse_journal_line(hostile) is None
+    # and the real envelope still parses through the same code path
+    good = _line(0, "aimd-grow", bid="e574f38a", max_concurrent=2)
+    event = fgw.parse_journal_line(good)
+    assert event is not None and event.kind == "aimd-grow"
 
 
 # ---------------------------------------------------------------------------

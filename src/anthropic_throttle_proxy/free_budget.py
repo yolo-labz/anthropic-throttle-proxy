@@ -130,7 +130,12 @@ UNDECLARED_RETRY_AFTER_S = 60
 
 # Operator-facing budget label charset, inherited from ProspectiveRefusal.
 _LABEL_RE = re.compile(r"\A[a-z0-9][a-z0-9._-]{0,62}\Z")
-_ENTRY_RE = re.compile(r"\A([^\s=]+)=([0-9]+)(?:/([0-9]+))?\Z")
+# ``\d`` rather than ``[0-9]`` (concise character class). No ``re.ASCII``: the
+# flag would ALSO narrow ``\s`` in the model-name group, changing which model
+# names parse. ``\d`` widens digits to Unicode Nd, and ``int()`` accepts those
+# too (``int("٣") == 3``), so the parsed allowance is unchanged and no new
+# conversion path can raise.
+_ENTRY_RE = re.compile(r"\A([^\s=]+)=(\d+)(?:/(\d+))?\Z")
 _TRUE = {"1", "true", "yes", "on"}
 
 
@@ -260,6 +265,69 @@ def reset_for_tests() -> None:
         _config_error = ""
 
 
+def _env_text(env: Mapping[str, str], name: str) -> str:
+    """Trimmed text of one knob; empty when unset or nullish."""
+    return str(env.get(name, "") or "").strip()
+
+
+def _parse_budgets(raw: str) -> tuple[dict[str, BudgetSpec], bool, list[str]]:
+    """``(specs, invalid, errors)`` for ``THROTTLE_FREE_BUDGETS``.
+
+    Each entry is ``model=budget[/window_s]``. ONE malformed entry invalidates
+    the whole declaration (spec 289's rule — a bad entry must never vanish into
+    feature-off) while every valid entry is still returned, so the journal can
+    name exactly what failed to parse.
+    """
+    specs: dict[str, BudgetSpec] = {}
+    errors: list[str] = []
+    if not raw:
+        return specs, False, errors
+    invalid = False
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            invalid = True
+            errors.append("empty entry")
+            continue
+        match = _ENTRY_RE.match(entry)
+        if not match:
+            invalid = True
+            errors.append(entry)
+            continue
+        model, budget_raw, window_raw = match.groups()
+        budget, window = int(budget_raw), int(window_raw or DEFAULT_WINDOW_S)
+        if budget <= 0 or window <= 0 or model in specs:
+            invalid = True
+            errors.append(entry)
+            continue
+        specs[model] = BudgetSpec(model, budget, window, _label_for(model))
+    return specs, invalid, errors
+
+
+def _parse_pressure(raw: str) -> tuple[float, str | None]:
+    """``(pressure_pct, error)`` for ``THROTTLE_FREE_BUDGET_PRESSURE_PCT``.
+
+    Unset → the default with no error. Malformed → default + the raw text.
+    Out-of-range → the PARSED value + the raw text: the declaration fails
+    closed either way, and the caller stores exactly what it was given.
+    """
+    if not raw:
+        return DEFAULT_PRESSURE_PCT, None
+    try:
+        pressure = float(raw)
+    except ValueError:
+        return DEFAULT_PRESSURE_PCT, raw
+    return pressure, raw if not 0.0 <= pressure <= 100.0 else None
+
+
+def _lane_from(lane_raw: str, upstream: str) -> str:
+    """Declared lane, else the upstream's last path segment (…/go → go)."""
+    if lane_raw:
+        return _slug(lane_raw) or "free"
+    parts = [p for p in upstream.rstrip("/").split("/") if p]
+    return _slug(parts[-1] if parts else "free") or "free"
+
+
 def load_from_env(environ: Mapping[str, str] | None = None) -> None:
     """(Re)parse the knobs into module state. Malformed declarations fail closed.
 
@@ -267,73 +335,42 @@ def load_from_env(environ: Mapping[str, str] | None = None) -> None:
     admission refuses with ``invalid-config``, and the parse error is logged so
     the journal names the mistake (spec 289's rule — a bad entry must not vanish
     into feature-off).
+
+    One helper per knob, then a single state commit: the parse-everything form
+    blew the cognitive-complexity budget (Sonar S3776, 33 vs 15, 19/10/2026),
+    and splitting it keeps every decision local and re-readable. The state
+    written — and the order labels are re-stamped in — is unchanged.
     """
     global _specs, _lane, _required, _invalid, _pressure_pct, _config_error
     env = os.environ if environ is None else environ
-    specs: dict[str, BudgetSpec] = {}
-    invalid = False
-    errors: list[str] = []
-
-    raw_budgets = str(env.get("THROTTLE_FREE_BUDGETS", "") or "").strip()
-    if raw_budgets:
-        for entry in raw_budgets.split(","):
-            entry = entry.strip()
-            if not entry:
-                invalid = True
-                errors.append("empty entry")
-                continue
-            match = _ENTRY_RE.match(entry)
-            if not match:
-                invalid = True
-                errors.append(entry)
-                continue
-            model, budget_raw, window_raw = match.groups()
-            budget, window = int(budget_raw), int(window_raw or DEFAULT_WINDOW_S)
-            if budget <= 0 or window <= 0 or model in specs:
-                invalid = True
-                errors.append(entry)
-                continue
-            specs[model] = BudgetSpec(model, budget, window, _label_for(model))
-
-    lane_raw = str(env.get("THROTTLE_FREE_LANE", "") or "").strip()
-    upstream = str(env.get("THROTTLE_UPSTREAM", "") or "").strip()
-    if not lane_raw:
-        # Derive a stable lane name from the upstream path (…/inference/go → go).
-        parts = [p for p in upstream.rstrip("/").split("/") if p]
-        lane_raw = parts[-1] if parts else "free"
-
-    pressure_raw = str(env.get("THROTTLE_FREE_BUDGET_PRESSURE_PCT", "") or "").strip()
-    pressure = DEFAULT_PRESSURE_PCT
-    if pressure_raw:
-        try:
-            pressure = float(pressure_raw)
-        except ValueError:
-            invalid = True
-            errors.append(pressure_raw)
-        else:
-            if not 0.0 <= pressure <= 100.0:
-                invalid = True
-                errors.append(pressure_raw)
+    specs, invalid, errors = _parse_budgets(_env_text(env, "THROTTLE_FREE_BUDGETS"))
+    pressure, pressure_error = _parse_pressure(_env_text(env, "THROTTLE_FREE_BUDGET_PRESSURE_PCT"))
+    if pressure_error is not None:
+        invalid = True
+        errors.append(pressure_error)
+    lane = _lane_from(_env_text(env, "THROTTLE_FREE_LANE"), _env_text(env, "THROTTLE_UPSTREAM"))
+    required = _env_text(env, "THROTTLE_FREE_BUDGET_REQUIRED").lower() in _TRUE
+    config_error = ", ".join(errors[:4])
 
     with _lock:
-        _specs = specs
-        _lane = _slug(lane_raw) or "free"
+        _lane = lane
         # Labels are lane-scoped: re-stamp them now that the lane is known.
         _specs = {
             model: BudgetSpec(spec.model, spec.budget, spec.window_s, _label_for(model))
-            for model, spec in _specs.items()
+            for model, spec in specs.items()
         }
-        _required = str(env.get("THROTTLE_FREE_BUDGET_REQUIRED", "") or "").strip().lower() in _TRUE
+        _required = required
         _invalid = invalid
         _pressure_pct = pressure
         _windows = {}
-        _config_error = ", ".join(errors[:4])
+        _config_error = config_error
+    # One journal line per parse outcome — the receipt an operator reads.
     if invalid:
-        log(f"free-budget-config-error lane={_lane} entries={_config_error} (failing closed)")
+        log(f"free-budget-config-error lane={lane} entries={config_error} (failing closed)")
     elif specs:
         log(
-            f"free-budget-enabled lane={_lane} models={len(specs)} "
-            f"required={_required} pressure={pressure:g} "
+            f"free-budget-enabled lane={lane} models={len(specs)} "
+            f"required={required} pressure={pressure:g} "
             f"window_s={sorted({s.window_s for s in specs.values()})}"
         )
 

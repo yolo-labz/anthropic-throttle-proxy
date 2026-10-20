@@ -16,19 +16,16 @@ from __future__ import annotations
 import time
 
 import pytest
-from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, free_lane_isolate
+from _free_lane_env import (
+    FREE_FLOOR,
+    FREE_INITIAL,
+    free_lane_isolate,
+    make_free_lane,
+)
 
 from anthropic_throttle_proxy import config, limiter
 
 _isolate = free_lane_isolate(queue_mode="fair", hold_s=240.0)
-
-
-def _lane(
-    queue_mode: str = "fair",
-    hard_max: int = FREE_HARD_CEILING,
-    bearer_id: str = "e574f38a",
-) -> limiter.FairBearerLimiter:
-    return limiter.FairBearerLimiter(hard_max, queue_mode, bearer_id=bearer_id)
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +35,7 @@ def _lane(
 
 async def test_shrink_never_rests_below_the_floor() -> None:
     """Acceptance (a) part 1 — the floor is a floor, whatever the pushback says."""
-    lim = _lane()
+    lim = make_free_lane()
     for _ in range(12):
         cap = await lim.shrink()
         assert cap is not None
@@ -47,7 +44,7 @@ async def test_shrink_never_rests_below_the_floor() -> None:
 
 async def test_aimd_floor_yields_to_the_operator_hard_ceiling() -> None:
     """A hot-tuned ceiling below AIMD_MIN must not be re-inflated by a 429."""
-    lim = _lane()
+    lim = make_free_lane()
     await limiter._retune_limiter_hard_max("e574f38a", lim, 1)
     assert lim.aimd_floor() == 1
     for _ in range(5):
@@ -63,7 +60,7 @@ async def test_lane_resting_at_the_floor_regains_a_slot_after_dwell() -> None:
     generation is ~28 min of single-file traffic. The healthy case — the lane
     has sat quiet at the floor and served one clean request — must yield a slot.
     """
-    lim = _lane()
+    lim = make_free_lane()
     lim.max_concurrent = FREE_FLOOR
     for _ in range(8):
         await lim.shrink()  # drive to the floor the incident's way
@@ -89,7 +86,7 @@ async def test_cold_start_bearer_gets_no_free_ramp(
     """
     monkeypatch.setattr(config, "AIMD_MIN", 1, raising=True)
     monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1, raising=True)
-    lim = _lane()
+    lim = make_free_lane()
     # Warm start sits ON the floor, which is the shape that made the dwell ramp
     # dangerous: "rested here forever" and "never left" look identical.
     assert lim.max_concurrent == lim.aimd_floor() == 1
@@ -106,7 +103,7 @@ async def test_cooldown_alone_is_not_enough_at_the_floor() -> None:
     not the cooldown that already existed — otherwise the ramp fires immediately
     after every shrink and the lane oscillates straight back into the wall.
     """
-    lim = _lane()
+    lim = make_free_lane()
     lim.max_concurrent = FREE_FLOOR
     await lim.shrink()
     lim._last_throttle_at = time.time() - (config.AIMD_BACKOFF_S + 1.0)
@@ -116,7 +113,7 @@ async def test_cooldown_alone_is_not_enough_at_the_floor() -> None:
 
 async def test_open_retry_after_window_blocks_the_dwell_ramp() -> None:
     """A lane inside an upstream hold must not widen, however long it rested."""
-    lim = _lane()
+    lim = make_free_lane()
     lim.max_concurrent = FREE_FLOOR
     await lim.shrink()
     lim._last_throttle_at = time.time() - (2 * config.AIMD_BACKOFF_S + 1.0)
@@ -147,7 +144,7 @@ async def test_hold_window_at_the_240s_contract_is_honoured_not_fast_failed() ->
 
 async def test_hold_then_release_completes_inside_the_client_budget() -> None:
     """A <=240 s window parks the request and returns it to the lane afterwards."""
-    lim = _lane()
+    lim = make_free_lane()
     lim.note_retry_after(0.2)
     assert lim.retry_after_remaining() > 0
     await lim.wait_retry_after()  # must not raise / fast-fail
@@ -204,7 +201,7 @@ async def test_unknown_pushback_still_shrinks_but_is_logged_as_unknown() -> None
     """Behaviour-preserving by design (see the branch comment in proxy.py)."""
     from anthropic_throttle_proxy import proxy
 
-    lim = _lane()
+    lim = make_free_lane()
     before = lim.max_concurrent
     attempt = proxy._Attempt()
     attempt.meta, attempt.final_status = {}, 429
@@ -219,7 +216,7 @@ async def test_measured_budget_wall_still_shrinks() -> None:
     """
     from anthropic_throttle_proxy import proxy
 
-    lim = _lane()
+    lim = make_free_lane()
     lim.max_concurrent = FREE_INITIAL
     before = lim.max_concurrent
     attempt = proxy._Attempt()

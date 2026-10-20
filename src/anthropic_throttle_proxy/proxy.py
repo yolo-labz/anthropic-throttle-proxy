@@ -4965,6 +4965,86 @@ async def _pre_dispatch_probe_gate(
     return new_bid, new_headers, None, "reroute"
 
 
+def _free_budget_gate(
+    path: str,
+    model: str,
+    headers: dict[str, str],
+) -> tuple[dict[str, str], web.Response, str] | None:
+    """Pre-dispatch free-tier budget verdict, or ``None`` to continue.
+
+    Free-tier budget consult BEFORE the slot phase (spec 335): a request that
+    cannot be dispatched inside this window must fail fast here, not buy a 180 s
+    queue wait first. Generation paths only — probes/health stay free, exactly
+    as Retry-After pauses already do. No unit is claimed (that happens
+    immediately before transport), and the refusal never reaches AIMD:
+    admission is upstream of pushback by construction.
+
+    Lifted out of ``_pre_dispatch_gate`` (Sonar: cognitive complexity 18 > 15).
+    """
+    if not _retry_after_blocks_path(path):
+        return None
+    decision = _free_budget.admit(model)
+    if decision.allowed:
+        return None
+    log(
+        f"free-budget-refusal where=pre-dispatch path={path} model={model} "
+        f"reason={decision.reason} retry_after={decision.retry_after_s} "
+        f"budget={decision.budget_label} used={decision.used}/{decision.budget}"
+    )
+    return headers, decision.response, "answer"
+
+
+async def _park_on_pre_dispatch_retry_after(
+    *,
+    limiter: FairBearerLimiter,
+    bid: str,
+    headers: dict[str, str],
+    path: str,
+    cid: str,
+    retry_after_remaining: float,
+    finish_probe: _FinishProbe,
+    try_reroute: _TryReroute,
+    wait_alternate: _WaitAlternate,
+    reroute: _Reroute,
+    wait_reval: _WaitReval,
+) -> tuple[FairBearerLimiter, str, dict[str, str], web.Response | None, str]:
+    """Answer an armed pre-dispatch Retry-After window for this route.
+
+    The ``retry_after_remaining > 0`` branch of ``_pre_dispatch_gate``, lifted
+    out for the same Sonar limit. A short pause need not arm the half-open probe
+    gate: park here too, because falling through churns slots until
+    ``_post_slot_recheck`` returns them.
+    """
+    bid, headers, response, action = await _pre_dispatch_retry_after(
+        bid=bid,
+        headers=headers,
+        path=path,
+        retry_after_remaining=retry_after_remaining,
+        source="pre-dispatch",
+        finish_probe=finish_probe,
+        release_on_reroute=True,
+        try_reroute=try_reroute,
+        wait_alternate=wait_alternate,
+        reroute=reroute,
+    )
+    if action == "reroute":
+        return limiter, bid, headers, None, "reroute"
+    if action == "answer":
+        return limiter, bid, headers, response, "answer"
+    if not await wait_reval(limiter.wait_retry_after):
+        finish_probe(success=False)
+        return (
+            limiter,
+            bid,
+            headers,
+            _queue_wait_timeout_response(bid, cid, path, limiter, 0.0),
+            "answer",
+        )
+    # Recheck the gate with the same route/lease. Routing afresh while we own a
+    # probe would overwrite its owner and wait on our own probe.
+    return limiter, bid, headers, None, "reroute"
+
+
 async def _pre_dispatch_gate(
     *,
     path: str,
@@ -4988,21 +5068,10 @@ async def _pre_dispatch_gate(
     """
     queue_mode, hard_max = _effective_admission(bid)
     limiter = await _get_bearer_limiter(bid, queue_mode, hard_max)
-    if _retry_after_blocks_path(path):
-        # Free-tier budget consult BEFORE the slot phase (spec 335): a request
-        # that cannot be dispatched inside this window must fail fast here, not
-        # buy a 180 s queue wait first. Generation paths only — probes/health
-        # stay free, exactly as Retry-After pauses already do. No unit is
-        # claimed (that happens immediately before transport), and the refusal
-        # never reaches AIMD: admission is upstream of pushback by construction.
-        decision = _free_budget.admit(model)
-        if not decision.allowed:
-            log(
-                f"free-budget-refusal where=pre-dispatch path={path} model={model} "
-                f"reason={decision.reason} retry_after={decision.retry_after_s} "
-                f"budget={decision.budget_label} used={decision.used}/{decision.budget}"
-            )
-            return limiter, bid, headers, decision.response, "answer"
+    refusal = _free_budget_gate(path, model, headers)
+    if refusal is not None:
+        refusal_headers, refusal_response, refusal_action = refusal
+        return limiter, bid, refusal_headers, refusal_response, refusal_action
     if not _meter_binding_allows(bid):
         # A fresh sibling may be temporarily unselectable while its cold probe
         # runs. Reuse the bounded alternate-probe wait before refusing this
@@ -5036,36 +5105,19 @@ async def _pre_dispatch_gate(
         )
         return limiter, bid, headers, response, action
     if retry_after_remaining > 0:
-        bid, headers, response, action = await _pre_dispatch_retry_after(
+        return await _park_on_pre_dispatch_retry_after(
+            limiter=limiter,
             bid=bid,
             headers=headers,
             path=path,
+            cid=cid,
             retry_after_remaining=retry_after_remaining,
-            source="pre-dispatch",
             finish_probe=finish_probe,
-            release_on_reroute=True,
             try_reroute=try_reroute,
             wait_alternate=wait_alternate,
             reroute=reroute,
+            wait_reval=wait_reval,
         )
-        if action == "reroute":
-            return limiter, bid, headers, None, "reroute"
-        if action == "answer":
-            return limiter, bid, headers, response, "answer"
-        # A short pause need not arm the half-open probe gate. Park here too:
-        # falling through churns slots until _post_slot_recheck returns them.
-        if not await wait_reval(limiter.wait_retry_after):
-            finish_probe(success=False)
-            return (
-                limiter,
-                bid,
-                headers,
-                _queue_wait_timeout_response(bid, cid, path, limiter, 0.0),
-                "answer",
-            )
-        # Recheck the gate with the same route/lease. Routing afresh while we
-        # own a probe would overwrite its owner and wait on our own probe.
-        return limiter, bid, headers, None, "reroute"
     # Same escape as the probe gate above; unlike that branch this one is
     # reachable holding a lease on `bid`, which wait_for_alternate_probe refuses
     # to park on (see its docstring — that way lies a lease cycle).
