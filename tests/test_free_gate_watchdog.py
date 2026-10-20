@@ -473,3 +473,121 @@ def test_cli_replay_exit_zero_on_a_clean_capture(tmp_path: Path, capsys) -> None
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert payload["alerts"] == []
+
+
+# ---------------------------------------------------------------------------
+# R4 — unreachable gate (aislop swallowed-exception fix: the failure must be
+# observable state, not a stderr line + continue)
+# ---------------------------------------------------------------------------
+def _healthy_scrape(source: str) -> fgw.Scrape:
+    return fgw.Scrape(
+        ts=T0,
+        source=source,
+        samples=[
+            fgw.Sample(fgw.M_AIMD_MAX, (("bearer", "b1"),), 12.0),
+            fgw.Sample(fgw.M_AIMD_FLOOR, (("bearer", "b1"),), 1.0),
+        ],
+    )
+
+
+def test_poll_blind_gate_is_a_critical_alert_not_just_a_stderr_line(monkeypatch, capsys) -> None:
+    """Every scrape failing must yield a visible finding + the operator log line."""
+    calls = {"n": 0}
+
+    def _boom(endpoint, *, timeout=5.0, source=""):
+        calls["n"] += 1
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(fgw, "fetch_metrics", _boom)
+    alerts, pending, scrapes = fgw.poll(
+        {"go:8770": "http://127.0.0.1:8770"},
+        interval=0.0,
+        samples=3,
+        config=fgw.WatchdogConfig(),
+    )
+    err = capsys.readouterr().err
+    # the log line stays...
+    assert "go:8770 http://127.0.0.1:8770 unreachable" in err
+    # ...and the failure is now observable state, surfaced through evaluate()
+    assert scrapes == []
+    blind = [a for a in alerts if a.rule == "unreachable"]
+    assert len(blind) == 1
+    assert blind[0].severity == "critical"
+    assert blind[0].bearer == "go:8770"
+    assert "failed 3/3 scrape(s)" in blind[0].detail
+    assert "ConnectionRefusedError" in blind[0].detail
+    assert calls["n"] == 3, "must keep polling every sample despite failures"
+
+
+def test_poll_unreachable_survives_an_empty_scrape_stream(monkeypatch) -> None:
+    """evaluate() early-returns on no scrapes — the blind gate must come first."""
+
+    def _boom(endpoint, *, timeout=5.0, source=""):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(fgw, "fetch_metrics", _boom)
+    alerts, _, _ = fgw.poll(
+        {"zen:8774": "http://127.0.0.1:8774"},
+        interval=0.0,
+        samples=2,
+        config=fgw.WatchdogConfig(),
+    )
+    assert [a.rule for a in alerts] == ["unreachable"]
+    assert alerts[0].severity == "critical"
+    assert "TimeoutError" in alerts[0].detail
+
+
+def test_poll_partial_outage_is_pending_and_the_live_gate_still_evaluates(monkeypatch) -> None:
+    """A gate that failed SOME scrapes is a near-miss; the healthy twin runs."""
+    state = {"failures_left": 2}
+
+    def _flaky(endpoint, *, timeout=5.0, source=""):
+        if "8770" in endpoint and state["failures_left"] > 0:
+            state["failures_left"] -= 1
+            raise ConnectionResetError(104, "Connection reset by peer")
+        return _healthy_scrape(source or endpoint)
+
+    monkeypatch.setattr(fgw, "fetch_metrics", _flaky)
+    alerts, pending, scrapes = fgw.poll(
+        {"go:8770": "http://127.0.0.1:8770", "zen:8774": "http://127.0.0.1:8774"},
+        interval=0.0,
+        samples=3,
+        config=fgw.WatchdogConfig(),
+    )
+    # go failed 2/3 -> partial, never a page; zen fully healthy -> no finding
+    assert [a.rule for a in alerts] == []
+    partial = [p for p in pending if p.rule == "unreachable"]
+    assert len(partial) == 1
+    assert partial[0].bearer == "go:8770"
+    assert "failed 2/3 scrape(s)" in partial[0].detail
+    assert "partial outage" in partial[0].detail
+    # the healthy gate's 3 scrapes, plus go's 1 successful retry after its two
+    # failures, still drove the normal rules (4 total)
+    assert len(scrapes) == 4
+
+
+def test_unreachable_rule_falsifier_all_healthy_is_silent(monkeypatch) -> None:
+    """No failures -> zero unreachable findings (absence of signal is signal)."""
+    monkeypatch.setattr(
+        fgw, "fetch_metrics", lambda e, *, timeout=5.0, source="": _healthy_scrape(source or e)
+    )
+    alerts, pending, scrapes = fgw.poll(
+        {"go:8770": "http://127.0.0.1:8770"},
+        interval=0.0,
+        samples=2,
+        config=fgw.WatchdogConfig(),
+    )
+    assert [a.rule for a in alerts if a.rule == "unreachable"] == []
+    assert [p for p in pending if p.rule == "unreachable"] == []
+    assert len(scrapes) == 2
+
+
+def test_unreachable_gate_blind_boundary() -> None:
+    """blind iff every attempted scrape failed — the property the rule reads."""
+    gate = fgw.UnreachableGate(source="go", endpoint="http://x")
+    gate.attempts, gate.failures = 3, 2
+    assert not gate.blind
+    gate.failures = 3
+    assert gate.blind
+    gate.attempts = gate.failures = 0
+    assert not gate.blind, "no attempts must not read as blind"

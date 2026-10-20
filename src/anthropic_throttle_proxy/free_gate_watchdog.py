@@ -72,6 +72,7 @@ __all__ = [
     "Reconstructor",
     "Sample",
     "Scrape",
+    "UnreachableGate",
     "WatchdogConfig",
     "evaluate",
     "fetch_metrics",
@@ -449,6 +450,42 @@ def scrapes_from_journal(
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
+@dataclass
+class UnreachableGate:
+    """One gate's scrape failures over a live run — per-endpoint failure state.
+
+    This is the counter the stderr warning used to be the only trace of. A gate
+    the watchdog cannot scrape is invisible to every OTHER rule (no scrapes, no
+    series), so the blindness itself must be carried into :func:`evaluate` and
+    surfaced as a finding: a gate that failed EVERY scrape becomes a critical
+    ``unreachable`` Alert (the watchdog is blind for the whole run), while a
+    partially-failing gate becomes a ``Pending`` near-miss so one transient
+    timeout does not page anyone.
+    """
+
+    source: str
+    endpoint: str
+    attempts: int = 0
+    failures: int = 0
+    first_ts: float = 0.0
+    last_ts: float = 0.0
+    last_error: str = ""
+
+    @property
+    def blind(self) -> bool:
+        """True when NO scrape of this gate landed (at least one was attempted)."""
+        return self.attempts > 0 and self.failures >= self.attempts
+
+    def note_failure(self, exc: BaseException) -> None:
+        """Record one failed scrape: count, when it happened, why it failed."""
+        now = time.time()
+        if self.failures == 0:
+            self.first_ts = now
+        self.failures += 1
+        self.last_ts = now
+        self.last_error = f"{type(exc).__name__}: {exc}"
+
+
 @dataclass(frozen=True)
 class Alert:
     rule: str
@@ -550,12 +587,68 @@ def _window_counts(
     return out
 
 
+def _rule_unreachable(
+    gates: Sequence[UnreachableGate],
+    scrapes: Sequence[Scrape],
+    pending: list[Pending],
+) -> list[Alert]:
+    """R4: a gate the watchdog could not scrape is itself a finding.
+
+    Runs BEFORE the other rules and even on an empty scrape stream: a run where
+    every scrape failed has no series to evaluate, and reporting nothing would
+    make blindness indistinguishable from health. A fully-blind gate is a
+    critical ``unreachable`` Alert; a gate that failed only SOME scrapes is a
+    ``Pending`` near-miss (one transient timeout must not page anyone, exactly
+    like the pin dwell).
+    """
+    alerts: list[Alert] = []
+    run_end = scrapes[-1].ts if scrapes else time.time()
+    for gate in gates:
+        detail = (
+            f"{gate.source} ({gate.endpoint}) failed {gate.failures}/{gate.attempts} "
+            f"scrape(s), last error: {gate.last_error}"
+        )
+        if gate.blind:
+            alerts.append(
+                Alert(
+                    rule="unreachable",
+                    severity="critical",
+                    bearer=gate.source,
+                    ts=gate.last_ts or run_end,
+                    source=gate.source,
+                    detail=(
+                        f"{detail} — watchdog is BLIND to this gate for the whole run; "
+                        "no rule below saw its metrics"
+                    ),
+                )
+            )
+        else:
+            pending.append(
+                Pending(
+                    rule="unreachable",
+                    bearer=gate.source,
+                    started=gate.first_ts,
+                    ended=gate.last_ts,
+                    detail=f"{detail} — partial outage, other scrapes landed",
+                )
+            )
+    return alerts
+
+
 def evaluate(
-    scrapes: Sequence[Scrape], config: WatchdogConfig
+    scrapes: Sequence[Scrape],
+    config: WatchdogConfig,
+    unreachable: Sequence[UnreachableGate] = (),
 ) -> tuple[list[Alert], list[Pending]]:
-    """Run every rule over a chronological scrape stream."""
+    """Run every rule over a chronological scrape stream.
+
+    ``unreachable`` carries per-endpoint scrape failures from live ``poll``;
+    it is consulted first because an all-failed run yields no scrapes at all
+    and the early return below would otherwise hide the blindness.
+    """
     alerts: list[Alert] = []
     pending: list[Pending] = []
+    alerts.extend(_rule_unreachable(unreachable, scrapes, pending))
     if not scrapes:
         return alerts, pending
     scrapes = sorted(scrapes, key=lambda s: s.ts)
@@ -752,16 +845,31 @@ def poll(
     timeout: float = 5.0,
     on_scrape: Any = None,
 ) -> tuple[list[Alert], list[Pending], list[Scrape]]:
-    """Scrape every gate ``samples`` times, ``interval`` seconds apart."""
+    """Scrape every gate ``samples`` times, ``interval`` seconds apart.
+
+    A failed scrape is NOT discarded: it is recorded on the endpoint's
+    :class:`UnreachableGate` (count + timestamps + last error) and handed to
+    :func:`evaluate`, which raises it to an ``unreachable`` Alert or Pending.
+    The stderr line stays for the operator watching the run live.
+    """
     scrapes: list[Scrape] = []
+    gates: dict[str, UnreachableGate] = {
+        name: UnreachableGate(source=name, endpoint=endpoint)
+        for name, endpoint in endpoints.items()
+    }
     for index in range(samples):
         for name, endpoint in endpoints.items():
+            gate = gates[name]
+            gate.attempts += 1
             try:
                 scrape = fetch_metrics(endpoint, timeout=timeout, source=name)
             # URLError and TimeoutError are both OSError subclasses in py3; the
             # base class alone covers refused connections, DNS failures and
             # read timeouts, and any new OSError descendant stays covered.
             except OSError as exc:
+                # Handling, not swallowing: the failure is counted on the gate
+                # below and re-surfaced by evaluate() as an unreachable finding.
+                gate.note_failure(exc)
                 print(f"warn: {name} {endpoint} unreachable: {exc}", file=sys.stderr)
                 continue
             scrapes.append(scrape)
@@ -769,7 +877,9 @@ def poll(
                 on_scrape(scrape)
         if index + 1 < samples:
             time.sleep(interval)
-    alerts, pending = evaluate(scrapes, config)
+    alerts, pending = evaluate(
+        scrapes, config, unreachable=[g for g in gates.values() if g.failures]
+    )
     return alerts, pending, scrapes
 
 
