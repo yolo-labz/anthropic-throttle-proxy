@@ -35,6 +35,7 @@ idle lane.
 | `pushback` | ≥3 budget-class AIMD shrinks / 5 min per bearer | warning | **18:50:24** (10.8 min before the first 503) |
 | `qtimeout` | ≥2 queue-wait-timeout 503s / min per bearer | critical | **19:02:30** (clients already dying) |
 | `pinned` | ceiling ≤ floor sustained ≥10 min | critical | **19:03:48** (confirms the 15.2 min pin) |
+| `unreachable` | every live scrape of a gate failed (partial → `Pending`) | critical | live-only — the watchdog is blind to that gate |
 
 Each rule is paired with a falsifier test (near-miss must stay silent):
 
