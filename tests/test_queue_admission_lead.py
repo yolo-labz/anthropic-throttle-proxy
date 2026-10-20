@@ -14,18 +14,13 @@ between 16:47:10 and 16:52:28 and then RESTED at ``max_concurrent=1`` for
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncGenerator
 
 import pytest
-from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, isolate_free_lane
+from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, free_lane_isolate
 
 from anthropic_throttle_proxy import config, limiter
 
-
-@pytest.fixture(autouse=True)
-async def _isolate(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[None]:
-    async with isolate_free_lane(monkeypatch, queue_mode="fair", hold_s=240.0):
-        yield
+_isolate = free_lane_isolate(queue_mode="fair", hold_s=240.0)
 
 
 def _lane(

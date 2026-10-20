@@ -26,19 +26,11 @@ exercise the production decision path without an HTTP round trip.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-
-import pytest
-from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, isolate_free_lane
+from _free_lane_env import FREE_FLOOR, FREE_HARD_CEILING, FREE_INITIAL, free_lane_isolate
 
 from anthropic_throttle_proxy import config, limiter
 
-
-@pytest.fixture(autouse=True)
-async def _isolate(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[None]:
-    """Free-lane AIMD knobs + a clean registry (shared helper, spec 333)."""
-    async with isolate_free_lane(monkeypatch, queue_mode="off"):
-        yield
+_isolate = free_lane_isolate(queue_mode="off")
 
 
 def _free_lane(

@@ -11,6 +11,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import pytest
+
 from anthropic_throttle_proxy import config, limiter, pacing
 
 FREE_HARD_CEILING = 1024
@@ -53,3 +55,18 @@ def patch_admission(monkeypatch, **settings) -> None:
     for key, value in settings.items():
         monkeypatch.setattr(config, key, value)
     monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
+
+
+def free_lane_isolate(*, queue_mode: str = "off", hold_s: float | None = None):
+    """Return an autouse async fixture isolating the free-lane AIMD knobs.
+
+    Factories the per-suite ``_isolate`` fixture so the decorator/signature
+    boilerplate is not re-cloned (jscpd) in every suite that needs it.
+    """
+
+    @pytest.fixture(autouse=True)
+    async def _isolate(monkeypatch: pytest.MonkeyPatch):
+        async with isolate_free_lane(monkeypatch, queue_mode=queue_mode, hold_s=hold_s):
+            yield
+
+    return _isolate
