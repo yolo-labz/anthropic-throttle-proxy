@@ -734,3 +734,41 @@ def test_capacity_fail_closed_for_stale_and_unknown(row, klass):
     from anthropic_throttle_proxy.ui.presentation import row_capacity_class
 
     assert row_capacity_class(row) == klass
+
+
+# --- 21/10/2026: a wedged browser identity must say WHY sampling stopped -----
+_failure_reason = _probe["_failure_reason"]
+
+
+class _WedgedTimeout(TimeoutError):
+    """Shaped like `lib.interactive.AttachWedged`: a timeout that names itself."""
+
+    def __init__(self) -> None:
+        self.reason = "browser attach wedged on identity xiaomi-mimo2"
+        super().__init__("browser attach wedged on identity xiaomi-mimo2 — no CDP session")
+
+
+def test_wedged_attach_reason_names_the_identity():
+    # 14-21/10/2026: the MiMo meters sat 5.9 days stale while every sample died
+    # as a bare `TimeoutError`. The dashboard must be able to say WHY.
+    assert _failure_reason(_WedgedTimeout(), "xiaomi-mimo2") == (
+        "browser attach wedged on identity xiaomi-mimo2"
+    )
+
+
+def test_plain_timeout_names_the_identity_it_failed_on():
+    assert _failure_reason(TimeoutError(), "xiaomi") == (
+        "browser attach timed out on identity xiaomi"
+    )
+
+
+def test_own_value_error_message_survives_but_driver_messages_never_do():
+    # ValueErrors here are raised by this script (identity mismatch, rejected
+    # reading) and carry no URL; a driver error message embeds the authenticated
+    # page URL, so only its TYPE is ever forwarded.
+    assert _failure_reason(ValueError("Team B browser identity does not match"), "x") == (
+        "Team B browser identity does not match"
+    )
+    leaky = RuntimeError("page.goto: https://platform.xiaomimimo.com/console?token=secret")
+    assert "secret" not in _failure_reason(leaky, "xiaomi")
+    assert _failure_reason(leaky, "xiaomi") == "console sample failed (RuntimeError)"
