@@ -96,6 +96,30 @@ def _parse_console_ts(raw: str) -> datetime:
     raise ValueError(f"unparseable console timestamp: {raw!r}")
 
 
+def _failure_reason(exc: BaseException, identity: str) -> str:
+    """A credential-free WHY for a sample that produced nothing.
+
+    The dashboard could only ever say `TimeoutError` for 5.9 days (14-21/10/2026)
+    while a wedged renderer on the browser identity refused every attach, because
+    the probe printed the exception TYPE and nothing else. Browser-driver
+    messages embed the websocket URL and the authenticated page URL, so they are
+    never forwarded — but the proxy's own typed reason (`interactive.AttachWedged`)
+    is written by us and names the identity and what was done about it.
+    """
+    typed = getattr(exc, "reason", "")
+    if isinstance(typed, str) and typed:
+        return typed
+    if isinstance(exc, TimeoutError) or "imeout" in type(exc).__name__:
+        return f"browser attach timed out on identity {identity}"
+    if isinstance(exc, ValueError):
+        # Every ValueError on this path is raised by THIS script (an identity
+        # mismatch, a rejected reading) and carries no URL, token or cookie.
+        # Driver/handler exceptions are the ones that embed authenticated URLs,
+        # so their messages stay suppressed.
+        return str(exc)[:120]
+    return f"console sample failed ({type(exc).__name__})"
+
+
 def _team_fail(reason: str) -> dict:
     """Fresh fail-closed team row: no meters, nothing measured implied.
 
@@ -363,15 +387,24 @@ def main() -> int:
         # fresh fail-closed B row (team-line semantics), and seats are
         # never aggregated.
         seat_b = None
+        seat_b_reason = ""
         if team_b_project:
             try:
                 seat_b = read_team_b_seat(interactive, team_b_project, expected_b, sample_deadline)
-            except Exception:
+            except Exception as exc:
                 seat_b = None
+                # A failed B read still rewrites its row, so carry WHY into it:
+                # "Team seat reading unavailable" alone left the dashboard
+                # unable to tell a wedged browser from a logged-out seat.
+                seat_b_reason = _failure_reason(exc, "xiaomi-mimo2")
         if team_b_project:
             result = team_report(
                 observed["detail"], observed["usage"], seat_reading, now, seat_b_response=seat_b
             )
+            if seat_b is None and seat_b_reason:
+                for lane in result["lanes"]:
+                    if lane["id"] == _TEAM_B_LANE_ID:
+                        lane["reason"] = seat_b_reason
         else:
             result = team_report(observed["detail"], observed["usage"], seat_reading, now)
     else:
@@ -384,6 +417,10 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        # Browser exceptions can contain account URLs; never log their messages.
-        print(f"MiMo console reading unavailable ({type(exc).__name__})", file=sys.stderr)
+        # Browser exceptions can contain account URLs; never log their messages —
+        # `_failure_reason` forwards only our own typed reason, never str(exc).
+        print(
+            f"MiMo console reading unavailable: {_failure_reason(exc, 'xiaomi')}",
+            file=sys.stderr,
+        )
         raise SystemExit(1) from None
