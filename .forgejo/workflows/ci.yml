@@ -1,0 +1,47 @@
+# Forgejo CI-of-record (fleet migration off GitHub Actions, 22/10/2026).
+# `.forgejo/` is invisible to GitHub → zero GitHub dispatch/billing. Runs on the
+# fleet runner's `X64:host` lane (nix available), and reports its verdict back
+# to GitHub as the commit status `forgejo/ruff-pytest` via the status bridge.
+# Keep the job id/context stable: it is the bridge's identity.
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  ruff-pytest:
+    runs-on: X64
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report pending
+        continue-on-error: true
+        env:
+          GH_STATUS_TOKEN: ${{ secrets.GH_STATUS_TOKEN }}
+          GH_REPO: yolo-labz/anthropic-throttle-proxy
+          GH_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STATUS_CONTEXT: forgejo/ruff-pytest
+          STATUS_STATE: pending
+          STATUS_DESC: Forgejo CI running
+          STATUS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/forgejo-gh-status.sh
+      - name: Sync (locked)
+        run: nix shell nixpkgs#uv nixpkgs#python313 -c uv sync --frozen --group dev --python python3.13
+      - name: Ruff lint
+        run: nix shell nixpkgs#uv -c uv run ruff check src tests
+      - name: Ruff format check
+        run: nix shell nixpkgs#uv -c uv run ruff format --check src tests
+      - name: Pytest
+        run: nix shell nixpkgs#uv -c uv run pytest -q -p no:cacheprovider
+      - name: Status bridge → GitHub (forgejo/ruff-pytest)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_STATUS_TOKEN: ${{ secrets.GH_STATUS_TOKEN }}
+          GH_REPO: yolo-labz/anthropic-throttle-proxy
+          GH_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STATUS_CONTEXT: forgejo/ruff-pytest
+          STATUS_STATE: ${{ job.status }}
+          STATUS_DESC: Forgejo CI ruff + pytest
+          STATUS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash scripts/forgejo-gh-status.sh
