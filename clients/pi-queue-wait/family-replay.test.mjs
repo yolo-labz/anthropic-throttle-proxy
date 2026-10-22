@@ -85,6 +85,7 @@ test("unit: providerFamily mirrors the harness classification", () => {
   assert.equal(providerFamily("openai-codex"), "openai");
   assert.equal(providerFamily("codex-b"), "openai");
   assert.equal(providerFamily("claude-bridge"), "anthropic");
+  assert.equal(providerFamily("claude-lane"), "anthropic"); // NixOS #2929 gateway lane
   assert.equal(providerFamily("ollama"), null);
   assert.equal(providerFamily(undefined), null);
 });
