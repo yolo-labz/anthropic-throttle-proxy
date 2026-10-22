@@ -67,10 +67,13 @@ class _CountingUpstream:
         return web.Response(status=200, headers={"content-type": "application/json"}, text="ok")
 
 
+_UPSTREAM_KEY = web.AppKey("upstream", _CountingUpstream)
+
+
 def _counting_app() -> web.Application:
     upstream = _CountingUpstream()
     app = web.Application()
-    app["upstream"] = upstream
+    app[_UPSTREAM_KEY] = upstream
     app.router.add_route("*", "/{path:.*}", upstream.messages)
     return app
 
@@ -141,7 +144,7 @@ async def test_strict_local_refusal_typed_503_zero_upstream(monkeypatch, tmp_pat
         expected_reason = "exhausted" if case == "exhausted" else "unbound"
         _assert_local_refusal(resp, body, expected_reason)
         # Zero upstream transport, zero provider feedback, no retries.
-        assert upstream_app["upstream"].hits == 0
+        assert upstream_app[_UPSTREAM_KEY].hits == 0
         assert config.state["served"] == 0
         assert config.state["upstream_retries"] == 0
         assert _aimd_shrink_total() == before, "local refusal must never AIMD-shrink"
@@ -158,7 +161,7 @@ async def test_default_off_positive_control_passthrough(monkeypatch):
         resp = await client.post("/v1/messages", data=_BODY, headers=_HEADERS)
         await resp.read()
         assert resp.status == 200  # untouched normal path
-        assert upstream_app["upstream"].hits == 1
+        assert upstream_app[_UPSTREAM_KEY].hits == 1
     finally:
         await client.close()
         await upstream_server.close()

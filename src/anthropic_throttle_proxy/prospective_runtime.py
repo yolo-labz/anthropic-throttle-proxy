@@ -322,7 +322,7 @@ class ProspectiveRuntime(_OffRuntime):
 
 
 RUNTIME_KEY = web.AppKey("prospective_runtime", ProspectiveRuntime)
-_SELECTED_KEY = "anthropic_throttle_proxy.selected_dispatch"
+_SELECTED_KEY = web.RequestKey("anthropic_throttle_proxy.selected_dispatch", SelectedDispatch)
 _OFF_RUNTIME = _OffRuntime()
 
 

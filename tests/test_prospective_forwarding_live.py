@@ -41,6 +41,8 @@ _MODEL = "live-m"
 _BUDGETS = Budgets(max_requests=1, max_tokens=10**9)
 _BODY = json.dumps({"model": _MODEL, "messages": [{"role": "user", "content": "hi"}]}).encode()
 _TIMEOUT = aiohttp.ClientTimeout(total=5)
+_ENDPOINT_KEY = web.AppKey("endpoint", str)
+_UPSTREAM_URL_KEY = web.AppKey("upstream_url", str)
 
 
 def _selected(endpoint: str) -> SelectedDispatch:
@@ -73,10 +75,10 @@ def _runtime(tmp_path, endpoint: str, *, source=_SOURCE, model=_MODEL) -> Prospe
 
 async def _handler(request: web.Request) -> web.StreamResponse:
     body = await request.read()
-    set_selected_dispatch(request, _selected(request.app["endpoint"]))
+    set_selected_dispatch(request, _selected(request.app[_ENDPOINT_KEY]))
     try:
         result = await forwarding._forward_once(
-            request, dict(request.headers), body, request.app["upstream_url"], _TIMEOUT
+            request, dict(request.headers), body, request.app[_UPSTREAM_URL_KEY], _TIMEOUT
         )
     except LocalProspectiveRefusal as exc:  # typed local policy: never provider feedback
         return local_refusal_response(exc.refusal)
@@ -118,8 +120,8 @@ async def _serve(tmp_path, upstream: _Upstream, *, mode="strict"):
     runtime = _runtime(tmp_path, endpoint) if mode == "strict" else ProspectiveRuntime()
     await runtime.start()
     app = web.Application()
-    app["upstream_url"] = endpoint + "/messages"
-    app["endpoint"] = endpoint
+    app[_UPSTREAM_URL_KEY] = endpoint + "/messages"
+    app[_ENDPOINT_KEY] = endpoint
     app[RUNTIME_KEY] = runtime
     app.router.add_post("/v1/messages", _handler)
     client = TestClient(TestServer(app))
@@ -183,8 +185,8 @@ async def test_default_off_identical_status_and_body():
     await up_server.start_server()
     endpoint = str(up_server.make_url("/upstream-v1"))
     app = web.Application()  # NO RUNTIME_KEY -> shared OFF runtime
-    app["endpoint"] = endpoint
-    app["upstream_url"] = endpoint + "/messages"
+    app[_ENDPOINT_KEY] = endpoint
+    app[_UPSTREAM_URL_KEY] = endpoint + "/messages"
     app.router.add_post("/v1/messages", _handler)
     client = TestClient(TestServer(app))
     await client.start_server()
