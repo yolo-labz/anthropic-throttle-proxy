@@ -1,6 +1,8 @@
 # Forgejo CI-of-record (fleet migration off GitHub Actions, 22/10/2026).
 # `.forgejo/` is invisible to GitHub → zero GitHub dispatch/billing. Runs on the
-# fleet runner's `X64:host` lane (nix available), and reports its verdict back
+# fleet runner's `ubuntu-latest` act container (the host lane mounts the job
+# workdir without exec, so wheel binaries like ruff in .venv fail with EACCES —
+# measured run 6, 22/10), and reports its verdict back
 # to GitHub as the commit status `forgejo/ruff-pytest` via the status bridge.
 # Keep the job id/context stable: it is the bridge's identity.
 name: CI
@@ -10,7 +12,7 @@ on:
   workflow_dispatch:
 jobs:
   ruff-pytest:
-    runs-on: X64
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -25,14 +27,19 @@ jobs:
           STATUS_DESC: Forgejo CI running
           STATUS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: bash scripts/forgejo-gh-status.sh
+      - name: Set up uv + Python 3.13
+        uses: astral-sh/setup-uv@v8
+        with:
+          version: "0.9.2"
+          python-version: "3.13"
       - name: Sync (locked)
-        run: nix shell nixpkgs#uv nixpkgs#python313 -c uv sync --frozen --group dev --python python3.13
+        run: uv sync --frozen --group dev
       - name: Ruff lint
-        run: nix shell nixpkgs#uv -c uv run ruff check src tests
+        run: uv run ruff check src tests
       - name: Ruff format check
-        run: nix shell nixpkgs#uv -c uv run ruff format --check src tests
+        run: uv run ruff format --check src tests
       - name: Pytest
-        run: nix shell nixpkgs#uv -c uv run pytest -q -p no:cacheprovider
+        run: uv run pytest -q -p no:cacheprovider
       - name: Status bridge → GitHub (forgejo/ruff-pytest)
         if: always()
         continue-on-error: true
