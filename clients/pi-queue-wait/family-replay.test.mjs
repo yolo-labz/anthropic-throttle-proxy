@@ -74,6 +74,7 @@ test("unit: the covered-provider set is the single source of truth the harness i
   assert.equal(normalizesProvider("zai"), true);
   assert.equal(normalizesProvider("mimo-desktop"), true);
   assert.equal(normalizesProvider("deepseek"), true);
+  assert.equal(normalizesProvider("claude-lane"), true);
   assert.equal(normalizesProvider("openai-codex"), false, "an unwrapped target must stay fail-closed");
   assert.equal(normalizesProvider("codex-b"), false);
 });
@@ -219,6 +220,70 @@ test("integration: deepseek is registered and its requests are normalized too", 
     assert.equal(body.messages.some((m) => m.role === "tool"), true, "tool pair survives");
   } finally {
     await proxy.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("integration: claude-lane is registered on anthropic-messages and normalized", async () => {
+  const { ModelRuntime } = await loadModelRuntimeModule();
+  const proxy = createFakeProxy([sse200()]);
+  const dir = mkdtempSync(path.join(tmpdir(), "claude-lane-family-"));
+  try {
+    const baseUrl = await proxy.baseUrl("");
+    const modelsPath = path.join(dir, "models.json");
+    writeFileSync(modelsPath, JSON.stringify({
+      providers: {
+        "claude-lane": {
+          baseUrl, api: "anthropic-messages", apiKey: "local-lane-fixture",
+          models: [{ id: "claude-haiku-5-5", name: "Lane fixture", input: ["text"], contextWindow: 200000, maxTokens: 8192 }],
+        },
+      },
+    }));
+    const runtime = await ModelRuntime.create({ authPath: path.join(dir, "auth.json"), modelsPath, refreshOnCreate: false });
+    const loaded = await loadQueueWaitExtensionRegistration();
+    for (const extension of loaded.result.extensions) {
+      for (const handler of extension.handlers.get("session_start") ?? []) {
+        await handler({ reason: "startup" }, { modelRegistry: runtime, ui: { setStatus: () => {} } });
+      }
+    }
+    const registered = loaded.registrations.find((r) => r.name === "claude-lane");
+    assert.ok(registered, "claude-lane must be registered when the catalog declares it");
+    assert.equal(registered.config.api, "anthropic-messages", "the lane keeps its Anthropic wire format");
+    const model = runtime.getModels("claude-lane")[0];
+    assert.equal(model.baseUrl, baseUrl, "the overlay keeps the configured endpoint");
+
+    // The fake proxy answers OpenAI-shaped SSE; only the outgoing body matters here.
+    await drain(registered.config.streamSimple(
+      model, foreignContext(),
+      { apiKey: "local-lane-fixture", fetch: (a, b) => globalThis.fetch(a, b), maxRetries: 0 },
+    ));
+    assert.equal(proxy.requests.length, 1, "exactly one upstream request");
+    const serialized = proxy.requests[0].body;
+    assert.equal(serialized.includes(FOREIGN_REASONING), false, "no foreign reasoning toward claude-lane");
+    assert.equal(serialized.includes("sig-from-openai"), false, "no foreign signature toward claude-lane");
+    assert.equal(serialized.includes('"tool_use"'), true, "tool call survives as tool_use");
+    assert.equal(serialized.includes(TOOL_RESULT), true, "tool result survives");
+  } finally {
+    await proxy.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("integration: no claude-lane in the catalog registers no claude-lane", async () => {
+  const { ModelRuntime } = await loadModelRuntimeModule();
+  const dir = mkdtempSync(path.join(tmpdir(), "claude-lane-absent-"));
+  try {
+    const modelsPath = path.join(dir, "models.json");
+    writeFileSync(modelsPath, JSON.stringify({ providers: {} }));
+    const runtime = await ModelRuntime.create({ authPath: path.join(dir, "auth.json"), modelsPath, refreshOnCreate: false });
+    const loaded = await loadQueueWaitExtensionRegistration();
+    for (const extension of loaded.result.extensions) {
+      for (const handler of extension.handlers.get("session_start") ?? []) {
+        await handler({ reason: "startup" }, { modelRegistry: runtime, ui: { setStatus: () => {} } });
+      }
+    }
+    assert.equal(loaded.registrations.some((r) => r.name === "claude-lane"), false);
+  } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
