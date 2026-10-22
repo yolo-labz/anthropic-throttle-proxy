@@ -11,7 +11,11 @@
 // the same factory as the jiti-hostile "@earendil-works/pi-ai/api/openai-
 // completions.lazy" subpath.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream, openAICompletionsApi } from "@earendil-works/pi-ai/compat";
+import {
+  anthropicMessagesApi,
+  createAssistantMessageEventStream,
+  openAICompletionsApi,
+} from "@earendil-works/pi-ai/compat";
 import { createQueueWaitStream } from "./queue-wait.mjs";
 import { normalizeContextForProvider } from "./normalize-families.mjs";
 
@@ -59,6 +63,20 @@ export default function (pi: ExtensionAPI) {
   const register = (provider: string) =>
     pi.registerProvider(provider, { api: "openai-completions", streamSimple });
 
+  // claude-lane: the :8765 Anthropic gateway speaks anthropic-messages. It gets
+  // the family normalizer only — queue-wait's tuples are ZAI/MiMo-bound, and the
+  // gateway's own fair queue absorbs saturation. Without this wrapper a resumed
+  // GPT/GLM tool context was refused ("cannot replay") on every claude-lane pane.
+  const anthropic = anthropicMessagesApi();
+  const streamSimpleAnthropic = (model, context, options) => {
+    const normalized = normalizeContextForProvider(context?.messages, model?.provider);
+    return anthropic.streamSimple(
+      model,
+      normalized.changed ? { ...context, messages: normalized.messages } : context,
+      options,
+    );
+  };
+
   pi.on("session_start", (_event, ctx) => {
     ui = ctx.ui;
     // MiMo is user-configured, not built in. Do not invent an empty provider
@@ -69,6 +87,13 @@ export default function (pi: ExtensionAPI) {
     // the baseUrl survive registration. The registry guard keeps a host with no
     // DeepSeek at all from gaining an empty one.
     if (ctx.modelRegistry.getProvider("deepseek")) register("deepseek");
+    // User-configured like MiMo: never invent it on a host without the lane.
+    if (ctx.modelRegistry.getProvider("claude-lane")) {
+      pi.registerProvider("claude-lane", {
+        api: "anthropic-messages",
+        streamSimple: streamSimpleAnthropic,
+      });
+    }
   });
   pi.on("agent_start", (_event, ctx) => {
     ui = ctx.ui;
