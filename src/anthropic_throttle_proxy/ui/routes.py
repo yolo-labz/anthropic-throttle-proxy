@@ -980,7 +980,7 @@ _CLOSED_STATUSES = frozenset({"rejected", "exhausted", "refused", "error"})
 def _retry_after_text(last_ratelimit: dict | None) -> str:
     """Humanize the honoured Retry-After; empty when there is none to show."""
     raw = (last_ratelimit or {}).get("retry-after")
-    if raw in (None, ""):
+    if raw is None or raw == "":
         return ""
     try:
         seconds = float(raw)
