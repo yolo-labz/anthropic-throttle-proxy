@@ -36,7 +36,11 @@ export const NORMALIZER_VERSION = "spec-2435-1";
 // the same classification and a divergence is a bug in whichever moved.
 export const providerFamily = (provider) => {
   const name = String(provider ?? "");
-  if (name === "claude" || name === "claude-bridge") return "anthropic";
+  // claude-lane (NixOS #2929, 22/10/2026): the anthropic-throttle-proxy
+  // gateway itself, exposed to pi as an Anthropic-shape provider. Pure
+  // Anthropic — Western — and unlike the opencode* gateways it serves ONLY
+  // Claude models, so it needs no mixed-gateway conservatism.
+  if (name === "claude" || name === "claude-bridge" || name === "claude-lane") return "anthropic";
   if (name === "codex" || name === "openai-codex" || name.startsWith("codex-")) return "openai";
   if (name === "deepseek" || name === "deepinfra" || name === "zai") return "chinese-frontier";
   if (name.startsWith("mimo") || name.startsWith("xiaomi")) return "chinese-frontier";
