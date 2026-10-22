@@ -21,7 +21,7 @@ import path from "node:path";
 import {
   loadPiAi, loadModelRuntimeModule, loadQueueWaitExtensionRegistration, createFakeProxy, sse200,
 } from "./native-replay.mjs";
-import { contextFamilies, normalizeContextForProvider, normalizesProvider, providerFamily } from "./normalize-families.mjs";
+import { NORMALIZED_PROVIDERS, contextFamilies, normalizeContextForProvider, normalizesProvider, providerFamily } from "./normalize-families.mjs";
 
 const FOREIGN_REASONING = "FOREIGN_REASONING_TEXT";
 const TOOL_RESULT = "TOOL_RESULT_TEXT";
@@ -76,6 +76,36 @@ test("unit: the covered-provider set is the single source of truth the harness i
   assert.equal(normalizesProvider("deepseek"), true);
   assert.equal(normalizesProvider("openai-codex"), false, "an unwrapped target must stay fail-closed");
   assert.equal(normalizesProvider("codex-b"), false);
+});
+
+// Guard (22/10/2026): #347 classified claude-lane as anthropic but did not add
+// it to NORMALIZED_PROVIDERS, and every claude-lane pane that resumed a
+// foreign-family tool context wedged on "cannot replay". Every provider name
+// providerFamily() recognises must now be either normalized here or listed
+// with the reason it is not — adding a classification forces that decision.
+const UNWRAPPED_BY_DESIGN = Object.freeze({
+  claude: "Claude Code bridge; context never crosses into pi's replay path",
+  "claude-bridge": "same as claude",
+  codex: "OpenAI lanes run pi's native openai-responses transport (spec 2122 gate)",
+  "openai-codex": "same as codex",
+  deepinfra: "retired lane (unfunded)",
+  cursor: "not a pi provider",
+});
+test("unit: every classified provider is normalized or explicitly unwrapped", () => {
+  const classified = [
+    "claude", "claude-bridge", "claude-lane", "codex", "openai-codex",
+    "deepseek", "deepinfra", "zai", "mimo-desktop", "cursor",
+  ];
+  for (const provider of classified) {
+    assert.ok(providerFamily(provider), `${provider} must be classified`);
+    assert.ok(
+      normalizesProvider(provider) || provider in UNWRAPPED_BY_DESIGN,
+      `${provider} is classified but neither normalized nor listed in UNWRAPPED_BY_DESIGN — panes on it will wedge on cross-family replay`,
+    );
+  }
+  for (const provider of NORMALIZED_PROVIDERS) {
+    assert.ok(providerFamily(provider), `${provider} is normalized but unclassified`);
+  }
 });
 
 test("unit: providerFamily mirrors the harness classification", () => {
