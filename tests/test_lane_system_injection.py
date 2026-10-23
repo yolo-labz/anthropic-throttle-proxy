@@ -67,9 +67,7 @@ def _cc_body() -> bytes:
 
 def test_sentinel_request_gets_marker_and_fold(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
-    out = proxy._inject_lane_system_prompt(
-        _req({"x-api-key": SENTINEL}), _pi_body(), {"x-api-key": SENTINEL}
-    )
+    out = proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), _pi_body())
     obj = json.loads(out)
     assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
     first = obj["messages"][0]["content"]
@@ -103,13 +101,13 @@ def test_untouched_shapes_return_the_same_bytes(monkeypatch, headers, method, ki
         "list": lambda: b"[1, 2, 3]",
         None: lambda: None,
     }[kind]()
-    assert proxy._inject_lane_system_prompt(_req(headers, method), body, {}) is body
+    assert proxy._inject_lane_system_prompt(_req(headers, method), body) is body
 
 
 def test_no_sentinel_configured_untouched(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "")
     body = _pi_body()
-    assert proxy._inject_lane_system_prompt(_req({}), body, {}) is body
+    assert proxy._inject_lane_system_prompt(_req({}), body) is body
 
 
 # With no pi system to fold, the marker is the only system block.
@@ -124,7 +122,7 @@ MARKER_ONLY = {
 def test_marker_only_when_nothing_to_fold(monkeypatch, payload):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
     out = proxy._inject_lane_system_prompt(
-        _req({"x-api-key": SENTINEL}), json.dumps(payload).encode(), {}
+        _req({"x-api-key": SENTINEL}), json.dumps(payload).encode()
     )
     obj = json.loads(out)
     assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
@@ -137,9 +135,7 @@ def test_list_content_gets_preamble_block(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
     body = json.loads(_pi_body())
     body["messages"][0]["content"] = [{"type": "text", "text": "first"}]
-    out = proxy._inject_lane_system_prompt(
-        _req({"x-api-key": SENTINEL}), json.dumps(body).encode(), {}
-    )
+    out = proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), json.dumps(body).encode())
     folded = json.loads(out)["messages"][0]["content"]
     assert folded[0]["text"].startswith("[system preamble]") and folded[1]["text"] == "first"
 

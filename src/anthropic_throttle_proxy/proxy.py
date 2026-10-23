@@ -4822,7 +4822,7 @@ def _json_object(body: bytes) -> dict[str, object] | None:
     """Best-effort body parse; anything that is not a JSON object returns None."""
     try:
         obj = json.loads(body)
-    except Exception:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return None
     return obj if isinstance(obj, dict) else None
 
@@ -4867,9 +4867,7 @@ def _fold_pi_system_into_first_message(obj: dict[str, object]) -> None:
         first["content"] = [{"type": "text", "text": preamble}] + list(content)
 
 
-def _inject_lane_system_prompt(
-    request: web.Request, body: bytes | None, headers: dict[str, str]
-) -> bytes | None:
+def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> bytes | None:
     """Sentinel-lane entitlement fix (22/10/2026).
 
     Subscription (OAuth) bearers refuse ``POST /v1/messages`` unless the
@@ -4906,7 +4904,7 @@ def _shrink_forward_body(
     breadcrumb stubs, hard floor on single-attachment overruns).
     """
     if body is not None and request.method == "POST":
-        body = _inject_lane_system_prompt(request, body, headers)
+        body = _inject_lane_system_prompt(request, body)
         return _apply_body_shrink(request, body, path, model_label, headers)
     return body
 
