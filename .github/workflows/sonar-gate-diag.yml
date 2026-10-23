@@ -7,21 +7,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Probe the endpoints the CI token may read
+      - name: Read the gate for an analysis this token submitted
         env:
           HOST: ${{ vars.SONAR_HOST_URL }}
           TOKEN: ${{ secrets.SONAR_TOKEN }}
+          AID: acf42a43-83e8-4227-9340-5c1078b2d31b
         run: |
           set -u
-          B="$HOST/api"; K=yolo-labz_anthropic-throttle-proxy
-          probe() {
-            echo "=== $1"
-            code=$(curl -sS -u "$TOKEN:" -o /tmp/r.json -w '%{http_code}' "$B/$1")
-            echo "http=$code"
-            head -c 1200 /tmp/r.json; echo
-          }
-          probe "ce/component?component=$K"
-          probe "project_analyses/search?project=$K&ps=2"
-          probe "qualitygates/project_status?projectKey=$K"
-          probe "issues/search?componentKeys=$K&resolved=false&ps=5&types=BUG,VULNERABILITY"
-          probe "hotspots/search?projectKey=$K&status=TO_REVIEW&ps=20"
+          code=$(curl -sS -u "$TOKEN:" -o /tmp/g.json -w '%{http_code}' "$HOST/api/qualitygates/project_status?analysisId=$AID")
+          echo "http=$code"
+          jq -r '.projectStatus.status' /tmp/g.json 2>/dev/null
+          echo "--- conditions ---"
+          jq -r '.projectStatus.conditions[]? | "\(.status)\t\(.metricKey)\tactual=\(.actualValue)\tthreshold=\(.errorThreshold // "-")"' /tmp/g.json 2>/dev/null
+          echo "--- raw ---"
+          head -c 1500 /tmp/g.json
