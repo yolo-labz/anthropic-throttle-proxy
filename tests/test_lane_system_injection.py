@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from aiohttp.test_utils import make_mocked_request
 
 from anthropic_throttle_proxy import config, proxy
@@ -326,3 +327,75 @@ def test_no_messages_still_gets_marker(monkeypatch):
     body = json.dumps({"system": "You are pi."}).encode()
     obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
     assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
+
+
+# ── routing-side strip (proxy._route_account_if_enabled) ───────────────────
+# The sentinel x-api-key must be REMOVED so the account router (not the
+# explicit API-key lane) picks the upstream credential. If it leaked through,
+# Anthropic would answer 401 — the 22/10/2026 production failure.
+@pytest.mark.parametrize(
+    ("incoming", "still_present"),
+    [("local-lane-via-8765", None), ("sk-ant-real", "sk-ant-real")],
+)
+def test_route_account_rewrites_only_the_sentinel(monkeypatch, incoming, still_present):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "local-lane-via-8765")
+    monkeypatch.setattr(proxy, "_account_routing_enabled", lambda: False)
+    headers = {"x-api-key": incoming, "content-type": "application/json"}
+    proxy._route_account_if_enabled(headers, "bearer-in", method="POST", path="/v1/messages")
+    assert headers.get("x-api-key") == still_present
+
+
+# ── injector pass-throughs: every skip must be byte-identical ─────────────
+@pytest.mark.parametrize(
+    ("method", "headers", "body"),
+    [
+        ("POST", {"x-api-key": "local-lane-via-8765"}, b"not-json{"),
+        ("POST", {"x-api-key": "local-lane-via-8765"}, b"[1, 2, 3]"),
+        ("POST", {"x-api-key": "local-lane-via-8765"}, None),
+        ("GET", {"x-api-key": "local-lane-via-8765"}, b'{"system": "x"}'),
+    ],
+    ids=["unparsable", "non-object", "no-body", "non-post"],
+)
+def test_injector_passes_through_unchanged(monkeypatch, method, headers, body):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "local-lane-via-8765")
+    request = make_mocked_request(method, "/v1/messages", headers=headers)
+    assert proxy._inject_lane_system_prompt(request, body, {}) is body
+
+
+# ── injector shaping: marker-only when there is no pi system to fold ──────
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"messages": [{"role": "user", "content": "hi"}]},
+        {"system": [], "messages": [{"role": "user", "content": "hi"}]},
+        {"system": "You are pi."},
+    ],
+    ids=["no-system", "empty-system", "system-but-no-messages"],
+)
+def test_marker_only_when_nothing_to_fold(monkeypatch, payload):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "local-lane-via-8765")
+    body = json.dumps(payload).encode()
+    obj = json.loads(
+        proxy._inject_lane_system_prompt(_req({"x-api-key": "local-lane-via-8765"}), body, {})
+    )
+    assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
+    if "messages" in payload:
+        assert obj["messages"][0]["content"] == "hi"
+
+
+@pytest.mark.parametrize(
+    "content", ["hi", [{"type": "text", "text": "first"}]], ids=["string", "list"]
+)
+def test_pi_system_folds_into_first_user_message(monkeypatch, content):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "local-lane-via-8765")
+    body = json.dumps(
+        {"system": "You are pi.", "messages": [{"role": "user", "content": content}]}
+    ).encode()
+    obj = json.loads(
+        proxy._inject_lane_system_prompt(_req({"x-api-key": "local-lane-via-8765"}), body, {})
+    )
+    folded = obj["messages"][0]["content"]
+    text = folded if isinstance(folded, str) else folded[0]["text"]
+    assert text.startswith("[system preamble]\nYou are pi.")
+    if isinstance(folded, list):
+        assert folded[1:] == [{"type": "text", "text": "first"}]
