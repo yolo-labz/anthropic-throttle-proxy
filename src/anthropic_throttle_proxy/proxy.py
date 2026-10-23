@@ -4833,6 +4833,61 @@ def _is_sentinel_lane_request(request: web.Request) -> bool:
     return "authorization" not in incoming and sentinel_hit
 
 
+def _lane_binding_window() -> tuple[float, float]:
+    """Highest 5h/7d utilisation across bearers, with that window's reset.
+
+    The account is shared, so the guard looks at the lane, not at the single
+    bearer this request would use: refusing fleet traffic only on ITS bearer
+    would let four panes exhaust a sibling's window.
+    """
+    util, reset = 0.0, 0.0
+    for bearer in bearer_state.values():
+        unified = bearer.get("unified") or {}
+        for key, reset_key in (("util_5h", "reset_5h"), ("util_7d", "reset_7d")):
+            value = unified.get(key)
+            if not isinstance(value, (int, float)):
+                continue
+            if float(value) > util:
+                util = float(value)
+                candidate = unified.get(reset_key)
+                reset = float(candidate) if isinstance(candidate, (int, float)) else 0.0
+    return util, reset
+
+
+def _fleet_budget_response(request: web.Request) -> web.Response | None:
+    """429 fleet traffic when the shared window is nearly spent (reserve rule).
+
+    Only the SENTINEL lane is refused: Claude Code sends its own Authorization
+    bearer and is the traffic this ceiling exists to protect, so it always
+    passes. Disabled by default (``THROTTLE_FLEET_MAX_UTILIZATION=0``).
+    """
+    ceiling = config.FLEET_MAX_UTILIZATION
+    if ceiling <= 0 or not _is_sentinel_lane_request(request):
+        return None
+    util, reset = _lane_binding_window()
+    if util < ceiling:
+        return None
+    retry_after = max(5, int(reset - time.time())) if reset else 60
+    return web.json_response(
+        {
+            "type": "error",
+            "error": {
+                "type": "rate_limit_error",
+                "message": (
+                    f"fleet budget reserve: the shared window is at {util:.0%} "
+                    f"(ceiling {ceiling:.0%}); the remainder is reserved for "
+                    "interactive Claude Code."
+                ),
+            },
+        },
+        status=429,
+        headers={
+            "retry-after": str(retry_after),
+            "x-anthropic-throttle-fleet-reserve": "1",
+        },
+    )
+
+
 def _json_object(body: bytes) -> dict[str, object] | None:
     """Best-effort body parse; anything that is not a JSON object returns None."""
     try:
@@ -5566,6 +5621,9 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if synthetic_response is not None:
         return synthetic_response
     early_response = _pre_queue_disconnect_response(request, path, bid, cid, via, model_label)
+    if early_response is not None:
+        return early_response
+    early_response = _fleet_budget_response(request)
     if early_response is not None:
         return early_response
     body = _shrink_forward_body(request, body, path, model_label, headers)
