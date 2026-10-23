@@ -4876,10 +4876,30 @@ def _fold_pi_system_into_first_message(obj: dict[str, object]) -> None:
     first = msgs[0]
     content = first.get("content") if isinstance(first, dict) else None
     preamble = f"[system preamble]\n{pi_system}\n[end system preamble]\n\n"
+    # Carry the client's cache breakpoint onto the preamble. Moving the system
+    # prompt into the first user message otherwise DROPS the cache_control that
+    # marks the (large) prompt as a stable prefix, so every request re-writes it
+    # as fresh input: Anthropic bills cache writes at 1.25x and the fleet pays
+    # it on every turn of every pane. The breakpoint is equivalent here because
+    # the preamble is byte-stable for a given system prompt.
+    cache_control = None
+    if isinstance(sys_val, list):
+        for block in sys_val:
+            if isinstance(block, dict) and block.get("cache_control"):
+                cache_control = block["cache_control"]
+                break
+    preamble_block: dict[str, object] = {"type": "text", "text": preamble}
+    if cache_control is not None:
+        preamble_block["cache_control"] = cache_control
     if isinstance(content, str):
-        first["content"] = preamble + content
+        # A plain string cannot carry cache metadata: keep the old shape unless
+        # there is a breakpoint to preserve.
+        if cache_control is None:
+            first["content"] = preamble + content
+        else:
+            first["content"] = [preamble_block, {"type": "text", "text": content}]
     elif isinstance(content, list):
-        first["content"] = [{"type": "text", "text": preamble}] + list(content)
+        first["content"] = [preamble_block] + list(content)
 
 
 def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> bytes | None:
