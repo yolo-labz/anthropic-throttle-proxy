@@ -4833,24 +4833,26 @@ def _is_sentinel_lane_request(request: web.Request) -> bool:
     return "authorization" not in incoming and sentinel_hit
 
 
-def _lane_binding_window() -> tuple[float, float]:
-    """Highest 5h/7d utilisation across bearers, with that window's reset.
+def _lane_five_hour_window() -> tuple[float, float]:
+    """Highest 5h utilisation across bearers, with that window's reset.
 
-    The account is shared, so the guard looks at the lane, not at the single
-    bearer this request would use: refusing fleet traffic only on ITS bearer
-    would let four panes exhaust a sibling's window.
+    The reserve exists for ONE thing: keeping the tail of the rolling 5h
+    window free for interactive Claude Code. The 7d window is deliberately NOT
+    consulted — it resets days out, so gating on it produced a 5.7-hour
+    ``Retry-After`` that burned a client's whole retry budget and killed the
+    turn (measured 23/10/2026 on five panes). A 7d wall is a different regime
+    and is already handled by the rejected-window pause.
     """
     util, reset = 0.0, 0.0
     for bearer in bearer_state.values():
         unified = bearer.get("unified") or {}
-        for key, reset_key in (("util_5h", "reset_5h"), ("util_7d", "reset_7d")):
-            value = unified.get(key)
-            if not isinstance(value, (int, float)):
-                continue
-            if float(value) > util:
-                util = float(value)
-                candidate = unified.get(reset_key)
-                reset = float(candidate) if isinstance(candidate, (int, float)) else 0.0
+        value = unified.get("util_5h")
+        if not isinstance(value, (int, float)):
+            continue
+        if float(value) > util:
+            util = float(value)
+            candidate = unified.get("reset_5h")
+            reset = float(candidate) if isinstance(candidate, (int, float)) else 0.0
     return util, reset
 
 
@@ -4864,10 +4866,14 @@ def _fleet_budget_response(request: web.Request) -> web.Response | None:
     ceiling = config.FLEET_MAX_UTILIZATION
     if ceiling <= 0 or not _is_sentinel_lane_request(request):
         return None
-    util, reset = _lane_binding_window()
+    util, reset = _lane_five_hour_window()
     if util < ceiling:
         return None
-    retry_after = max(5, int(reset - time.time())) if reset else 60
+    # Bounded on purpose: a client retries a handful of times before it gives
+    # up, so the pause must be short enough to ride out and the window's real
+    # reset is at most one 5h period away. 180 s is well inside pi's default
+    # retry budget and far below the hours a reset-derived value produced.
+    retry_after = min(180, max(5, int(reset - time.time()) if reset else 60))
     return web.json_response(
         {
             "type": "error",

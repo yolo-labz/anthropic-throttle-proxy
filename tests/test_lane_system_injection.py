@@ -226,4 +226,20 @@ def test_fleet_budget_reserve(monkeypatch, ceiling, util, headers, expect_status
         return
     assert response.status == expect_status
     assert response.headers["x-anthropic-throttle-fleet-reserve"] == "1"
-    assert int(response.headers["retry-after"]) > 0
+    assert 5 <= int(response.headers["retry-after"]) <= 180
+
+
+def test_fleet_reserve_ignores_the_weekly_window(monkeypatch):
+    """A nearly-spent 7d window must not gate the 5h reserve.
+
+    7d resets days out: gating on it produced a 5.7-hour Retry-After that burned
+    a pane's whole retry budget and killed the turn (23/10/2026, five panes).
+    """
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    monkeypatch.setattr(config, "FLEET_MAX_UTILIZATION", 0.85)
+    monkeypatch.setitem(
+        proxy.bearer_state,
+        "weekly-test",
+        {"unified": {"util_5h": 0.20, "reset_5h": 4_000_000_000, "util_7d": 0.99}},
+    )
+    assert proxy._fleet_budget_response(_req({"x-api-key": SENTINEL})) is None
