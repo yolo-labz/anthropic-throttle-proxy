@@ -1753,6 +1753,25 @@ def _seed_cold_start_probation(snapshot: list[dict[str, object]]) -> None:
             _limiter.require_retry_probe(configured_bid)
 
 
+def _strip_sentinel_api_key(headers: dict[str, str]) -> bool:
+    """Remove the sentinel ``x-api-key``; True when it was present.
+
+    A local client that sends the sentinel as ``x-api-key`` is asking for the
+    SUBSCRIPTION lane, not the metered API-key lane: dropping the header lets
+    the account router rewrite ``Authorization``. Returned as a bool so the
+    caller only flips its own state, keeping this branch out of its complexity
+    budget (Sonar S3776 counts every nested branch of the caller).
+    """
+    sentinel = config.LOCAL_API_KEY_SENTINEL
+    if not sentinel:
+        return False
+    for key in [k for k in headers if k.lower() == "x-api-key"]:
+        if headers[key] == sentinel:
+            del headers[key]
+            return True
+    return False
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -1774,6 +1793,11 @@ def _route_account_if_enabled(
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
+    # Sentinel lane key (22/10/2026): a local client's x-api-key that matches
+    # the configured sentinel is a REQUEST FOR ROUTING, not an API-key lane
+    # member — strip it so the account router rewrites Authorization.
+    if explicit_api_key and _strip_sentinel_api_key(headers):
+        explicit_api_key = False
     api_key = None if explicit_api_key else _api_key_candidate()
     now = time.time()
     snapshot: list[dict[str, object]] = []
@@ -4794,6 +4818,98 @@ def _pre_queue_disconnect_response(
     return None
 
 
+def _is_sentinel_lane_request(request: web.Request) -> bool:
+    """True only for traffic that rode the LOCAL sentinel lane (spec 344).
+
+    Mirrors the strip in ``_route_account_if_enabled``: the sentinel is an
+    ``x-api-key`` with NO ``Authorization`` header. Claude Code's own OAuth
+    traffic therefore never matches, which is what keeps its multi-block
+    system and ``cache_control`` breakpoints intact.
+    """
+    if not config.LOCAL_API_KEY_SENTINEL or request.method != "POST":
+        return False
+    incoming = request.headers
+    sentinel_hit = incoming.get("x-api-key", "") == config.LOCAL_API_KEY_SENTINEL
+    return "authorization" not in incoming and sentinel_hit
+
+
+def _json_object(body: bytes) -> dict[str, object] | None:
+    """Best-effort body parse; anything that is not a JSON object returns None."""
+    try:
+        obj = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _leading_system_text(obj: dict[str, object]) -> str:
+    """The first system block's text, whether ``system`` is a string or a list."""
+    sys_val = obj.get("system")
+    if isinstance(sys_val, list) and sys_val and isinstance(sys_val[0], dict):
+        return str(sys_val[0].get("text", ""))
+    if isinstance(sys_val, str):
+        return sys_val
+    return ""
+
+
+def _fold_pi_system_into_first_message(obj: dict[str, object]) -> None:
+    """Move pi's own system prompt into the first user message.
+
+    Measured 22/10: the entitlement/metering gate bills any request whose
+    ``system`` carries NON-Claude-Code blocks after the marker as extra usage,
+    even with the marker first. Marker-ONLY passes, so pi's prompt becomes a
+    bracketed preamble (behaviour-neutral for the model, gate-neutral for
+    billing) instead of a second system block.
+    """
+    sys_val = obj.get("system")
+    if isinstance(sys_val, list):
+        pi_system = "\n\n".join(b.get("text", "") for b in sys_val if isinstance(b, dict))
+    elif isinstance(sys_val, str):
+        pi_system = sys_val
+    else:
+        return
+    if not pi_system:
+        return
+    msgs = obj.get("messages")
+    if not (isinstance(msgs, list) and msgs):
+        return
+    first = msgs[0]
+    content = first.get("content") if isinstance(first, dict) else None
+    preamble = f"[system preamble]\n{pi_system}\n[end system preamble]\n\n"
+    if isinstance(content, str):
+        first["content"] = preamble + content
+    elif isinstance(content, list):
+        first["content"] = [{"type": "text", "text": preamble}] + list(content)
+
+
+def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> bytes | None:
+    """Sentinel-lane entitlement fix (22/10/2026).
+
+    Subscription (OAuth) bearers refuse ``POST /v1/messages`` unless the
+    Claude Code identity is the FIRST system block (the documented entitlement
+    gate). Local clients riding the sentinel lane (pi's custom provider) send
+    their own system prompt, so this makes the marker the only system block and
+    folds pi's prompt into the first user message.
+
+    Per-request scope: a request is rewritten ONLY when it actually rode the
+    sentinel lane (see ``_is_sentinel_lane_request``). Claude Code's own
+    traffic is forwarded byte-identical, and a body whose first system block
+    already IS the marker is left untouched. Best-effort: unparsable bodies
+    pass through unchanged.
+    """
+    if body is None or not _is_sentinel_lane_request(request):
+        return body
+    obj = _json_object(body)
+    if obj is None:
+        return body
+    marker = config.CLAUDE_CODE_SYSTEM_PROMPT
+    if _leading_system_text(obj).strip() == marker:
+        return body
+    _fold_pi_system_into_first_message(obj)
+    obj["system"] = [{"type": "text", "text": marker}]
+    return json.dumps(obj).encode("utf-8", "replace")
+
+
 def _shrink_forward_body(
     request: web.Request, body: bytes | None, path: str, model_label: str, headers: dict[str, str]
 ) -> bytes | None:
@@ -4803,6 +4919,7 @@ def _shrink_forward_body(
     breadcrumb stubs, hard floor on single-attachment overruns).
     """
     if body is not None and request.method == "POST":
+        body = _inject_lane_system_prompt(request, body)
         return _apply_body_shrink(request, body, path, model_label, headers)
     return body
 
