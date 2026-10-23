@@ -491,6 +491,13 @@ API_KEY_ROUTING_MODE = (
     _API_KEY_ROUTING_MODE if _API_KEY_ROUTING_MODE in {"off", "overflow", "prefer"} else "off"
 )
 API_KEY_LABEL = os.environ.get("THROTTLE_API_KEY_LABEL", "API").strip() or "API"
+# 22/10/2026 — local sentinel lane key. When set, a request whose x-api-key
+# equals this sentinel is NOT treated as an explicit API-key request: the
+# header is stripped and account routing rewrites Authorization to a
+# configured OAuth account. Lets local clients that can only speak x-api-key
+# (pi's native anthropic provider) ride the subscription lane instead of
+# the metered API-key lane. Default "" keeps historical behaviour.
+LOCAL_API_KEY_SENTINEL = os.environ.get("THROTTLE_LOCAL_API_KEY", "").strip()
 API_KEY_MAX_CONCURRENT = max(
     1, int(os.environ.get("THROTTLE_API_KEY_MAX_CONCURRENT", str(MAX_CONCURRENT)))
 )

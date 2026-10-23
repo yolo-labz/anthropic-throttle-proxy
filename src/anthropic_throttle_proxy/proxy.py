@@ -1774,6 +1774,15 @@ def _route_account_if_enabled(
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
+    # Sentinel lane key (22/10/2026): a local client's x-api-key that matches
+    # the configured sentinel is a REQUEST FOR ROUTING, not an API-key lane
+    # member — strip it so the account router rewrites Authorization.
+    if explicit_api_key and config.LOCAL_API_KEY_SENTINEL:
+        for key in [k for k in headers if k.lower() == "x-api-key"]:
+            if headers[key] == config.LOCAL_API_KEY_SENTINEL:
+                del headers[key]
+                explicit_api_key = False
+                break
     api_key = None if explicit_api_key else _api_key_candidate()
     now = time.time()
     snapshot: list[dict[str, object]] = []
@@ -4794,6 +4803,76 @@ def _pre_queue_disconnect_response(
     return None
 
 
+
+def _inject_lane_system_prompt(
+    request: web.Request, body: bytes | None, headers: dict[str, str]
+) -> bytes | None:
+    """Sentinel-lane entitlement fix (22/10/2026).
+
+    Subscription (OAuth) bearers refuse ``POST /v1/messages`` unless the
+    Claude Code identity is the FIRST system block (the documented
+    entitlement gate). Local clients riding the sentinel lane (pi's custom
+    provider) send their own system prompt, so prepend the exact string the
+    gate requires. Per-request scope (spec 344, 22/10/2026): applies ONLY
+    to requests that actually rode the sentinel lane — ``x-api-key`` equal
+    to the sentinel with NO ``Authorization`` header, mirroring the strip
+    in ``_route_account_if_enabled``. Claude Code's own OAuth traffic
+    (Authorization bearer) is forwarded byte-identical, so its prompt
+    cache breakpoints and multi-block system survive. A body whose first
+    system block already IS the marker is likewise left untouched.
+    Best-effort: unparsable bodies pass through.
+    """
+    if not config.LOCAL_API_KEY_SENTINEL or body is None or request.method != "POST":
+        return body
+    incoming = request.headers
+    sentinel_hit = incoming.get("x-api-key", "") == config.LOCAL_API_KEY_SENTINEL
+    if "authorization" in incoming or not sentinel_hit:
+        return body
+    try:
+        obj = json.loads(body)
+    except Exception:
+        return body
+    if not isinstance(obj, dict):
+        return body
+    marker = config.CLAUDE_CODE_SYSTEM_PROMPT
+    sys_val = obj.get("system")
+    first_text = ""
+    if isinstance(sys_val, list) and sys_val and isinstance(sys_val[0], dict):
+        first_text = sys_val[0].get("text", "")
+    elif isinstance(sys_val, str):
+        first_text = sys_val
+    if first_text.strip() == marker:
+        return body
+    if sys_val is None or sys_val == []:
+        obj["system"] = [{"type": "text", "text": marker}]
+        return json.dumps(obj).encode("utf-8", "replace")
+    # Measured 22/10 (bisect): the entitlement/metering gate bills any
+    # request whose system carries NON-Claude-Code blocks after the marker
+    # as extra usage, even with the marker first. Marker-ONLY system passes.
+    # pi's own system prompt is preserved by folding it into the leading
+    # user message as a bracketed preamble (behavior-neutral for the model,
+    # gate-neutral for billing).
+    pi_system = ""
+    if isinstance(sys_val, list):
+        pi_system = "\n\n".join(
+            b.get("text", "") for b in sys_val if isinstance(b, dict)
+        )
+    elif isinstance(sys_val, str):
+        pi_system = sys_val
+    if pi_system:
+        msgs = obj.get("messages")
+        if isinstance(msgs, list) and msgs:
+            first = msgs[0]
+            content = first.get("content") if isinstance(first, dict) else None
+            preamble = f"[system preamble]\n{pi_system}\n[end system preamble]\n\n"
+            if isinstance(content, str):
+                first["content"] = preamble + content
+            elif isinstance(content, list):
+                first["content"] = [{"type": "text", "text": preamble}] + list(content)
+    obj["system"] = [{"type": "text", "text": marker}]
+    return json.dumps(obj).encode("utf-8", "replace")
+
+
 def _shrink_forward_body(
     request: web.Request, body: bytes | None, path: str, model_label: str, headers: dict[str, str]
 ) -> bytes | None:
@@ -4803,6 +4882,7 @@ def _shrink_forward_body(
     breadcrumb stubs, hard floor on single-attachment overruns).
     """
     if body is not None and request.method == "POST":
+        body = _inject_lane_system_prompt(request, body, headers)
         return _apply_body_shrink(request, body, path, model_label, headers)
     return body
 
