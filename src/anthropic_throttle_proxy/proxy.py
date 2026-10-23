@@ -4803,7 +4803,6 @@ def _pre_queue_disconnect_response(
     return None
 
 
-
 def _inject_lane_system_prompt(
     request: web.Request, body: bytes | None, headers: dict[str, str]
 ) -> bytes | None:
@@ -4854,9 +4853,7 @@ def _inject_lane_system_prompt(
     # gate-neutral for billing).
     pi_system = ""
     if isinstance(sys_val, list):
-        pi_system = "\n\n".join(
-            b.get("text", "") for b in sys_val if isinstance(b, dict)
-        )
+        pi_system = "\n\n".join(b.get("text", "") for b in sys_val if isinstance(b, dict))
     elif isinstance(sys_val, str):
         pi_system = sys_val
     if pi_system:

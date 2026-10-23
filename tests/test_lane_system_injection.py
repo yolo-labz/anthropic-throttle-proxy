@@ -81,18 +81,14 @@ def test_sentinel_request_gets_marker_and_fold(monkeypatch):
 def test_authorization_bearer_is_byte_identical(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
     body = _cc_body()
-    out = proxy._inject_lane_system_prompt(
-        _req({"Authorization": "Bearer oauth-token"}), body, {}
-    )
+    out = proxy._inject_lane_system_prompt(_req({"Authorization": "Bearer oauth-token"}), body, {})
     assert out is body  # cache_control + multi-block system untouched
 
 
 def test_non_sentinel_api_key_untouched(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
     body = _pi_body()
-    out = proxy._inject_lane_system_prompt(
-        _req({"x-api-key": "sk-ant-real-key"}), body, {}
-    )
+    out = proxy._inject_lane_system_prompt(_req({"x-api-key": "sk-ant-real-key"}), body, {})
     assert out is body
 
 
