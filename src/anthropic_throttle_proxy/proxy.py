@@ -1753,6 +1753,25 @@ def _seed_cold_start_probation(snapshot: list[dict[str, object]]) -> None:
             _limiter.require_retry_probe(configured_bid)
 
 
+def _strip_sentinel_api_key(headers: dict[str, str]) -> bool:
+    """Remove the sentinel ``x-api-key``; True when it was present.
+
+    A local client that sends the sentinel as ``x-api-key`` is asking for the
+    SUBSCRIPTION lane, not the metered API-key lane: dropping the header lets
+    the account router rewrite ``Authorization``. Returned as a bool so the
+    caller only flips its own state, keeping this branch out of its complexity
+    budget (Sonar S3776 counts every nested branch of the caller).
+    """
+    sentinel = config.LOCAL_API_KEY_SENTINEL
+    if not sentinel:
+        return False
+    for key in [k for k in headers if k.lower() == "x-api-key"]:
+        if headers[key] == sentinel:
+            del headers[key]
+            return True
+    return False
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -1777,12 +1796,8 @@ def _route_account_if_enabled(
     # Sentinel lane key (22/10/2026): a local client's x-api-key that matches
     # the configured sentinel is a REQUEST FOR ROUTING, not an API-key lane
     # member — strip it so the account router rewrites Authorization.
-    if explicit_api_key and config.LOCAL_API_KEY_SENTINEL:
-        for key in [k for k in headers if k.lower() == "x-api-key"]:
-            if headers[key] == config.LOCAL_API_KEY_SENTINEL:
-                del headers[key]
-                explicit_api_key = False
-                break
+    if explicit_api_key and _strip_sentinel_api_key(headers):
+        explicit_api_key = False
     api_key = None if explicit_api_key else _api_key_candidate()
     now = time.time()
     snapshot: list[dict[str, object]] = []
