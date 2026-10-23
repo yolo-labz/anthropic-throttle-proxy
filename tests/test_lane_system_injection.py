@@ -222,3 +222,107 @@ def test_list_first_message_content_is_prefixed(monkeypatch):
         "text": "hi",
         "cache_control": {"type": "ephemeral"},
     }
+
+
+def test_route_strips_sentinel_and_drops_explicit_api_key(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    monkeypatch.setattr(proxy, "_account_routing_enabled", lambda: False)
+    headers = {"x-api-key": SENTINEL, "content-type": "application/json"}
+    proxy._route_account_if_enabled(headers, "bearer-in", method="POST", path="/v1/messages")
+    assert "x-api-key" not in headers
+
+
+def test_route_keeps_real_api_key_when_not_the_sentinel(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    monkeypatch.setattr(proxy, "_account_routing_enabled", lambda: False)
+    headers = {"x-api-key": "sk-ant-real", "content-type": "application/json"}
+    proxy._route_account_if_enabled(headers, "bearer-in", method="POST", path="/v1/messages")
+    assert headers["x-api-key"] == "sk-ant-real"
+
+
+# ── injector edges: every pass-through must be byte-identical ──────────────
+
+
+def test_unparsable_body_untouched(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = b"not-json{"
+    out = proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {})
+    assert out is body
+
+
+def test_non_object_json_untouched(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = b"[1, 2, 3]"
+    out = proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {})
+    assert out is body
+
+
+def test_get_request_untouched(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = b'{"system": "x"}'
+    req = make_mocked_request("GET", "/v1/models", headers={"x-api-key": SENTINEL})
+    assert proxy._inject_lane_system_prompt(req, body, {}) is body
+
+
+def test_none_body_untouched(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    assert proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), None, {}) is None
+
+
+def test_missing_system_gets_marker_only(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = json.dumps({"messages": [{"role": "user", "content": "hi"}]}).encode()
+    obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
+    assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
+    # No pi system at all → nothing to fold into the user message.
+    assert obj["messages"][0]["content"] == "hi"
+
+
+def test_empty_system_list_gets_marker_only(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = json.dumps({"system": [], "messages": [{"role": "user", "content": "hi"}]}).encode()
+    obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
+    assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
+    assert obj["messages"][0]["content"] == "hi"
+
+
+def test_string_system_folded_into_string_content(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = json.dumps(
+        {"system": "You are pi.", "messages": [{"role": "user", "content": "hi"}]}
+    ).encode()
+    obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
+    assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
+    content = obj["messages"][0]["content"]
+    assert content.startswith("[system preamble]\nYou are pi.")
+    assert content.endswith("hi")
+
+
+def test_list_content_gets_preamble_block(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = json.dumps(
+        {
+            "system": [{"type": "text", "text": "You are pi."}],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "first"},
+                        {"type": "text", "text": "second"},
+                    ],
+                }
+            ],
+        }
+    ).encode()
+    obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
+    content = obj["messages"][0]["content"]
+    assert isinstance(content, list) and len(content) == 3
+    assert content[0]["text"].startswith("[system preamble]")
+    assert content[1]["text"] == "first" and content[2]["text"] == "second"
+
+
+def test_no_messages_still_gets_marker(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = json.dumps({"system": "You are pi."}).encode()
+    obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
+    assert obj["system"] == [{"type": "text", "text": config.CLAUDE_CODE_SYSTEM_PROMPT}]
