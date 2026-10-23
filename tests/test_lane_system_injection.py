@@ -154,3 +154,41 @@ def test_route_account_rewrites_only_the_sentinel(monkeypatch, incoming, still_p
     headers = {"x-api-key": incoming, "content-type": "application/json"}
     proxy._route_account_if_enabled(headers, "bearer-in", method="POST", path="/v1/messages")
     assert headers.get("x-api-key") == still_present
+
+
+@pytest.mark.parametrize(
+    ("system", "has_breakpoint"),
+    [
+        (
+            [{"type": "text", "text": "You are pi.", "cache_control": {"type": "ephemeral"}}],
+            True,
+        ),
+        ("You are pi.", False),
+    ],
+    ids=["list-with-breakpoint", "plain-string"],
+)
+def test_fold_preserves_the_cache_breakpoint(monkeypatch, system, has_breakpoint):
+    """pi's cache_control must survive the system->user move.
+
+    The marker-only system exists so the (large) pi prompt stays a cached
+    prefix; dropping the breakpoint re-bills it as fresh input at the
+    cache-write rate on every turn.
+    """
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    payload = json.loads(_pi_body())
+    payload["system"] = system
+    out = json.loads(
+        proxy._inject_lane_system_prompt(
+            _req({"x-api-key": SENTINEL}), json.dumps(payload).encode()
+        )
+    )
+    folded = out["messages"][0]["content"]
+    if has_breakpoint:
+        assert isinstance(folded, list)
+        assert folded[0]["cache_control"] == {"type": "ephemeral"}
+        assert folded[0]["text"].startswith("[system preamble]")
+        assert folded[1]["text"] == "hi"
+    else:
+        # Nothing to carry: keep the historical string shape.
+        assert isinstance(folded, str) and folded.endswith("hi")
+        assert "[system preamble]" in folded

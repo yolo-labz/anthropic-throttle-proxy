@@ -4852,6 +4852,23 @@ def _leading_system_text(obj: dict[str, object]) -> str:
     return ""
 
 
+def _first_cache_breakpoint(sys_val: object) -> dict[str, object] | None:
+    """The first ``cache_control`` marker among the system blocks, if any.
+
+    Moving pi's system prompt into the first user message otherwise DROPS the
+    marker that makes it a stable cache prefix: Anthropic then re-writes the
+    prompt as fresh input on every turn instead of reading it back, which is the
+    difference between the cache-write and cache-read rates on the largest
+    block in the request.
+    """
+    if not isinstance(sys_val, list):
+        return None
+    for block in sys_val:
+        if isinstance(block, dict) and block.get("cache_control"):
+            return block["cache_control"]
+    return None
+
+
 def _fold_pi_system_into_first_message(obj: dict[str, object]) -> None:
     """Move pi's own system prompt into the first user message.
 
@@ -4876,10 +4893,22 @@ def _fold_pi_system_into_first_message(obj: dict[str, object]) -> None:
     first = msgs[0]
     content = first.get("content") if isinstance(first, dict) else None
     preamble = f"[system preamble]\n{pi_system}\n[end system preamble]\n\n"
+    # Carry the client's cache breakpoint onto the preamble (see
+    # _first_cache_breakpoint): the preamble is byte-stable for a given system
+    # prompt, so the breakpoint stays equivalent where it lands.
+    cache_control = _first_cache_breakpoint(sys_val)
+    preamble_block: dict[str, object] = {"type": "text", "text": preamble}
+    if cache_control is not None:
+        preamble_block["cache_control"] = cache_control
     if isinstance(content, str):
-        first["content"] = preamble + content
+        # A plain string cannot carry cache metadata: keep the old shape unless
+        # there is a breakpoint to preserve.
+        if cache_control is None:
+            first["content"] = preamble + content
+        else:
+            first["content"] = [preamble_block, {"type": "text", "text": content}]
     elif isinstance(content, list):
-        first["content"] = [{"type": "text", "text": preamble}] + list(content)
+        first["content"] = [preamble_block] + list(content)
 
 
 def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> bytes | None:
