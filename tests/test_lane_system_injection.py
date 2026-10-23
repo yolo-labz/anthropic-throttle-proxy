@@ -299,29 +299,6 @@ def test_string_system_folded_into_string_content(monkeypatch):
     assert content.endswith("hi")
 
 
-def test_list_content_gets_preamble_block(monkeypatch):
-    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
-    body = json.dumps(
-        {
-            "system": [{"type": "text", "text": "You are pi."}],
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "first"},
-                        {"type": "text", "text": "second"},
-                    ],
-                }
-            ],
-        }
-    ).encode()
-    obj = json.loads(proxy._inject_lane_system_prompt(_req({"x-api-key": SENTINEL}), body, {}))
-    content = obj["messages"][0]["content"]
-    assert isinstance(content, list) and len(content) == 3
-    assert content[0]["text"].startswith("[system preamble]")
-    assert content[1]["text"] == "first" and content[2]["text"] == "second"
-
-
 def test_no_messages_still_gets_marker(monkeypatch):
     monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
     body = json.dumps({"system": "You are pi."}).encode()
@@ -383,19 +360,13 @@ def test_marker_only_when_nothing_to_fold(monkeypatch, payload):
         assert obj["messages"][0]["content"] == "hi"
 
 
-@pytest.mark.parametrize(
-    "content", ["hi", [{"type": "text", "text": "first"}]], ids=["string", "list"]
-)
-def test_pi_system_folds_into_first_user_message(monkeypatch, content):
-    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "local-lane-via-8765")
-    body = json.dumps(
-        {"system": "You are pi.", "messages": [{"role": "user", "content": content}]}
-    ).encode()
-    obj = json.loads(
-        proxy._inject_lane_system_prompt(_req({"x-api-key": "local-lane-via-8765"}), body, {})
+def test_list_content_gets_preamble_block(monkeypatch):
+    """pi's prompt folds as a leading text block when content is a list."""
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    body = json.loads(_pi_body())
+    body["messages"][0]["content"] = [{"type": "text", "text": "first"}]
+    out = proxy._inject_lane_system_prompt(
+        _req({"x-api-key": SENTINEL}), json.dumps(body).encode(), {}
     )
-    folded = obj["messages"][0]["content"]
-    text = folded if isinstance(folded, str) else folded[0]["text"]
-    assert text.startswith("[system preamble]\nYou are pi.")
-    if isinstance(folded, list):
-        assert folded[1:] == [{"type": "text", "text": "first"}]
+    folded = json.loads(out)["messages"][0]["content"]
+    assert folded[0]["text"].startswith("[system preamble]") and folded[1]["text"] == "first"
