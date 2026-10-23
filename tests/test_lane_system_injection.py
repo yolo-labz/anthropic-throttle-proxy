@@ -192,3 +192,38 @@ def test_fold_preserves_the_cache_breakpoint(monkeypatch, system, has_breakpoint
         # Nothing to carry: keep the historical string shape.
         assert isinstance(folded, str) and folded.endswith("hi")
         assert "[system preamble]" in folded
+
+
+# ── fleet budget reserve (23/10/2026) ─────────────────────────────────────
+# Several panes share ONE subscription window with interactive Claude Code.
+# Above the ceiling the FLEET yields; the human's own Authorization traffic
+# never does — that is the whole point of the reserve.
+def _set_lane_util(monkeypatch, util: float) -> None:
+    monkeypatch.setitem(
+        proxy.bearer_state,
+        "budget-test",
+        {"unified": {"util_5h": util, "reset_5h": 4_000_000_000}},
+    )
+
+
+@pytest.mark.parametrize(
+    ("ceiling", "util", "headers", "expect_status"),
+    [
+        (0.0, 0.99, {"x-api-key": SENTINEL}, None),  # reserve disabled
+        (0.85, 0.10, {"x-api-key": SENTINEL}, None),  # plenty of window left
+        (0.85, 0.86, {"x-api-key": SENTINEL}, 429),  # fleet yields
+        (0.85, 0.86, {"Authorization": "Bearer cc"}, None),  # Claude Code never
+    ],
+    ids=["off", "below", "above-fleet", "above-claude-code"],
+)
+def test_fleet_budget_reserve(monkeypatch, ceiling, util, headers, expect_status):
+    monkeypatch.setattr(config, "FLEET_MAX_UTILIZATION", ceiling)
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    _set_lane_util(monkeypatch, util)
+    response = proxy._fleet_budget_response(_req(headers))
+    if expect_status is None:
+        assert response is None
+        return
+    assert response.status == expect_status
+    assert response.headers["x-anthropic-throttle-fleet-reserve"] == "1"
+    assert int(response.headers["retry-after"]) > 0
