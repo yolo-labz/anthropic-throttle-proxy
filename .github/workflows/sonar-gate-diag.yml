@@ -1,0 +1,27 @@
+name: sonar gate diag (throwaway)
+on: push
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe the endpoints the CI token may read
+        env:
+          HOST: ${{ vars.SONAR_HOST_URL }}
+          TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -u
+          B="$HOST/api"; K=yolo-labz_anthropic-throttle-proxy
+          probe() {
+            echo "=== $1"
+            code=$(curl -sS -u "$TOKEN:" -o /tmp/r.json -w '%{http_code}' "$B/$1")
+            echo "http=$code"
+            head -c 1200 /tmp/r.json; echo
+          }
+          probe "ce/component?component=$K"
+          probe "project_analyses/search?project=$K&ps=2"
+          probe "qualitygates/project_status?projectKey=$K"
+          probe "issues/search?componentKeys=$K&resolved=false&ps=5&types=BUG,VULNERABILITY"
+          probe "hotspots/search?projectKey=$K&status=TO_REVIEW&ps=20"
