@@ -19,14 +19,24 @@ report, team_seat_b_lane, team_seat_lane, team_report = (
 )
 NOW = datetime(2026, 9, 23, 16, tzinfo=UTC)
 
+# The fixture's period end must stay in the FUTURE relative to the clock the code
+# under test reads. `main()` computes `now = datetime.now(UTC)` itself (not the
+# `NOW` above), so a hard-coded "2026-10-23 23:59:59" silently crossed over into
+# the past on 24/10/2026 and flipped every plan row to "exhausted": 7 tests went
+# red overnight with no code change (main was green on 23/10 15:29, red on 25/10).
+# Deriving it keeps "a live, non-expired plan" true forever instead of until a
+# date someone picked.
+def future_period_end(days=30):
+    return (datetime.now(UTC) + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
-def plan_detail():
+
+def plan_detail(period_end=None):
     return {
         "code": 0,
         "data": {
             "planName": "Max",
             "expired": False,
-            "currentPeriodEnd": "2026-10-23 23:59:59",
+            "currentPeriodEnd": period_end or future_period_end(),
             "apiKey": "must-not-escape",
         },
     }
@@ -111,7 +121,7 @@ def team_sample(
     code=0,
     plan_name="Example Team",
     expired=False,
-    period_end="2026-10-23 23:59:59",
+    period_end=None,
     seat_status="ASSIGNED",
     total=1000,
     used=250,
@@ -126,7 +136,13 @@ def team_sample(
     `used_percent`/`history_used_percent` deliberately DISAGREE with the
     counters so a test can prove every rendered number is derived from
     creditsTotal/creditsUsed and never read from the display percentages.
+
+    `period_end` defaults to a FUTURE date for the same reason as
+    `plan_detail()`: `main()` reads the real clock, so a frozen "2026-10-23"
+    made every seat read "exhausted" from 24/10/2026 onward.
     """
+    if period_end is None:
+        period_end = future_period_end()
     data = {
         "projectId": "project-example-must-not-leak",
         "planCode": "example",
