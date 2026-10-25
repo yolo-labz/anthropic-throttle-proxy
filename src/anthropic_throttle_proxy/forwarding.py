@@ -54,7 +54,9 @@ ForwardResult = tuple[
     "dict[str, str] | None",
 ]
 
-_SUCCESS_HEADERS_CALLBACK_KEY = "anthropic_throttle_proxy.success_headers_callback"
+_SUCCESS_HEADERS_CALLBACK_KEY = web.RequestKey(
+    "anthropic_throttle_proxy.success_headers_callback", object
+)
 
 
 def set_success_headers_callback(request: web.Request, callback: Callable[[], None]) -> None:

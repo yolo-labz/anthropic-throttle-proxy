@@ -20,9 +20,10 @@ import hashlib
 import ipaddress
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from urllib.parse import urlparse
 
 import aiohttp_jinja2
@@ -41,12 +42,25 @@ from .. import output_usage as _output_usage
 
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
+from ..limiter import FairBearerLimiter
 from . import signals as _signals
 from .presentation import apply_display, apply_workload, attach_provider_capacity, capacity_summary
 
 _HERE = Path(__file__).resolve().parent
 _TEMPLATES = _HERE / "templates"
 _STATIC = _HERE / "static"
+
+
+class _BearerView(TypedDict, total=False):
+    """The fields of one ``config.bearer_state`` row this module renders.
+    ``bearer_state`` is typed ``dict[str, dict[str, object]]`` in config, so
+    the render path narrows each row here instead of re-checking per read."""
+
+    inflight: int
+    queued: int
+    served: int
+    last_ratelimit: dict[str, Any] | None
+    unified: dict[str, Any] | None
 
 
 def _asset_version(
@@ -189,8 +203,8 @@ def _credential_refusal(cred: object) -> str | None:
 
 def _capability_splits(
     bearers: list[dict],
-    credential_verdicts: dict[str, dict] | None,
-    admission: dict[str, object] | None,
+    credential_verdicts: dict[str, dict | None] | None,
+    admission: Mapping[str, object] | None,
 ) -> tuple[list[str], list[str]]:
     """Split bearers into ``(refused, unevidenced)`` capability buckets.
 
@@ -352,8 +366,8 @@ def _compute_status(
     queue_mode: str,
     now: float | None = None,
     *,
-    credential_verdicts: dict[str, dict] | None = None,
-    admission: dict[str, object] | None = None,
+    credential_verdicts: dict[str, dict | None] | None = None,
+    admission: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Derive one LOCAL verdict from the live snapshot (drives the status strip).
 
@@ -459,7 +473,7 @@ def _publish_account_scoped_gauge(label: str, usage: dict) -> None:
     _metrics.M_ACCOUNT_SCOPED.labels(label, model).set(scoped["util"])
 
 
-def _publish_identity_gauges(identity: dict[str, object]) -> None:
+def _publish_identity_gauges(identity: dict[str, Any]) -> None:
     """Publish the distinct-account verdict plus the FR-005 collision counters."""
     suspected = identity.get("suspected") or {}
     if identity["collapsed"]:
@@ -467,7 +481,7 @@ def _publish_identity_gauges(identity: dict[str, object]) -> None:
     elif suspected:
         # Shared email pending live-token verification — unknown, not "distinct".
         _metrics.M_ACCOUNTS_DISTINCT.set(-1)
-    elif int(identity["known"]) >= 2:  # type: ignore[call-overload]
+    elif int(identity["known"]) >= 2:
         _metrics.M_ACCOUNTS_DISTINCT.set(1)
     else:
         _metrics.M_ACCOUNTS_DISTINCT.set(-1)
@@ -481,7 +495,7 @@ def _publish_identity_gauges(identity: dict[str, object]) -> None:
 
 
 def _publish_account_gauges(
-    endpoint: dict[str, dict[str, object]], identity: dict[str, object]
+    endpoint: dict[str, dict[str, object]], identity: dict[str, Any]
 ) -> None:
     """Mirror endpoint truth into /metrics so Grafana sees what /ui sees.
 
@@ -966,7 +980,7 @@ _CLOSED_STATUSES = frozenset({"rejected", "exhausted", "refused", "error"})
 def _retry_after_text(last_ratelimit: dict | None) -> str:
     """Humanize the honoured Retry-After; empty when there is none to show."""
     raw = (last_ratelimit or {}).get("retry-after")
-    if raw in (None, ""):
+    if raw is None or raw == "":
         return ""
     try:
         seconds = float(raw)
@@ -1097,21 +1111,22 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
     it diagnosed a page that does not exist (cross-family review, 18/09/2026:
     hiding the button never disabled the endpoint).
     """
-    cs = _proxy.state["central_status"]
+    cs = cast(str, _proxy.state["central_status"])
     ui_cfg = _display_config(source if project else None)
     # Collection runs in the background regardless of display hiding. A GET
     # must never acquire a collector lock or wait on an upstream network call.
     labels = _accounts.bearer_labels()
     now = time.time()
-    bearers = []
+    bearers: list[dict[str, Any]] = []
     # _anon is the unauthenticated bypass slot (health checks, /metrics). It
     # has no account, no budget window and no retry state — a row of dashes
     # that reads as plumbing. Keep it out of the operator's bearer table.
     anon_bid = "_anon"  # ratelimit._bearer_id's unauthenticated bypass slot
-    for bid, bstate in _proxy.bearer_state.items():
+    for bid, raw_state in _proxy.bearer_state.items():
         if bid == anon_bid:
             continue
-        lim = _proxy.bearer_limiters.get(bid)
+        bstate = cast(_BearerView, raw_state)
+        lim = cast(FairBearerLimiter | None, _proxy.bearer_limiters.get(bid))
         unified = bstate.get("unified")
         bearers.append(
             {
@@ -1179,9 +1194,9 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
         central_url=central_url,
         central_status=cs,
         level=str(status.get("level", "idle")),
-        inflight=_proxy.state["inflight"],
-        queued=_proxy.state["queued"],
-        served=_proxy.state["served"],
+        inflight=_counter("inflight"),
+        queued=_counter("queued"),
+        served=_counter("served"),
         max_concurrent=_proxy.MAX_CONCURRENT,
         fleet=fleet_view,
     )
@@ -1213,16 +1228,16 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
         "lanes": lanes_view,
         "copilot": copilot_view,
         "status": status,
-        "inflight": _proxy.state["inflight"],
-        "queued": _proxy.state["queued"],
+        "inflight": _counter("inflight"),
+        "queued": _counter("queued"),
         # Streams parked in an SSE keepalive-hold. Peer of inflight/queued, not
         # a total: a held request is already answered 200 and is counted by
         # neither, so without this row the operator's screen shows an idle proxy
         # while it is holding streams open (spec 092 T003).
-        "holds": _proxy.state["keepalive_holds_active"],
-        "served": _proxy.state["served"],
-        "disconnects": _proxy.state["client_disconnects"],
-        "retries": _proxy.state["upstream_retries"],
+        "holds": _counter("keepalive_holds_active"),
+        "served": _counter("served"),
+        "disconnects": _counter("client_disconnects"),
+        "retries": _counter("upstream_retries"),
         "max_concurrent": _proxy.MAX_CONCURRENT,
         "queue_mode": _proxy.QUEUE_MODE,
         "min_dispatch_gap_ms": int(_proxy.MIN_DISPATCH_GAP_S * 1000),
@@ -1427,7 +1442,9 @@ def _live_cap() -> int:
     number that changes on pushback, and blocking the event loop for it would
     break the <50 ms health budget the same loop serves.
     """
-    return sum(lim.max_concurrent for lim in _proxy.bearer_limiters.values())
+    return sum(
+        cast(FairBearerLimiter, lim).max_concurrent for lim in _proxy.bearer_limiters.values()
+    )
 
 
 def _counter(key: str) -> int:
