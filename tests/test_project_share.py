@@ -198,7 +198,26 @@ def test_green_never_defers() -> None:
     assert not share.defer("nixos")
 
 
-def test_hot_window_defers_only_over_share_and_never_direct() -> None:
+def test_ordering_is_off_by_default_even_in_a_hot_window(monkeypatch) -> None:
+    monkeypatch.delenv(project_share.ORDERING_ENV, raising=False)
+    share = _share()
+    _hot(share)
+    assert share.view(now=T0 + 600).state in ("AMBER", "RED")
+    assert [r.project for r in share.view(now=T0 + 600).rows if r.over] == ["nixos"]
+    assert not share.defer_active()
+    assert not share.defer("nixos")
+
+
+def test_ordering_turns_on_only_with_the_env_flag(monkeypatch) -> None:
+    for value, expected in (("0", False), ("", False), ("true", False), ("1", True)):
+        monkeypatch.setenv(project_share.ORDERING_ENV, value)
+        share = _share()
+        _hot(share)
+        assert share.defer_active() is expected, value
+
+
+def test_hot_window_defers_only_over_share_and_never_direct(monkeypatch) -> None:
+    monkeypatch.setenv(project_share.ORDERING_ENV, "1")
     share = _share()
     share.record_spend(DIRECT, 50.0, now=T0)  # Claude Code, also over its share
     _hot(share)
@@ -247,7 +266,15 @@ async def test_green_dispatch_is_plain_round_robin(monkeypatch) -> None:
     assert await _dispatch_order(share, monkeypatch) == ["over-1", "over-2", "under"]
 
 
+async def test_hot_dispatch_is_plain_round_robin_by_default(monkeypatch) -> None:
+    monkeypatch.delenv(project_share.ORDERING_ENV, raising=False)
+    share = _share()
+    _hot(share)
+    assert await _dispatch_order(share, monkeypatch) == ["over-1", "over-2", "under"]
+
+
 async def test_hot_dispatch_lets_under_share_go_first_and_refuses_nothing(monkeypatch) -> None:
+    monkeypatch.setenv(project_share.ORDERING_ENV, "1")
     share = _share()
     _hot(share)
     order = await _dispatch_order(share, monkeypatch)
@@ -310,6 +337,7 @@ async def test_card_renders_dashes_and_the_uncalibrated_label_with_no_data(monke
     finally:
         await client.close()
     assert "UNKNOWN" in html
+    assert "queue ordering <b>off</b>" in html
     assert "capacity unknown — meter uncalibrated" in html
     assert "no Claude traffic seen in this window yet" in html
     assert "NaN" not in html and "None" not in html

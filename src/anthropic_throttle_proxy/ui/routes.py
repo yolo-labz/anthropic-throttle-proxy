@@ -1379,6 +1379,8 @@ def _projects_context(message: str | None = None, error: str | None = None) -> d
         "reset_7d_in": _in(view.reset_7d),
         "weights": _project_share.SHARE.weights(),
         "weight_choices": _project_share.WEIGHTS,
+        "ordering_on": _project_share.ordering_enabled(),
+        "ordering_env": _project_share.ORDERING_ENV,
         "amber_at": _project_share.AMBER_AT,
         "red_at": _project_share.RED_AT,
         "message": message,

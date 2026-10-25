@@ -9,7 +9,8 @@ this module only ever does three things:
    unusable header is project ``_direct`` — which also covers Claude Code.
 2. **Measurement.** Per-project list-$ inside the current 5 h window, plus a
    pace projection ``û`` of the window's utilization at reset.
-3. **Advisory ordering.** In AMBER/RED only, a waiter of a project that is over
+3. **Advisory ordering — OFF by default** (``THROTTLE_PROJECT_ORDERING=1`` opts
+   in; see ``ORDERING_ENV``). When on, in AMBER/RED only, a waiter of a project that is over
    its weighted max-min share yields its turn in the queue to an under-share
    project. Nothing is refused, nothing is dropped, an in-flight request is
    never touched, and ``_direct`` is never deferred. In GREEN this module
@@ -52,6 +53,18 @@ WEIGHTS: Final[tuple[int, ...]] = (1, 2, 3, 4)
 MIN_CALIBRATION_UTIL: Final[float] = 0.05
 # the over-share set is recomputed at most this often (it scans the 5 h ledger)
 REFRESH_S: Final[float] = 5.0
+# Queue ordering is DORMANT unless this is "1". Replayed on the 13 real 5 h
+# windows (stacksmith out/meter-calibration.md §6), the 30-min-slope projection
+# fired AMBER/RED in 8 of 13 while measured u peaked at 0.44: every firing was a
+# false alarm (bursty windows, peak/mean p90 4.5). Measurement, attribution, the
+# card and the weights stay; only the reordering waits for evidence (re-open if a
+# window reaches MEASURED u >= 0.70 with 2+ labelled projects).
+ORDERING_ENV: Final[str] = "THROTTLE_PROJECT_ORDERING"
+
+
+def ordering_enabled() -> bool:
+    return os.environ.get(ORDERING_ENV, "0").strip() == "1"
+
 
 _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 _MAX_SLUG = 64
@@ -226,7 +239,7 @@ class ProjectShare:
         )
 
     def defer_active(self) -> bool:
-        """Is advisory ordering on (AMBER/RED with an over-share project)?"""
+        """Is advisory ordering on (opt-in flag, AMBER/RED, an over-share project)?"""
         return self._ordering
 
     def defer(self, project: str | None) -> bool:
@@ -242,7 +255,7 @@ class ProjectShare:
         view = self.view(now)
         over = frozenset(r.project for r in view.rows if r.over and r.project != DIRECT)
         self._over = over
-        self._ordering = view.state in ("AMBER", "RED") and bool(over)
+        self._ordering = ordering_enabled() and view.state in ("AMBER", "RED") and bool(over)
 
     # --- persistence ----------------------------------------------------------
     def _load_weights(self) -> dict[str, int]:

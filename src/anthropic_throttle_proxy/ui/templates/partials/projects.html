@@ -9,10 +9,11 @@
 <div class="projects-card">
   <div class="projects-head">
     <span class="projects-state {{ state_class }}">{{ view.state }}</span>
-    <span>5 h util <b>{{ pct(view.util_5h) }}</b></span>
+    <span class="muted">{% if view.projected is not none %}state from the û projection — advisory, not a measurement{% else %}state from measured u{% endif %}</span>
+    <span>5 h util, measured <b>{{ pct(view.util_5h) }}</b></span>
     <span>projected at reset (û) <b>{{ pct(view.projected) }}</b></span>
     <span>resets in <b>{{ reset_5h_in or "—" }}</b></span>
-    <span class="muted">amber &gt; {{ pct(amber_at) }} · red &gt; {{ pct(red_at) }} · advisory: reorders the queue in amber/red only, never refuses</span>
+    <span class="muted">amber &gt; {{ pct(amber_at) }} · red &gt; {{ pct(red_at) }} · queue ordering {% if ordering_on %}<b>on</b> (amber/red only, never refuses){% else %}<b>off</b> — measurement only ({{ ordering_env }}=1 enables){% endif %}</span>
   </div>
 
   {% if message %}<output class="config-toast ok">saved · {{ message }}</output>{% endif %}
