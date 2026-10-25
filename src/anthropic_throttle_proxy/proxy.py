@@ -7233,6 +7233,11 @@ def main() -> None:
     app.cleanup_ctx.append(_upstream_egress_context)
     app.cleanup_ctx.append(_upstream_auth_context)
     app.cleanup_ctx.append(_credential_recheck_context)
+    # Measurement only: persist each bearer's cached 5h/7d meter once a minute
+    # and label same-reset falls as recalibrations (meter_recorder.py).
+    from .meter_recorder import meter_recorder_context
+
+    app.cleanup_ctx.append(meter_recorder_context(lambda: config.bearer_state))
     # Every response this proxy serves carries MARKER_HEADER so a downstream
     # local tier can tell a central-served 5xx (relay — keep central up) from
     # dokku nginx answering for a dead container (mark central down).
