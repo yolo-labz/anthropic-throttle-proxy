@@ -19,6 +19,7 @@ report, team_seat_b_lane, team_seat_lane, team_report = (
 )
 NOW = datetime(2026, 9, 23, 16, tzinfo=UTC)
 
+
 # The fixture's period end must stay in the FUTURE relative to the clock the code
 # under test reads. `main()` computes `now = datetime.now(UTC)` itself (not the
 # `NOW` above), so a hard-coded "2026-10-23 23:59:59" silently crossed over into
