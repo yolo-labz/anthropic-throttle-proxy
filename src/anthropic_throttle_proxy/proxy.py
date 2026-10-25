@@ -155,7 +155,10 @@ from .metrics import (
     REGISTRY,
     generate_latest,
 )
-from .pricing import _pricing_for
+from .pricing import _pricing_for, rates_for_usage
+from .project_share import PROJECT_HEADER as _PROJECT_HEADER
+from .project_share import SHARE as _PROJECT_SHARE
+from .project_share import project_of as _project_of
 from .ratelimit import (
     API_KEY_BEARER_ID,
     _api_key_id,
@@ -599,6 +602,8 @@ async def _apply_unified(
     if not unified:
         return
     bstate["unified"] = unified
+    # Per-project 5 h share (advisory): the pace projector's only meter input.
+    _PROJECT_SHARE.observe_meter(unified)
     # Stamp when this sample landed so a headerless-429 classification can tell a
     # fresh cache (concurrency storm, still receiving header-bearing successes)
     # from a stale one (budget wall, every response 429ing) — see
@@ -4241,6 +4246,7 @@ def _record_usage(
     *,
     seat: str = "",
     lane: str = "",
+    project: str | None = None,
 ) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
@@ -4252,7 +4258,7 @@ def _record_usage(
     """
     try:
         usage = _parse_sse_usage(bytes(captured))
-        rates = _pricing_for(model)
+        rates = rates_for_usage(model, usage)
         spend_usd = 0.0
         for kind, count in usage.items():
             if count <= 0:
@@ -4271,6 +4277,9 @@ def _record_usage(
             M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
                 spend_usd
             )
+        if project is not None:
+            # Unknown-cost models still mark the project active (0 USD).
+            _PROJECT_SHARE.record_spend(project, spend_usd)
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
@@ -4540,7 +4549,13 @@ async def _finalize(
         and (MESSAGES_SUBPATH in path or COMPLETIONS_SUBPATH in path)
     ):
         _record_usage(
-            model, model_label, attempt.captured, path, seat=bid, lane=_spend_lane_label()
+            model,
+            model_label,
+            attempt.captured,
+            path,
+            seat=bid,
+            lane=_spend_lane_label(),
+            project=_project_of(request.headers),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -4764,7 +4779,10 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
     return {
         k: v
         for k, v in request.headers.items()
-        if k.lower() not in HOP_HEADERS and k.lower() != config.WAIT_BUDGET_HEADER
+        if k.lower() not in HOP_HEADERS
+        and k.lower() != config.WAIT_BUDGET_HEADER
+        # attribution is this tier's business, never Anthropic's
+        and k.lower() != _PROJECT_HEADER
     }
 
 
@@ -5459,7 +5477,12 @@ async def _run_slot(
 
     rerouted = False
     try:
-        async with limiter.slot(cid, priority=is_priority, max_wait=slot_max_wait) as held:
+        async with limiter.slot(
+            cid,
+            priority=is_priority,
+            max_wait=slot_max_wait,
+            project=_project_of(request.headers),
+        ) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()

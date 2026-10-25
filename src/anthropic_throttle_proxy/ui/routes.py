@@ -39,6 +39,7 @@ from .. import history as _history
 from .. import lanes as _lanes
 from .. import metrics as _metrics
 from .. import output_usage as _output_usage
+from .. import project_share as _project_share
 
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
@@ -1352,6 +1353,67 @@ async def config_set(request: web.Request) -> web.Response:
     )
 
 
+_TPL_PROJECTS = f"{_PARTIALS}/projects.html"
+
+
+def _projects_context(message: str | None = None, error: str | None = None) -> dict[str, Any]:
+    """The 5 h project-share card: the decision, not a BI view (allocator §6).
+
+    Every number comes from the live ledger; anything the gateway cannot
+    know renders as an em dash in the template (``None`` here). Top 8 rows.
+    """
+    view = _project_share.SHARE.view()
+    now = time.time()
+
+    def _in(epoch: float | None) -> str | None:
+        if epoch is None:
+            return None
+        secs = max(0, int(epoch - now))
+        return f"{secs // 3600}h{(secs % 3600) // 60:02d}m"
+
+    return {
+        "view": view,
+        "rows": view.rows[:8],
+        "hidden_rows": max(0, len(view.rows) - 8),
+        "reset_5h_in": _in(view.reset_5h),
+        "reset_7d_in": _in(view.reset_7d),
+        "weights": _project_share.SHARE.weights(),
+        "weight_choices": _project_share.WEIGHTS,
+        "amber_at": _project_share.AMBER_AT,
+        "red_at": _project_share.RED_AT,
+        "message": message,
+        "error": error,
+    }
+
+
+async def projects_partial(request: web.Request) -> web.Response:
+    """GET /ui/projects — the per-project 5 h share card (hx-polled)."""
+    return aiohttp_jinja2.render_template(_TPL_PROJECTS, request, _projects_context())
+
+
+async def project_weight_set(request: web.Request) -> web.Response:
+    """POST /ui/projects/weight — set one project's weight w_p in {1,2,3,4}.
+
+    The ONLY admin knob. It changes queue order in AMBER/RED and nothing else:
+    no budget, no quota, no refusal. Weight 1 (the default) removes the entry.
+    """
+    form = await request.post()
+    project = str(form.get("project", "")).strip()
+    message: str | None = None
+    error: str | None = None
+    try:
+        weight = int(str(form.get("weight", "")))
+        _project_share.SHARE.set_weight(project, weight)
+        message = f"{_project_share.sanitize(project)} → weight {weight}"
+    except (ValueError, TypeError) as exc:
+        error = f"invalid: {exc!s}"
+    except OSError as exc:
+        error = f"could not persist weight: {exc!s}"
+    return aiohttp_jinja2.render_template(
+        _TPL_PROJECTS, request, _projects_context(message=message, error=error)
+    )
+
+
 async def config_reset(request: web.Request) -> web.Response:
     """POST /ui/config/reset — drop one knob's runtime override.
 
@@ -1487,6 +1549,8 @@ def attach_ui(app: web.Application) -> None:
     app.router.add_get("/ui/config", config_form)
     app.router.add_post("/ui/config", config_set)
     app.router.add_post("/ui/config/reset", config_reset)
+    app.router.add_get("/ui/projects", projects_partial)
+    app.router.add_post("/ui/projects/weight", project_weight_set)
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
     app.on_startup.append(_start_account_refresher)
     app.on_cleanup.append(_stop_account_refresher)
