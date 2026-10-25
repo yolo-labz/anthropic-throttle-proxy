@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import collections
 import json
+import math
 import os
 import re
 import threading
@@ -196,35 +197,17 @@ class ProjectShare:
         projected = _project(samples, t)
         state = _state(u, projected)
         start = reset - WINDOW_S if reset is not None else t - WINDOW_S
-        per: dict[str, float] = collections.defaultdict(float)
-        for ts, project, usd in spend:
-            if ts >= start:
-                per[project] += usd
+        per = _spend_since(spend, start)
         total = sum(per.values())
         whole = self._started <= start
-        capacity = (
-            total / u
-            if (u is not None and u >= MIN_CALIBRATION_UTIL and whole and total > 0)
-            else None
-        )
+        capacity = _calibrate(total, u, whole)
         week_start = week[1] - WEEK_S if week else t - WEEK_S
-        week_usd = sum(usd for ts, _p, usd in spend if ts >= week_start)
+        week_usd = sum(_spend_since(spend, week_start).values())
         week_whole = self._started <= week_start
         week_bad = week is not None and regressed == week[1]
-        week_capacity = (
-            week_usd / week[0]
-            if week and not week_bad and week_whole and week[0] >= MIN_CALIBRATION_UTIL and week_usd
-            else None
-        )
+        week_capacity = None if week_bad else _calibrate(week_usd, week and week[0], week_whole)
         active = {p for p, ts in last_seen.items() if t - ts <= ACTIVE_S}
-        weight_sum = sum(weights.get(p, 1) for p in active)
-        rows: list[ProjectRow] = []
-        for project in sorted(set(per) | active, key=lambda p: (-per.get(p, 0.0), p)):
-            w = weights.get(project, 1)
-            g = USABLE * w / weight_sum if project in active and weight_sum else None
-            used = per.get(project, 0.0) / capacity if capacity else None
-            over = used is not None and g is not None and used > g
-            rows.append(ProjectRow(project, per.get(project, 0.0), used, g, w, over))
+        rows = _share_rows(per, active, weights, capacity)
         return WindowView(
             util_5h=u,
             reset_5h=reset,
@@ -235,7 +218,7 @@ class ProjectShare:
             since_window_start=whole,
             total_usd=total,
             capacity_usd=capacity,
-            rows=tuple(rows),
+            rows=rows,
             week_usd=week_usd,
             since_week_start=week_whole,
             week_capacity_usd=week_capacity,
@@ -288,6 +271,40 @@ class ProjectShare:
         os.replace(tmp, path)
 
 
+def _spend_since(spend: list[tuple[float, str, float]], start: float) -> dict[str, float]:
+    per: dict[str, float] = collections.defaultdict(float)
+    for ts, project, usd in spend:
+        if ts >= start:
+            per[project] += usd
+    return per
+
+
+def _calibrate(usd: float, util: float | None, saw_whole_period: bool) -> float | None:
+    """List-$ capacity of a period = $ seen / meter, or ``None`` if not knowable.
+
+    Only valid when this process saw the whole period and the meter is high
+    enough that the ratio is not noise; otherwise the honest answer is unknown.
+    """
+    if util is None or util < MIN_CALIBRATION_UTIL or not saw_whole_period or usd <= 0:
+        return None
+    return usd / util
+
+
+def _share_rows(
+    per: dict[str, float], active: set[str], weights: dict[str, int], capacity: float | None
+) -> tuple[ProjectRow, ...]:
+    """used_p vs g_p = U·w_p/Σ_active w_q, largest spend first (allocator §3)."""
+    weight_sum = sum(weights.get(p, 1) for p in active)
+    rows: list[ProjectRow] = []
+    for project in sorted(set(per) | active, key=lambda p: (-per.get(p, 0.0), p)):
+        w = weights.get(project, 1)
+        g = USABLE * w / weight_sum if project in active and weight_sum else None
+        used = per.get(project, 0.0) / capacity if capacity else None
+        over = used is not None and g is not None and used > g
+        rows.append(ProjectRow(project, per.get(project, 0.0), used, g, w, over))
+    return tuple(rows)
+
+
 def _project(samples: list[tuple[float, float, float]], now: float) -> float | None:
     """û = u + r̂·(t_reset − t), r̂ from same-window samples of the last 30 min.
 
@@ -321,7 +338,7 @@ def _num(value: object) -> float | None:
         out = float(value)
     except ValueError:
         return None
-    return out if out == out else None  # NaN guard
+    return None if math.isnan(out) else out
 
 
 def _now() -> float:

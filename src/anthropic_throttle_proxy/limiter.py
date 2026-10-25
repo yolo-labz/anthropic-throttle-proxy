@@ -1288,13 +1288,7 @@ class FairBearerLimiter:
                 q.append(fut)
                 if client_id not in self._rr_order:
                     self._rr_order.append(client_id)
-                if project is not None:
-                    if len(self._client_project) > 4 * len(self._queues) + 256:
-                        # drop entries of clients that no longer wait
-                        self._client_project = {
-                            c: p for c, p in self._client_project.items() if c in self._queues
-                        }
-                    self._client_project[client_id] = project
+                self._note_client_project(client_id, project)
             self._try_dispatch()
         try:
             # The dispatcher stamps the future's result with the lane that
@@ -1368,6 +1362,16 @@ class FairBearerLimiter:
                 self.priority_inflight -= 1
             self._note_completion(lease, priority)
             self._try_dispatch()
+
+    def _note_client_project(self, client_id: str, project: str | None) -> None:
+        """Remember a queued client's project; bounded to clients that still wait."""
+        if project is None:
+            return
+        if len(self._client_project) > 4 * len(self._queues) + 256:
+            self._client_project = {
+                c: p for c, p in self._client_project.items() if c in self._queues
+            }
+        self._client_project[client_id] = project
 
     def _prefer_under_share(self) -> None:
         """AMBER/RED only: bring the first under-share client to the rotation head.

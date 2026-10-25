@@ -33,9 +33,9 @@
           {% if r.project != "_direct" %}
           <form hx-post="/ui/projects/weight" hx-target="#projects" hx-swap="innerHTML" hx-trigger="change">
             <input type="hidden" name="project" value="{{ r.project }}">
-            <select name="weight" aria-label="weight for {{ r.project }}">
+            <label>w <select name="weight">
               {% for w in weight_choices %}<option value="{{ w }}"{% if w == r.weight %} selected{% endif %}>{{ w }}</option>{% endfor %}
-            </select>
+            </select></label>
           </form>
           {% else %}<span class="muted" title="Claude Code and unlabelled traffic: never reordered">fixed</span>{% endif %}
         </td>
