@@ -95,6 +95,24 @@ def classify(prev: Mapping[str, object] | None, cur: Mapping[str, object], win: 
     return {"event": "steady"}
 
 
+def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None:
+    """The row for one bearer's cached unified sample, or None if it has never had one."""
+    unified = bstate.get("unified")
+    if not isinstance(unified, Mapping) or unified.get("util_7d") is None:
+        return None
+    sampled_at = bstate.get("unified_at")
+    age = round(now - sampled_at, 1) if isinstance(sampled_at, (int, float)) else None
+    return {
+        "epoch": int(now),
+        "bearer": bid,
+        "sampled_at": sampled_at,
+        "sample_age_s": age,
+        **{k: unified.get(k) for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")},
+        "status_7d": unified.get("status_7d"),
+        "status": unified.get("status"),
+    }
+
+
 class MeterRecorder:
     """Owns the per-bearer previous reading and the append-only log."""
 
@@ -130,57 +148,50 @@ class MeterRecorder:
         """One row per bearer that has ever cached a unified sample."""
         out = []
         for bid, bstate in sorted(self.source().items()):
-            unified = bstate.get("unified")
-            if not isinstance(unified, Mapping) or unified.get("util_7d") is None:
+            row = _snapshot(bid, bstate, now)
+            if row is None:
                 continue
-            sampled_at = bstate.get("unified_at")
-            row: dict[str, object] = {
-                "epoch": int(now),
-                "bearer": bid,
-                "sampled_at": sampled_at,
-                "sample_age_s": (
-                    round(now - sampled_at, 1) if isinstance(sampled_at, (int, float)) else None
-                ),
-                **{
-                    k: unified.get(k)
-                    for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")
-                },
-                "status_7d": unified.get("status_7d"),
-                "status": unified.get("status"),
-            }
             prev = self.last.get(bid)
-            if prev is not None and prev.get("sampled_at") == sampled_at:
+            if prev is not None and prev.get("sampled_at") == row["sampled_at"]:
                 # No new header since the last row: keep the cadence, skip the verdict.
                 row["stale"] = True
             else:
-                for win in WINDOWS:
-                    verdict = classify(prev, row, win)
-                    row[f"event_{win}"] = verdict.pop("event")
-                    for key, value in verdict.items():
-                        row[f"{key}_{win}"] = value
-                    if row[f"event_{win}"] == "recalibration":
-                        self.recalibrations += 1
-                        log.warning(
-                            "meter recalibration: bearer=%s window=%s %.2f->%.2f same reset %s",
-                            bid,
-                            win,
-                            prev[f"util_{win}"],
-                            row[f"util_{win}"],
-                            row[f"reset_{win}"],
-                        )
+                self._judge(bid, prev, row)
                 self.last[bid] = row
             out.append(row)
         return out
+
+    def _judge(self, bid: str, prev: Mapping[str, object] | None, row: dict) -> None:
+        """Attach the per-window verdict to a fresh row; count and log recalibrations."""
+        for win in WINDOWS:
+            verdict = classify(prev, row, win)
+            row[f"event_{win}"] = verdict.pop("event")
+            for key, value in verdict.items():
+                row[f"{key}_{win}"] = value
+            if row[f"event_{win}"] == "recalibration":
+                self.recalibrations += 1
+                log.warning(
+                    "meter recalibration: bearer=%s window=%s %.2f->%.2f same reset %s",
+                    bid,
+                    win,
+                    prev[f"util_{win}"] if prev else None,
+                    row[f"util_{win}"],
+                    row[f"reset_{win}"],
+                )
+
+    def _size(self) -> int:
+        """Current log size; a log that does not exist yet is empty, not an error."""
+        try:
+            return self.path.stat().st_size
+        except FileNotFoundError:
+            return 0
 
     def write(self, rows: list[dict]) -> None:
         if not rows:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if self.path.stat().st_size > MAX_BYTES:
-                self.path.replace(self.path.with_name(self.path.name + ".1"))
-        except FileNotFoundError:
-            pass
+        if self._size() > MAX_BYTES:
+            self.path.replace(self.path.with_name(self.path.name + ".1"))
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write("".join(json.dumps(r, separators=(",", ":")) + "\n" for r in rows))
 
@@ -203,7 +214,7 @@ async def _loop(recorder: MeterRecorder, interval: float) -> None:
 def meter_recorder_context(source: BearerSource):
     """aiohttp cleanup context: start the minute loop, cancel it on shutdown."""
 
-    async def context(app):  # noqa: ARG001 - aiohttp passes the app
+    async def context(_app):
         path = default_path()
         if path is None:
             yield
@@ -215,9 +226,8 @@ def meter_recorder_context(source: BearerSource):
             yield
         finally:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+            # Collect the loop's own CancelledError as a result. If THIS coroutine is cancelled
+            # while waiting, gather re-raises it instead of the cleanup swallowing it.
+            await asyncio.gather(task, return_exceptions=True)
 
     return context
