@@ -2326,6 +2326,99 @@ def _is_oauth_telemetry_path(path: str) -> bool:
     return p in _OAUTH_TELEMETRY_PATHS
 
 
+# Inbound GET /api/oauth/{usage,profile} cache (W1, 26/10/2026). Clients polled
+# this gateway at ~4 s per bearer and every poll was forwarded upstream: ~880
+# upstream 429s/h. Serve the last good answer for OAUTH_TELEMETRY_TTL_S, fetch at
+# most once per TTL per (bearer, path) under a per-key lock, and back off
+# exponentially on 429/5xx. ponytail: in-memory dicts keyed by (bearer, path);
+# ceiling = bearers x 2 paths; a restart costs one upstream fetch per bearer.
+OAUTH_TELEMETRY_TTL_S = 90.0
+_OAUTH_TELEMETRY_STALE_MAX_S = 1800.0
+_oauth_telemetry_cache: dict[tuple[str, str], tuple[float, int, bytes, str]] = {}
+_oauth_telemetry_fail: dict[tuple[str, str], tuple[float, int]] = {}  # (until, streak)
+_oauth_telemetry_locks: dict[tuple[str, str], asyncio.Lock] = {}
+_OAUTH_DROP = {
+    "content-length",
+    "content-encoding",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+}
+
+
+def _oauth_telemetry_reply(entry: tuple[float, int, bytes, str]) -> web.Response:
+    return web.Response(status=entry[1], body=entry[2], headers={"Content-Type": entry[3]})
+
+
+def _oauth_telemetry_unavailable(
+    hit: tuple[float, int, bytes, str] | None, delay: float
+) -> web.Response:
+    """Serve the last good reading while backing off, else a bounded 429."""
+    if hit is not None and time.time() - hit[0] < _OAUTH_TELEMETRY_STALE_MAX_S:
+        return _oauth_telemetry_reply(hit)
+    return web.Response(
+        status=429,
+        text="oauth telemetry backing off\n",
+        headers={"Retry-After": str(max(1, int(delay)))},
+    )
+
+
+async def _oauth_telemetry_serve(request: web.Request) -> web.StreamResponse:
+    """Single-flight, TTL-cached answer for an inbound OAuth telemetry GET."""
+    path = request.match_info.get("path", "")
+    key = (_bearer_id(request.headers), path)
+    if key[0] == "_anon":
+        return await _serve(request)  # no credential: nothing to key a cache on
+    lock = _oauth_telemetry_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        now = time.time()
+        hit = _oauth_telemetry_cache.get(key)
+        if hit is not None and now - hit[0] < OAUTH_TELEMETRY_TTL_S:
+            return _oauth_telemetry_reply(hit)
+        until, streak = _oauth_telemetry_fail.get(key, (0.0, 0))
+        if now < until:
+            return _oauth_telemetry_unavailable(hit, until - now)
+        status, body, retry_after, hdrs, ctype = 0, b"", None, {}, "application/json"
+        try:
+            timeout = aiohttp.ClientTimeout(total=6)
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.get(
+                    config.UPSTREAM.rstrip("/") + "/" + path,
+                    headers=_forward_headers(request),
+                ) as up,
+            ):
+                status, body = up.status, await up.read()
+                hdrs = {k: v for k, v in up.headers.items() if k.lower() not in _OAUTH_DROP}
+                retry_after = up.headers.get("Retry-After")
+                ctype = up.headers.get("Content-Type", ctype)
+        except (aiohttp.ClientError, TimeoutError):
+            pass  # status 0: transport failure, handled as a 5xx below
+        now = time.time()
+        if status == 200:
+            _oauth_telemetry_cache[key] = (now, 200, body, ctype)
+            _oauth_telemetry_fail.pop(key, None)
+            return web.Response(status=200, body=body, headers=hdrs)
+        if status == 401:
+            _oauth_telemetry_cache.pop(key, None)  # dead credential: drop stale numbers
+            return web.Response(status=401, body=body, headers=hdrs)
+        if status == 0 or status == 429 or status >= 500:
+            streak += 1
+            delay = min(OAUTH_TELEMETRY_TTL_S * 2 ** (streak - 1), _OAUTH_TELEMETRY_STALE_MAX_S)
+            if retry_after and retry_after.isdigit():
+                delay = max(delay, float(retry_after))
+            _oauth_telemetry_fail[key] = (now + delay, streak)
+            log(
+                f"oauth-telemetry-backoff path=/{path} status={status} "
+                f"streak={streak} delay={delay:.0f}s"
+            )
+            if status and hit is None:
+                # First failure: relay upstream unchanged (Retry-After, budget headers).
+                return web.Response(status=status, body=body, headers=hdrs)
+            return _oauth_telemetry_unavailable(hit, delay)
+        return web.Response(status=status, body=body, headers=hdrs)
+
+
 def _is_entitlement_refusal_attempt(attempt: _Attempt, bid: str = "") -> bool:
     """True when THIS attempt's throttle is Anthropic's OAuth entitlement gate.
 
@@ -5614,6 +5707,8 @@ async def handler(request: web.Request) -> web.StreamResponse:
         return _admission_closed_response()
     state["admitted_holds"] = int(state.get("admitted_holds", 0)) + 1
     try:
+        if request.method == "GET" and _is_oauth_telemetry_path(request.match_info.get("path", "")):
+            return await _oauth_telemetry_serve(request)
         return await _serve(request)
     finally:
         state["admitted_holds"] = max(0, int(state.get("admitted_holds", 0)) - 1)

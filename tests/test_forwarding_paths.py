@@ -402,7 +402,9 @@ async def test_telemetry_retries_are_not_counted_as_upstream_pushback(
 
     resp = await tc.get(path, headers={"Authorization": "Bearer dead-upstream"})
     await _settle()
-    assert resp.status == 502  # both attempts failed, as they must on a dead port
+    # Both attempts failed, as they must on a dead port. Telemetry is answered by the
+    # per-bearer cache (W1): its failed fetch becomes a 429 backoff, not a 502.
+    assert resp.status == (502 if counted else 429)
 
     # BOTH counters, not just the state dict: `/metrics` is where the figure is
     # actually read, and moving `M_UPSTREAM_RETRIES.inc()` outside the exclusion
