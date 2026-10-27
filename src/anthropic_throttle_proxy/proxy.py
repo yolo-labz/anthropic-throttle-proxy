@@ -778,6 +778,53 @@ def _is_queue_timeout_response(response: web.StreamResponse | None) -> bool:
     return response is not None and config.QUEUE_TIMEOUT_HEADER in response.headers
 
 
+# A saturated queue and an EXHAUSTED WINDOW are different walls and need
+# different Retry-After values. The queue unjams as soon as a slot frees
+# (seconds), so the drain estimate is right there. A window at its cap does
+# not move until its reset, and telling the client "come back in N seconds"
+# sends it straight back into the same wall.
+#
+# Measured 26/10/2026 12:16: 5h util 0.91 / 7d 0.90 with live slots collapsing
+# to 1, so every request 503'd carrying a drain-estimate Retry-After. pi does
+# not honour Retry-After and retries 10x at a fixed 6 s, so a pane printed ~10
+# "503 queue wait exceeded" lines and waited out the whole storm while each
+# retry re-entered the fair queue and pushed the next one deeper.
+#
+# The client cannot be fixed from here, but the SERVER can stop lying: when the
+# binding window is at/over its soft target, quote the time to ITS reset.
+# UTILIZATION_TARGET is 0 by default ("no ceiling"), and 0 means OFF rather
+# than "brake at zero", so it cannot be used as the wall threshold directly.
+_WINDOW_WALL_TARGET = UTILIZATION_TARGET or 0.90
+
+
+def _window_wall_retry_after(bid: str) -> int | None:
+    """Seconds until the binding window's reset, when that window is at the wall.
+
+    ``None`` means "no window wall" -> the caller keeps the drain estimate.
+    Never returns 0: a caller that gets a number must have something to wait
+    for, and a passed reset means the window rolled over while this snapshot
+    is still stale, which an immediate retry would misread.
+    """
+    try:
+        state = bearer_state.get(bid) or {}
+        unified = state.get("unified") or {}
+    except Exception:  # a broken meter must never block a refusal path
+        return None
+    if not isinstance(unified, dict):
+        return None
+    window = _binding_window(unified)
+    if window is None:
+        return None
+    util = unified.get(f"util_{window}")
+    reset = unified.get(f"reset_{window}")
+    if not isinstance(util, (int, float)) or not isinstance(reset, (int, float)):
+        return None
+    if float(util) < _WINDOW_WALL_TARGET:
+        return None
+    remaining = int(reset - time.time())
+    return remaining if remaining > 0 else None
+
+
 def _queue_wait_timeout_response(
     bid: str,
     cid: str,
@@ -816,6 +863,13 @@ def _queue_wait_timeout_response(
         estimate = limiter.drain_estimate(max_wait, client_id=cid)
     pre_queue = timeout is not None and timeout.pre_queue
     retry_after_s = budget_floored_retry_after(estimate) if pre_queue else estimate.retry_after_s
+
+    # A window wall outranks the queue estimate: waiting for a slot cannot help
+    # while the WINDOW is exhausted, and a short Retry-After makes the client
+    # hammer it (measured: 10 retries at 6 s into a 93-min wall).
+    wall_s = _window_wall_retry_after(bid)
+    if wall_s is not None:
+        retry_after_s = max(int(retry_after_s), wall_s)
     log(
         f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
         f"reason={'pre-queue-depth' if pre_queue else 'elapsed'} "
