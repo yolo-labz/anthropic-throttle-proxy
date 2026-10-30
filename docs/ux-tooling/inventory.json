@@ -1,7 +1,7 @@
 {
   "schema": "ux-tooling-inventory/v1",
   "generated_at": "2026-10-30T16:30-03:00",
-  "scope": "Mechanical inventory for the Throttler UX/UI design seats (side-projects:w2P). Discovery and status only; nothing was run against a live page, no skill was executed, no config was changed.",
+  "scope": "Mechanical inventory for the Throttler UX/UI design seats (side-projects:w2P). Discovery and status only; engine/version probes ran, but no end-to-end design verb or live page was exercised and no config was changed.",
   "host": "desktop (x86_64-linux)",
   "repo": "yolo-labz/anthropic-throttle-proxy",
   "installs": [
@@ -60,8 +60,9 @@
       "exposure": "codemode",
       "verified": {
         "pi_mcp_list": "connected, 12 tools (codemode, global), exit 0",
-        "browser_identities": "read-only call OK: 71 identities, all reported 'ready'. Public-search identities present: brave-search, google-search, startpage-search, yep-search (headed), lever-public",
-        "server_health": "read-only call OK: host Nix.Server reachable; system_state=degraded, failed_units=2 (reported, not investigated here)"
+        "browser_identities": "read-only call, gated on structuredContent: isError=false, ok=true, refused!=true. 71 identities, 71 'ready'. Public-search identities present: brave-search, google-search, startpage-search, yep-search (headed). Earlier unchecked parse of content[0].text was superseded by this check.",
+        "server_health": "read-only call, gated on structuredContent: isError=false, ok=true. Host Nix.Server reachable; system_state=degraded, failed_units=2 (reported, not investigated here)",
+        "gate_rule": "Any missing, failed, isError, ok!==true or refused===true response is UNKNOWN/HOLD, never an empty healthy registry."
       },
       "tools_available": ["browser_identities", "browser_status", "browser_ensure", "browser_attach", "browser_run", "browser_stop", "server_health", "server_units", "server_pressure", "server_journal", "server_deploy_status", "server_deploy"],
       "not_executed": ["browser_ensure", "browser_attach", "browser_run", "browser_stop", "server_deploy*", "any navigation or page read"],
