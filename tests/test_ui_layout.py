@@ -355,6 +355,16 @@ def test_the_hero_distinguishes_unverified_from_blocked_siblings():
     assert "no verified alternative" not in panel
 
 
+def test_hero_binding_facts_leave_room_for_the_verdict():
+    """An unbounded auto track gave the live verdict/detail a zero-pixel width."""
+    rule = re.search(r"(?m)^\.hero\s*\{([^}]*)\}", _css(), re.S)
+    assert rule
+    assert re.search(
+        r"grid-template-columns:\s*minmax\(0,\s*1fr\)\s+fit-content\(60%\)",
+        rule.group(1),
+    ), "binding facts must be capped so long account/status text cannot erase the verdict"
+
+
 def test_hero_omits_the_facts_block_when_nothing_is_binding():
     """No binding → no empty labelled cells pretending there is one."""
     html = _render(status={"level": "healthy", "verdict": "HEALTHY", "since": "3h", "detail": ""})

@@ -198,11 +198,10 @@ main { display: flex; flex-direction: column; gap: 0.85rem; flex: 1; }
    inside a sentence naming a bearer hash respectively. */
 .hero {
   display: grid;
-  /* Verdict + detail take the slack; the facts sit at their natural width
-     against the right edge. `auto` on the facts track, not `1fr`, because
-     `1fr` spread three short labelled values evenly across 1800px and turned
-     a three-fact readout into three islands. */
-  grid-template-columns: minmax(0, 1fr) auto;
+  /* Keep short facts at their natural width, but cap their track: an
+     unbounded auto track lets long status/account text consume the whole
+     row and collapse the verdict and detail to zero pixels. */
+  grid-template-columns: minmax(0, 1fr) fit-content(60%);
   align-items: center;
   gap: 0.5rem 2.5rem;
   background: var(--panel);
