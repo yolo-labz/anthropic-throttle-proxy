@@ -43,12 +43,12 @@ def _visible_subscriptions(
     ]
 
 
-def _visible_lane_registry(lanes: dict, hidden: set[str]) -> list[dict]:
-    return [
-        row
-        for row in lanes.get("registry", [])
-        if not any(_family(row.get(key) or "") in hidden for key in ("family", "provider", "id"))
-    ]
+def _provider_visible(row: dict, defaults: dict) -> bool:
+    """Explicit destination hiding; never infer retirement from a hidden account."""
+    names = {str(row.get(key) or "").strip().lower() for key in ("provider", "id", "name")}
+    hidden = {name.strip().lower() for name in defaults.get("hidden_providers", [])}
+    families = {_family(row.get("family") or ""), *(_family(name) for name in names)}
+    return not (names & hidden or families & _hidden_families(defaults))
 
 
 def _subscriptions_only_status() -> dict:
@@ -120,7 +120,7 @@ def _decorate_row(row: dict) -> None:
 def apply_display(view: dict, config: dict) -> dict:
     """Hide configured display rows and decorate copied meters, leaving source evidence intact.
 
-    Row hiding is ``_visible_subscriptions`` / ``_visible_lane_registry``; the
+    Row hiding is ``_visible_subscriptions`` / ``_provider_visible``; the
     primary-off board is ``_hide_primary``; per-row decoration is
     ``_decorate_row``.
     """
@@ -133,8 +133,17 @@ def apply_display(view: dict, config: dict) -> dict:
     # Stable within each group: configured order remains authoritative.
     result["subscriptions"].sort(key=lambda row: bool(row.get("catalogue_only")))
     lanes = result.get("lanes") or {}
-    lanes["registry"] = _visible_lane_registry(lanes, hidden)
+    lanes["registry"] = [
+        row for row in lanes.get("registry", []) if _provider_visible(row, defaults)
+    ]
     result["lanes"] = lanes
+    result["providers"] = [
+        row for row in result.get("providers", []) if _provider_visible(row, defaults)
+    ]
+    result["workload_choices"] = [
+        name for name in result.get("workload_choices", [])
+        if _provider_visible({"name": name}, defaults)
+    ]
     result["show_local"] = defaults.get("show_primary", True) and not defaults.get("workload")
     if not result["show_local"]:
         _hide_primary(result)
@@ -146,7 +155,7 @@ def apply_display(view: dict, config: dict) -> dict:
 def apply_workload(view: dict, config: dict, fleet: list[dict]) -> None:
     """Select workload signals, never routing, admin controls or the combined dial."""
     name = (config.get("defaults") or {}).get("workload")
-    if not name:
+    if not name or not _provider_visible({"name": name}, config.get("defaults") or {}):
         return
     view["workload_label"] = name
     view["workload_available"] = False

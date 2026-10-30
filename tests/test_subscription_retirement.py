@@ -103,9 +103,5 @@ def test_current_board_example_does_not_pin_stale_tiers_or_models():
     assert {s["id"] for s in config["subscriptions"]} == {
         "codex:a",
         "codex:c",
-        "zai:plan",
         "copilot:personal",
-        "mimo:plan",
-        "mimo:team-owner",
-        "mimo:team-b",
     }

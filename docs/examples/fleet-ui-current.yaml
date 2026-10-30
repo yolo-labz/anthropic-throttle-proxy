@@ -1,5 +1,5 @@
 # Display inventory, not routing, billing verification or model eligibility.
-# Live planType/plan observations win; do not hardcode tier/model captions here.
+# Live observations supply Anthropic accounts and plan captions; no bearer hashes.
 subscriptions:
   - id: codex:a
     label: Codex A
@@ -11,33 +11,23 @@ subscriptions:
     emoji: 🌀
     family: openai
     lane: codex:c
-  - id: zai:plan
-    label: Z.AI
-    emoji: ✨
-    family: chinese-frontier
-    lane: zai:plan
   - id: copilot:personal
     label: Copilot
     emoji: 🐙
     family: github
     lane: copilot:personal
-  - id: mimo:plan
-    label: MiMo individual
-    provider: MiMo
-    family: chinese-frontier
-  - id: mimo:team-owner
-    label: MiMo Team owner
-    provider: MiMo
-    family: chinese-frontier
-  - id: mimo:team-b
-    label: MiMo Team B
-    provider: MiMo
-    family: chinese-frontier
 defaults:
-  hidden_families: [anthropic]
+  hidden_families: []
   hidden_subscriptions:
     - mimo:desktop-subscription
+    - mimo:plan
+    - mimo:team-owner
+    - mimo:team-b
+    - mimo:team-unassigned
     - deepseek
     - codex:b
-    - mimo:team-unassigned
+    # Inactive for this board, NOT evidence of billing cancellation.
+    - zai:plan
+  # Destination IDs/names are independent of individual subscription IDs.
+  hidden_providers: [mimo, deepseek, opencode, opencode-zen, zai]
   show_primary: false
