@@ -4,12 +4,12 @@
 
 ## Artifact isolation
 
-Tests ran from a clean `git archive origin/main` with only owned source/tests/example overlaid. `PYTHONPATH="$isolated/src"` and the existing venv interpreter avoid the shared editable-install trap. Unrelated dirty limiter/config/conftest files and concurrent visual changes are excluded. Exact-branch acceptance follows selective commit.
+Tests ran from a clean `git archive origin/main` with only owned source/tests/example overlaid. `PYTHONPATH="$isolated/src"` and the existing venv interpreter avoid the shared editable-install trap. Unrelated dirty limiter/config/conftest files and concurrent visual changes are excluded. Exact-branch targeted acceptance also passed 108 tests plus ruff after selective commit. The shared target is behind main: the initial exact-branch full run inherited seven obsolete MiMo fixture failures and a durable-cleanup deadline failure already fixed upstream. It also exposed stale materialization of three owned files by the initial selective commit; accepted copies were restored, committed separately and byte-compared with the passing overlay. Parent coordination is required before target synchronization; no uncoordinated `but pull` was run.
 
 ## Results
 
 - Regression before implementation: `pytest tests/test_provider_board_projection.py -q --tb=short`: exit 1, six failures (including ghost sibling providers and missing validation).
-- Initial implementation check: one test-fixture failure (`index.html` is not the dashboard template). Follow-up fixture check required the real handler's `asset_v`; no application behavior was weakened. One implementation, fixture corrections only; no provider retries.
+- Initial implementation check: one test-fixture failure (`index.html` is not the dashboard template). Follow-up fixture check required the real handler's `asset_v`; no application behavior was weakened. Attempt 1 implemented projection; fixture corrections only, no provider retries. Attempt 2 added the blank-name guard after a red regression showed whitespace-only destination names could match absent fields and blank the board.
 - Targeted config/display/retirement/data/enrollment/capacity tests: exit 0, **108 passed**; offline dashboard + repeated stats rendering included.
 - Full `pytest -q --tb=short`: exit 0, **2400 passed**, 276 existing warnings.
 - `ruff check src tests`: exit 0. `ruff format --check src tests`: exit 0, 155 files formatted.

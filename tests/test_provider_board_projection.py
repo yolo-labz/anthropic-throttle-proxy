@@ -49,6 +49,8 @@ def test_projection_hides_exact_destinations_not_sibling_accounts():
     legacy = apply_display(view, {})
     assert len(legacy["providers"]) == 3
     assert len(legacy["subscriptions"]) == 5
+    blank = apply_display(view, {"defaults": {"hidden_providers": [" "]}})
+    assert blank["providers"] == legacy["providers"]
     apply_workload(
         out,
         {"defaults": {**config["defaults"], "workload": "mimo"}},

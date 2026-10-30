@@ -46,7 +46,7 @@ def _visible_subscriptions(
 def _provider_visible(row: dict, defaults: dict) -> bool:
     """Explicit destination hiding; never infer retirement from a hidden account."""
     names = {str(row.get(key) or "").strip().lower() for key in ("provider", "id", "name")}
-    hidden = {name.strip().lower() for name in defaults.get("hidden_providers", [])}
+    hidden = {name.strip().lower() for name in defaults.get("hidden_providers", [])} - {""}
     families = {_family(row.get("family") or ""), *(_family(name) for name in names)}
     return not (names & hidden or families & _hidden_families(defaults))
 
