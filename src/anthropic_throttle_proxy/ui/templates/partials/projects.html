@@ -1,0 +1,71 @@
+{# Per-project share of the 5 h window (allocator ideation §3/§6).
+   Shows the decision, not a BI view. Every unknown renders as "—": the
+   gateway never invents a denominator. Rendered by GET /ui/projects (polled)
+   and POST /ui/projects/weight (the only knob).
+#}
+{% macro pct(x) %}{% if x is none %}—{% else %}{{ "%.0f" | format(x * 100) }}%{% endif %}{% endmacro %}
+{% macro usd(x) %}{% if x is none %}—{% else %}${{ "%.2f" | format(x) }}{% endif %}{% endmacro %}
+{% set state_class = {"GREEN": "ok", "AMBER": "warn", "RED": "crit"}.get(view.state, "muted") %}
+<div class="projects-card">
+  <div class="projects-head">
+    <span class="projects-state {{ state_class }}">{{ view.state }}</span>
+    <span class="muted">{% if view.projected is not none %}state from the û projection — advisory, not a measurement{% else %}state from measured u{% endif %}</span>
+    <span>5 h util, measured <b>{{ pct(view.util_5h) }}</b></span>
+    <span>projected at reset (û) <b>{{ pct(view.projected) }}</b></span>
+    <span>resets in <b>{{ reset_5h_in or "—" }}</b></span>
+    <span class="muted">amber &gt; {{ pct(amber_at) }} · red &gt; {{ pct(red_at) }} · queue ordering {% if ordering_on %}<b>on</b> (amber/red only, never refuses){% else %}<b>off</b> — measurement only ({{ ordering_env }}=1 enables){% endif %}</span>
+  </div>
+
+  {% if message %}<output class="config-toast ok">saved · {{ message }}</output>{% endif %}
+  {% if error %}<div class="config-toast err" role="alert">error · {{ error }}</div>{% endif %}
+
+  <table class="projects-table">
+    <thead>
+      <tr><th scope="col">project</th><th scope="col">list $ this window</th><th scope="col">used</th><th scope="col">fair share g</th><th scope="col">weight</th><th scope="col"></th></tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr{% if r.over %} class="over"{% endif %}>
+        <td><code>{{ r.project }}</code></td>
+        <td>{{ usd(r.usd) }}</td>
+        <td>{{ pct(r.used) }}</td>
+        <td>{{ pct(r.entitlement) }}</td>
+        <td>
+          {% if r.project != "_direct" %}
+          <form hx-post="/ui/projects/weight" hx-target="#projects" hx-swap="innerHTML" hx-trigger="change">
+            <input type="hidden" name="project" value="{{ r.project }}">
+            <label>w <select name="weight">
+              {% for w in weight_choices %}<option value="{{ w }}"{% if w == r.weight %} selected{% endif %}>{{ w }}</option>{% endfor %}
+            </select></label>
+          </form>
+          {% else %}<span class="muted" title="Claude Code and unlabelled traffic: never reordered">fixed</span>{% endif %}
+        </td>
+        <td>{% if r.over %}<span class="warn">over</span>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">no Claude traffic seen in this window yet</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if hidden_rows %}<p class="muted">+{{ hidden_rows }} smaller projects not shown</p>{% endif %}
+  {% if view.capacity_usd is none %}
+  <p class="muted">used / fair share need a window capacity estimate: {% if not view.since_window_start %}this process started inside the window{% elif view.util_5h is none %}no meter reading yet{% else %}5 h util below 5 %{% endif %} — so they show —.</p>
+  {% else %}
+  <p class="muted">window capacity ≈ {{ usd(view.capacity_usd) }} list (fitted: {{ usd(view.total_usd) }} seen ÷ {{ pct(view.util_5h) }})</p>
+  {% endif %}
+
+  <div class="projects-week">
+    <span>7 d util <b>{{ pct(view.util_7d) }}</b></span>
+    <span>resets in <b>{{ reset_7d_in or "—" }}</b></span>
+    <span>list $ seen this week <b>{% if view.since_week_start %}{{ usd(view.week_usd) }}{% else %}— <span class="muted">(process younger than the week)</span>{% endif %}</b></span>
+    <span>capacity <b>{% if view.week_capacity_usd is none %}capacity unknown — meter uncalibrated{% else %}{{ usd(view.week_capacity_usd) }}{% endif %}</b></span>
+    {% if view.week_meter_regressed %}<span class="crit">7 d meter fell without a reset</span>{% endif %}
+  </div>
+
+  <form class="projects-add" hx-post="/ui/projects/weight" hx-target="#projects" hx-swap="innerHTML">
+    <label>project <input name="project" required pattern="[A-Za-z0-9._-]{1,64}" size="22"></label>
+    <label>weight <select name="weight">{% for w in weight_choices %}<option value="{{ w }}">{{ w }}</option>{% endfor %}</select></label>
+    <button type="submit">set</button>
+    <span class="muted">weight is the only knob: w ∈ {1,2,3,4}, default 1</span>
+  </form>
+</div>

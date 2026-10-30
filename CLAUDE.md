@@ -78,8 +78,9 @@ Before changing throttle behavior, central fallback, limiter state, request
 pacing, Nix pins, or deployment config:
 
 1. Capture live evidence first: local `/__throttle/health`, central
-   `/__throttle/health`, `journalctl --user -u anthropic-throttle-proxy`, the
-   current user unit `ExecStart`, and the current Nix store path.
+   `/__throttle/health`, `journalctl --user -u throttler-gateway.service` (see the
+   journal-name trap below — the `anthropic-throttle-proxy` name yields NO entries),
+   the current user unit `ExecStart`, and the current Nix store path.
 2. State the hypothesis in one sentence.
 3. Identify what would falsify the hypothesis before editing.
 4. Add or update tests that exercise the exact failure path.
@@ -137,7 +138,12 @@ ls -la /run/user/$(id -u)/systemd/user/anthropic-throttle-proxy.service.d/
 curl -fsS http://127.0.0.1:8765/__throttle/health | jq
 
 # 6. Service journal (last failure window)
-journalctl --user -u anthropic-throttle-proxy.service -n 80 --no-pager
+# NOTE (measured 25/10/2026): `anthropic-throttle-proxy.service` is a SYMLINK to the
+# canonical `throttler-gateway.service`, and journald attributes entries only to the
+# canonical name. The old spelling silently returns "-- No entries --", which reads as
+# "the service logs nothing" and sends you debugging journald.
+journalctl --user -u throttler-gateway.service -n 80 --no-pager
+# (equivalently: journalctl --user _PID=$(systemctl --user show throttler-gateway.service -p MainPID --value))
 
 # 7. Trace the Nix store path actually on the cmdline
 pid=$(systemctl --user show anthropic-throttle-proxy.service -p MainPID --value)

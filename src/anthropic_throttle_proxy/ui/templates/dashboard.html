@@ -60,6 +60,11 @@
       {% include "partials/stats.html" %}
     </section>
 
+    {# Per-project share of the 5 h window — one advisory card (allocator §6). #}
+    <section id="projects" aria-label="5 h window share by project" hx-get="/ui/projects" hx-trigger="load, every 10s" hx-target="#projects" hx-swap="innerHTML">
+      <p class="muted">Loading…</p>
+    </section>
+
   </main>
 
   <div class="bottom-bar">

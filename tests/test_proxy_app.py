@@ -1272,12 +1272,13 @@ async def test_oauth_usage_429_does_not_poison_message_limiter(
 
     # The 429 is relayed unchanged; the poller backs off its own Retry-After.
     assert resp.status == 429
-    lim = config.bearer_limiters[bid]
     # No AIMD shrink, no retry-after pause — bearer stays fully usable for
-    # real /v1/messages traffic.
-    assert lim.max_concurrent == 3
-    assert lim.retry_after_remaining() == 0.0
-    assert config.bearer_state[bid]["last_ratelimit"] is None
+    # real /v1/messages traffic. W1: telemetry is cache-answered, so the bearer's
+    # limiter may never have been created; absence is also neutral.
+    lim = config.bearer_limiters.get(bid)
+    assert lim is None or lim.max_concurrent == 3
+    assert lim is None or lim.retry_after_remaining() == 0.0
+    assert config.bearer_state.get(bid, {}).get("last_ratelimit") is None
 
 
 async def test_usage_poller_marks_only_budget_rejected_429_as_locked(
@@ -1324,10 +1325,10 @@ async def test_usage_poller_marks_only_budget_rejected_429_as_locked(
         bid = proxy._bearer_id({"Authorization": f"Bearer {token}"})
         # The real loopback GET traverses proxy.handler, which creates neutral
         # per-bearer state; telemetry isolation means that state stays neutral.
-        lim = config.bearer_limiters[bid]
-        assert lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
-        assert lim.retry_after_remaining() == 0.0
-        assert config.bearer_state[bid]["last_ratelimit"] is None
+        lim = config.bearer_limiters.get(bid)  # W1: cache-answered, may be absent
+        assert lim is None or lim.max_concurrent == config.AIMD_INITIAL_CONCURRENT
+        assert lim is None or lim.retry_after_remaining() == 0.0
+        assert config.bearer_state.get(bid, {}).get("last_ratelimit") is None
 
 
 async def test_upstream_400_log_identifies_request_without_bearer_secret(
@@ -1389,9 +1390,9 @@ async def test_oauth_profile_429_also_skips_message_limiter(
     await asyncio.sleep(0.02)
 
     assert resp.status == 429
-    lim = config.bearer_limiters[bid]
-    assert lim.max_concurrent == 3
-    assert lim.retry_after_remaining() == 0.0
+    lim = config.bearer_limiters.get(bid)  # W1: cache-answered, may be absent
+    assert lim is None or lim.max_concurrent == 3
+    assert lim is None or lim.retry_after_remaining() == 0.0
 
 
 async def test_retry_after_before_queue_reroutes_to_fresh_account(

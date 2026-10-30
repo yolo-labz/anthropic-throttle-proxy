@@ -491,6 +491,25 @@ API_KEY_ROUTING_MODE = (
     _API_KEY_ROUTING_MODE if _API_KEY_ROUTING_MODE in {"off", "overflow", "prefer"} else "off"
 )
 API_KEY_LABEL = os.environ.get("THROTTLE_API_KEY_LABEL", "API").strip() or "API"
+# 22/10/2026 — local sentinel lane key. When set, a request whose x-api-key
+# equals this sentinel is NOT treated as an explicit API-key request: the
+# header is stripped and account routing rewrites Authorization to a
+# configured OAuth account. Lets local clients that can only speak x-api-key
+# (pi's native anthropic provider) ride the subscription lane instead of
+# the metered API-key lane. Default "" keeps historical behaviour.
+LOCAL_API_KEY_SENTINEL = os.environ.get("THROTTLE_LOCAL_API_KEY", "").strip()
+
+# 23/10/2026 — fleet budget reserve. The sentinel lane (pi panes) shares ONE
+# subscription window with interactive Claude Code. A 28-pane dispatch took the
+# 5h window 17% -> 81% in under two hours, which is fine until it starves the
+# human: at 100% the account pauses EVERYTHING, Claude Code included. When this
+# ceiling is set (0 = off), fleet (sentinel) requests are answered with a 429 +
+# Retry-After once the binding window reaches it, while requests carrying a real
+# `Authorization` bearer — Claude Code itself — are never refused here. Read as
+# a utilisation fraction (0.85 = keep the last 15% for interactive work).
+FLEET_MAX_UTILIZATION = min(
+    1.0, max(0.0, float(os.environ.get("THROTTLE_FLEET_MAX_UTILIZATION", "0")))
+)
 API_KEY_MAX_CONCURRENT = max(
     1, int(os.environ.get("THROTTLE_API_KEY_MAX_CONCURRENT", str(MAX_CONCURRENT)))
 )

@@ -58,7 +58,10 @@ export const providerFamily = (provider) => {
 // deepseek is included: its catalog is Pi-provided (builtin), and a measured
 // fixture proved that registering it with just {api, streamSimple} keeps all
 // three builtin models and its baseUrl intact.
-export const NORMALIZED_PROVIDERS = Object.freeze(["zai", "mimo-desktop", "deepseek"]);
+// claude-lane (22/10/2026): the :8765 anthropic-messages gateway. index.ts
+// wraps it with this normalizer (no queue-wait), so the parity replay guard may
+// let a foreign-family tool context continue on it instead of refusing.
+export const NORMALIZED_PROVIDERS = Object.freeze(["zai", "mimo-desktop", "deepseek", "claude-lane"]);
 
 export const normalizesProvider = (provider) =>
   NORMALIZED_PROVIDERS.includes(String(provider ?? ""));

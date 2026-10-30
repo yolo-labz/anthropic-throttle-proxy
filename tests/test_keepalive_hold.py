@@ -161,6 +161,11 @@ async def _make_client_with_upstream(
     monkeypatch.setattr(config, "KEEPALIVE_INTERVAL_MS", keepalive_interval_ms)
     monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", queue_max_wait_s)
     monkeypatch.setattr(config, "RATE_PUSHBACK_RETRIES", rate_pushback_retries)
+    # Synthetic 529/429 pauses default to AIMD_BACKOFF_S (30 s). The hold sleeps
+    # them out against the client budget, which made each hold test cost the
+    # full budget. Shrink the synthetic pause; Retry-After paths are untouched.
+    monkeypatch.setattr(config, "AIMD_BACKOFF_S", 0.1)
+    monkeypatch.setattr(config, "CONCURRENCY_COOLDOWN_S", 0.1)
     _reset_state()
 
     app = _make_proxy_app()
@@ -210,10 +215,10 @@ async def test_emit_keepalive_frames_writes_comment_and_stops() -> None:
             chunks.append(data)
 
     resp = FakeSSEResponse()
-    # The emitter floor is 500 ms (max(0.5, interval_ms/1000)); sleep 700 ms
+    # The emitter floor is 500 ms (max(0.5, interval_ms/1000)); sleep 600 ms
     # to guarantee at least one write fires before we cancel.
     task = asyncio.create_task(proxy._emit_keepalive_frames(resp, 10))
-    await asyncio.sleep(0.7)
+    await asyncio.sleep(0.6)
     task.cancel()
     try:
         await task
@@ -319,9 +324,9 @@ async def test_529_then_200_client_gets_200_sse(monkeypatch) -> None:
     With the keepalive-hold: the client gets 200 text/event-stream with keepalive
     comments, then the real SSE body when the retry succeeds.
     """
-    # success_delay_s=0.7 ensures the hold is active long enough for the keepalive
+    # success_delay_s=0.6 ensures the hold is active long enough for the keepalive
     # emitter (500 ms floor) to fire at least one frame before the retry succeeds.
-    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.7)
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.6)
     test_client, upstream_server = await _make_client_with_upstream(monkeypatch, upstream_app)
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
@@ -648,10 +653,10 @@ async def test_keepalive_interval_respected(monkeypatch) -> None:
     """Keepalive frames are emitted at < idle-timeout interval (invariant 1).
 
     The emitter floor is 500 ms (max(0.5, interval_ms/1000)). The upstream is
-    delayed 700 ms so the hold is active long enough for one frame to fire
+    delayed 600 ms so the hold is active long enough for one frame to fire
     before the retry succeeds. At least one keepalive comment must appear.
     """
-    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.7)
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.6)
     test_client, upstream_server = await _make_client_with_upstream(
         monkeypatch, upstream_app, keepalive_interval_ms=500
     )
@@ -924,9 +929,9 @@ async def test_hold_engages_at_default_pushback_retries(monkeypatch) -> None:
     engages the hold first, so keepalives flow. Discriminator: a keepalive comment
     is present in the body at the default retry count.
     """
-    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.7)
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.6)
     test_client, upstream_server = await _make_client_with_upstream(
-        monkeypatch, upstream_app, rate_pushback_retries=1, queue_max_wait_s=10.0
+        monkeypatch, upstream_app, rate_pushback_retries=1, queue_max_wait_s=2.0
     )
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
@@ -1013,7 +1018,7 @@ async def test_529_long_retry_after_not_held(monkeypatch) -> None:
 async def test_hold_wait_bounded_by_budget_not_retry_after(monkeypatch) -> None:
     """MAJOR (Codex + Opus panel): inside the hold, wait_retry_after must not sleep
     past the budget deadline. A 529 with Retry-After (within the hold ceiling) but
-    LONGER than the remaining budget must exit at ~budget, not at Retry-After —
+    LONGER than the remaining budget must exit at ~budget (0.5 s here), not at Retry-After —
     otherwise the fair slot is held past client patience (invariant 6).
     """
     monkeypatch.setattr(config, "MAX_HOLD_RETRY_AFTER_S", 30)
@@ -1021,7 +1026,7 @@ async def test_hold_wait_bounded_by_budget_not_retry_after(monkeypatch) -> None:
     # must bound the actual wait. Pre-fix, wait_retry_after slept the full 25s.
     upstream_app = _make_upstream_app(fail_count=9999, fail_status=529, retry_after_s=25)
     test_client, upstream_server = await _make_client_with_upstream(
-        monkeypatch, upstream_app, queue_max_wait_s=1.0
+        monkeypatch, upstream_app, queue_max_wait_s=0.5
     )
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
@@ -1076,8 +1081,8 @@ async def test_health_reports_active_holds_during_hold(monkeypatch) -> None:
     cares about — `anthropic_keepalive_holds_total` moves when the hold ENDS, so
     it cannot answer "is the proxy holding right now".
     """
-    # 1.5 s success delay keeps the hold open long enough to scrape health.
-    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=1.5)
+    # 0.8 s success delay keeps the hold open long enough to scrape health.
+    upstream_app = _make_upstream_app(fail_count=1, fail_status=529, success_delay_s=0.8)
     test_client, upstream_server = await _make_client_with_upstream(monkeypatch, upstream_app)
     try:
         before = await (await test_client.get("/__throttle/health")).json()

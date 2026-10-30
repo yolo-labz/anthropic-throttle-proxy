@@ -20,6 +20,7 @@ from pathlib import Path
 from . import config
 from .config import log
 from .metrics import M_AIMD_MAX
+from .project_share import SHARE as _PROJECT_SHARE
 
 # Completed slot durations kept per lane. Small on purpose: the estimator wants
 # what this lane is doing NOW, not its lifetime average.
@@ -730,6 +731,9 @@ class FairBearerLimiter:
         # client_id → deque of waiting futures; _rr_order = client_ids w/ pending work.
         self._queues: dict[str, collections.deque[asyncio.Future]] = {}
         self._rr_order: collections.deque[str] = collections.deque()
+        # client_id → project of its waiters (main queue only), for the advisory
+        # per-project ordering (project_share). Bounded to queued clients.
+        self._client_project: dict[str, str] = {}
         # Priority lane: short/latency-sensitive calls (the /goal Stop-hook
         # evaluator — small max_tokens, no tools) park HERE, not the RR queue,
         # and dispatch against a DEDICATED pool of PRIORITY_RESERVE_SLOTS that
@@ -794,7 +798,12 @@ class FairBearerLimiter:
         self.observe_enabled = queue_mode != "off"
 
     def slot(
-        self, client_id: str, *, priority: bool = False, max_wait: float | None = None
+        self,
+        client_id: str,
+        *,
+        priority: bool = False,
+        max_wait: float | None = None,
+        project: str | None = None,
     ) -> _FairSlotContext:
         """Return an async context manager that holds one slot for ``client_id``.
 
@@ -809,8 +818,12 @@ class FairBearerLimiter:
         parked after that many seconds raises :class:`QueueWaitTimeout` instead
         of stalling past the client's own socket timeout. ``None``/0 keeps the
         historical unbounded wait.
+
+        ``project`` only matters when the 5 h window runs hot (AMBER/RED): a
+        waiter of an over-share project then yields its TURN to an under-share
+        one (project_share). It is never refused and never dropped.
         """
-        return _FairSlotContext(self, client_id, priority, max_wait)
+        return _FairSlotContext(self, client_id, priority, max_wait, project)
 
     def aimd_floor(self) -> int:
         """The lowest live ceiling AIMD is allowed to leave this lane resting at.
@@ -1228,7 +1241,12 @@ class FairBearerLimiter:
             raise QueueWaitTimeout(max_wait, pre_queue=True, estimate=estimate)
 
     async def acquire_lease(
-        self, client_id: str, *, priority: bool = False, max_wait: float | None = None
+        self,
+        client_id: str,
+        *,
+        priority: bool = False,
+        max_wait: float | None = None,
+        project: str | None = None,
     ) -> tuple[bool, int]:
         """Acquire one slot for ``client_id``, queueing fairly if necessary.
 
@@ -1270,6 +1288,7 @@ class FairBearerLimiter:
                 q.append(fut)
                 if client_id not in self._rr_order:
                     self._rr_order.append(client_id)
+                self._note_client_project(client_id, project)
             self._try_dispatch()
         try:
             # The dispatcher stamps the future's result with the lane that
@@ -1344,6 +1363,34 @@ class FairBearerLimiter:
             self._note_completion(lease, priority)
             self._try_dispatch()
 
+    def _note_client_project(self, client_id: str, project: str | None) -> None:
+        """Remember a queued client's project; bounded to clients that still wait."""
+        if project is None:
+            return
+        if len(self._client_project) > 4 * len(self._queues) + 256:
+            self._client_project = {
+                c: p for c, p in self._client_project.items() if c in self._queues
+            }
+        self._client_project[client_id] = project
+
+    def _prefer_under_share(self) -> None:
+        """AMBER/RED only: bring the first under-share client to the rotation head.
+
+        Work-conserving and refusal-free: over-share clients keep their place in
+        the rotation (behind), and when every waiter is over-share the order is
+        left untouched. In GREEN ``defer_active`` is False and this returns
+        before touching anything, so dispatch is exactly the old round-robin.
+        Holds ``_lock``.
+        """
+        if not _PROJECT_SHARE.defer_active():
+            return
+        order = self._rr_order
+        for i, client_id in enumerate(order):
+            if not _PROJECT_SHARE.defer(self._client_project.get(client_id)):
+                if i:
+                    order.rotate(-i)
+                return
+
     def _next_waiter(
         self, order: collections.deque[str], queues: dict[str, collections.deque]
     ) -> asyncio.Future | None:
@@ -1407,6 +1454,7 @@ class FairBearerLimiter:
             self.priority_inflight += 1
             fut.set_result((True, self._note_dispatch(True)))
         while normal_busy(self.inflight, self.priority_inflight) < self.max_concurrent:
+            self._prefer_under_share()
             fut = self._next_waiter(self._rr_order, self._queues)
             if fut is None:
                 break
@@ -1530,11 +1578,13 @@ class _FairSlotContext:
         client_id: str,
         priority: bool = False,
         max_wait: float | None = None,
+        project: str | None = None,
     ) -> None:
         self.limiter = limiter
         self.client_id = client_id
         self.priority = priority
         self.max_wait = max_wait
+        self.project = project
         self.lease: int | None = None
 
     def _estimate(self) -> DrainEstimate:
@@ -1551,7 +1601,10 @@ class _FairSlotContext:
         # Admission and enqueue share the lock: wait_for can schedule several
         # acquires before any runs, so a pre-check here races simultaneous arrivals.
         acquire = self.limiter.acquire_lease(
-            self.client_id, priority=self.priority, max_wait=self.max_wait if bounded else None
+            self.client_id,
+            priority=self.priority,
+            max_wait=self.max_wait if bounded else None,
+            project=self.project,
         )
         if bounded:
             # wait_for cancels the parked acquire on timeout; its

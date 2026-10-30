@@ -155,7 +155,10 @@ from .metrics import (
     REGISTRY,
     generate_latest,
 )
-from .pricing import _pricing_for
+from .pricing import _pricing_for, rates_for_usage
+from .project_share import PROJECT_HEADER as _PROJECT_HEADER
+from .project_share import SHARE as _PROJECT_SHARE
+from .project_share import project_of as _project_of
 from .ratelimit import (
     API_KEY_BEARER_ID,
     _api_key_id,
@@ -599,6 +602,8 @@ async def _apply_unified(
     if not unified:
         return
     bstate["unified"] = unified
+    # Per-project 5 h share (advisory): the pace projector's only meter input.
+    _PROJECT_SHARE.observe_meter(unified)
     # Stamp when this sample landed so a headerless-429 classification can tell a
     # fresh cache (concurrency storm, still receiving header-bearing successes)
     # from a stale one (budget wall, every response 429ing) — see
@@ -773,6 +778,53 @@ def _is_queue_timeout_response(response: web.StreamResponse | None) -> bool:
     return response is not None and config.QUEUE_TIMEOUT_HEADER in response.headers
 
 
+# A saturated queue and an EXHAUSTED WINDOW are different walls and need
+# different Retry-After values. The queue unjams as soon as a slot frees
+# (seconds), so the drain estimate is right there. A window at its cap does
+# not move until its reset, and telling the client "come back in N seconds"
+# sends it straight back into the same wall.
+#
+# Measured 26/10/2026 12:16: 5h util 0.91 / 7d 0.90 with live slots collapsing
+# to 1, so every request 503'd carrying a drain-estimate Retry-After. pi does
+# not honour Retry-After and retries 10x at a fixed 6 s, so a pane printed ~10
+# "503 queue wait exceeded" lines and waited out the whole storm while each
+# retry re-entered the fair queue and pushed the next one deeper.
+#
+# The client cannot be fixed from here, but the SERVER can stop lying: when the
+# binding window is at/over its soft target, quote the time to ITS reset.
+# UTILIZATION_TARGET is 0 by default ("no ceiling"), and 0 means OFF rather
+# than "brake at zero", so it cannot be used as the wall threshold directly.
+_WINDOW_WALL_TARGET = UTILIZATION_TARGET or 0.90
+
+
+def _window_wall_retry_after(bid: str) -> int | None:
+    """Seconds until the binding window's reset, when that window is at the wall.
+
+    ``None`` means "no window wall" -> the caller keeps the drain estimate.
+    Never returns 0: a caller that gets a number must have something to wait
+    for, and a passed reset means the window rolled over while this snapshot
+    is still stale, which an immediate retry would misread.
+    """
+    try:
+        state = bearer_state.get(bid) or {}
+        unified = state.get("unified") or {}
+    except Exception:  # a broken meter must never block a refusal path
+        return None
+    if not isinstance(unified, dict):
+        return None
+    window = _binding_window(unified)
+    if window is None:
+        return None
+    util = unified.get(f"util_{window}")
+    reset = unified.get(f"reset_{window}")
+    if not isinstance(util, (int, float)) or not isinstance(reset, (int, float)):
+        return None
+    if float(util) < _WINDOW_WALL_TARGET:
+        return None
+    remaining = int(reset - time.time())
+    return remaining if remaining > 0 else None
+
+
 def _queue_wait_timeout_response(
     bid: str,
     cid: str,
@@ -811,6 +863,13 @@ def _queue_wait_timeout_response(
         estimate = limiter.drain_estimate(max_wait, client_id=cid)
     pre_queue = timeout is not None and timeout.pre_queue
     retry_after_s = budget_floored_retry_after(estimate) if pre_queue else estimate.retry_after_s
+
+    # A window wall outranks the queue estimate: waiting for a slot cannot help
+    # while the WINDOW is exhausted, and a short Retry-After makes the client
+    # hammer it (measured: 10 retries at 6 s into a 93-min wall).
+    wall_s = _window_wall_retry_after(bid)
+    if wall_s is not None:
+        retry_after_s = max(int(retry_after_s), wall_s)
     log(
         f"queue-wait-timeout bid={bid} cid={cid} path=/{path} "
         f"reason={'pre-queue-depth' if pre_queue else 'elapsed'} "
@@ -1753,6 +1812,25 @@ def _seed_cold_start_probation(snapshot: list[dict[str, object]]) -> None:
             _limiter.require_retry_probe(configured_bid)
 
 
+def _strip_sentinel_api_key(headers: dict[str, str]) -> bool:
+    """Remove the sentinel ``x-api-key``; True when it was present.
+
+    A local client that sends the sentinel as ``x-api-key`` is asking for the
+    SUBSCRIPTION lane, not the metered API-key lane: dropping the header lets
+    the account router rewrite ``Authorization``. Returned as a bool so the
+    caller only flips its own state, keeping this branch out of its complexity
+    budget (Sonar S3776 counts every nested branch of the caller).
+    """
+    sentinel = config.LOCAL_API_KEY_SENTINEL
+    if not sentinel:
+        return False
+    for key in [k for k in headers if k.lower() == "x-api-key"]:
+        if headers[key] == sentinel:
+            del headers[key]
+            return True
+    return False
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -1774,6 +1852,11 @@ def _route_account_if_enabled(
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
+    # Sentinel lane key (22/10/2026): a local client's x-api-key that matches
+    # the configured sentinel is a REQUEST FOR ROUTING, not an API-key lane
+    # member — strip it so the account router rewrites Authorization.
+    if explicit_api_key and _strip_sentinel_api_key(headers):
+        explicit_api_key = False
     api_key = None if explicit_api_key else _api_key_candidate()
     now = time.time()
     snapshot: list[dict[str, object]] = []
@@ -2295,6 +2378,99 @@ def _is_oauth_telemetry_path(path: str) -> bool:
     """
     p = path if path.startswith("/") else "/" + path
     return p in _OAUTH_TELEMETRY_PATHS
+
+
+# Inbound GET /api/oauth/{usage,profile} cache (W1, 26/10/2026). Clients polled
+# this gateway at ~4 s per bearer and every poll was forwarded upstream: ~880
+# upstream 429s/h. Serve the last good answer for OAUTH_TELEMETRY_TTL_S, fetch at
+# most once per TTL per (bearer, path) under a per-key lock, and back off
+# exponentially on 429/5xx. ponytail: in-memory dicts keyed by (bearer, path);
+# ceiling = bearers x 2 paths; a restart costs one upstream fetch per bearer.
+OAUTH_TELEMETRY_TTL_S = 90.0
+_OAUTH_TELEMETRY_STALE_MAX_S = 1800.0
+_oauth_telemetry_cache: dict[tuple[str, str], tuple[float, int, bytes, str]] = {}
+_oauth_telemetry_fail: dict[tuple[str, str], tuple[float, int]] = {}  # (until, streak)
+_oauth_telemetry_locks: dict[tuple[str, str], asyncio.Lock] = {}
+_OAUTH_DROP = {
+    "content-length",
+    "content-encoding",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+}
+
+
+def _oauth_telemetry_reply(entry: tuple[float, int, bytes, str]) -> web.Response:
+    return web.Response(status=entry[1], body=entry[2], headers={"Content-Type": entry[3]})
+
+
+def _oauth_telemetry_unavailable(
+    hit: tuple[float, int, bytes, str] | None, delay: float
+) -> web.Response:
+    """Serve the last good reading while backing off, else a bounded 429."""
+    if hit is not None and time.time() - hit[0] < _OAUTH_TELEMETRY_STALE_MAX_S:
+        return _oauth_telemetry_reply(hit)
+    return web.Response(
+        status=429,
+        text="oauth telemetry backing off\n",
+        headers={"Retry-After": str(max(1, int(delay)))},
+    )
+
+
+async def _oauth_telemetry_serve(request: web.Request) -> web.StreamResponse:
+    """Single-flight, TTL-cached answer for an inbound OAuth telemetry GET."""
+    path = request.match_info.get("path", "")
+    key = (_bearer_id(request.headers), path)
+    if key[0] == "_anon":
+        return await _serve(request)  # no credential: nothing to key a cache on
+    lock = _oauth_telemetry_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        now = time.time()
+        hit = _oauth_telemetry_cache.get(key)
+        if hit is not None and now - hit[0] < OAUTH_TELEMETRY_TTL_S:
+            return _oauth_telemetry_reply(hit)
+        until, streak = _oauth_telemetry_fail.get(key, (0.0, 0))
+        if now < until:
+            return _oauth_telemetry_unavailable(hit, until - now)
+        status, body, retry_after, hdrs, ctype = 0, b"", None, {}, "application/json"
+        try:
+            timeout = aiohttp.ClientTimeout(total=6)
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.get(
+                    config.UPSTREAM.rstrip("/") + "/" + path,
+                    headers=_forward_headers(request),
+                ) as up,
+            ):
+                status, body = up.status, await up.read()
+                hdrs = {k: v for k, v in up.headers.items() if k.lower() not in _OAUTH_DROP}
+                retry_after = up.headers.get("Retry-After")
+                ctype = up.headers.get("Content-Type", ctype)
+        except (aiohttp.ClientError, TimeoutError):
+            pass  # status 0: transport failure, handled as a 5xx below
+        now = time.time()
+        if status == 200:
+            _oauth_telemetry_cache[key] = (now, 200, body, ctype)
+            _oauth_telemetry_fail.pop(key, None)
+            return web.Response(status=200, body=body, headers=hdrs)
+        if status == 401:
+            _oauth_telemetry_cache.pop(key, None)  # dead credential: drop stale numbers
+            return web.Response(status=401, body=body, headers=hdrs)
+        if status == 0 or status == 429 or status >= 500:
+            streak += 1
+            delay = min(OAUTH_TELEMETRY_TTL_S * 2 ** (streak - 1), _OAUTH_TELEMETRY_STALE_MAX_S)
+            if retry_after and retry_after.isdigit():
+                delay = max(delay, float(retry_after))
+            _oauth_telemetry_fail[key] = (now + delay, streak)
+            log(
+                f"oauth-telemetry-backoff path=/{path} status={status} "
+                f"streak={streak} delay={delay:.0f}s"
+            )
+            if status and hit is None:
+                # First failure: relay upstream unchanged (Retry-After, budget headers).
+                return web.Response(status=status, body=body, headers=hdrs)
+            return _oauth_telemetry_unavailable(hit, delay)
+        return web.Response(status=status, body=body, headers=hdrs)
 
 
 def _is_entitlement_refusal_attempt(attempt: _Attempt, bid: str = "") -> bool:
@@ -4217,6 +4393,7 @@ def _record_usage(
     *,
     seat: str = "",
     lane: str = "",
+    project: str | None = None,
 ) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
@@ -4228,7 +4405,7 @@ def _record_usage(
     """
     try:
         usage = _parse_sse_usage(bytes(captured))
-        rates = _pricing_for(model)
+        rates = rates_for_usage(model, usage)
         spend_usd = 0.0
         for kind, count in usage.items():
             if count <= 0:
@@ -4247,6 +4424,9 @@ def _record_usage(
             M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
                 spend_usd
             )
+        if project is not None:
+            # Unknown-cost models still mark the project active (0 USD).
+            _PROJECT_SHARE.record_spend(project, spend_usd)
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
@@ -4516,7 +4696,13 @@ async def _finalize(
         and (MESSAGES_SUBPATH in path or COMPLETIONS_SUBPATH in path)
     ):
         _record_usage(
-            model, model_label, attempt.captured, path, seat=bid, lane=_spend_lane_label()
+            model,
+            model_label,
+            attempt.captured,
+            path,
+            seat=bid,
+            lane=_spend_lane_label(),
+            project=_project_of(request.headers),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -4740,7 +4926,10 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
     return {
         k: v
         for k, v in request.headers.items()
-        if k.lower() not in HOP_HEADERS and k.lower() != config.WAIT_BUDGET_HEADER
+        if k.lower() not in HOP_HEADERS
+        and k.lower() != config.WAIT_BUDGET_HEADER
+        # attribution is this tier's business, never Anthropic's
+        and k.lower() != _PROJECT_HEADER
     }
 
 
@@ -4794,6 +4983,188 @@ def _pre_queue_disconnect_response(
     return None
 
 
+def _is_sentinel_lane_request(request: web.Request) -> bool:
+    """True only for traffic that rode the LOCAL sentinel lane (spec 344).
+
+    Mirrors the strip in ``_route_account_if_enabled``: the sentinel is an
+    ``x-api-key`` with NO ``Authorization`` header. Claude Code's own OAuth
+    traffic therefore never matches, which is what keeps its multi-block
+    system and ``cache_control`` breakpoints intact.
+    """
+    if not config.LOCAL_API_KEY_SENTINEL or request.method != "POST":
+        return False
+    incoming = request.headers
+    sentinel_hit = incoming.get("x-api-key", "") == config.LOCAL_API_KEY_SENTINEL
+    return "authorization" not in incoming and sentinel_hit
+
+
+def _lane_five_hour_window() -> tuple[float, float]:
+    """Highest 5h utilisation across bearers, with that window's reset.
+
+    The reserve exists for ONE thing: keeping the tail of the rolling 5h
+    window free for interactive Claude Code. The 7d window is deliberately NOT
+    consulted — it resets days out, so gating on it produced a 5.7-hour
+    ``Retry-After`` that burned a client's whole retry budget and killed the
+    turn (measured 23/10/2026 on five panes). A 7d wall is a different regime
+    and is already handled by the rejected-window pause.
+    """
+    util, reset = 0.0, 0.0
+    for bearer in bearer_state.values():
+        unified = bearer.get("unified") or {}
+        value = unified.get("util_5h")
+        if not isinstance(value, (int, float)):
+            continue
+        if float(value) > util:
+            util = float(value)
+            candidate = unified.get("reset_5h")
+            reset = float(candidate) if isinstance(candidate, (int, float)) else 0.0
+    return util, reset
+
+
+def _fleet_budget_response(request: web.Request) -> web.Response | None:
+    """429 fleet traffic when the shared window is nearly spent (reserve rule).
+
+    Only the SENTINEL lane is refused: Claude Code sends its own Authorization
+    bearer and is the traffic this ceiling exists to protect, so it always
+    passes. Disabled by default (``THROTTLE_FLEET_MAX_UTILIZATION=0``).
+    """
+    ceiling = config.FLEET_MAX_UTILIZATION
+    if ceiling <= 0 or not _is_sentinel_lane_request(request):
+        return None
+    util, reset = _lane_five_hour_window()
+    if util < ceiling:
+        return None
+    # Bounded on purpose: a client retries a handful of times before it gives
+    # up, so the pause must be short enough to ride out and the window's real
+    # reset is at most one 5h period away. 180 s is well inside pi's default
+    # retry budget and far below the hours a reset-derived value produced.
+    retry_after = min(180, max(5, int(reset - time.time()) if reset else 60))
+    return web.json_response(
+        {
+            "type": "error",
+            "error": {
+                "type": "rate_limit_error",
+                "message": (
+                    f"fleet budget reserve: the shared window is at {util:.0%} "
+                    f"(ceiling {ceiling:.0%}); the remainder is reserved for "
+                    "interactive Claude Code."
+                ),
+            },
+        },
+        status=429,
+        headers={
+            "retry-after": str(retry_after),
+            "x-anthropic-throttle-fleet-reserve": "1",
+        },
+    )
+
+
+def _json_object(body: bytes) -> dict[str, object] | None:
+    """Best-effort body parse; anything that is not a JSON object returns None."""
+    try:
+        obj = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _leading_system_text(obj: dict[str, object]) -> str:
+    """The first system block's text, whether ``system`` is a string or a list."""
+    sys_val = obj.get("system")
+    if isinstance(sys_val, list) and sys_val and isinstance(sys_val[0], dict):
+        return str(sys_val[0].get("text", ""))
+    if isinstance(sys_val, str):
+        return sys_val
+    return ""
+
+
+def _first_cache_breakpoint(sys_val: object) -> dict[str, object] | None:
+    """The first ``cache_control`` marker among the system blocks, if any.
+
+    Moving pi's system prompt into the first user message otherwise DROPS the
+    marker that makes it a stable cache prefix: Anthropic then re-writes the
+    prompt as fresh input on every turn instead of reading it back, which is the
+    difference between the cache-write and cache-read rates on the largest
+    block in the request.
+    """
+    if not isinstance(sys_val, list):
+        return None
+    for block in sys_val:
+        if isinstance(block, dict) and block.get("cache_control"):
+            return block["cache_control"]
+    return None
+
+
+def _fold_pi_system_into_first_message(obj: dict[str, object]) -> None:
+    """Move pi's own system prompt into the first user message.
+
+    Measured 22/10: the entitlement/metering gate bills any request whose
+    ``system`` carries NON-Claude-Code blocks after the marker as extra usage,
+    even with the marker first. Marker-ONLY passes, so pi's prompt becomes a
+    bracketed preamble (behaviour-neutral for the model, gate-neutral for
+    billing) instead of a second system block.
+    """
+    sys_val = obj.get("system")
+    if isinstance(sys_val, list):
+        pi_system = "\n\n".join(b.get("text", "") for b in sys_val if isinstance(b, dict))
+    elif isinstance(sys_val, str):
+        pi_system = sys_val
+    else:
+        return
+    if not pi_system:
+        return
+    msgs = obj.get("messages")
+    if not (isinstance(msgs, list) and msgs):
+        return
+    first = msgs[0]
+    content = first.get("content") if isinstance(first, dict) else None
+    preamble = f"[system preamble]\n{pi_system}\n[end system preamble]\n\n"
+    # Carry the client's cache breakpoint onto the preamble (see
+    # _first_cache_breakpoint): the preamble is byte-stable for a given system
+    # prompt, so the breakpoint stays equivalent where it lands.
+    cache_control = _first_cache_breakpoint(sys_val)
+    preamble_block: dict[str, object] = {"type": "text", "text": preamble}
+    if cache_control is not None:
+        preamble_block["cache_control"] = cache_control
+    if isinstance(content, str):
+        # A plain string cannot carry cache metadata: keep the old shape unless
+        # there is a breakpoint to preserve.
+        if cache_control is None:
+            first["content"] = preamble + content
+        else:
+            first["content"] = [preamble_block, {"type": "text", "text": content}]
+    elif isinstance(content, list):
+        first["content"] = [preamble_block] + list(content)
+
+
+def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> bytes | None:
+    """Sentinel-lane entitlement fix (22/10/2026).
+
+    Subscription (OAuth) bearers refuse ``POST /v1/messages`` unless the
+    Claude Code identity is the FIRST system block (the documented entitlement
+    gate). Local clients riding the sentinel lane (pi's custom provider) send
+    their own system prompt, so this makes the marker the only system block and
+    folds pi's prompt into the first user message.
+
+    Per-request scope: a request is rewritten ONLY when it actually rode the
+    sentinel lane (see ``_is_sentinel_lane_request``). Claude Code's own
+    traffic is forwarded byte-identical, and a body whose first system block
+    already IS the marker is left untouched. Best-effort: unparsable bodies
+    pass through unchanged.
+    """
+    if body is None or not _is_sentinel_lane_request(request):
+        return body
+    obj = _json_object(body)
+    if obj is None:
+        return body
+    marker = config.CLAUDE_CODE_SYSTEM_PROMPT
+    if _leading_system_text(obj).strip() == marker:
+        return body
+    _fold_pi_system_into_first_message(obj)
+    obj["system"] = [{"type": "text", "text": marker}]
+    return json.dumps(obj).encode("utf-8", "replace")
+
+
 def _shrink_forward_body(
     request: web.Request, body: bytes | None, path: str, model_label: str, headers: dict[str, str]
 ) -> bytes | None:
@@ -4803,6 +5174,7 @@ def _shrink_forward_body(
     breadcrumb stubs, hard floor on single-attachment overruns).
     """
     if body is not None and request.method == "POST":
+        body = _inject_lane_system_prompt(request, body)
         return _apply_body_shrink(request, body, path, model_label, headers)
     return body
 
@@ -5252,7 +5624,12 @@ async def _run_slot(
 
     rerouted = False
     try:
-        async with limiter.slot(cid, priority=is_priority, max_wait=slot_max_wait) as held:
+        async with limiter.slot(
+            cid,
+            priority=is_priority,
+            max_wait=slot_max_wait,
+            project=_project_of(request.headers),
+        ) as held:
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -5384,6 +5761,8 @@ async def handler(request: web.Request) -> web.StreamResponse:
         return _admission_closed_response()
     state["admitted_holds"] = int(state.get("admitted_holds", 0)) + 1
     try:
+        if request.method == "GET" and _is_oauth_telemetry_path(request.match_info.get("path", "")):
+            return await _oauth_telemetry_serve(request)
         return await _serve(request)
     finally:
         state["admitted_holds"] = max(0, int(state.get("admitted_holds", 0)) - 1)
@@ -5420,6 +5799,9 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if synthetic_response is not None:
         return synthetic_response
     early_response = _pre_queue_disconnect_response(request, path, bid, cid, via, model_label)
+    if early_response is not None:
+        return early_response
+    early_response = _fleet_budget_response(request)
     if early_response is not None:
         return early_response
     body = _shrink_forward_body(request, body, path, model_label, headers)
@@ -7000,6 +7382,11 @@ def main() -> None:
     app.cleanup_ctx.append(_upstream_egress_context)
     app.cleanup_ctx.append(_upstream_auth_context)
     app.cleanup_ctx.append(_credential_recheck_context)
+    # Measurement only: persist each bearer's cached 5h/7d meter once a minute
+    # and label same-reset falls as recalibrations (meter_recorder.py).
+    from .meter_recorder import meter_recorder_context
+
+    app.cleanup_ctx.append(meter_recorder_context(lambda: config.bearer_state))
     # Every response this proxy serves carries MARKER_HEADER so a downstream
     # local tier can tell a central-served 5xx (relay — keep central up) from
     # dokku nginx answering for a dead container (mark central down).
