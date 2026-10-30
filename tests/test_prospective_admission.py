@@ -158,6 +158,9 @@ async def test_acquisition_abandonment_rolls_back_after_worker_finishes(
             await dispatch(owner)
     finally:
         gate.release.set()
+    # The 100ms deadline tests abandonment, not durable rollback/shutdown.
+    # Keep the normal fixture deadline for cleanup on slower CI disks.
+    monkeypatch.setattr(owner, "_wait_timeout", 2.0)
     await owner.aclose()
     restored = await owners()
     assert await restored.snapshot(KEY) == {"requests": 0, "tokens": 0}
