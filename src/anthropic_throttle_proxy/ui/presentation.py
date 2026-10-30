@@ -141,7 +141,8 @@ def apply_display(view: dict, config: dict) -> dict:
         row for row in result.get("providers", []) if _provider_visible(row, defaults)
     ]
     result["workload_choices"] = [
-        name for name in result.get("workload_choices", [])
+        name
+        for name in result.get("workload_choices", [])
         if _provider_visible({"name": name}, defaults)
     ]
     result["show_local"] = defaults.get("show_primary", True) and not defaults.get("workload")

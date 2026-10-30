@@ -46,7 +46,9 @@ def config_path() -> Path:
 
 def _validate_hidden_lists(defaults: dict[str, Any]) -> None:
     for key, non_empty in (
-        ("hidden_families", False), ("hidden_subscriptions", True), ("hidden_providers", True)
+        ("hidden_families", False),
+        ("hidden_subscriptions", True),
+        ("hidden_providers", True),
     ):
         if key not in defaults:
             continue

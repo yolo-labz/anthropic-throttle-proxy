@@ -13,9 +13,7 @@ from anthropic_throttle_proxy.ui.presentation import apply_display, apply_worklo
 @pytest.mark.parametrize("bad", [None, "mimo", [False], [""]])
 def test_hidden_providers_validation(bad):
     with pytest.raises(ValueError, match="hidden_providers"):
-        fleet_ui_config._validate(
-            {"subscriptions": [], "defaults": {"hidden_providers": bad}}
-        )
+        fleet_ui_config._validate({"subscriptions": [], "defaults": {"hidden_providers": bad}})
 
 
 def test_projection_hides_exact_destinations_not_sibling_accounts():
@@ -32,11 +30,17 @@ def test_projection_hides_exact_destinations_not_sibling_accounts():
         "workload_choices": ["mimo", "codex", "future"],
     }
     before = deepcopy(view)
-    config = {"defaults": {"hidden_subscriptions": ["mimo:plan", "codex:c"],
-                           "hidden_providers": ["mimo"]}}
+    config = {
+        "defaults": {
+            "hidden_subscriptions": ["mimo:plan", "codex:c"],
+            "hidden_providers": [" MiMo "],
+        }
+    }
     out = apply_display(view, config)
     assert [r["id"] for r in out["subscriptions"]] == [
-        "claude-current", "codex:a", "copilot:personal"
+        "claude-current",
+        "codex:a",
+        "copilot:personal",
     ]
     assert [r["name"] for r in out["providers"]] == ["codex", "future"]
     assert [r["id"] for r in out["lanes"]["registry"]] == ["codex", "future"]
@@ -45,24 +49,41 @@ def test_projection_hides_exact_destinations_not_sibling_accounts():
     legacy = apply_display(view, {})
     assert len(legacy["providers"]) == 3
     assert len(legacy["subscriptions"]) == 5
-    apply_workload(out, {"defaults": {**config["defaults"], "workload": "mimo"}},
-                   [{"name": "mimo", "ok": True, "served": 999}])
+    apply_workload(
+        out,
+        {"defaults": {**config["defaults"], "workload": "mimo"}},
+        [{"name": "mimo", "ok": True, "served": 999}],
+    )
     assert not out.get("workload_available")
     assert out.get("served") != 999
 
 
 async def test_current_sources_survive_full_page_and_poll_without_ghosts(monkeypatch):
-    config = {"subscriptions": [], "defaults": {
-        "show_primary": False,
-        "hidden_subscriptions": ["mimo:plan", "zai:plan"],
-        "hidden_providers": ["mimo", "opencode", "opencode-zen", "zai"],
-    }}
-    source = {"age_s": 1, "interval_s": 900, "lanes": [
-        {"id": "codex:a", "kind": "codex", "family": "openai", "status": "ok", "meters": []},
-        {"id": "copilot:personal", "kind": "copilot", "family": "github", "status": "exhausted", "meters": []},
-        {"id": "mimo:plan", "kind": "mimo", "status": "stale", "meters": []},
-        {"id": "zai:plan", "kind": "zai", "status": "refused", "meters": []},
-    ], "registry": [{"id": n, "provider": n} for n in ("mimo", "zai", "codex", "future")]}
+    config = {
+        "subscriptions": [],
+        "defaults": {
+            "show_primary": False,
+            "hidden_subscriptions": ["mimo:plan", "zai:plan"],
+            "hidden_providers": ["mimo", "opencode", "opencode-zen", "zai"],
+        },
+    }
+    source = {
+        "age_s": 1,
+        "interval_s": 900,
+        "lanes": [
+            {"id": "codex:a", "kind": "codex", "family": "openai", "status": "ok", "meters": []},
+            {
+                "id": "copilot:personal",
+                "kind": "copilot",
+                "family": "github",
+                "status": "exhausted",
+                "meters": [],
+            },
+            {"id": "mimo:plan", "kind": "mimo", "status": "stale", "meters": []},
+            {"id": "zai:plan", "kind": "zai", "status": "refused", "meters": []},
+        ],
+        "registry": [{"id": n, "provider": n} for n in ("mimo", "zai", "codex", "future")],
+    }
     fleet = [{"name": n, "ok": True} for n in ("mimo", "opencode", "opencode-zen", "zai", "future")]
     accounts = [{"bearer_id": "synthetic-current", "email": "current@example.invalid", "ok": True}]
     published = []
@@ -84,7 +105,7 @@ async def test_current_sources_survive_full_page_and_poll_without_ghosts(monkeyp
         assert {r["name"] for r in view["providers"]} == {"future"}
         assert view["workload_choices"] == ["future"]
         assert {r["id"] for r in view["lanes"]["registry"]} == {"codex", "future"}
-        html = env.get_template(template).render(**view)
+        html = env.get_template(template).render(**view, asset_v=routes._ASSET_V)
         assert 'data-subscription-id="codex:a"' in html
         assert 'data-subscription-id="copilot:personal"' in html
         assert 'data-subscription-id="mimo:plan"' not in html
