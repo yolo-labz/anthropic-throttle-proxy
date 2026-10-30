@@ -1,0 +1,94 @@
+{
+  "schema": "ux-tooling-inventory/v1",
+  "generated_at": "2026-10-30T16:30-03:00",
+  "scope": "Mechanical inventory for the Throttler UX/UI design seats (side-projects:w2P). Discovery and status only; nothing was run against a live page, no skill was executed, no config was changed.",
+  "host": "desktop (x86_64-linux)",
+  "repo": "yolo-labz/anthropic-throttle-proxy",
+  "installs": [
+    {
+      "id": "impeccable-pi",
+      "kind": "skill+engine-launcher",
+      "path": "/home/notroot/.pi/agent/skills/impeccable",
+      "skill_md_version": "4.7.0",
+      "launcher_version_file": "0.1.16 (scripts/VERSION)",
+      "scope": "user (pi)",
+      "enabled": "discoverable by pi as skill (user skills dir)",
+      "verified": {
+        "skill_md_frontmatter": "present (name: impeccable, version 4.7.0)",
+        "engine_probe": "IMPECCABLE_LAUNCHER_PROBE=1 scripts/impeccable engine-probe -> 'impeccable-engine 0.1.16', exit 0",
+        "version_flag": "scripts/impeccable --version -> '4.7.0', exit 0",
+        "engine_binary": "/home/notroot/.impeccable/bin/0.1.16/impeccable (sha256 a890a5b4b7d9d79ec54aa74612b5e924e5f5b422600a25fde8bcbda11b031787)"
+      },
+      "notes": [
+        "Update check cache reports latest 4.8.0 (~/.impeccable/update-check.json). Not upgraded: no supply-chain review in this slice.",
+        "The launcher downloads from GitHub release channel when no binary is cached. The probe path does not download. Do not run impeccable verbs in a sandbox without the cached 0.1.16 binary."
+      ]
+    },
+    {
+      "id": "impeccable-claude-plugin",
+      "kind": "claude-plugin",
+      "path": "/nix/store/wzwxmfxzn7gqpfihxv329r6jsaim896g-source/plugin (marketplace source); install cache /home/notroot/.claude/plugins/cache/impeccable/impeccable/4.5.0 MISSING",
+      "version": "4.5.0",
+      "scope": "user (claude)",
+      "enabled": "enabledPlugins impeccable@impeccable = true in ~/.claude/settings.json",
+      "verified": {
+        "marketplace_skill_md_version": "4.5.0",
+        "installed_plugins_json": "lists impeccable@impeccable 4.5.0 with installPath that does not exist on disk"
+      },
+      "status": "DRIFT / DUPLICATE: second Impeccable install with different content (4.5.0 vs pi 4.7.0); Claude install cache is absent so Claude-side activation is UNVERIFIED. Owner: Nix/Claude config (not changed here)."
+    },
+    {
+      "id": "design-skills-nix",
+      "kind": "skills (Agent Skills dirs, symlinked via home-manager)",
+      "location": "/home/notroot/.agents/skills/{redesign,design-presets,huashu-design,image-to-code,imagegen-web,brandkit,diagram-design}",
+      "version": "not declared in SKILL.md frontmatter",
+      "scope": "user (agents + home-manager)",
+      "verified": "each symlink resolves to a /nix/store source with a readable SKILL.md (frontmatter name/description present). Not executed."
+    },
+    {
+      "id": "pi-gitbutler-skills",
+      "kind": "skills",
+      "location": "~/.pi/agent/skills/gitbutler, ~/.pi/agent/skills/impeccable",
+      "verified": "present"
+    }
+  ],
+  "mcp_servers": [
+    {
+      "name": "browser-fleet",
+      "config": "~/.pi/agent/mcp.json (Nix-managed, read-only for this slice)",
+      "command": "/nix/store/cm25z3k47r4c25j8afr4ir7bv7qx1n45-browser-fleet-mcp/bin/browser-fleet-mcp mcp",
+      "exposure": "codemode",
+      "verified": {
+        "pi_mcp_list": "connected, 12 tools (codemode, global), exit 0",
+        "browser_identities": "read-only call OK: 71 identities, all reported 'ready'. Public-search identities present: brave-search, google-search, startpage-search, yep-search (headed), lever-public",
+        "server_health": "read-only call OK: host Nix.Server reachable; system_state=degraded, failed_units=2 (reported, not investigated here)"
+      },
+      "tools_available": ["browser_identities", "browser_status", "browser_ensure", "browser_attach", "browser_run", "browser_stop", "server_health", "server_units", "server_pressure", "server_journal", "server_deploy_status", "server_deploy"],
+      "not_executed": ["browser_ensure", "browser_attach", "browser_run", "browser_stop", "server_deploy*", "any navigation or page read"],
+      "route_rule": "All web/browser work stays on this server route (vault Web Automation policy). No local Chrome/Playwright, no direct HTTP."
+    },
+    {
+      "name": "jobs",
+      "config": "~/.pi/agent/mcp.json",
+      "command": "/nix/store/969yy57k494b4lln28b8rlrpb47yrxm1-desktop-job-queue/bin/desktop-job-queue mcp",
+      "exposure": "codemode",
+      "verified": "pi mcp list: connected, 3 tools (job_submit, job_wait, pool_status)",
+      "relevance": "not a design tool; listed for completeness"
+    }
+  ],
+  "not_available_or_unverified": [
+    {"capability": "Impeccable live browser iteration (scripts/live-browser.js)", "status": "NOT EXECUTED. Requires an attached page via the server browser route; Impeccable owns navigation and this slice did not navigate."},
+    {"capability": "Impeccable skill invocation end-to-end (critique/audit on a live page)", "status": "NOT EXECUTED. Only engine-probe and --version were run."},
+    {"capability": "Claude-side Impeccable plugin activation", "status": "UNVERIFIED: enabled in settings, install cache missing."},
+    {"capability": "Figma / design-token MCP", "status": "NOT CONFIGURED. Not installed; would need supply-chain review and credentials. Not faked."},
+    {"capability": "Accessibility/contrast automated checker MCP", "status": "NOT CONFIGURED. Not installed. Manual contrast checks only until a vetted tool is chosen."},
+    {"capability": "Screenshot-diff / visual regression", "status": "NOT CONFIGURED beyond the server browser (browser_run) route, which is not exercised here."}
+  ],
+  "reproduce": [
+    "IMPECCABLE_LAUNCHER_PROBE=1 ~/.pi/agent/skills/impeccable/scripts/impeccable engine-probe",
+    "~/.pi/agent/skills/impeccable/scripts/impeccable --version",
+    "pi mcp list",
+    "ls -l ~/.agents/skills/ | grep -E 'redesign|design-presets|huashu|image-to-code|imagegen|brandkit|diagram'",
+    "python3 -c \"import json;print(json.load(open('$HOME/.claude/plugins/installed_plugins.json'))['plugins']['impeccable@impeccable'])\"  # then test installPath exists"
+  ]
+}
