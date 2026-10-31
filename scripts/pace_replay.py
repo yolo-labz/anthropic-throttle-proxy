@@ -97,6 +97,39 @@ class Window(NamedTuple):
     priority_share: float
     now0: float
     horizon_s: float
+    law: str = "line"
+    rate_window_s: float = 1800.0
+    margin: float = 0.1
+
+
+def _state(
+    acc: dict[str, Any],
+    now: float,
+    burst: float,
+    win: Window,
+    history: dict[str, list[tuple[float, float, float]]],
+) -> dict[str, Any]:
+    """The same call production makes: the burn comes from the per-minute meter history."""
+    hist = history[acc["label"]]
+    hist.append((now, acc["util"], acc["reset"]))
+    # Keep only what burn_per_h can read: the window plus one previous plateau.
+    cutoff = now - max(win.rate_window_s, 6 * 3600.0)
+    while len(hist) > 2 and hist[0][0] < cutoff:
+        del hist[0]
+    burn = None
+    if win.law == "remaining":
+        burn = ua.burn_per_h(hist, now, win.rate_window_s)
+    return ua.account_state(
+        acc["label"],
+        acc["util"],
+        acc["reset"],
+        now,
+        burst,
+        law=win.law,
+        burn=burn,
+        rate_window_s=win.rate_window_s,
+        margin=win.margin,
+    )
 
 
 def simulate(
@@ -113,7 +146,8 @@ def simulate(
     land (spill-only), or defers it. pi-prop: comparison column, proportional
     admission on fleet excess over the burst, spread over all accounts.
     """
-    priority_share, now0, horizon_s = win
+    priority_share, now0, horizon_s = win.priority_share, win.now0, win.horizon_s
+    history: dict[str, list[tuple[float, float, float]]] = {a["label"]: [] for a in accounts}
     accs = [dict(a) for a in accounts]
     labels = [a["label"] for a in accs]
     own = {a["label"]: demand * a["rate"] * STEP_S for a in accs}
@@ -129,7 +163,7 @@ def simulate(
             if now >= a["reset"] and a["label"] not in closed:
                 closed[a["label"]] = a["util"]
                 a["util"], a["reset"] = 0.0, a["reset"] + WEEK_S
-        states = [ua.account_state(a["label"], a["util"], a["reset"], now, burst) for a in accs]
+        states = [_state(a, now, burst, win, history) for a in accs]
         util_by = {a["label"]: a["util"] for a in accs}
         reset_by = {a["label"]: a["reset"] for a in accs}
         all_ahead = all(s["state"] == "ahead" for s in states)
@@ -248,10 +282,10 @@ def build_accounts(
 
 
 def run_grid(
-    accounts: list[dict[str, Any]], priority_share: float, as_of: float
+    accounts: list[dict[str, Any]], priority_share: float, as_of: float, law: str = "line"
 ) -> list[dict[str, Any]]:
     horizon = max(a["reset"] for a in accounts) - as_of + 2 * STEP_S
-    win = Window(priority_share, as_of, horizon)
+    win = Window(priority_share, as_of, horizon, law=law)
     runs = []
     for d in DEMANDS:
         runs.append(simulate("off", 1 / 28, 1, d, accounts, win))
@@ -274,11 +308,11 @@ SCAN_DEMANDS = (0.80, 0.85, 0.90)
 
 
 def demand_cap_scan(
-    accounts: list[dict[str, Any]], priority_share: float, as_of: float
+    accounts: list[dict[str, Any]], priority_share: float, as_of: float, law: str = "line"
 ) -> list[dict[str, Any]]:
     """Enforce k=1 at lower demand: the cap at which each account ends <= 1.00x."""
     horizon = max(a["reset"] for a in accounts) - as_of + 2 * STEP_S
-    win = Window(priority_share, as_of, horizon)
+    win = Window(priority_share, as_of, horizon, law=law)
     rows = []
     for d in SCAN_DEMANDS:
         for bname, b in BURSTS.items():
@@ -328,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scenario", choices=["today", "now"], default="today")
     p.add_argument("--meter-log", type=Path, default=DEFAULT_LOG)
     p.add_argument("--priority-share", type=float, default=DEFAULT_PRIORITY_SHARE)
+    p.add_argument("--law", choices=["line", "remaining"], default="line")
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
 
@@ -339,14 +374,15 @@ def main(argv: list[str] | None = None) -> int:
     for a in accounts:
         a["remaining_h"] = round((a["reset"] - as_of) / 3600, 2)
         a["rate_pct_per_h"] = round(100 * a["rate"] * 3600, 4)
-    runs = run_grid(accounts, args.priority_share, as_of)
-    scan = demand_cap_scan(accounts, args.priority_share, as_of)
+    runs = run_grid(accounts, args.priority_share, as_of, args.law)
+    scan = demand_cap_scan(accounts, args.priority_share, as_of, args.law)
     report = {
         "scenario": args.scenario,
         "as_of": dt.datetime.fromtimestamp(as_of, BRT).isoformat(),
         "accounts": accounts,
         "assumptions": {
             "priority_share": args.priority_share,
+            "law": args.law,
             "unit_per_turn": UNIT_PER_TURN,
             "retry_cap_s": RETRY_CAP_S,
             "step_s": STEP_S,

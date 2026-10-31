@@ -1023,6 +1023,12 @@ def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list
     for acct in snapshot:
         bid = str(acct.get("bearer_id", ""))
         unified = (config.bearer_state.get(bid) or {}).get("unified") or {}
+        burn = None
+        if config.WEEKLY_PACING_LAW == "remaining":
+            # Window-fraction per hour, the same unit as remaining_cap_per_h.
+            burn = _usage_allocator.burn_per_h(
+                _WEEK_SAMPLES.samples(bid), now, config.WEEKLY_RATE_WINDOW_S
+            )
         states.append(
             _usage_allocator.account_state(
                 str(acct.get("label", bid)),
@@ -1030,6 +1036,10 @@ def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list
                 unified.get("reset_7d"),
                 now,
                 config.WEEKLY_BURST,
+                law=config.WEEKLY_PACING_LAW,
+                burn=burn,
+                rate_window_s=config.WEEKLY_RATE_WINDOW_S,
+                margin=config.WEEKLY_RATE_MARGIN,
             )
         )
     return states

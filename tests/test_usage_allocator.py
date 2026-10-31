@@ -81,8 +81,9 @@ def test_all_ahead_defers_non_priority_with_catch_up_retry_after() -> None:
     assert verdict == "defer"
     expected = min(ua.catchup_wait_s(v, reset, NOW, BURST) for v in util.values())
     assert abs(retry - expected) <= 1.0
-    # Hand-computed: proton's catch-up is (0.60 - 1/28) - 0.5 = 0.0643 of the week.
-    assert retry == pytest.approx((0.60 - BURST - 0.5) * WEEK, abs=2.0)
+    # Hand-computed on the decaying line: e* = (0.60 - b)/(1 - b); catch-up = (e* - 0.5)·W.
+    e_star = (0.60 - BURST) / (1.0 - BURST)
+    assert retry == pytest.approx((e_star - 0.5) * WEEK, abs=2.0)
 
     verdict, detail = ua.decide_pacing(states, mode="enforce", priority=True, now=NOW, cap_s=1e9)
     assert verdict == "route" and detail is None
@@ -134,7 +135,8 @@ def test_unknown_reading_is_not_treated_as_ahead() -> None:
 def test_allowed_line_and_keys_stay_finite() -> None:
     allowed = ua.allowed_7d(NOW, NOW + WEEK / 2, BURST)
     assert allowed is not None and math.isfinite(allowed)
-    assert allowed == pytest.approx(0.5 + BURST)
+    # Decaying burst (381): the line is elapsed + burst·(1 − elapsed).
+    assert allowed == pytest.approx(0.5 + BURST * 0.5)
     state = ua.account_state("a", 0.5, NOW + WEEK / 2, NOW, BURST)
     assert math.isfinite(state["ahead_by"])
     assert ua.allowed_7d(NOW, NOW - 1.0, BURST) is None  # a past reset is unknown, not zero
