@@ -319,7 +319,7 @@ function deferred() {
 function bounded(promise, label, timeoutMs = 2_000) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
+    timer = setTimeout(() => reject(new Error(`${String(label)} timed out after ${timeoutMs} ms`)), timeoutMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -327,7 +327,7 @@ function bounded(promise, label, timeoutMs = 2_000) {
 async function waitUntil(predicate, label, timeoutMs = 500) {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error(`${label} timed out after ${timeoutMs} ms`);
+    if (Date.now() >= deadline) throw new Error(`${String(label)} timed out after ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
@@ -478,7 +478,7 @@ const RESPOND_MUTATIONS = {
 };
 
 for (const [name, respond] of Object.entries(RESPOND_MUTATIONS)) {
-  test(`unit: ineligible passthrough — ${name}`, async () => {
+  test(`unit: ineligible passthrough — ${String(name)}`, async () => {
     const attempts = [];
     const { deps, waits, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([], attempts) });
     const { fetch, calls } = fakeFetch([respond]);
@@ -509,7 +509,7 @@ const MODEL_MUTATIONS = {
 };
 
 for (const [name, overrides] of Object.entries(MODEL_MUTATIONS)) {
-  test(`unit: ineligible passthrough — ${name}`, async () => {
+  test(`unit: ineligible passthrough — ${String(name)}`, async () => {
     const attempts = [];
     const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([], attempts) });
     const { fetch, calls } = fakeFetch([eligible503()]);
@@ -642,7 +642,7 @@ const RETRY_AFTER_FALLBACKS = {
 };
 
 for (const [name, headers] of Object.entries(RETRY_AFTER_FALLBACKS)) {
-  test(`unit: missing/invalid Retry-After falls back conservatively — ${name}`, async () => {
+  test(`unit: missing/invalid Retry-After falls back conservatively — ${String(name)}`, async () => {
     const attempts = [];
     const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([], attempts), random: () => 0 });
     const { fetch } = fakeFetch([{ status: 503, headers, body: PROXY_QUEUE_BODY }, { status: 200, headers: {}, body: "" }]);
@@ -728,27 +728,27 @@ for (const [label, patch] of [
   ["string", (u, f) => { u[f] = "0"; }],
 ]) {
   for (const field of USAGE_SCALAR_FIELDS) {
-    test(`unit: no retry when usage.${field} is ${label}`, async () => {
+    test(`unit: no retry when usage.${field} is ${String(label)}`, async () => {
       const usage = ZERO_USAGE();
       patch(usage, field);
       const attempts = [];
       const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([{ thenError: { usage } }], attempts) });
       const { fetch, calls } = fakeFetch([eligible503()]);
       await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
-      assert.equal(attempts.length, 1, `${label} usage.${field} must not authorize a retry`);
+      assert.equal(attempts.length, 1, `${String(label)} usage.${field} must not authorize a retry`);
       assert.equal(calls.length, 1);
       assert.equal(sleeps.length, 0);
     });
   }
   for (const field of COST_SCALAR_FIELDS) {
-    test(`unit: no retry when usage.cost.${field} is ${label}`, async () => {
+    test(`unit: no retry when usage.cost.${field} is ${String(label)}`, async () => {
       const usage = { ...ZERO_USAGE(), cost: { ...ZERO_COST() } };
       patch(usage.cost, field);
       const attempts = [];
       const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([{ thenError: { usage } }], attempts) });
       const { fetch, calls } = fakeFetch([eligible503()]);
       await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
-      assert.equal(attempts.length, 1, `${label} usage.cost.${field} must not authorize a retry`);
+      assert.equal(attempts.length, 1, `${String(label)} usage.cost.${field} must not authorize a retry`);
       assert.equal(calls.length, 1);
       assert.equal(sleeps.length, 0);
     });
@@ -934,7 +934,7 @@ for (const [name, streamSimple, message] of [
     "iterator failure",
   ],
 ]) {
-  test(`unit: ${name} emits exactly one native terminal error`, async () => {
+  test(`unit: ${String(name)} emits exactly one native terminal error`, async () => {
     const waits = [];
     const { deps } = baseDeps({ streamSimple, onWait: (info) => waits.push(info) });
     const events = await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { maxRetries: 0 }));

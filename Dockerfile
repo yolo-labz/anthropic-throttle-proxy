@@ -53,9 +53,9 @@ RUN groupadd --gid 10001 throttler \
     && mkdir -p /home/throttler/.local/state \
     && chown -R throttler:throttler /home/throttler
 
-COPY --from=builder --chown=throttler:throttler /app/.venv /app/.venv
-COPY --from=builder --chown=throttler:throttler /app/src /app/src
-COPY --from=builder --chown=throttler:throttler /app/pyproject.toml /app/pyproject.toml
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+COPY --from=builder /app/pyproject.toml /app/pyproject.toml
 
 ENV PATH="/app/.venv/bin:${PATH}" \
     HOME=/home/throttler \
@@ -68,7 +68,8 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     THROTTLE_PORT=8765
 
 # The app writes state under $XDG_STATE_HOME (falling back to ~/.local/state),
-# both now owned by the unprivileged user.
+# both now owned by the unprivileged user. /app itself stays root-owned and
+# read-only: the service never needs write access to its own code.
 USER throttler
 
 EXPOSE 8765
