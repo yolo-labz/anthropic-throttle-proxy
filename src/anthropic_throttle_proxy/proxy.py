@@ -945,9 +945,7 @@ def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list
     return states
 
 
-def _weekly_pacing_filter(
-    snapshot: list[dict[str, object]], now: float
-) -> list[dict[str, object]]:
+def _weekly_pacing_filter(snapshot: list[dict[str, object]], now: float) -> list[dict[str, object]]:
     """Spill-only: drop ahead-of-schedule accounts when a sibling has room (enforce only)."""
     if config.WEEKLY_PACING_MODE != "enforce" or not snapshot:
         return snapshot
