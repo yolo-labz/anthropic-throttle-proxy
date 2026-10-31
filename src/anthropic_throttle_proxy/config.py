@@ -325,6 +325,10 @@ def _finite_env_float(name: str, default: str, fallback: float) -> float:
 
 
 QUEUE_MAX_WAIT_S = _finite_env_float("THROTTLE_QUEUE_MAX_WAIT_S", "30", 30.0)
+# Ceiling for a client that asks to wait longer than QUEUE_MAX_WAIT_S via
+# PATIENCE_HEADER (below). Raise-only: the header can lift a request's bound up
+# to this value, never above it, and never below the default knob.
+QUEUE_MAX_PATIENT_WAIT_S = _finite_env_float("THROTTLE_QUEUE_MAX_PATIENT_WAIT_S", "900", 900.0)
 # Weekly MiMo opt-in: one normal waiter on a one-slot lane may outlive a
 # pessimistic prediction, but never its finite actual wait budget. Env-only.
 QUEUE_ALLOW_FIRST_WAITER = (
@@ -579,6 +583,22 @@ QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 # can never exceed the local knob), so the header needs no trust filtering.
 WAIT_BUDGET_HEADER = "x-anthropic-throttle-wait-budget-ms"
 
+# Optional request header: how long THIS client is willing to wait for a slot,
+# in milliseconds. Patient callers (no 60 s socket patience, e.g. pi) use it to
+# lift their queue-wait bound from QUEUE_MAX_WAIT_S up to QUEUE_MAX_PATIENT_WAIT_S.
+# Absent / unparseable / non-positive = unchanged bound. Never forwarded upstream.
+PATIENCE_HEADER = "x-anthropic-throttle-client-patience-ms"
+# Streaming requests (stream=true) that wait on a queue slot or a weekly-pacing
+# deferral commit a 200 text/event-stream response FIRST and ping it while they
+# wait, so no client idle timer fires. Opt-in per request via PATIENCE_HEADER, or
+# for every streaming request when this knob is on. Off = byte-identical behaviour.
+STREAM_HOLD_ON_DEFER = os.environ.get("THROTTLE_STREAM_HOLD_ON_DEFER", "off").strip().lower() in {
+    "on",
+    "true",
+    "1",
+    "yes",
+}
+
 # Stamped on a relayed 429 that this proxy classified as Anthropic's OAuth
 # ENTITLEMENT gate rather than rate pushback: the request's first `system` block
 # was not the Claude Code identity string, so a subscription bearer is refused
@@ -605,6 +625,8 @@ state: dict[str, object] = {
     # holds_total counter only moves when a hold ENDS, so an operator watching a
     # saturation window has no way to see the holds that are still open.
     "keepalive_holds_active": 0,
+    # Requests parked in the fair queue with a patience-raised bound right now.
+    "queue_patient_waiting": 0,
     # Requests that PASSED the admission gate but are not yet counted
     # queued/inflight (e.g. still uploading their body). Incremented
     # synchronously at handler entry, decremented in the handler's guaranteed
@@ -840,6 +862,10 @@ def _set_max_hold_retry_after_s(v: float) -> None:
 
 def _set_queue_max_wait_s(v: float) -> None:
     _set_module_attr(_MOD_CONFIG, "QUEUE_MAX_WAIT_S", v)
+
+
+def _set_queue_max_patient_wait_s(v: float) -> None:
+    _set_module_attr(_MOD_CONFIG, "QUEUE_MAX_PATIENT_WAIT_S", v)
 
 
 def _set_body_shrink_cap_bytes(v: int) -> None:
@@ -1153,6 +1179,20 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "closing transport and surfaces as InvalidHTTPResponse (phantom "
             "401). Keep this inside the client's patience window (~30s) so "
             "the SDK retries transparently instead. 0 disables the bound."
+        ),
+    },
+    "queue_max_patient_wait_s": {
+        "label": "Max patient queue wait",
+        "type": "float",
+        "min": 0.0,
+        "max": 3600.0,
+        "getter": lambda: QUEUE_MAX_PATIENT_WAIT_S,
+        "setter": _set_queue_max_patient_wait_s,
+        "units": "s",
+        "help": (
+            "Ceiling for requests that send x-anthropic-throttle-client-patience-ms "
+            "to wait longer than queue_max_wait_s in the fair queue. Only callers "
+            "that send that header are affected."
         ),
     },
     "body_shrink_cap_bytes": {

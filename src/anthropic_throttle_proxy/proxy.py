@@ -842,6 +842,73 @@ def _window_wall_retry_after(bid: str) -> int | None:
     return remaining if remaining > 0 else None
 
 
+def _patience_bound(headers: Mapping[str, str]) -> float | None:
+    """Seconds this client will wait for a slot, from PATIENCE_HEADER (ms).
+
+    ``None`` = header absent, unparseable, non-finite or non-positive, so the
+    default bound applies. A valid value is clamped to QUEUE_MAX_PATIENT_WAIT_S.
+    """
+    raw = headers.get(config.PATIENCE_HEADER)
+    if raw is None:
+        return None
+    try:
+        asked = float(raw) / 1000.0
+    except ValueError:
+        return None
+    if not math.isfinite(asked) or asked <= 0:
+        return None
+    return min(asked, config.QUEUE_MAX_PATIENT_WAIT_S)
+
+
+# Waits (seconds) of requests that were served from the fair queue, newest last.
+_QUEUE_WAIT_SAMPLES: list[float] = []
+_QUEUE_WAIT_SAMPLE_CAP = 256
+
+
+class _QueueWaitMark:
+    """One request's time in the fair queue: patient count plus served-wait samples.
+
+    ``end`` is idempotent, so the slot-acquired point and the outer ``finally``
+    can both call it without double-decrementing the patient counter.
+    """
+
+    __slots__ = ("patient", "started", "open")
+
+    def __init__(self, patient: bool) -> None:
+        self.patient = patient
+        self.started = time.monotonic()
+        self.open = True
+        if patient:
+            state["queue_patient_waiting"] = int(state["queue_patient_waiting"]) + 1
+
+    def end(self, *, served: bool) -> None:
+        if not self.open:
+            return
+        self.open = False
+        if self.patient:
+            state["queue_patient_waiting"] = max(0, int(state["queue_patient_waiting"]) - 1)
+        if served:
+            _QUEUE_WAIT_SAMPLES.append(time.monotonic() - self.started)
+            del _QUEUE_WAIT_SAMPLES[:-_QUEUE_WAIT_SAMPLE_CAP]
+
+
+def _queue_health() -> dict:
+    """Health view of the fair queue: patient waiters and served-wait p50/p95."""
+    waits = sorted(_QUEUE_WAIT_SAMPLES)
+
+    def pct(q: float) -> float | None:
+        if not waits:
+            return None
+        return round(waits[min(len(waits) - 1, max(0, math.ceil(q * len(waits)) - 1))], 3)
+
+    return {
+        "patient_waiting": int(state["queue_patient_waiting"]),
+        "wait_p50_s": pct(0.5),
+        "wait_p95_s": pct(0.95),
+        "wait_samples": len(waits),
+    }
+
+
 def _queue_wait_timeout_response(
     bid: str,
     cid: str,
@@ -918,6 +985,11 @@ def _effective_queue_max_wait(headers: Mapping[str, str]) -> float | None:
     never exceeds the local knob — so the header needs no trust filtering.
     """
     knob = config.QUEUE_MAX_WAIT_S or None
+    patient = _patience_bound(headers)
+    if patient is not None and knob is not None:
+        # Raise-only: a patient caller lifts the local bound, never lowers it.
+        # A disabled knob (None) stays unbounded — the header adds no bound.
+        knob = max(knob, patient)
     raw = headers.get(config.WAIT_BUDGET_HEADER)
     if raw is None:
         return knob
@@ -5276,6 +5348,7 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
         for k, v in request.headers.items()
         if k.lower() not in HOP_HEADERS
         and k.lower() != config.WAIT_BUDGET_HEADER
+        and k.lower() != config.PATIENCE_HEADER
         # attribution is this tier's business, never Anthropic's
         and k.lower() != _PROJECT_HEADER
     }
@@ -5923,6 +5996,150 @@ async def _post_slot_recheck(
     return bid, headers, None, False
 
 
+_QUEUE_WAIT_EXCEEDED_TEXT = (
+    "proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue\n"
+)
+_DEFER_HOLD_KEY = "throttle_deferral_hold"
+_DEFER_PING_CAP_MS = 15_000
+
+
+class _DeferralHold:
+    """A 200 text/event-stream response committed BEFORE a queue or pacing wait.
+
+    The keepalive emitter pings it while the request waits. ``stop`` is
+    idempotent: it ends the emitter (awaited, so no ping can interleave with
+    the terminal event) and drops the active-hold gauge exactly once.
+    """
+
+    __slots__ = ("sse", "task", "bid", "open")
+
+    def __init__(self, sse: web.StreamResponse, task: asyncio.Task, bid: str) -> None:
+        self.sse = sse
+        self.task = task
+        self.bid = bid
+        self.open = True
+
+    async def stop(self) -> None:
+        if self.open:
+            self.open = False
+            state["keepalive_holds_active"] = max(0, int(state["keepalive_holds_active"]) - 1)
+        await _keepalive_cancel_emitter(self.task, self.bid)
+
+
+def _stream_hold_wanted(request: web.Request, body: bytes | None) -> bool:
+    """Stream the wait only for streaming requests that opted in (or knob on)."""
+    if not _is_streaming_body(body):
+        return False
+    return config.STREAM_HOLD_ON_DEFER or config.PATIENCE_HEADER in request.headers
+
+
+async def _open_deferral_hold(request: web.Request, bid: str) -> _DeferralHold:
+    """Commit the 200 SSE and start pings, then park the hold on the request."""
+    sse = web.StreamResponse(
+        status=200, headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
+    )
+    await sse.prepare(request)
+    interval_ms = min(config.KEEPALIVE_INTERVAL_MS, _DEFER_PING_CAP_MS)
+    task = asyncio.create_task(_emit_keepalive_frames(sse, interval_ms))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    state["keepalive_holds_active"] = int(state["keepalive_holds_active"]) + 1
+    hold = _DeferralHold(sse, task, bid)
+    request[_DEFER_HOLD_KEY] = hold
+    log(f"deferral-hold-open bid={bid} path={request.path} interval_ms={interval_ms}")
+    return hold
+
+
+async def _hold_deferral(
+    request: web.Request,
+    bid: str,
+    poll: Callable[[], int | None],
+    max_wait: float | None,
+) -> web.StreamResponse | None:
+    """Hold a streaming request while ``poll`` reports a deferral.
+
+    Returns ``None`` once the deferral clears (the hold stays on the request
+    for the queue dispatch). Returns the terminal SSE response when the wait
+    budget expires: the same queue-timeout text, no hang.
+    """
+    hold = await _open_deferral_hold(request, bid)
+    budget = max_wait if max_wait is not None else config.QUEUE_MAX_PATIENT_WAIT_S
+    deadline = time.monotonic() + budget
+    while True:
+        retry_after = poll()
+        if retry_after is None:
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            await hold.stop()
+            await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
+            return hold.sse
+        await asyncio.sleep(min(remaining, max(0.5, min(float(retry_after), 15.0))))
+
+
+async def _dispatch_into_hold(
+    *,
+    request: web.Request,
+    hold: _DeferralHold,
+    headers: dict[str, str],
+    body: bytes | None,
+    target: tuple[str, aiohttp.ClientTimeout, str],
+    bid: str,
+    cid: str,
+    model: str,
+    model_label: str,
+    limiter: FairBearerLimiter,
+    counters: _Counters,
+    wait_deadline: float | None,
+) -> web.StreamResponse:
+    """Dispatch an admitted request inside its committed hold (existing retry path)."""
+    path = request.match_info.get("path", "")
+    url, client_timeout, via = target
+    t0 = time.time()
+    attempt = _attempt_for_request(request, bid, cid, via, model_label)
+    attempt.started_at = t0
+    try:
+        while True:
+            if wait_deadline is not None and time.time() >= wait_deadline:
+                await hold.stop()
+                await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
+                attempt.final_status = 503
+                attempt.response = hold.sse
+                return hold.sse
+            await _keepalive_wait_out_retry_after(limiter, wait_deadline)
+            terminal = await _keepalive_one_attempt(
+                request=request,
+                headers=dict(headers),
+                body=body,
+                url=url,
+                client_timeout=client_timeout,
+                via=via,
+                wait_deadline=wait_deadline,
+                sse_resp=hold.sse,
+                attempt=attempt,
+                bid=bid,
+                path=path,
+                limiter=limiter,
+                cancel_keepalive=hold.stop,
+            )
+            if terminal is not None:
+                return terminal
+    finally:
+        await hold.stop()
+        await _finalize(
+            counters,
+            bid,
+            limiter,
+            bearer_state[bid],
+            attempt,
+            t0,
+            model,
+            model_label,
+            request,
+            path,
+        )
+
+
 async def _run_slot(
     *,
     request: web.Request,
@@ -5971,6 +6188,9 @@ async def _run_slot(
         )
 
     rerouted = False
+    if request.get(_DEFER_HOLD_KEY) is None and _stream_hold_wanted(request, body):
+        await _open_deferral_hold(request, bid)
+    wait_mark = _QueueWaitMark(patient=_patience_bound(request.headers) is not None)
     try:
         async with limiter.slot(
             cid,
@@ -5978,8 +6198,26 @@ async def _run_slot(
             max_wait=slot_max_wait,
             project=_project_of(request.headers),
         ) as held:
+            wait_mark.end(served=True)
             counters.dequeue()
             counters.enter_inflight()
+            hold = request.get(_DEFER_HOLD_KEY)
+            if hold is not None:
+                held_response = await _dispatch_into_hold(
+                    request=request,
+                    hold=hold,
+                    headers=headers,
+                    body=body,
+                    target=target,
+                    bid=bid,
+                    cid=cid,
+                    model=model,
+                    model_label=model_label,
+                    limiter=limiter,
+                    counters=counters,
+                    wait_deadline=wait_deadline,
+                )
+                return bid, headers, held_response, False
             t0 = time.time()
             attempt = _attempt_for_request(request, bid, cid, via, model_label)
             attempt.started_at = t0
@@ -6082,6 +6320,7 @@ async def _run_slot(
             False,
         )
     finally:
+        wait_mark.end(served=False)
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
         # and the inner `async with limiter.slot()` body decrementing it,
         # roll back the queue counter so it doesn't leak forever and starve
@@ -6094,7 +6333,30 @@ async def _run_slot(
 
 
 async def handler(request: web.Request) -> web.StreamResponse:
-    """Entry wrapper: quiesce gate + liveness claim BEFORE any await.
+    """Entry point: runs the request core, then keeps any committed hold valid.
+
+    Once a deferral hold has committed its 200 SSE, no other status can be sent.
+    A non-SSE answer from the core is therefore delivered as the hold's terminal
+    SSE error event, carrying the same text, and the hold closes exactly once.
+    """
+    try:
+        response = await _handler_core(request)
+    except BaseException:
+        hold = request.get(_DEFER_HOLD_KEY)
+        if hold is not None:
+            await hold.stop()
+        raise
+    hold = request.get(_DEFER_HOLD_KEY)
+    if hold is None or response is hold.sse:
+        return response
+    await hold.stop()
+    text = getattr(response, "text", None) or "proxy request ended before dispatch\n"
+    await _emit_sse_error_terminal(hold.sse, text.strip())
+    return hold.sse
+
+
+async def _handler_core(request: web.Request) -> web.StreamResponse:
+    """Request core behind ``handler``: quiesce gate + liveness claim BEFORE any await.
 
     The claim is synchronous, so a request that passed the gate is counted from
     the first instant it exists server-side — even while its body is still
@@ -6154,14 +6416,30 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if early_response is not None:
         return early_response
     body = _shrink_forward_body(request, body, path, model_label, headers)
+    max_wait_for_hold = _effective_queue_max_wait(request.headers)
     paced_retry_after = _weekly_pacing_defer(is_priority)
     if paced_retry_after is not None:
-        return _weekly_pacing_response(paced_retry_after)
+        if not _stream_hold_wanted(request, body):
+            return _weekly_pacing_response(paced_retry_after)
+        terminal = await _hold_deferral(
+            request, bid, lambda: _weekly_pacing_defer(is_priority), max_wait_for_hold
+        )
+        if terminal is not None:
+            return terminal
     share_retry_after = _weekly_share_defer(wproject, is_priority)
     if share_retry_after is not None:
-        return _weekly_pacing_response(
-            share_retry_after, "client over its weekly share while the fleet is ahead"
+        if not _stream_hold_wanted(request, body):
+            return _weekly_pacing_response(
+                share_retry_after, "client over its weekly share while the fleet is ahead"
+            )
+        terminal = await _hold_deferral(
+            request,
+            bid,
+            lambda: _weekly_share_defer(wproject, is_priority),
+            max_wait_for_hold,
         )
+        if terminal is not None:
+            return terminal
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
         request, path, headers, bid, model, req_max_tokens, via
@@ -7279,6 +7557,7 @@ async def health(_request: web.Request) -> web.Response:
         "version": _version,
         "inflight": state["inflight"],
         "queued": state["queued"],
+        "queue": _queue_health(),
         "served": state["served"],
         # Streams currently parked in a keepalive-hold. Distinct from inflight:
         # a held request has already been answered 200 and is being kept alive

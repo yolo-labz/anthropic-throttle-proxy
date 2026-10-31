@@ -2514,3 +2514,133 @@ async def test_all_meters_refused_stays_bounded_503(
     assert response.headers.get("retry-after")
     attempts = client.probe_state["attempts"]
     assert attempts == {}, "a refused meter must never spend upstream"
+
+
+# ---------------------------------------------------------------------------
+# Streamed deferral hold: a streaming request commits 200 SSE before its queue
+# or weekly-pacing wait, pings while it waits, then serves the real body.
+# ---------------------------------------------------------------------------
+
+
+STREAM_BODY = b'{"model":"claude-opus-4-8","stream":true,"max_tokens":8,"messages":[]}'
+
+
+def _stream_setup(monkeypatch, *, hold_knob: bool) -> None:
+    monkeypatch.setattr(config, "QUEUE_MODE", "fair")
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 1)
+    monkeypatch.setattr(config, "AIMD_INITIAL_CONCURRENT", 1)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.2)
+    monkeypatch.setattr(config, "KEEPALIVE_INTERVAL_MS", 500)
+    monkeypatch.setattr(config, "STREAM_HOLD_ON_DEFER", hold_knob)
+
+
+async def test_streamed_wait_behind_backlog_pings_then_serves(client, monkeypatch) -> None:
+    """(stream hold) 120 s backlog in miniature: 200 committed, >=1 keepalive
+    before the body, then the real body; zero 503.
+
+    Mutant: skip the prepare (make _stream_hold_wanted return False) ⇒ the
+    default 0.2 s bound answers 503 and this test fails.
+    """
+    _stream_setup(monkeypatch, hold_knob=True)
+    auth = "Bearer stream-hold-serve"
+    bid = proxy._bearer_id({"authorization": auth})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    await lim.acquire("holder")
+
+    async def release_later() -> None:
+        await asyncio.sleep(1.2)
+        await lim.release()
+
+    releaser = asyncio.create_task(release_later())
+    resp = await client.post(
+        "/v1/messages",
+        data=STREAM_BODY,
+        headers={"Authorization": auth, config.PATIENCE_HEADER: "5000"},
+    )
+    body = await resp.read()
+    await releaser
+
+    assert resp.status == 200
+    assert resp.headers["Content-Type"].startswith("text/event-stream")
+    ping = body.find(b": keepalive")
+    assert ping != -1, body[:200]
+    assert b"event:" in body[ping:], "the real upstream body must follow the pings"
+    assert b"proxy queue wait exceeded" not in body
+    # The handler's finally (slot release, gauges) can land after the client has
+    # read the last byte, so poll for the release instead of asserting at once.
+    for _ in range(100):
+        if lim.snapshot()["inflight"] == 0 and config.state["keepalive_holds_active"] == 0:
+            break
+        await asyncio.sleep(0.02)
+    assert lim.snapshot()["inflight"] == 0
+    assert config.state["keepalive_holds_active"] == 0
+
+
+async def test_streamed_bound_expiry_is_an_sse_error_not_a_hang(client, monkeypatch) -> None:
+    """Bound expiry on a committed hold ⇒ one SSE error event, the queue-timeout
+    text, and the response ends promptly (no hang)."""
+    _stream_setup(monkeypatch, hold_knob=True)
+    auth = "Bearer stream-hold-expire"
+    bid = proxy._bearer_id({"authorization": auth})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    await lim.acquire("holder")
+    try:
+        resp = await asyncio.wait_for(
+            client.post(
+                "/v1/messages",
+                data=STREAM_BODY,
+                headers={"Authorization": auth, config.PATIENCE_HEADER: "400"},
+            ),
+            timeout=5,
+        )
+        body = await asyncio.wait_for(resp.read(), timeout=5)
+    finally:
+        await lim.release()
+
+    assert resp.status == 200
+    assert b"proxy queue wait exceeded" in body
+    assert body.count(b"event: error") == 1
+    assert config.state["keepalive_holds_active"] == 0
+
+
+async def test_knob_off_streaming_wait_is_unchanged(client, monkeypatch) -> None:
+    """Knob off and no opt-in header ⇒ the historical clean 503, no SSE."""
+    _stream_setup(monkeypatch, hold_knob=False)
+    auth = "Bearer stream-hold-off"
+    bid = proxy._bearer_id({"authorization": auth})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    await lim.acquire("holder")
+    try:
+        resp = await client.post("/v1/messages", data=STREAM_BODY, headers={"Authorization": auth})
+        await resp.read()
+    finally:
+        await lim.release()
+
+    assert resp.status == 503
+    assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    assert "text/event-stream" not in resp.headers.get("Content-Type", "")
+
+
+async def test_weekly_pacing_deferral_holds_then_resumes(client, monkeypatch) -> None:
+    """A streaming request deferred by weekly pacing holds with pings and
+    resumes once the deferral clears, serving the real body."""
+    _stream_setup(monkeypatch, hold_knob=True)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    calls = {"n": 0}
+
+    def pacing(priority: bool) -> float | None:
+        calls["n"] += 1
+        return 0.5 if calls["n"] <= 3 else None
+
+    monkeypatch.setattr(proxy, "_weekly_pacing_defer", pacing)
+    resp = await client.post(
+        "/v1/messages",
+        data=STREAM_BODY,
+        headers={"Authorization": "Bearer pacing-hold", config.PATIENCE_HEADER: "5000"},
+    )
+    body = await resp.read()
+
+    assert resp.status == 200
+    assert body.find(b": keepalive") != -1
+    assert b"event:" in body[body.find(b": keepalive") :]
+    assert calls["n"] >= 4
