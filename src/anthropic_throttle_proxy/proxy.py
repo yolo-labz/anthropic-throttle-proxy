@@ -63,6 +63,7 @@ from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
 from . import pacing as _pacing
+from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
 
 # Re-exported config (env scalars + shared mutable state + log + HOP_HEADERS).
@@ -923,6 +924,85 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
         and 0 < max_tokens <= config.PRIORITY_MAX_TOKENS
         and not has_tools
         and body_len <= config.PRIORITY_MAX_BODY_BYTES
+    )
+
+
+def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list[dict]:
+    """Per-account 7d pace from the unified readings the proxy already holds (spec 377)."""
+    states = []
+    for acct in snapshot:
+        bid = str(acct.get("bearer_id", ""))
+        unified = (config.bearer_state.get(bid) or {}).get("unified") or {}
+        states.append(
+            _usage_allocator.account_state(
+                str(acct.get("label", bid)),
+                unified.get("util_7d"),
+                unified.get("reset_7d"),
+                now,
+                config.WEEKLY_BURST,
+            )
+        )
+    return states
+
+
+def _weekly_pacing_filter(
+    snapshot: list[dict[str, object]], now: float
+) -> list[dict[str, object]]:
+    """Spill-only: drop ahead-of-schedule accounts when a sibling has room (enforce only)."""
+    if config.WEEKLY_PACING_MODE != "enforce" or not snapshot:
+        return snapshot
+    verdict, labels = _usage_allocator.decide_pacing(
+        _weekly_pacing_states(snapshot, now),
+        mode="enforce",
+        priority=False,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    if verdict != "route" or labels is None:
+        return snapshot
+    return [acct for acct in snapshot if str(acct.get("label")) in labels]
+
+
+def _weekly_pacing_defer(priority: bool) -> int | None:
+    """Honest Retry-After when every account is ahead and the call is non-priority."""
+    if config.WEEKLY_PACING_MODE != "enforce" or not _account_routing_enabled():
+        return None
+    from . import accounts
+
+    now = time.time()
+    states = _weekly_pacing_states(accounts.routing_snapshot(now), now)
+    verdict, retry_after = _usage_allocator.decide_pacing(
+        states,
+        mode="enforce",
+        priority=priority,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    return retry_after if verdict == "defer" else None
+
+
+def _weekly_pacing_response(retry_after_s: int) -> web.Response:
+    """Same stamped 503 as a queue-wait timeout, so clients re-enter via Retry-After."""
+    return web.Response(
+        status=503,
+        headers={"retry-after": str(retry_after_s), config.QUEUE_TIMEOUT_HEADER: "1"},
+        text="weekly pacing: every account is ahead of schedule; retry after catch-up\n",
+    )
+
+
+def _weekly_pacing_view() -> dict:
+    """Read-only publication for /__throttle/admission (never changes a decision)."""
+    from . import accounts
+
+    now = time.time()
+    snapshot = accounts.routing_snapshot(now) if _account_routing_enabled() else []
+    return _usage_allocator.publish(
+        _weekly_pacing_states(snapshot, now),
+        mode=config.WEEKLY_PACING_MODE,
+        burst=config.WEEKLY_BURST,
+        shares=config.CLIENT_SHARES,
     )
 
 
@@ -1869,7 +1949,7 @@ def _route_account_if_enabled(
 
         # One clock for the snapshot and every pacing score: budget_paced divides
         # by time-to-reset, so a split clock can change the winner at the edge.
-        snapshot = accounts.routing_snapshot(now)
+        snapshot = _weekly_pacing_filter(accounts.routing_snapshot(now), now)
         if allow_retry_probe:
             # Routing runs before limiter allocation. Seed probation for
             # configured cold-start accounts synchronously (no first-await race).
@@ -5805,6 +5885,9 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if early_response is not None:
         return early_response
     body = _shrink_forward_body(request, body, path, model_label, headers)
+    paced_retry_after = _weekly_pacing_defer(is_priority)
+    if paced_retry_after is not None:
+        return _weekly_pacing_response(paced_retry_after)
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
         request, path, headers, bid, model, req_max_tokens, via
@@ -6854,6 +6937,7 @@ async def admission(_request: web.Request) -> web.Response:
             "retry_after_s": retry_after_s,
             "lane": {"open": lane_open, "detail": lane_detail},
             "saturation": saturation,
+            "weekly_pacing": _weekly_pacing_view(),
             "bearers": {
                 bid: {
                     "usable": ok,
