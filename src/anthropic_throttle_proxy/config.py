@@ -490,6 +490,16 @@ SESSION_AFFINITY = (
     "off" if os.environ.get("THROTTLE_SESSION_AFFINITY", "on").strip().lower() == "off" else "on"
 )
 WEEKLY_BURST = _usage_allocator.parse_burst(os.environ.get("THROTTLE_WEEKLY_BURST"))
+# THROTTLE_WEEKLY_PACING_LAW=line|remaining (default line). remaining spends the
+# REMAINING 7d budget evenly; its burn is measured over THROTTLE_WEEKLY_RATE_WINDOW_S
+# with THROTTLE_WEEKLY_RATE_MARGIN tolerance above the cap.
+WEEKLY_PACING_LAW = _usage_allocator.parse_law(os.environ.get("THROTTLE_WEEKLY_PACING_LAW"))
+WEEKLY_RATE_WINDOW_S = _usage_allocator.parse_rate_window(
+    os.environ.get("THROTTLE_WEEKLY_RATE_WINDOW_S")
+)
+WEEKLY_RATE_MARGIN = _usage_allocator.parse_rate_margin(
+    os.environ.get("THROTTLE_WEEKLY_RATE_MARGIN")
+)
 CLIENT_SHARES = _usage_allocator.parse_shares(os.environ.get("THROTTLE_CLIENT_SHARES"))
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
 ACCOUNT_ROUTING_MODE = (

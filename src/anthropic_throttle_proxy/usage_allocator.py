@@ -25,6 +25,14 @@ WEEK_S = 7 * 24 * 3600.0
 # One 6 h slice of the week. Hot-tunable through THROTTLE_WEEKLY_BURST.
 DEFAULT_BURST = 1.0 / 28.0
 MODES = ("off", "observe", "enforce")
+# Pacing law. ``line``: allowed = elapsed + burst·(1−elapsed), so the allowance
+# decays to exactly 1.0 at reset (the burst is a lead, never a tail).
+# ``remaining``: spend the REMAINING budget evenly, r = (1−u)/T_left, and call an
+# account ahead when its measured burn exceeds r·(1+margin).
+LAWS = ("line", "remaining")
+DEFAULT_LAW = "line"
+DEFAULT_RATE_WINDOW_S = 1800.0
+DEFAULT_RATE_MARGIN = 0.1
 
 
 def parse_mode(raw: str | None) -> str:
@@ -41,6 +49,29 @@ def parse_burst(raw: str | None) -> float:
     if not math.isfinite(value) or not 0.0 <= value <= 1.0:
         return DEFAULT_BURST
     return value
+
+
+def parse_law(raw: str | None) -> str:
+    value = (raw or "").strip().lower()
+    return value if value in LAWS else DEFAULT_LAW
+
+
+def _parse_bounded(raw: str | None, default: float, lo: float, hi: float) -> float:
+    try:
+        value = float((raw or "").strip())
+    except ValueError:
+        return default
+    return value if math.isfinite(value) and lo <= value <= hi else default
+
+
+def parse_rate_window(raw: str | None) -> float:
+    """Burn-measurement window in seconds; 1 min .. 1 day, else the default."""
+    return _parse_bounded(raw, DEFAULT_RATE_WINDOW_S, 60.0, 86400.0)
+
+
+def parse_rate_margin(raw: str | None) -> float:
+    """Tolerance above the remaining-budget rate before an account is ahead."""
+    return _parse_bounded(raw, DEFAULT_RATE_MARGIN, 0.0, 5.0)
 
 
 def parse_shares(raw: str | None) -> dict[str, float]:
@@ -67,7 +98,61 @@ def allowed_7d(now: float, reset_7d: float, burst: float | None = None) -> float
     if burst is None:
         burst = DEFAULT_BURST
     elapsed = min(1.0, max(0.0, 1.0 - (reset_7d - now) / WEEK_S))
-    return elapsed + burst
+    # Decaying burst: the allowance meets 1.0 at reset, so a window never closes above it.
+    return elapsed + burst * (1.0 - elapsed)
+
+
+def remaining_cap_per_h(util_7d: float | None, reset_7d: float | None, now: float) -> float | None:
+    """Sustainable burn of what is LEFT: (1 − u) / T_left, in window-fraction per hour."""
+    if util_7d is None or reset_7d is None or reset_7d <= now:
+        return None
+    hours_left = (reset_7d - now) / 3600.0
+    return max(0.0, 1.0 - util_7d) / hours_left
+
+
+def burn_per_h(
+    samples: Sequence[tuple[float, float, float]], now: float, window_s: float
+) -> float | None:
+    """Measured 7d burn (window-fraction per hour) for the current reset epoch.
+
+    The meter steps in 1 pt, so a short lookback reads one step as a burn: one 1 pt
+    step inside a 30 min window is 2 pt/h. The lookback is therefore the LONGER of the
+    window and the time back to the start of the previous plateau, so it always spans
+    a whole inter-step gap: ``L = max(window_s, now − t_prev_plateau)``. At 8 pt/h the
+    window wins (about 4 steps). At 0.4 pt/h the plateau wins and one step averages
+    over its gap. A falling meter burns 0. None when there is no span to measure.
+    """
+    if not samples:
+        return None
+    reset = samples[-1][2]
+    same = [s for s in samples if s[2] == reset]
+    if len(same) < 2 or reset <= now:
+        return None
+    u_last = same[-1][1]
+    i = len(same) - 1
+    while i > 0 and same[i - 1][1] == u_last:
+        i -= 1  # i: first sample of the current plateau
+    lookback = window_s
+    if i > 0:
+        v_prev = same[i - 1][1]
+        j = i - 1
+        while j > 0 and same[j - 1][1] == v_prev:
+            j -= 1  # j: first sample of the previous plateau
+        lookback = max(window_s, now - same[j][0])
+    start = same[0]
+    for sample in same:
+        if sample[0] <= now - lookback:
+            start = sample
+    if t_span_too_short(start[0], same[-1][0]):
+        return None
+    du = u_last - start[1]
+    if du <= 0:
+        return 0.0
+    return du / ((now - start[0]) / 3600.0)
+
+
+def t_span_too_short(t_start: float, t_end: float) -> bool:
+    return t_end - t_start < BURN_MIN_SPAN_S
 
 
 def account_state(
@@ -76,14 +161,26 @@ def account_state(
     reset_7d: float | None,
     now: float,
     burst: float | None = None,
+    *,
+    law: str = DEFAULT_LAW,
+    burn: float | None = None,
+    rate_window_s: float = DEFAULT_RATE_WINDOW_S,
+    margin: float = DEFAULT_RATE_MARGIN,
 ) -> dict[str, Any]:
     allowed = allowed_7d(now, reset_7d, burst)
+    elapsed = elapsed_7d(now, reset_7d)
+    if law == "remaining":
+        state = _remaining_state(
+            label, util_7d, reset_7d, now, allowed, burn, rate_window_s, margin
+        )
+        return {**state, "elapsed": elapsed}
     if util_7d is None or allowed is None:
         return {
             "label": label,
             "util_7d": util_7d,
             "reset_7d": reset_7d,
             "allowed_7d": allowed,
+            "elapsed": elapsed,
             "ahead_by": None,
             "state": "unknown",
         }
@@ -93,20 +190,59 @@ def account_state(
         "util_7d": util_7d,
         "reset_7d": reset_7d,
         "allowed_7d": round(allowed, 6),
+        "elapsed": elapsed,
         "ahead_by": ahead_by,
         "state": "ahead" if ahead_by > 0 else "on_schedule",
     }
 
 
+def elapsed_7d(now: float, reset_7d: float | None) -> float | None:
+    """Elapsed fraction of the 7d window (0..1); None when the reset is unknown or past."""
+    if reset_7d is None or reset_7d <= now:
+        return None
+    return min(1.0, max(0.0, 1.0 - (reset_7d - now) / WEEK_S))
+
+
+def _remaining_state(
+    label: str,
+    util_7d: float | None,
+    reset_7d: float | None,
+    now: float,
+    allowed: float | None,
+    burn: float | None,
+    rate_window_s: float,
+    margin: float,
+) -> dict[str, Any]:
+    """Remaining law. ``allowed_7d`` stays the line value for display only."""
+    cap = remaining_cap_per_h(util_7d, reset_7d, now)
+    base = {
+        "label": label,
+        "util_7d": util_7d,
+        "reset_7d": reset_7d,
+        "allowed_7d": round(allowed, 6) if allowed is not None else None,
+        "law": "remaining",
+        "cap_per_h": None if cap is None else round(cap, 6),
+        "burn_per_h": None if burn is None else round(burn, 6),
+        "wait_s": rate_window_s,
+    }
+    if util_7d is None or cap is None or burn is None:
+        return {**base, "ahead_by": None, "state": "unknown"}
+    ahead_by = round(burn - cap * (1.0 + margin), 6)
+    return {**base, "ahead_by": ahead_by, "state": "ahead" if ahead_by > 0 else "on_schedule"}
+
+
 def catchup_wait_s(
     util_7d: float, reset_7d: float, now: float, burst: float | None = None
 ) -> float:
-    """Seconds until ``allowed_7d`` reaches ``util_7d`` again (or the window resets)."""
+    """Seconds until the decaying line reaches ``util_7d`` (or the window resets).
+
+    Solves ``e + burst·(1−e) = util`` for the elapsed fraction ``e``.
+    """
     if burst is None:
         burst = DEFAULT_BURST
-    catch_at = reset_7d - WEEK_S + (util_7d - burst) * WEEK_S
-    if catch_at >= reset_7d:
-        return max(1.0, reset_7d - now)
+    e_star = (util_7d - burst) / (1.0 - burst) if burst < 1.0 else 1.0
+    e_star = min(1.0, max(0.0, e_star))
+    catch_at = reset_7d - WEEK_S * (1.0 - e_star)
     return max(1.0, catch_at - now)
 
 
@@ -159,6 +295,9 @@ def catchup_retry(
     """Honest Retry-After: the soonest catch-up among ``ahead`` accounts, capped."""
     waits = []
     for s in ahead:
+        if "wait_s" in s:  # remaining law: the rolling window must drain first
+            waits.append(float(s["wait_s"]))
+            continue
         util = (util_by_label or {}).get(s["label"], s.get("util_7d"))
         reset = (reset_by_label or {}).get(s["label"], s.get("reset_7d"))
         if util is None or reset is None:
@@ -345,7 +484,7 @@ def publish(
         if s.get("state") == "unknown" or s.get("util_7d") is None:
             continue
         used += float(s["util_7d"])
-        elapsed += float(s["allowed_7d"]) - burst
+        elapsed += float(s["elapsed"])
     fleet_pace = round(used / elapsed, 4) if elapsed > 1e-9 else None
     return {
         "mode": mode,
