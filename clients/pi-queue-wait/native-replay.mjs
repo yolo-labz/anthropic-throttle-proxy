@@ -159,7 +159,14 @@ export const PI_CODING_AGENT_ROOT =
 
 // Provider catalog IDs are plain ASCII identifiers; order them with an explicit
 // comparator so the assertion compares content, not an implicit alphabetical sort.
-export const sortedIds = (ids) => [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+export const sortedIds = (ids) => [...ids].sort(compareIds);
+
+// Explicit three-way comparison without a nested ternary (S3358).
+function compareIds(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
 let _piAi;
 /**
  * Resolve + import @earendil-works/pi-ai/compat through the mounted Pi

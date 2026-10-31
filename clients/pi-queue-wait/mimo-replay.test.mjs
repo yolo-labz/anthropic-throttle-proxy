@@ -68,7 +68,7 @@ for (const provider of ["mimo-desktop", "zai"]) {
     provider, id: "glm-5.3", baseUrl: "http://127.0.0.1:8766/api/coding/paas/v4",
   } : {});
   for (const [label, count, retryAfter] of [["30 minutes", 8, 241], ["32 rejections", 40, 1]]) {
-    test(`persistent native: ${provider} survives ${label} then streams`, { timeout: 5000 }, async () => {
+    test(`persistent native: ${String(provider)} survives ${String(label)} then streams`, { timeout: 5000 }, async () => {
       const f = await fixture([...Array.from({ length: count }, () => eligible503({ retryAfter })), sse200()]);
       try {
         const events = await drain(f.stream()(queuedModel(), context(), f.options({ maxRetries: 3, maxRetryDelayMs: 1 })));
@@ -81,7 +81,7 @@ for (const provider of ["mimo-desktop", "zai"]) {
       } finally { await f.proxy.close(); }
     });
   }
-  test(`persistent native: ${provider} cancels after the former wait ceiling`, { timeout: 5000 }, async () => {
+  test(`persistent native: ${String(provider)} cancels after the former wait ceiling`, { timeout: 5000 }, async () => {
     const f = await fixture([eligible503({ retryAfter: 241 })]);
     const controller = new AbortController();
     let sleeps = 0;
@@ -154,7 +154,7 @@ const responseNegatives = [
   ...[401, 403, 429, 500, 529].map(status => [`status ${status}`, r => { r.status = status; }]),
 ];
 for (const [label, mutate] of responseNegatives) {
-  test(`mimo native: ineligible ${label} passes through`, { timeout: 3000 }, async () => {
+  test(`mimo native: ineligible ${String(label)} passes through`, { timeout: 3000 }, async () => {
     const response = eligible503({ retryAfter: 0.001 });
     mutate(response);
     const f = await fixture([response]);
@@ -200,7 +200,7 @@ for (const [label, decorate] of [
   ["foreign final URL", r => Object.defineProperty(r, "url", { value: "http://example.invalid:8773/v1/chat/completions" })],
   ["final query", r => Object.defineProperty(r, "url", { value: `${r.url}?redirect=1` })],
 ]) {
-  test(`mimo native: ${label} cannot lend provenance`, { timeout: 3000 }, async () => {
+  test(`mimo native: ${String(label)} cannot lend provenance`, { timeout: 3000 }, async () => {
     const f = await fixture([eligible503()]);
     try {
       const events = await drain(f.stream()(model(), context(), f.options({ fetch: async (...args) => {
@@ -273,7 +273,7 @@ const eventNegatives = [
     [1, null, undefined, "0"].map(value => [`cost.${key}=${value}`, e => { e.error.usage.cost[key] = value; }])),
 ];
 for (const [label, mutate] of eventNegatives) {
-  test(`mimo native event guard: ${label}`, { timeout: 3000 }, async () => {
+  test(`mimo native event guard: ${String(label)}`, { timeout: 3000 }, async () => {
     const f = await fixture([eligible503({ retryAfter: 0.001 })]);
     let terminal;
     try {
@@ -442,7 +442,7 @@ test("mimo extension: real loader overlay preserves models.json configuration", 
     const { registrations } = loaded;
     assert.deepEqual(registrations.map(r => r.name).sort(), ["deepseek", "mimo-desktop", "zai"]);
     for (const { config } of registrations) {
-      assert.deepEqual(Object.keys(config).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), ["api", "streamSimple"]);
+      assert.deepEqual(Object.keys(config).sort((a, b) => a.localeCompare(b)), ["api", "streamSimple"]);
       assert.equal(config.api, "openai-completions");
       assert.equal(typeof config.streamSimple, "function");
     }
