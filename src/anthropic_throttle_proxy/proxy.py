@@ -337,6 +337,12 @@ _TYPICAL_MAX_TOKENS = 4096.0
 # it is strong enough that the selector does not keep spending a near-empty
 # window just because its current queue is short.
 _OVERPACE_SURCHARGE = 60.0
+# budget_paced weekly share: an account whose 7d pace exceeds 1x has its share
+# scaled by max(0, 1 - k*(pace-1)); at k=2 it reaches zero share at 1.5x.
+_WEEKLY_PACE_K = 2.0
+# Finite key for a zero-share account: loses to every weighted account, still
+# selectable when nothing else is usable (the existing spillover path).
+_WEEKLY_SPILL_KEY = 1e9
 _QUEUE_SPILLOVER_LOAD_THRESHOLD = 100.0
 _TARGET_SPILLOVER_SURCHARGE = 100.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
@@ -1354,6 +1360,11 @@ def _account_routing_candidate_score(
     # window: otherwise the -0.01 bonus lets a windowed incoming (even a
     # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
     stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
+    weekly = None
+    if isinstance(unified, dict) and isinstance(unified.get("util_7d"), (int, float)):
+        weekly = (float(unified["util_7d"]), unified.get("reset_7d"))
+    lim = config.bearer_limiters.get(bid)
+    request_count = (lim.queued_total + lim.priority_queued + lim.inflight) if lim else 0.0
     return _routing_pressure_score(
         load=load,
         util=util,
@@ -1365,6 +1376,8 @@ def _account_routing_candidate_score(
         max_tokens=max_tokens,
         now=now,
         allow_target_spillover=allow_target_spillover,
+        weekly=weekly,
+        request_count=float(request_count),
     )
 
 
@@ -1516,6 +1529,41 @@ def _scoped_window_pressure(
     return util, under_pressure
 
 
+def _weekly_pace(util_7d: float, reset_7d: float | None, now: float) -> float:
+    """7d pace = utilization ÷ elapsed fraction of the 7d window (1.0 = on pace).
+
+    An unknown or already-passed reset reads as a fresh window (elapsed floor),
+    which is the same convention ``_window_elapsed_fraction`` uses for pacing.
+    """
+    return util_7d / _window_elapsed_fraction(reset_7d, _WINDOW_7D_S, now)
+
+
+def _bearer_weekly_pace(bstate: dict, now: float) -> float | None:
+    """Health-facing 7d pace for one bearer, or None when 7d data is absent."""
+    unified = bstate.get("unified") or {}
+    util = unified.get("util_7d")
+    if not isinstance(util, (int, float)):
+        return None
+    return round(_weekly_pace(float(util), unified.get("reset_7d"), now), 3)
+
+
+def _weekly_share_weight(util_7d: float, reset_7d: float | None, now: float) -> float:
+    """Remaining weekly allowance RATE, pace-penalised (0 = no share).
+
+    ``headroom ÷ hours-to-reset`` (1 h floor), scaled by
+    ``max(0, 1 - k·(pace-1))`` once pace exceeds 1x. Under-pace accounts keep
+    their full share; an account past 1.5x gets none while over pace.
+    """
+    headroom = max(0.0, 1.0 - util_7d)
+    if reset_7d is None or reset_7d <= now:
+        hours = _WINDOW_7D_S / 3600.0
+    else:
+        hours = min(reset_7d - now, _WINDOW_7D_S) / 3600.0
+    pace = _weekly_pace(util_7d, reset_7d, now)
+    penalty = max(0.0, 1.0 - _WEEKLY_PACE_K * (pace - 1.0)) if pace > 1.0 else 1.0
+    return headroom * penalty / max(hours, 1.0)
+
+
 def _routing_pressure_score(
     *,
     load: float,
@@ -1528,6 +1576,8 @@ def _routing_pressure_score(
     max_tokens: int | None,
     now: float,
     allow_target_spillover: bool,
+    weekly: tuple[float, float | None] | None = None,
+    request_count: float = 0.0,
 ) -> float:
     """Combine the surviving gate readings into the ranking score.
 
@@ -1545,6 +1595,12 @@ def _routing_pressure_score(
         pressure = _budget_pacing_pressure(windows, expected_cost, now)
         overpace = _budget_pacing_overpace(windows, expected_cost, now)
         target_surcharge = _TARGET_SPILLOVER_SURCHARGE if target_crossed else 0.0
+        if weekly is not None:
+            # Weighted fair share: (requests+1)/weight, minimised across accounts.
+            weight = _weekly_share_weight(weekly[0], weekly[1], now)
+            load = (
+                (request_count + 1.0) / weight if weight > 0 else _WEEKLY_SPILL_KEY + request_count
+            )
         return (
             load
             + warning_surcharge
@@ -6861,6 +6917,7 @@ async def admission(_request: web.Request) -> web.Response:
                     "status_7d": (bearers[bid].get("unified") or {}).get("status_7d"),
                     "util_5h": (bearers[bid].get("unified") or {}).get("util_5h"),
                     "util_7d": (bearers[bid].get("unified") or {}).get("util_7d"),
+                    "weekly_pace": _bearer_weekly_pace(bearers[bid], now),
                 }
                 for bid, ok in usable.items()
             },
