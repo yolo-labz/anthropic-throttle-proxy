@@ -57,7 +57,7 @@ export function parseRetryAfterMs(value, nowMs) {
   const trimmed = value.trim();
   if (trimmed === "") return null;
   if (/^\d+(\.\d+)?$/.test(trimmed)) {
-    const ms = Math.round(parseFloat(trimmed) * 1000);
+    const ms = Math.round(Number.parseFloat(trimmed) * 1000);
     return Number.isFinite(ms) && ms > 0 ? ms : null;
   }
   const date = Date.parse(trimmed);
@@ -213,29 +213,59 @@ export function createQueueWaitStream(deps) {
     const outer = createEventStream();
     const signal = options?.signal;
 
+    // Clear the wait signal without letting a cleanup failure suppress the
+    // terminal event (extracted so the retry loop below stays readable).
+    const clearWait = () => {
+      try {
+        onWait(null);
+      } catch {
+        /* wait-cleanup failure must not suppress the terminal event */
+      }
+    };
+
+    // Retry is allowed ONLY on abort-free attempts whose single terminal event
+    // is a fully-gated captured rejection; anything else is forwarded verbatim.
+    const mustForward = (event, attempt, signal) =>
+      attempt.sawPriorEvent ||
+      event?.reason === "aborted" ||
+      signal?.aborted ||
+      !attempt.rejection ||
+      !isZeroErrorEvent(event);
+
     const run = async () => {
       let rejections = 0;
       let waitedMs = 0;
 
       const finish = () => {
-        try {
-          onWait(null);
-        } catch {
-          /* wait-cleanup failure must not suppress the terminal event */
-        }
+        clearWait();
         outer.end();
       };
       const finishWithEvent = (event) => {
-        try {
-          onWait(null);
-        } catch {
-          /* wait-cleanup failure must not suppress the terminal event */
-        }
+        clearWait();
         outer.push(event);
         outer.end();
       };
       const emitSynthetic = (stopReason, message) => {
         finishWithEvent(syntheticErrorEvent(model, stopReason, message, Date.now()));
+      };
+
+      // Pay the admission delay. Abort only when the parent signal or an
+      // AbortError establishes it; any other failure is reported with its
+      // ORIGINAL message, never relabelled aborted. Returns the loop verdict.
+      const waitForAdmission = async (delayMs) => {
+        try {
+          await sleep(delayMs, signal);
+          return "ok";
+        } catch (sleepError) {
+          if (signal?.aborted || isAbortError(sleepError)) {
+            emitSynthetic("aborted", "Request was aborted");
+            return "aborted";
+          }
+          finishWithEvent(
+            syntheticErrorEvent(model, "error", String(sleepError?.message ?? sleepError), Date.now()),
+          );
+          return "error";
+        }
       };
 
       while (true) {
@@ -249,7 +279,7 @@ export function createQueueWaitStream(deps) {
         // justify a later retry.
         const attempt = { rejection: null, capture: null, sawPriorEvent: false };
         const innerFetch = wrapFetch(options, attempt, requestUrlGate, now);
-        const inner = streamSimple(model, context, { ...(options ?? {}), fetch: innerFetch });
+        const inner = streamSimple(model, context, { ...options, fetch: innerFetch });
 
         let terminal = null; // { event } when the inner stream ended with an error event
         for await (const event of inner) {
@@ -281,13 +311,7 @@ export function createQueueWaitStream(deps) {
 
         // Never retry after ANY emitted event of any type, on abort, or
         // without a fully-gated captured rejection on THIS attempt.
-        if (
-          attempt.sawPriorEvent ||
-          event?.reason === "aborted" ||
-          signal?.aborted ||
-          !attempt.rejection ||
-          !isZeroErrorEvent(event)
-        ) {
+        if (mustForward(event, attempt, signal)) {
           finishWithEvent(event);
           return;
         }
@@ -327,21 +351,8 @@ export function createQueueWaitStream(deps) {
           fallback: usedFallback,
           waitedMs,
         });
-        try {
-          await sleep(delayMs, signal);
-        } catch (sleepError) {
-          // Abort only when the parent signal or the rejection itself
-          // establishes it; any other failure stays an error with its
-          // ORIGINAL message — never relabelled aborted.
-          if (signal?.aborted || isAbortError(sleepError)) {
-            emitSynthetic("aborted", "Request was aborted");
-          } else {
-            finishWithEvent(
-              syntheticErrorEvent(model, "error", String(sleepError?.message ?? sleepError), Date.now()),
-            );
-          }
-          return;
-        }
+        const slept = await waitForAdmission(delayMs);
+        if (slept !== "ok") return;
         // The parent signal may have fired in a race with sleep resolution.
         if (signal?.aborted) {
           emitSynthetic("aborted", "Request was aborted");
@@ -434,7 +445,7 @@ function defaultSleep(ms, signal) {
 function isZeroErrorEvent(event) {
   const error = event?.error;
   if (event?.reason !== "error" || error?.stopReason !== "error") return false;
-  if (!error || error.role !== "assistant") return false;
+  if (error?.role !== "assistant") return false;
   if (Array.isArray(error.content) ? error.content.length !== 0 : true) return false;
   return allUsageZero(error.usage);
 }

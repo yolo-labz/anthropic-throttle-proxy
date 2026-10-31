@@ -157,45 +157,58 @@ export const REPO_ROOT = path.resolve(HERE, "..", "..");
 export const PI_CODING_AGENT_ROOT =
   process.env.PI_CODING_AGENT_ROOT ?? "/opt/pi/@earendil-works/pi-coding-agent";
 
+// Provider catalog IDs are plain ASCII identifiers; order them with an explicit
+// comparator so the assertion compares content, not an implicit alphabetical sort.
+export const sortedIds = (ids) => [...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 let _piAi;
 /**
  * Resolve + import @earendil-works/pi-ai/compat through the mounted Pi
  * package (its own node_modules chain), assert the factory surface the gate
  * pinned, and memoize. Throws (=> tests FAIL, never skip) when unloadable.
  */
+// Walk the resolver's own node_modules search path for the pi-ai manifest. The
+// package does not export ./package.json, so ERR_PACKAGE_PATH_NOT_EXPORTED is
+// expected and only a genuine resolve failure is re-thrown.
+function searchNodeModulesForManifest(resolver, originalError) {
+  for (const modulesDir of resolver.resolve.paths("@earendil-works/pi-ai") ?? []) {
+    const candidate = path.join(modulesDir, "@earendil-works", "pi-ai", "package.json");
+    try {
+      const candidateManifest = JSON.parse(readFileSync(candidate, "utf8"));
+      if (candidateManifest.name === "@earendil-works/pi-ai") return candidate;
+    } catch {
+      // Keep walking the resolver's own node_modules search path.
+    }
+  }
+  throw originalError;
+}
+
+function locateCompatPackageJson(from) {
+  const resolver = createRequire(from);
+  try {
+    return resolver.resolve("@earendil-works/pi-ai/package.json");
+  } catch (error) {
+    if (error?.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
+    return searchNodeModulesForManifest(resolver, error);
+  }
+}
+
+function compatEntryUrl(packageJsonPath) {
+  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  if (manifest.name !== "@earendil-works/pi-ai") throw new Error(`unexpected package manifest ${manifest.name}`);
+  const compatImport = manifest.exports?.["./compat"]?.import;
+  if (typeof compatImport !== "string" || compatImport === "") {
+    throw new Error("package exports['./compat'].import is missing");
+  }
+  return path.resolve(path.dirname(packageJsonPath), compatImport);
+}
+
 export async function loadPiAi() {
   if (_piAi) return _piAi;
   let compatUrl;
   const reasons = [];
   for (const from of [path.join(PI_CODING_AGENT_ROOT, "package.json"), path.join(REPO_ROOT, "package.json")]) {
     try {
-      const resolver = createRequire(from);
-      let packageJsonPath;
-      try {
-        packageJsonPath = resolver.resolve("@earendil-works/pi-ai/package.json");
-      } catch (error) {
-        if (error?.code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw error;
-        for (const modulesDir of resolver.resolve.paths("@earendil-works/pi-ai") ?? []) {
-          const candidate = path.join(modulesDir, "@earendil-works", "pi-ai", "package.json");
-          try {
-            const candidateManifest = JSON.parse(readFileSync(candidate, "utf8"));
-            if (candidateManifest.name === "@earendil-works/pi-ai") {
-              packageJsonPath = candidate;
-              break;
-            }
-          } catch {
-            // Keep walking the resolver's own node_modules search path.
-          }
-        }
-        if (!packageJsonPath) throw error;
-      }
-      const manifest = JSON.parse(readFileSync(packageJsonPath, "utf8"));
-      if (manifest.name !== "@earendil-works/pi-ai") throw new Error(`unexpected package manifest ${manifest.name}`);
-      const compatImport = manifest.exports?.["./compat"]?.import;
-      if (typeof compatImport !== "string" || compatImport === "") {
-        throw new Error("package exports['./compat'].import is missing");
-      }
-      compatUrl = path.resolve(path.dirname(packageJsonPath), compatImport);
+      compatUrl = compatEntryUrl(locateCompatPackageJson(from));
       break;
     } catch (error) {
       reasons.push(`${from}: ${error?.message ?? error}`);
@@ -314,7 +327,7 @@ export async function runRegistrationPreservationChecks(registrations) {
 
   const { runtime, cleanup } = await createTestModelRuntime();
   try {
-    const beforeRegisteredIds = [...runtime.getRegisteredProviderIds()].sort();
+    const beforeRegisteredIds = sortedIds(runtime.getRegisteredProviderIds());
     const beforeProviders = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
     const beforeModels = new Map([...beforeProviders.keys()].map((id) => [id, modelSnapshot(runtime, id)]));
     const beforeZai = beforeProviders.get("zai");
@@ -324,14 +337,14 @@ export async function runRegistrationPreservationChecks(registrations) {
 
     runtime.registerProvider(reg.name, config);
 
-    const afterRegisteredIds = [...runtime.getRegisteredProviderIds()].sort();
+    const afterRegisteredIds = sortedIds(runtime.getRegisteredProviderIds());
     assert.deepEqual(
       afterRegisteredIds,
-      [...new Set([...beforeRegisteredIds, "zai"])].sort(),
+      sortedIds([...beforeRegisteredIds, "zai"]),
       "registration registry may add only the zai overlay",
     );
     const afterProviders = new Map(runtime.getProviders().map((provider) => [provider.id, provider]));
-    assert.deepEqual([...afterProviders.keys()].sort(), [...beforeProviders.keys()].sort(), "provider catalog IDs stay unchanged");
+    assert.deepEqual(sortedIds(afterProviders.keys()), sortedIds(beforeProviders.keys()), "provider catalog IDs stay unchanged");
     for (const [id, provider] of beforeProviders) {
       assert.deepEqual(modelSnapshot(runtime, id), beforeModels.get(id), `provider ${id} models must be fully unchanged`);
       if (id !== "zai") {
@@ -345,7 +358,7 @@ export async function runRegistrationPreservationChecks(registrations) {
     assert.equal(afterZai.name, beforeZai.name);
     assert.equal(afterZai.baseUrl, beforeZai.baseUrl, "zai provider endpoint must be preserved");
     assert.deepEqual(afterZai.headers, beforeZai.headers, "zai provider headers must be preserved");
-    assert.deepEqual(Object.keys(afterZai.auth).sort(), Object.keys(beforeZai.auth).sort(), "zai auth modes must be preserved");
+    assert.deepEqual(sortedIds(Object.keys(afterZai.auth)), sortedIds(Object.keys(beforeZai.auth)), "zai auth modes must be preserved");
     assert.equal(afterZai.auth.apiKey?.name, beforeZai.auth.apiKey?.name, "zai API-key auth identity must be preserved");
     assert.equal(afterZai.auth.apiKey?.login, beforeZai.auth.apiKey?.login, "zai API-key login must be preserved");
     assert.equal(typeof beforeZai.auth.apiKey?.resolve, "function");
@@ -369,7 +382,7 @@ export async function runRegistrationPreservationChecks(registrations) {
 
     runtime.unregisterProvider("zai");
     assert.deepEqual(
-      [...runtime.getRegisteredProviderIds()].sort(),
+      sortedIds(runtime.getRegisteredProviderIds()),
       beforeRegisteredIds,
       "unregister must restore the registration registry exactly",
     );
@@ -498,7 +511,7 @@ export function runNativeReplayTests() {
     ["quota429", { status: 429, headers: { "retry-after": "0.001" }, body: "quota" }],
     ["wrong-body", { ...eligible503({ retryAfter: 0.001 }), body: "not a local queue rejection\n" }],
   ]) {
-    test(`native: unrelated ${label} retains maxRetries=1 behavior`, async () => {
+    test(`native: unrelated ${String(label)} retains maxRetries=1 behavior`, async () => {
       const piAi = await loadPiAi();
       const proxy = createFakeProxy([first, sse200()]);
       try {
@@ -551,7 +564,7 @@ export function runNativeReplayTests() {
       // Gate #5: random=0 ⇒ delay is exactly Retry-After + 1 ms of positive jitter.
       assert.deepEqual(state.delays, [1000 + 1], `expected [1001], saw ${JSON.stringify(state.delays)}`);
       assert.ok(waits.some((info) => info != null), "onWait must fire during admission wait");
-      assert.equal(waits[waits.length - 1], null, "onWait must be cleared on the success path");
+      assert.equal(waits.at(-1), null, "onWait must be cleared on the success path");
       assert.ok(fetchLog.length >= 2, "wrapper must observe via options.fetch");
     } finally {
       await proxy.close();
@@ -685,10 +698,8 @@ export function runNativeReplayTests() {
     try {
       const base = await proxy.baseUrl();
       const controller = new AbortController();
-      let releaseSleep;
       const sleep = () =>
         new Promise((_, reject) => {
-          releaseSleep = () => reject(new Error("aborted"));
           controller.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
         });
       const waits = [];
@@ -711,7 +722,7 @@ export function runNativeReplayTests() {
         true,
         "terminal error must be the abort",
       );
-      assert.equal(waits[waits.length - 1], null, "waiting UI cleared on abort");
+      assert.equal(waits.at(-1), null, "waiting UI cleared on abort");
     } finally {
       await proxy.close();
     }

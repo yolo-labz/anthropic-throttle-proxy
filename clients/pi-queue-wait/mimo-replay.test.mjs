@@ -75,7 +75,7 @@ for (const provider of ["mimo-desktop", "zai"]) {
         assert.equal(events.at(-1).type, "done", events.at(-1).error?.errorMessage);
         assert.equal(events.filter(e => e.type === "error").length, 0);
         assert.equal(f.proxy.requests.length, count + 1);
-        assert.deepEqual(f.delays, Array(count).fill(retryAfter * 1000 + 1));
+        assert.deepEqual(f.delays, new Array(count).fill(retryAfter * 1000 + 1));
         for (const req of f.proxy.requests) assert.equal(req.body, f.proxy.requests[0].body);
         assert.equal(f.waits.at(-1), null);
       } finally { await f.proxy.close(); }
@@ -127,7 +127,7 @@ for (const [label, deps, expectedCalls, expectedDelays, message] of [
   ["cumulative waits exceed budget", { maxWaitMs: 420001 }, 2, [210001], /210001 ms of waiting/],
   ["rejection ceiling", { maxRejections: 2 }, 3, [210001, 210001], /gave up after 3/],
 ]) {
-  test(`mimo native: bounded ${label}`, { timeout: 3000 }, async () => {
+  test(`mimo native: bounded ${String(label)}`, { timeout: 3000 }, async () => {
     const f = await fixture([eligible503({ retryAfter: 210 })]);
     try {
       const events = await drain(f.stream(deps)(model(), context(), f.options({ maxRetries: 3, maxRetryDelayMs: 1 })));
@@ -183,7 +183,7 @@ for (const [label, patch] of [
   ["fragment", { baseUrl: `${BASE}#x` }],
   ["credentials", { baseUrl: "http://fixture:secret@127.0.0.1:8773/v1" }],
 ]) {
-  test(`mimo native: ineligible ${label}`, { timeout: 3000 }, async () => {
+  test(`mimo native: ineligible ${String(label)}`, { timeout: 3000 }, async () => {
     const f = await fixture([eligible503({ retryAfter: 0.001 })]);
     try {
       const events = await drain(f.stream()(model(patch), context(), f.options()));
@@ -218,7 +218,7 @@ for (const [label, first] of [
   ["quota429", { status: 429, headers: { "retry-after": "0.001" }, body: "quota" }],
   ["wrong body", { ...eligible503({ retryAfter: 0.001 }), body: "not a queue rejection" }],
 ]) {
-  test(`mimo native: unrelated ${label} keeps maxRetries=1`, { timeout: 3000 }, async () => {
+  test(`mimo native: unrelated ${String(label)} keeps maxRetries=1`, { timeout: 3000 }, async () => {
     const f = await fixture([first, sse200()]);
     try {
       const events = await drain(f.stream()(model(), context(), f.options({ maxRetries: 1 })));
@@ -300,15 +300,18 @@ for (const [kind, delta] of [
   ["thinking", { reasoning_content: "partial thought" }],
   ["toolcall", { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "probe", arguments: "{}" } }] }],
 ]) {
-  test(`mimo native: partial ${kind} stream is never replayed`, { timeout: 3000 }, async () => {
+  test(`mimo native: partial ${String(kind)} stream is never replayed`, { timeout: 3000 }, async () => {
+    // Build the SSE error frame via a plain variable: interpolating a template
+    // literal inside another one is what S4624 flags, and this keeps it readable.
+    const errorFrame = JSON.stringify({ error: { message: `503 ${PROXY_QUEUE_BODY}` } });
     const body = `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}\n\n` +
-      `data: ${JSON.stringify({ error: { message: `503 ${PROXY_QUEUE_BODY}` } })}\n\n`;
+      `data: ${errorFrame}\n\n`;
     const f = await fixture([{ status: 200, headers: { "content-type": "text/event-stream", [MARKER_HEADER]: "1", [QUEUE_TIMEOUT_HEADER]: "1" }, body }]);
     try {
       const events = await drain(f.stream()(model(), context(), f.options({ maxRetries: 2 })));
       assert.equal(f.proxy.requests.length, 1);
       assert.deepEqual(f.delays, []);
-      assert.ok(events.some(e => e.type === `${kind}_delta`));
+      assert.ok(events.some(e => e.type === `${String(kind)}_delta`));
       assert.equal(events.at(-1).type, "error");
     } finally { await f.proxy.close(); }
   });
@@ -439,7 +442,7 @@ test("mimo extension: real loader overlay preserves models.json configuration", 
     const { registrations } = loaded;
     assert.deepEqual(registrations.map(r => r.name).sort(), ["deepseek", "mimo-desktop", "zai"]);
     for (const { config } of registrations) {
-      assert.deepEqual(Object.keys(config).sort(), ["api", "streamSimple"]);
+      assert.deepEqual(Object.keys(config).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), ["api", "streamSimple"]);
       assert.equal(config.api, "openai-completions");
       assert.equal(typeof config.streamSimple, "function");
     }

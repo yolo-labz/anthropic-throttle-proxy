@@ -49,7 +49,7 @@ function createEventStream() {
     },
     async result() {
       while (!state.ended) await new Promise((resolve) => state.waiters.push(resolve));
-      return state.events[state.events.length - 1];
+      return state.events.at(-1);
     },
     [Symbol.asyncIterator]() {
       return {
@@ -263,7 +263,7 @@ function fakeStreamSimple(behavior, attempts = []) {
           const text = await response.text();
           stream.push(
             nativeErrorEvent(
-              { errorMessage: `${response.status} ${text}`, ...(step.thenError ?? {}) },
+              { errorMessage: `${response.status} ${text}`, ...step.thenError },
               options,
             ),
           );
@@ -401,7 +401,7 @@ test("unit: persistent wait chunks long advice without timer overflow", { timeou
   }
 });
 
-await runNativeReplayTests();
+runNativeReplayTests();
 
 for (const [reason, stopReason] of [["stop", "error"], ["error", "stop"], [undefined, "error"], ["error", undefined]]) {
   test(`unit: fail closed on terminal semantics ${reason}/${stopReason}`, async () => {
@@ -542,7 +542,7 @@ for (const [name, modelOverrides, pathOverride] of [
   ["request URL has credentials", { baseUrl: "http://fixture:secret@127.0.0.1:8766/api/coding/paas/v4" }, undefined],
   ["request URL has a fragment", {}, "/chat/completions#fragment"],
 ]) {
-  test(`unit: strict full URL — ${name}`, async () => {
+  test(`unit: strict full URL — ${String(name)}`, async () => {
     const attempts = [];
     const { deps, sleeps } = baseDeps({
       streamSimple: fakeStreamSimple([{ pathOverride }], attempts),
@@ -591,12 +591,12 @@ test("unit: eligible rejection is retried transparently to a full success stream
   );
   assert.equal(attempts.length, 2, "exactly two upstream attempts");
   assert.equal(errorEventsOf(events).length, 0, "client must see no error event");
-  assert.equal(events[events.length - 1]?.type, "done");
+  assert.equal(events.at(-1)?.type, "done");
   assert.equal(sleeps.length, 1);
   assert.ok(sleeps[0].ms > 7000, "jitter must be strictly positive");
   assert.ok(sleeps[0].ms < 7000 + 60_000, "jitter must stay bounded");
   assert.ok(waits.some((info) => info != null), "onWait fired during the admission wait");
-  assert.equal(waits[waits.length - 1], null, "waiting UI cleared after success");
+  assert.equal(waits.at(-1), null, "waiting UI cleared after success");
   assert.equal(calls[0].body, calls[1].body, "identical serialized body on both attempts");
   assert.ok(String(calls[0].body).includes("PROBE-SECRET-BODY"), "body is the caller's, not a reserialization");
   assert.equal(attempts[0].options.signal, callerSignal, "caller signal object passed through unchanged");
@@ -787,14 +787,14 @@ for (const [name, errorShape] of [
   ["role", { omitRole: true }],
   ["usage", { omitUsage: true }],
 ]) {
-  test(`unit: missing assistant error ${name} fails closed`, async () => {
+  test(`unit: missing assistant error ${String(name)} fails closed`, async () => {
     const attempts = [];
     const { deps, sleeps } = baseDeps({ streamSimple: fakeStreamSimple([{ thenError: errorShape }], attempts) });
     const { fetch, calls } = fakeFetch([eligible503()]);
     await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
     assert.equal(attempts.length, 1);
     assert.equal(calls.length, 1);
-    assert.equal(sleeps.length, 0, `missing ${name} must not authorize a retry`);
+    assert.equal(sleeps.length, 0, `missing ${String(name)} must not authorize a retry`);
   });
 }
 
@@ -815,7 +815,7 @@ test("unit: maxRejections exhaustion surfaces a synthetic, retry-safe error", as
   for (const forbidden of ["503", "rate limit", "proxy queue wait exceeded"]) {
     assert.ok(!message.toLowerCase().includes(forbidden.toLowerCase()), `exhaustion text must not contain "${forbidden}"`);
   }
-  assert.equal(waits[waits.length - 1], null, "waiting UI cleared on exhaustion");
+  assert.equal(waits.at(-1), null, "waiting UI cleared on exhaustion");
 });
 
 test("unit: maxWaitMs stops admission waits and never re-surfaces the 503", async () => {
@@ -834,7 +834,7 @@ test("unit: maxWaitMs stops admission waits and never re-surfaces the 503", asyn
   const message = String(errors[0].error?.errorMessage ?? "");
   assert.ok(!message.includes("503"), "budget exhaustion must not echo the raw status");
   assert.ok(!message.includes(PROXY_QUEUE_BODY.trim()), "budget exhaustion must not re-surface the last rejection");
-  assert.equal(waits[waits.length - 1], null);
+  assert.equal(waits.at(-1), null);
 });
 
 test("unit: budget caps admission waits only — a started stream runs to completion", async () => {
@@ -844,7 +844,7 @@ test("unit: budget caps admission waits only — a started stream runs to comple
   const events = await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { fetch, maxRetries: 0 }));
   assert.equal(attempts.length, 2);
   assert.equal(errorEventsOf(events).length, 0);
-  assert.equal(events[events.length - 1]?.type, "done", "successful stream must not be cut by the admission budget");
+  assert.equal(events.at(-1)?.type, "done", "successful stream must not be cut by the admission budget");
 });
 
 test("unit: abort while sleeping — no further upstream call, waiting UI cleared", async () => {
@@ -872,7 +872,7 @@ test("unit: abort while sleeping — no further upstream call, waiting UI cleare
     const errors = errorEventsOf(events);
     assert.equal(errors.length, 1);
     assert.equal(errors[0].reason === "aborted" || errors[0].error?.stopReason === "aborted", true);
-    assert.equal(waits[waits.length - 1], null, "waiting UI cleared on abort");
+    assert.equal(waits.at(-1), null, "waiting UI cleared on abort");
   } finally {
     controller.abort();
     releaseAborted?.();
@@ -893,7 +893,7 @@ test("unit: abort before the first fetch — zero upstream calls", async () => {
   const errors = errorEventsOf(events);
   assert.equal(errors.length, 1);
   assert.equal(errors[0].reason === "aborted" || errors[0].error?.stopReason === "aborted", true);
-  assert.equal(waits[waits.length - 1], null);
+  assert.equal(waits.at(-1), null);
 });
 
 test("unit: non-abort sleep rejection preserves the failure as one native error", async () => {
@@ -909,7 +909,7 @@ test("unit: non-abort sleep rejection preserves the failure as one native error"
   assert.equal(attempts.length, 1);
   assert.equal(calls.length, 1);
   assertSingleNativeError(events, "error", "synthetic sleep failure");
-  assert.equal(waits[waits.length - 1], null, "waiting UI must clear after a sleep failure");
+  assert.equal(waits.at(-1), null, "waiting UI must clear after a sleep failure");
 });
 
 for (const [name, streamSimple, message] of [
@@ -939,7 +939,7 @@ for (const [name, streamSimple, message] of [
     const { deps } = baseDeps({ streamSimple, onWait: (info) => waits.push(info) });
     const events = await drain(createQueueWaitStream(deps)(makeModel(), makeContext(), { maxRetries: 0 }));
     assertSingleNativeError(events, "error", message);
-    assert.equal(waits[waits.length - 1], null, "waiting UI must clear after an engine throw");
+    assert.equal(waits.at(-1), null, "waiting UI must clear after an engine throw");
   });
 }
 
@@ -969,7 +969,7 @@ test("unit: clone body completing after the native error still yields the retry"
     const events = await streamPromise;
     assert.equal(attempts.length, 2, "late clone body must complete the eligible verdict and retry");
     assert.equal(errorEventsOf(events).length, 0);
-    assert.equal(events[events.length - 1]?.type, "done");
+    assert.equal(events.at(-1)?.type, "done");
   } finally {
     for (const response of responses) response.releaseCloneBody?.();
     await streamPromise.catch(() => {});
@@ -1087,7 +1087,7 @@ test("unit: abort during a stalled clone terminates promptly without retry", asy
   assert.equal(events.length, 1);
   assert.equal(events[0].reason, "aborted");
   assert.equal(events[0].error?.stopReason, "aborted");
-  assert.equal(waits[waits.length - 1], null, "waiting UI clears on capture abort");
+  assert.equal(waits.at(-1), null, "waiting UI clears on capture abort");
 });
 
 // ---------------------------------------------------------------------------
@@ -1128,7 +1128,7 @@ test("unit: concurrent requests isolate scripts and wait state", async () => {
   assert.equal(slowAttempts.length, 2, "slow lane retried once");
   assert.equal(fastAttempts.length, 1, "fast lane never waited");
   assert.equal(errorEventsOf(slow).length + errorEventsOf(fast).length, 0);
-  assert.equal(slow[slow.length - 1]?.type, "done");
-  assert.equal(fast[fast.length - 1]?.type, "done");
+  assert.equal(slow.at(-1)?.type, "done");
+  assert.equal(fast.at(-1)?.type, "done");
   assert.ok(sleeps.length >= 1, "the slow lane's admission wait was recorded");
 });
