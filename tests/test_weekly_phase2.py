@@ -208,3 +208,49 @@ def test_burn_is_silent_without_enough_span_or_across_a_reset() -> None:
     store = ua.WeekSamples()
     store.observe("k", now - 30, 0.5, now + WEEK)
     assert ua.burn_projection(store.samples("k"), now, ua.BURN_SHORT_S) is None
+
+
+# --- wiring: one gate for the handler, burn metric/log transition -------------
+
+
+def test_defer_response_is_one_gate_and_the_share_reason(fleet) -> None:
+    _set_util(fleet, 0.60, 0.47)
+    _skewed_tokens()
+    resp = proxy._weekly_defer_response(False, "side-projects")
+    assert resp is not None and resp.status == 503
+    assert b"weekly share" in resp.body
+    assert proxy._weekly_defer_response(True, "side-projects") is None
+
+
+def test_pacing_view_publishes_tokens_burn_and_enforced_flag(fleet, monkeypatch) -> None:
+    _set_util(fleet, 0.60, 0.47)
+    _skewed_tokens()
+    view = proxy._weekly_pacing_view()
+    assert view["weekly_tokens"] == {"side-projects": 900, "other": 100}
+    assert view["client_shares"]["enforced"] is True
+    assert view["client_shares"]["phase"] == "enforced-when-fleet-ahead"
+    assert view["burn"] == {}  # no unified samples observed in this test
+    monkeypatch.setattr(config, "WEEKLY_PACING_MODE", "observe")
+    assert proxy._weekly_pacing_view()["client_shares"]["phase"] == "observe-only"
+
+
+def test_burn_transition_logs_and_counts_once(monkeypatch) -> None:
+    now = 1_000_000.0 + WEEK * 0.5
+    reset = now + WEEK * 0.5
+    start = reset - WEEK
+    store = ua.WeekSamples()
+    t = now - 25 * 3600.0
+    while t <= now:
+        store.observe("hot", t, 1.20 * (t - start) / WEEK, reset)
+        t += 60.0
+    monkeypatch.setattr(proxy, "_WEEK_SAMPLES", store)
+    monkeypatch.setattr(proxy, "_burn_firing", set())
+    logged: list[str] = []
+    monkeypatch.setattr(proxy, "log", logged.append)
+    before = proxy.M_WEEKLY_BURN_ALERTS.labels(bearer="hot")._value.get()
+    proxy._refresh_burn(now, force=True)
+    proxy._refresh_burn(now + 1, force=True)  # still firing: no second transition
+    after = proxy.M_WEEKLY_BURN_ALERTS.labels(bearer="hot")._value.get()
+    assert after - before == 1
+    assert len(logged) == 1 and "weekly-burn-alert bid=hot" in logged[0]
+    assert proxy.M_WEEKLY_BURN.labels(bearer="hot", window="24h")._value.get() > 1.0

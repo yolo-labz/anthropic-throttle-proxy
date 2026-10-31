@@ -1071,6 +1071,17 @@ def _weekly_pacing_defer(priority: bool) -> int | None:
     return retry_after if verdict == "defer" else None
 
 
+def _weekly_defer_response(priority: bool, project: str) -> web.Response | None:
+    """Both weekly gates in one place: fleet-ahead pacing first, then the client share."""
+    retry = _weekly_pacing_defer(priority)
+    if retry is not None:
+        return _weekly_pacing_response(retry)
+    retry = _weekly_share_defer(project, priority)
+    if retry is None:
+        return None
+    return _weekly_pacing_response(retry, "client over its weekly share while the fleet is ahead")
+
+
 def _weekly_pacing_response(
     retry_after_s: int, reason: str = "every account is ahead of schedule"
 ) -> web.Response:
@@ -6145,14 +6156,9 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if early_response is not None:
         return early_response
     body = _shrink_forward_body(request, body, path, model_label, headers)
-    paced_retry_after = _weekly_pacing_defer(is_priority)
-    if paced_retry_after is not None:
-        return _weekly_pacing_response(paced_retry_after)
-    share_retry_after = _weekly_share_defer(wproject, is_priority)
-    if share_retry_after is not None:
-        return _weekly_pacing_response(
-            share_retry_after, "client over its weekly share while the fleet is ahead"
-        )
+    weekly_early = _weekly_defer_response(is_priority, wproject)
+    if weekly_early is not None:
+        return weekly_early
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
         request, path, headers, bid, model, req_max_tokens, via
