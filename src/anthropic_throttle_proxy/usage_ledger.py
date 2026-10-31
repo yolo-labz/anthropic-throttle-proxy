@@ -11,7 +11,7 @@ the request.
 
 Row shape (never prompt content, never a token)::
 
-    {"epoch", "bearer", "model", "project", "status", "usage_complete"?,
+    {"epoch", "bearer", "model", "project", "status", "session"?, "usage_complete"?,
      "input", "output", "cacheRead", "cacheWrite"?}
 
 * Every message attempt writes one row. Token fields appear only for a 2xx
@@ -155,6 +155,7 @@ def record(
     captured: bytes | bytearray | None,
     tail: str | None = None,
     now: float | None = None,
+    session: str | None = None,
 ) -> None:
     """Queue one row for this attempt. No-op when the ledger is off. Never raises."""
     if mode() == "off":
@@ -167,6 +168,8 @@ def record(
             "project": project or "_direct",
             "status": status,
         }
+        if session:
+            row["session"] = session  # hashed session key (session_affinity.derive_key)
         if status is not None and 200 <= status < 300 and captured:
             counts, complete = parse_usage(bytes(captured), tail)
             if counts is not None:

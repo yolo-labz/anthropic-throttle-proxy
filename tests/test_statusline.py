@@ -91,6 +91,7 @@ _HEALTH_TOP_LEVEL = frozenset(
         "central_status",
         "account_identity",
         "brake",
+        "session_affinity",
         "api_key",
         "central_last_check",
         "bearers",
