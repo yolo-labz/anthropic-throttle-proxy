@@ -586,6 +586,16 @@ WAIT_BUDGET_HEADER = "x-anthropic-throttle-wait-budget-ms"
 # lift their queue-wait bound from QUEUE_MAX_WAIT_S up to QUEUE_MAX_PATIENT_WAIT_S.
 # Absent / unparseable / non-positive = unchanged bound. Never forwarded upstream.
 PATIENCE_HEADER = "x-anthropic-throttle-client-patience-ms"
+# Streaming requests (stream=true) that wait on a queue slot or a weekly-pacing
+# deferral commit a 200 text/event-stream response FIRST and ping it while they
+# wait, so no client idle timer fires. Opt-in per request via PATIENCE_HEADER, or
+# for every streaming request when this knob is on. Off = byte-identical behaviour.
+STREAM_HOLD_ON_DEFER = os.environ.get("THROTTLE_STREAM_HOLD_ON_DEFER", "off").strip().lower() in {
+    "on",
+    "true",
+    "1",
+    "yes",
+}
 
 # Stamped on a relayed 429 that this proxy classified as Anthropic's OAuth
 # ENTITLEMENT gate rather than rate pushback: the request's first `system` block
