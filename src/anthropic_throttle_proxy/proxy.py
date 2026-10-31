@@ -5133,6 +5133,7 @@ async def _finalize(
     log(
         f"done   method={request.method} path=/{safe_path} status={final_status} bid={bid} "
         f"cid={safe_cid} via={safe_via} model={safe_model} elapsed_ms={elapsed_ms} "
+        f"project={_project_of(request.headers)} "
         f"inflight={counters.s['inflight']} "
         f"queued={counters.s['queued']} served={counters.s['served']} "
         f"disc={counters.s['client_disconnects']} retries={counters.s['upstream_retries']}"
