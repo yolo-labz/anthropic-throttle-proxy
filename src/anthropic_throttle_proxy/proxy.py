@@ -7400,6 +7400,9 @@ def main() -> None:
     # it never consumes a bearer slot and never reaches upstream (FR-002).
     app.router.add_get("/__throttle/statusline", statusline)
     app.router.add_get("/metrics", metrics)
+    from .consumers import attach_consumers
+
+    attach_consumers(app)  # spec 378 phase 1: read-only, env-gated
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
     from .ui.routes import attach_ui
 
