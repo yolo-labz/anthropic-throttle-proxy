@@ -23,7 +23,9 @@ def two_accounts(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: list(snapshot))
     monkeypatch.setattr(config, "QUEUE_RETRY_AFTER_MAX_S", 10**9)
     monkeypatch.setattr(config, "WEEKLY_BURST", ua.DEFAULT_BURST)
-    config.bearer_state.clear()
+    # Swap in a private dict for this test only: writing into the shared
+    # config.bearer_state leaked bearers into later tests (test_accounts ordering).
+    monkeypatch.setattr(config, "bearer_state", {})
     return now, snapshot
 
 
