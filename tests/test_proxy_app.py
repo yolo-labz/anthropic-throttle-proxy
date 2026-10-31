@@ -1364,6 +1364,7 @@ async def test_upstream_400_log_identifies_request_without_bearer_secret(
     assert "bid=" in done
     assert "cid=" in done
     assert "via=direct" in done
+    assert "project=_direct" in done
     assert "elapsed_ms=" in done
     assert "secret-value" not in "\n".join(lines)
     assert "gsk_reflected_test_secret" not in "\n".join(lines)
