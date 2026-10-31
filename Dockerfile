@@ -45,11 +45,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/src /app/src
-COPY --from=builder /app/pyproject.toml /app/pyproject.toml
+# Run as an unprivileged user: the container holds upstream credentials in its
+# environment, so a process escape must not land as root. UID/GID are fixed so a
+# bind-mounted state directory keeps stable ownership across restarts.
+RUN groupadd --gid 10001 throttler \
+    && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/throttler throttler \
+    && mkdir -p /home/throttler/.local/state \
+    && chown -R throttler:throttler /home/throttler
+
+COPY --from=builder --chown=throttler:throttler /app/.venv /app/.venv
+COPY --from=builder --chown=throttler:throttler /app/src /app/src
+COPY --from=builder --chown=throttler:throttler /app/pyproject.toml /app/pyproject.toml
 
 ENV PATH="/app/.venv/bin:${PATH}" \
+    HOME=/home/throttler \
     PYTHONUNBUFFERED=1 \
     PYTHONIOENCODING=utf-8 \
     APP_VERSION=${APP_VERSION} \
@@ -57,6 +66,10 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     BUILD_DATE=${BUILD_DATE} \
     THROTTLE_HOST=0.0.0.0 \
     THROTTLE_PORT=8765
+
+# The app writes state under $XDG_STATE_HOME (falling back to ~/.local/state),
+# both now owned by the unprivileged user.
+USER throttler
 
 EXPOSE 8765
 
