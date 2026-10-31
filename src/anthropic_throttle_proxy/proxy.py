@@ -58,7 +58,7 @@ from aiohttp import web
 from . import __build__ as _build_identity
 from . import __version__ as _version
 from . import account_pool as _account_pool
-from . import config
+from . import config, usage_ledger
 from . import free_budget as _free_budget
 from . import history as _history
 from . import lanes as _lanes
@@ -5042,6 +5042,15 @@ async def _finalize(
             lane=_spend_lane_label(),
             project=_project_of(request.headers),
             weekly_project=_weekly_project_of(request.headers),
+        )
+    if request.method == "POST" and MESSAGES_SUBPATH in path:
+        usage_ledger.record(
+            bearer=bid,
+            model=model_label,
+            project=_project_of(request.headers),
+            status=final_status,
+            captured=attempt.captured,
+            tail=(attempt.meta or {}).get("usage_tail"),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
