@@ -57,6 +57,7 @@ from aiohttp import web
 
 from . import __build__ as _build_identity
 from . import __version__ as _version
+from . import account_pool as _account_pool
 from . import config
 from . import free_budget as _free_budget
 from . import history as _history
@@ -1015,7 +1016,7 @@ def _weekly_pacing_view() -> dict:
 
 
 def _account_routing_enabled() -> bool:
-    return config.ACCOUNT_ROUTING_MODE in {"least_loaded", "budget_paced"} and bool(
+    return config.ACCOUNT_ROUTING_MODE in {"least_loaded", "budget_paced", "round_robin"} and bool(
         config.ACCOUNT_CRED_PATHS
     )
 
@@ -1755,6 +1756,36 @@ def _bearer_local_load_score(bid: str) -> float:
     return pressure * reference / capacity
 
 
+def _round_robin_candidates(
+    snapshot: list[dict[str, object]],
+    *,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> list[dict[str, object]]:
+    by_bearer: dict[str, dict[str, object]] = {}
+    for acct in snapshot:
+        bid = acct.get("bearer_id")
+        if not isinstance(bid, str) or not isinstance(acct.get("token"), str):
+            continue
+        if _bearer_retry_after_remaining(bid) > 0:
+            continue
+        score = _account_routing_candidate_score(
+            acct,
+            "",
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+            allow_pressure=True,
+            allow_target_spillover=True,
+            allow_retry_probe=allow_retry_probe,
+        )
+        if math.isfinite(score):
+            by_bearer.setdefault(bid, acct)
+    return list(by_bearer.values())
+
+
 def _account_selection(
     snapshot: list[dict[str, object]],
     incoming_bid: str,
@@ -1800,6 +1831,25 @@ def _account_selection(
         for acct in snapshot
         if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
     ]
+    if config.ACCOUNT_ROUTING_MODE == "round_robin":
+        candidates = _round_robin_candidates(
+            routable,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+            allow_retry_probe=allow_retry_probe,
+        )
+        floor = min(
+            (_bearer_local_load_score(str(acct["bearer_id"])) for acct in candidates),
+            default=math.inf,
+        )
+
+        def work_key(acct: dict[str, object]) -> tuple[int, int]:
+            lim = config.bearer_limiters.get(str(acct["bearer_id"]))
+            queued = lim.queued_total + lim.priority_queued if lim is not None else 0
+            return _account_pool.BALANCER.key(str(acct["label"]), queued)
+
+        return (min(candidates, key=work_key) if candidates else None), floor
     strict_candidates = [acct for acct in routable if score(acct) < math.inf]
     best_configured_load = min(
         (_bearer_local_load_score(str(acct["bearer_id"])) for acct in strict_candidates),
@@ -2059,6 +2109,20 @@ def _route_account_if_enabled(
         return incoming_bid, None
     if dead_fallback:
         log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
+    if config.ACCOUNT_ROUTING_MODE == "round_robin":
+        members = {
+            str(acct["label"]): str(acct["bearer_id"])
+            for acct in _round_robin_candidates(
+                snapshot,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+                allow_retry_probe=allow_retry_probe,
+            )
+        }
+        label = str(selected.get("label", ""))
+        if label in members:
+            _account_pool.BALANCER.selected(label, members)
     return _route_to_selected_auth(headers, incoming_bid, selected)
 
 

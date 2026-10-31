@@ -1101,6 +1101,50 @@ def _display_config(source: str | None) -> dict:
     return ui_cfg
 
 
+def _account_pool_view(now: float) -> dict | None:
+    from .. import account_pool
+
+    snapshot = _accounts.routing_snapshot(now)
+    if not snapshot:
+        return None
+    members = {
+        str(acct["label"]): str(acct["bearer_id"]) for acct in snapshot if acct.get("bearer_id")
+    }
+    eligible = {
+        str(acct["bearer_id"])
+        for acct in _proxy._round_robin_candidates(
+            snapshot, model="", max_tokens=None, now=now, allow_retry_probe=True
+        )
+    }
+    rows = account_pool.BALANCER.rows(members)
+    for row in rows:
+        bid = row["bearer"]
+        remaining = _proxy._bearer_retry_after_remaining(bid)
+        row["eligible"] = bid in eligible
+        windows = _proxy._unified_live_view(_proxy._statusline_unified(bid), now)
+        for window in ("5h", "7d"):
+            util = windows.get(f"util_{window}")
+            row[f"quota_{window}"] = round(100 * util) if isinstance(util, (int, float)) else None
+        row["reason"] = (
+            "credential refused"
+            if _proxy._bearer_credential_dead(bid)
+            else "quota hold until "
+            + datetime.fromtimestamp(now + remaining).strftime("%d/%m %H:%M")
+            if remaining > 0
+            else "eligible"
+            if bid in eligible
+            else "unavailable / awaiting recovery"
+        )
+    return {
+        "mode": _config.ACCOUNT_ROUTING_MODE,
+        "since": datetime.fromtimestamp(account_pool.BALANCER.started_at).strftime(
+            "%d/%m/%Y %H:%M"
+        ),
+        "eligible": sum(row["eligible"] for row in rows),
+        "rows": rows,
+    }
+
+
 async def _collect_view(*, project: bool = True, source: str | None = None) -> dict[str, object]:
     """Snapshot the proxy's globals into a JSON-safe view for the template.
 
@@ -1170,6 +1214,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
     for b in bearers:
         b["identity"] = email_by_bid.get(b["bearer_id"]) or b.get("account")
     identity = _accounts.identity_state(accounts_view)
+    pool_view = _account_pool_view(now)
     _publish_account_gauges(endpoint, identity)
     # Fleet + Copilot are concurrent with the account refresh — both are
     # failure-tolerant (a down sibling / 403 org renders as such, never raises).
@@ -1225,6 +1270,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
         "subscriptions": subscriptions,
         "fleet_ui_config_error": ui_cfg.get("config_error"),
         "identity": identity,
+        "account_pool": pool_view,
         "providers": providers,
         "lanes": lanes_view,
         "copilot": copilot_view,
