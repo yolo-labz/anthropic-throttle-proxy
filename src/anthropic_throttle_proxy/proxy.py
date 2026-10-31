@@ -64,6 +64,7 @@ from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
 from . import pacing as _pacing
+from . import session_affinity as _session_affinity
 from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
 
@@ -2118,6 +2119,71 @@ def _healthy_known_unconfigured_bearer(
     return _bearer_local_load_score(incoming_bid) <= best_configured_load
 
 
+def _pinned_account(
+    snapshot: list[dict[str, object]],
+    session_key: str | None,
+    incoming_bid: str,
+    *,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> dict[str, object] | None:
+    """The account this session already runs on, while it is still routable.
+
+    Prompt caches are per account, so a hop re-writes the whole conversation
+    (TD-B0a). Pure: it reads the pin and the STRICT gate (``allow_pressure`` off),
+    which is ``inf`` for Retry-After/429, brake, dead credential, rejected,
+    util >= 1 and util >= warn. An open Retry-After window, or a queue on the
+    pinned account while a sibling has room, also release the pin. Any release,
+    or no pin, returns ``None`` and the normal pool/pacing choice runs (that
+    choice is then re-pinned by the caller).
+    """
+    if not session_key or not _session_affinity.enabled():
+        return None
+    pinned_bid = _session_affinity.pinned(session_key, now)
+    # Any open Retry-After window (a 429 or the brake) releases the pin, even
+    # one short enough that the score only surcharges it instead of gating it.
+    if pinned_bid is None or _bearer_retry_after_remaining(pinned_bid) > 0:
+        return None
+
+    def strict_ok(acct: dict[str, object]) -> bool:
+        return (
+            _account_routing_candidate_score(
+                acct,
+                incoming_bid,
+                allow_retry_probe=allow_retry_probe,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            )
+            < math.inf
+        )
+
+    pinned = next(
+        (
+            acct
+            for acct in snapshot
+            if acct.get("bearer_id") == pinned_bid and isinstance(acct.get("token"), str)
+        ),
+        None,
+    )
+    if pinned is None or not strict_ok(pinned):
+        return None
+    # A cache hop costs one rewrite; waiting behind a full account costs up to the
+    # queue budget on every turn, and sessions sharing a key (identical prompts)
+    # would otherwise all pile onto one account.
+    if _bearer_local_load_score(pinned_bid) >= _QUEUE_SPILLOVER_LOAD_THRESHOLD and any(
+        acct is not pinned
+        and isinstance(acct.get("token"), str)
+        and strict_ok(acct)
+        and _bearer_local_load_score(str(acct["bearer_id"])) < _QUEUE_SPILLOVER_LOAD_THRESHOLD
+        for acct in snapshot
+    ):
+        return None
+    return pinned
+
+
 def _account_route_decision(
     snapshot: list[dict[str, object]],
     incoming_bid: str,
@@ -2128,6 +2194,7 @@ def _account_route_decision(
     max_tokens: int | None,
     now: float,
     allow_retry_probe: bool,
+    session_key: str | None = None,
 ) -> tuple[dict[str, object] | None, bool]:
     """Return ``(credential rewrite, used_dead_fallback)`` for one message.
 
@@ -2143,6 +2210,17 @@ def _account_route_decision(
         return api_key, False
     if not _account_routing_enabled():
         return api_key, False
+    pinned = _pinned_account(
+        snapshot,
+        session_key,
+        incoming_bid,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_retry_probe=allow_retry_probe,
+    )
+    if pinned is not None:
+        return pinned, False
 
     configured_bids = {
         str(acct["bearer_id"])
@@ -2223,6 +2301,24 @@ def _strip_sentinel_api_key(headers: dict[str, str]) -> bool:
     return False
 
 
+def _remember_session_account(
+    snapshot: list[dict[str, object]],
+    session_key: str | None,
+    selected: dict[str, object],
+    now: float,
+) -> None:
+    """Pin the session to the OAuth account just chosen (never the metered API-key lane)."""
+    bid = selected.get("bearer_id")
+    if not session_key or not isinstance(bid, str) or selected.get("auth_type") == "api_key":
+        return
+    if not any(acct.get("bearer_id") == bid for acct in snapshot):
+        return
+    previous = _session_affinity.pinned(session_key, now)
+    _session_affinity.pin(session_key, bid, now)
+    if previous is not None and previous != bid:
+        log(f"affinity-migrate session={session_key} from={previous} to={bid}")
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -2251,6 +2347,7 @@ def _route_account_if_enabled(
         explicit_api_key = False
     api_key = None if explicit_api_key else _api_key_candidate()
     now = time.time()
+    session_key = _session_affinity.current_key()
     snapshot: list[dict[str, object]] = []
     if (
         not explicit_api_key
@@ -2275,9 +2372,11 @@ def _route_account_if_enabled(
         max_tokens=max_tokens,
         now=now,
         allow_retry_probe=allow_retry_probe,
+        session_key=session_key,
     )
     if selected is None:
         return incoming_bid, None
+    _remember_session_account(snapshot, session_key, selected, now)
     if dead_fallback:
         log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
     if config.ACCOUNT_ROUTING_MODE == "round_robin":
@@ -5120,6 +5219,7 @@ async def _finalize(
             bearer=bid,
             model=model_label,
             project=_project_of(request.headers),
+            session=_session_affinity.current_key(),
             status=final_status,
             captured=attempt.captured,
             tail=(attempt.meta or {}).get("usage_tail"),
@@ -6416,6 +6516,8 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     early_response = _fleet_budget_response(request)
     if early_response is not None:
         return early_response
+    if request.method == "POST" and MESSAGES_SUBPATH in path:
+        _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
     max_wait_for_hold = _effective_queue_max_wait(request.headers)
     paced_retry_after = _weekly_pacing_defer(is_priority)
@@ -7596,6 +7698,7 @@ async def health(_request: web.Request) -> web.Response:
         # verification (a stale .claude.json label after a promote credential
         # swap looks identical until probed — the 10/07 false alarm).
         "account_identity": account_identity,
+        "session_affinity": {"enabled": _session_affinity.enabled(), **_session_affinity.stats()},
         # Pane-19 gap: surface whether the 7d/5h utilization brake is armed.
         # enabled=false means accounts can march to a hard 1.0 lockout unbraked.
         "brake": {

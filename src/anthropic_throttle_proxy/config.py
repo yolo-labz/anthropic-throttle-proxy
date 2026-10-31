@@ -484,6 +484,11 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 WEEKLY_PACING_MODE = _usage_allocator.parse_mode(os.environ.get("THROTTLE_WEEKLY_PACING"))
 # Per-request quota ledger (usage_ledger.py): off|observe. Measurement only; read per call.
 USAGE_LEDGER_MODE = os.environ.get("THROTTLE_USAGE_LEDGER", "off")
+# Session->account affinity (session_affinity.py): on|off kill switch. A session stays on
+# the account it started on; the pool/pacing policy only places NEW sessions.
+SESSION_AFFINITY = (
+    "off" if os.environ.get("THROTTLE_SESSION_AFFINITY", "on").strip().lower() == "off" else "on"
+)
 WEEKLY_BURST = _usage_allocator.parse_burst(os.environ.get("THROTTLE_WEEKLY_BURST"))
 CLIENT_SHARES = _usage_allocator.parse_shares(os.environ.get("THROTTLE_CLIENT_SHARES"))
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
