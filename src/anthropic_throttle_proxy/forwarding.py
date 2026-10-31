@@ -301,6 +301,9 @@ def note_upstream_auth(status: int, body: bytes | None = None) -> None:
         config.state["upstream_auth_last_check"] = time.time()
 
 
+_LEDGER_TAIL_BYTES = 64 * 1024
+
+
 async def _stream_response(request: web.Request, upstream: aiohttp.ClientResponse) -> ForwardResult:
     """Stream an open upstream response back to the client, capturing usage.
 
@@ -360,6 +363,12 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     await response.prepare(request)
     captured = bytearray()
     cap_limit = 1024 * 1024
+    # Usage ledger only (off by default): keep the LAST bytes too, because the
+    # terminal message_delta carries the final output count and a long stream
+    # overflows the head capture above. Bounded; no I/O here.
+    ledger_on = config.USAGE_LEDGER_MODE != "off"
+    tail = bytearray()
+    total = 0
     try:
         async for chunk in upstream.content.iter_any():
             if not chunk:
@@ -367,6 +376,10 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
             await response.write(chunk)
             if len(captured) < cap_limit:
                 captured.extend(chunk[: cap_limit - len(captured)])
+            if ledger_on:
+                total += len(chunk)
+                tail.extend(chunk[-_LEDGER_TAIL_BYTES:])
+                del tail[: max(0, len(tail) - _LEDGER_TAIL_BYTES)]
     except Exception as mid_exc:
         # Upstream stalled/errored AFTER 200 + headers + partial body are on the
         # wire. End the stream cleanly (write_eof → the client sees a valid
@@ -377,6 +390,9 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
         with contextlib.suppress(Exception):
             await response.write_eof()
         return response, upstream.status, captured, StreamCommittedError(mid_exc), meta
+    if ledger_on:
+        meta["usage_tail"] = tail.decode("utf-8", "replace")
+        meta["usage_stream_bytes"] = str(total)
     await response.write_eof()
     return response, upstream.status, captured, None, meta
 

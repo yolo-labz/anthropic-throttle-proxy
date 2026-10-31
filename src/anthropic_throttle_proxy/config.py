@@ -478,6 +478,8 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 # Spec 377 phase 1. Off by default; observe computes and publishes only.
 # THROTTLE_WEEKLY_PACING=off|observe|enforce; burst is a finite fraction of the week.
 WEEKLY_PACING_MODE = _usage_allocator.parse_mode(os.environ.get("THROTTLE_WEEKLY_PACING"))
+# Per-request quota ledger (usage_ledger.py): off|observe. Measurement only; read per call.
+USAGE_LEDGER_MODE = os.environ.get("THROTTLE_USAGE_LEDGER", "off")
 WEEKLY_BURST = _usage_allocator.parse_burst(os.environ.get("THROTTLE_WEEKLY_BURST"))
 CLIENT_SHARES = _usage_allocator.parse_shares(os.environ.get("THROTTLE_CLIENT_SHARES"))
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
