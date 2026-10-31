@@ -1377,6 +1377,18 @@ def _note_bearer_credential(
         )
 
 
+def _weekly_share_inputs(
+    bid: str, unified: object
+) -> tuple[tuple[float, float | None] | None, float]:
+    """(7d utilisation, reset) for the weekly share, and the bearer's live request count."""
+    weekly = None
+    if isinstance(unified, dict) and isinstance(unified.get("util_7d"), (int, float)):
+        weekly = (float(unified["util_7d"]), unified.get("reset_7d"))
+    lim = config.bearer_limiters.get(bid)
+    request_count = (lim.queued_total + lim.priority_queued + lim.inflight) if lim else 0.0
+    return weekly, float(request_count)
+
+
 def _account_routing_candidate_score(
     acct: dict[str, object],
     incoming_bid: str,
@@ -1442,11 +1454,7 @@ def _account_routing_candidate_score(
     # window: otherwise the -0.01 bonus lets a windowed incoming (even a
     # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
     stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
-    weekly = None
-    if isinstance(unified, dict) and isinstance(unified.get("util_7d"), (int, float)):
-        weekly = (float(unified["util_7d"]), unified.get("reset_7d"))
-    lim = config.bearer_limiters.get(bid)
-    request_count = (lim.queued_total + lim.priority_queued + lim.inflight) if lim else 0.0
+    weekly, request_count = _weekly_share_inputs(bid, unified)
     return _routing_pressure_score(
         load=load,
         util=util,
@@ -1459,7 +1467,7 @@ def _account_routing_candidate_score(
         now=now,
         allow_target_spillover=allow_target_spillover,
         weekly=weekly,
-        request_count=float(request_count),
+        request_count=request_count,
     )
 
 
