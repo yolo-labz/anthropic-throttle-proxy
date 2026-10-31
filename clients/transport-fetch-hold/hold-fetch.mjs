@@ -69,7 +69,7 @@ export function createHoldFetch(innerFetch = globalThis.fetch) {
 
   function resume() {
     held = false;
-    for (const waiter of [...waiters]) {
+    for (const waiter of waiters) {
       waiter.resolve();
     }
   }
@@ -103,7 +103,7 @@ export function createHoldFetch(innerFetch = globalThis.fetch) {
     // Re-loop (defect 1): resume() resolves the park, but a re-hold may land
     // before this continuation runs. Re-check the gate every wake so the wire
     // is only touched while it is open.
-    while (held) {
+    while (isHeld()) {
       await park(init.signal);
     }
     return innerFetch(input, init);
