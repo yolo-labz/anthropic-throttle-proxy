@@ -70,6 +70,13 @@
                      {% if k.max is not none %}max="{{ k.max }}"{% endif %}
                      step="0.01" required>
             </label>
+          {% elif k.type == "choice" %}
+            <label class="input-wrap">
+              <span class="sr-only">{{ k.label }}</span>
+              <select name="value" title="default: {{ k.default }}">
+                {% for c in k.choices %}<option value="{{ c }}"{% if c == k.value %} selected{% endif %}>{{ c }}</option>{% endfor %}
+              </select>
+            </label>
           {% else %}
             <label class="input-wrap">
               <span class="sr-only">{{ k.label }}</span>

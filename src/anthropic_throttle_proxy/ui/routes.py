@@ -1392,10 +1392,14 @@ async def config_set(request: web.Request) -> web.Response:
             error = f"unknown knob: {exc!s}"
         except (ValueError, TypeError) as exc:
             error = f"invalid value: {exc!s}"
+    # Non-HTMX callers get a real 400 on a refused value. HTMX keeps 200 so the
+    # inline error still swaps in (it does not swap 4xx responses by default).
+    status = 400 if error and not request.headers.get("HX-Request") else 200
     return aiohttp_jinja2.render_template(
         _TPL_CONFIG,
         request,
         {"knobs": _config.knob_snapshot(), "message": message, "error": error},
+        status=status,
     )
 
 
