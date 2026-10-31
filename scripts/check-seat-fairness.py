@@ -192,10 +192,14 @@ async def phase3_cancel(check: Check) -> None:
     t_c = asyncio.create_task(waiter("c2"))
     await asyncio.sleep(0)
     t_b.cancel()
+    cancelled = False
     try:
         await t_b
     except asyncio.CancelledError:
-        pass
+        # The cancelled waiter must be observed as cancelled; swallowing it
+        # silently would make the assertion below untestable.
+        cancelled = True
+    check.expect(cancelled, "F4 cancelled task propagates CancelledError")
     await lim.release(priority=eff, lease=lease)
     await asyncio.gather(t_a, t_c)
     check.expect("c1-cancelled" not in got, "F4 cancelled waiter never acquired", f"got={got}")
@@ -213,7 +217,7 @@ async def phase4_bounded_wait(check: Check) -> None:
     raised = False
     try:
         async with lim.slot("bounded", max_wait=0.03):
-            pass
+            raise AssertionError("bounded wait admitted a request with no slot free")
     except QueueWaitTimeout:
         raised = True
     check.expect(raised, "F5 bounded wait raises QueueWaitTimeout")

@@ -25,11 +25,12 @@ def git_data() -> tuple[Path, str, str, list[str]]:
 
 
 def source_roots(root: Path) -> list[str]:
-    properties = dict(
-        line.split("=", 1)
+    properties = {
+        key: value
         for line in (root / "sonar-project.properties").read_text().splitlines()
         if line.strip() and not line.startswith("#")
-    )
+        for key, value in [line.split("=", 1)]
+    }
     return properties["sonar.sources"].split(",")
 
 
