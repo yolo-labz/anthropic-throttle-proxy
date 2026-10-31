@@ -62,6 +62,7 @@ _HEALTH_TOP_LEVEL = frozenset(
         "version",
         "inflight",
         "queued",
+        "queue",
         "served",
         "keepalive_holds_active",
         # Additive (04/10/2026): gate state — affirmative observable closure, so

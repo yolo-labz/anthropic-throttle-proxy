@@ -842,6 +842,73 @@ def _window_wall_retry_after(bid: str) -> int | None:
     return remaining if remaining > 0 else None
 
 
+def _patience_bound(headers: Mapping[str, str]) -> float | None:
+    """Seconds this client will wait for a slot, from PATIENCE_HEADER (ms).
+
+    ``None`` = header absent, unparseable, non-finite or non-positive, so the
+    default bound applies. A valid value is clamped to QUEUE_MAX_PATIENT_WAIT_S.
+    """
+    raw = headers.get(config.PATIENCE_HEADER)
+    if raw is None:
+        return None
+    try:
+        asked = float(raw) / 1000.0
+    except ValueError:
+        return None
+    if not math.isfinite(asked) or asked <= 0:
+        return None
+    return min(asked, config.QUEUE_MAX_PATIENT_WAIT_S)
+
+
+# Waits (seconds) of requests that were served from the fair queue, newest last.
+_QUEUE_WAIT_SAMPLES: list[float] = []
+_QUEUE_WAIT_SAMPLE_CAP = 256
+
+
+class _QueueWaitMark:
+    """One request's time in the fair queue: patient count plus served-wait samples.
+
+    ``end`` is idempotent, so the slot-acquired point and the outer ``finally``
+    can both call it without double-decrementing the patient counter.
+    """
+
+    __slots__ = ("patient", "started", "open")
+
+    def __init__(self, patient: bool) -> None:
+        self.patient = patient
+        self.started = time.monotonic()
+        self.open = True
+        if patient:
+            state["queue_patient_waiting"] = int(state["queue_patient_waiting"]) + 1
+
+    def end(self, *, served: bool) -> None:
+        if not self.open:
+            return
+        self.open = False
+        if self.patient:
+            state["queue_patient_waiting"] = max(0, int(state["queue_patient_waiting"]) - 1)
+        if served:
+            _QUEUE_WAIT_SAMPLES.append(time.monotonic() - self.started)
+            del _QUEUE_WAIT_SAMPLES[:-_QUEUE_WAIT_SAMPLE_CAP]
+
+
+def _queue_health() -> dict:
+    """Health view of the fair queue: patient waiters and served-wait p50/p95."""
+    waits = sorted(_QUEUE_WAIT_SAMPLES)
+
+    def pct(q: float) -> float | None:
+        if not waits:
+            return None
+        return round(waits[min(len(waits) - 1, max(0, math.ceil(q * len(waits)) - 1))], 3)
+
+    return {
+        "patient_waiting": int(state["queue_patient_waiting"]),
+        "wait_p50_s": pct(0.5),
+        "wait_p95_s": pct(0.95),
+        "wait_samples": len(waits),
+    }
+
+
 def _queue_wait_timeout_response(
     bid: str,
     cid: str,
@@ -918,6 +985,11 @@ def _effective_queue_max_wait(headers: Mapping[str, str]) -> float | None:
     never exceeds the local knob — so the header needs no trust filtering.
     """
     knob = config.QUEUE_MAX_WAIT_S or None
+    patient = _patience_bound(headers)
+    if patient is not None and knob is not None:
+        # Raise-only: a patient caller lifts the local bound, never lowers it.
+        # A disabled knob (None) stays unbounded — the header adds no bound.
+        knob = max(knob, patient)
     raw = headers.get(config.WAIT_BUDGET_HEADER)
     if raw is None:
         return knob
@@ -5267,6 +5339,7 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
         for k, v in request.headers.items()
         if k.lower() not in HOP_HEADERS
         and k.lower() != config.WAIT_BUDGET_HEADER
+        and k.lower() != config.PATIENCE_HEADER
         # attribution is this tier's business, never Anthropic's
         and k.lower() != _PROJECT_HEADER
     }
@@ -5962,6 +6035,7 @@ async def _run_slot(
         )
 
     rerouted = False
+    wait_mark = _QueueWaitMark(patient=_patience_bound(request.headers) is not None)
     try:
         async with limiter.slot(
             cid,
@@ -5969,6 +6043,7 @@ async def _run_slot(
             max_wait=slot_max_wait,
             project=_project_of(request.headers),
         ) as held:
+            wait_mark.end(served=True)
             counters.dequeue()
             counters.enter_inflight()
             t0 = time.time()
@@ -6073,6 +6148,7 @@ async def _run_slot(
             False,
         )
     finally:
+        wait_mark.end(served=False)
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
         # and the inner `async with limiter.slot()` body decrementing it,
         # roll back the queue counter so it doesn't leak forever and starve
@@ -7270,6 +7346,7 @@ async def health(_request: web.Request) -> web.Response:
         "version": _version,
         "inflight": state["inflight"],
         "queued": state["queued"],
+        "queue": _queue_health(),
         "served": state["served"],
         # Streams currently parked in a keepalive-hold. Distinct from inflight:
         # a held request has already been answered 200 and is being kept alive
