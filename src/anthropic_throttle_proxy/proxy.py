@@ -154,6 +154,8 @@ from .metrics import (
     M_UTIL_5H,
     M_UTIL_7D,
     M_UTIL_WARNINGS,
+    M_WEEKLY_BURN,
+    M_WEEKLY_BURN_ALERTS,
     REGISTRY,
     generate_latest,
 )
@@ -616,6 +618,9 @@ async def _apply_unified(
     bstate["unified"] = unified
     # Per-project 5 h share (advisory): the pace projector's only meter input.
     _PROJECT_SHARE.observe_meter(unified)
+    if config.WEEKLY_PACING_MODE != "off":
+        _WEEK_SAMPLES.observe(bid, time.time(), unified.get("util_7d"), unified.get("reset_7d"))
+        _refresh_burn(time.time())
     # Stamp when this sample landed so a headerless-429 classification can tell a
     # fresh cache (concurrency storm, still receiving header-bearing successes)
     # from a stale one (budget wall, every response 429ing) — see
@@ -938,6 +943,80 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
     )
 
 
+# Spec 377 phase 2: process-local, bounded. Tokens are measured upstream usage only.
+_WEEKLY_TOKENS = _usage_allocator.WeeklyTokens()
+_WEEK_SAMPLES = _usage_allocator.WeekSamples()
+_BURN_EVAL_S = 60.0
+_burn_last_eval = float("-inf")
+_burn_firing: set[str] = set()
+
+
+def _weekly_project_of(headers: object) -> str:
+    """Attribution for the 7d share: project header, else workspace label, else ``_direct``."""
+    get = getattr(headers, "get", None)
+    if get is None:
+        return _usage_allocator.DIRECT_PROJECT
+    return _usage_allocator.weekly_project(get(_PROJECT_HEADER), get("X-Throttle-Client-Id"))
+
+
+def _refresh_burn(now: float, *, force: bool = False) -> None:
+    """Publish burn gauges and fire one alert per transition (never refuses)."""
+    global _burn_last_eval
+    if not force and now - _burn_last_eval < _BURN_EVAL_S:
+        return
+    _burn_last_eval = now
+    for key in _WEEK_SAMPLES.keys():
+        alert = _usage_allocator.burn_alert(_WEEK_SAMPLES.samples(key), now)
+        for window, value in (("24h", alert["long_24h"]), ("6h", alert["short_6h"])):
+            if value is not None:
+                M_WEEKLY_BURN.labels(bearer=key, window=window).set(value)
+        if alert["firing"] and key not in _burn_firing:
+            _burn_firing.add(key)
+            M_WEEKLY_BURN_ALERTS.labels(bearer=key).inc()
+            log(
+                f"weekly-burn-alert bid={key} projected_24h={alert['long_24h']} "
+                f"projected_6h={alert['short_6h']} (both > 1.0)"
+            )
+        elif not alert["firing"]:
+            _burn_firing.discard(key)
+
+
+def _weekly_share_defer(project: str, priority: bool) -> int | None:
+    """Spec 377 phase 2: defer a client over its 7d share ONLY while the fleet is ahead.
+
+    Enforce-only. Priority is exempt. Borrowing when the fleet is on schedule is
+    the Kueue-cohort rule: an idle share is lent, not hoarded.
+    """
+    if config.WEEKLY_PACING_MODE != "enforce" or priority or not config.CLIENT_SHARES:
+        return None
+    if not _account_routing_enabled():
+        return None
+    from . import accounts
+
+    now = time.time()
+    states = _weekly_pacing_states(accounts.routing_snapshot(now), now)
+    fleet = _usage_allocator.publish(
+        states, mode="enforce", burst=config.WEEKLY_BURST, shares=config.CLIENT_SHARES
+    )
+    fleet_pace = fleet["fleet_pace"]
+    fleet_ahead = fleet_pace is not None and fleet_pace > 1.0
+    others = _WEEKLY_TOKENS.active(now) - {project}
+    contended = any(name in config.CLIENT_SHARES for name in others)
+    verdict = _usage_allocator.decide_client_share(
+        project,
+        _WEEKLY_TOKENS.totals(now),
+        config.CLIENT_SHARES,
+        fleet_ahead=fleet_ahead,
+        contended=contended,
+    )
+    if verdict != "defer":
+        return None
+    ahead = [s for s in states if s.get("state") == "ahead"]
+    return _usage_allocator.catchup_retry(
+        ahead, now=now, cap_s=config.QUEUE_RETRY_AFTER_MAX_S, burst=config.WEEKLY_BURST
+    )
+
+
 def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list[dict]:
     """Per-account 7d pace from the unified readings the proxy already holds (spec 377)."""
     states = []
@@ -992,12 +1071,14 @@ def _weekly_pacing_defer(priority: bool) -> int | None:
     return retry_after if verdict == "defer" else None
 
 
-def _weekly_pacing_response(retry_after_s: int) -> web.Response:
+def _weekly_pacing_response(
+    retry_after_s: int, reason: str = "every account is ahead of schedule"
+) -> web.Response:
     """Same stamped 503 as a queue-wait timeout, so clients re-enter via Retry-After."""
     return web.Response(
         status=503,
         headers={"retry-after": str(retry_after_s), config.QUEUE_TIMEOUT_HEADER: "1"},
-        text="weekly pacing: every account is ahead of schedule; retry after catch-up\n",
+        text=f"weekly pacing: {reason}; retry after catch-up\n",
     )
 
 
@@ -1007,12 +1088,22 @@ def _weekly_pacing_view() -> dict:
 
     now = time.time()
     snapshot = accounts.routing_snapshot(now) if _account_routing_enabled() else []
-    return _usage_allocator.publish(
+    view = _usage_allocator.publish(
         _weekly_pacing_states(snapshot, now),
         mode=config.WEEKLY_PACING_MODE,
         burst=config.WEEKLY_BURST,
         shares=config.CLIENT_SHARES,
     )
+    view["client_shares"]["enforced"] = config.WEEKLY_PACING_MODE == "enforce"
+    view["client_shares"]["phase"] = (
+        "enforced-when-fleet-ahead" if view["client_shares"]["enforced"] else "observe-only"
+    )
+    view["weekly_tokens"] = _WEEKLY_TOKENS.totals(now)
+    view["burn"] = {
+        key: _usage_allocator.burn_alert(_WEEK_SAMPLES.samples(key), now)
+        for key in _WEEK_SAMPLES.keys()
+    }
+    return view
 
 
 def _account_routing_enabled() -> bool:
@@ -4637,6 +4728,7 @@ def _record_usage(
     seat: str = "",
     lane: str = "",
     project: str | None = None,
+    weekly_project: str | None = None,
 ) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
@@ -4667,6 +4759,9 @@ def _record_usage(
             M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
                 spend_usd
             )
+        if weekly_project is not None and config.WEEKLY_PACING_MODE != "off":
+            # Spec 377 phase 2: measured usage only; zero/absent is never recorded.
+            _WEEKLY_TOKENS.add(weekly_project, sum(usage.values()), time.time())
         if project is not None:
             # Unknown-cost models still mark the project active (0 USD).
             _PROJECT_SHARE.record_spend(project, spend_usd)
@@ -4946,6 +5041,7 @@ async def _finalize(
             seat=bid,
             lane=_spend_lane_label(),
             project=_project_of(request.headers),
+            weekly_project=_weekly_project_of(request.headers),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -6032,6 +6128,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     headers = _forward_headers(request)
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
+    wproject = _weekly_project_of(request.headers)
     url, client_timeout, via = pick_target(path, request.query_string)
     body, early_response = await _read_forward_body(request, path, bid, cid, via)
     if early_response is not None:
@@ -6051,6 +6148,11 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     paced_retry_after = _weekly_pacing_defer(is_priority)
     if paced_retry_after is not None:
         return _weekly_pacing_response(paced_retry_after)
+    share_retry_after = _weekly_share_defer(wproject, is_priority)
+    if share_retry_after is not None:
+        return _weekly_pacing_response(
+            share_retry_after, "client over its weekly share while the fleet is ahead"
+        )
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
         request, path, headers, bid, model, req_max_tokens, via

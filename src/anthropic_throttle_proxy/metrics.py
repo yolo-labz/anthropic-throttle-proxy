@@ -23,6 +23,8 @@ __all__ = [
     "M_START_TIME",
     "M_REQUESTS",
     "M_TOKENS",
+    "M_WEEKLY_BURN",
+    "M_WEEKLY_BURN_ALERTS",
     "M_COST",
     "M_DURATION",
     "M_INFLIGHT",
@@ -125,6 +127,18 @@ M_SPEND = Counter(
     "anthropic_spend_usd_total",
     "Estimated USD spend parsed from upstream usage blocks, by lane and seat.",
     ["lane", "seat", "model"],
+    registry=REGISTRY,
+)
+M_WEEKLY_BURN = Gauge(
+    "anthropic_weekly_burn_projection",
+    "Projected 7d utilisation at reset (slope over the window), by bearer and window.",
+    ["bearer", "window"],
+    registry=REGISTRY,
+)
+M_WEEKLY_BURN_ALERTS = Counter(
+    "anthropic_weekly_burn_alerts_total",
+    "Multi-window burn alert transitions (24h and 6h projections both above 1.0).",
+    ["bearer"],
     registry=REGISTRY,
 )
 M_INFLIGHT = Gauge("anthropic_inflight", "Current in-flight requests.", registry=REGISTRY)
