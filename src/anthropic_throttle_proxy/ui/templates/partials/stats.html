@@ -196,6 +196,43 @@
 
 {% if tps | default(false) or signals %}</div>{% endif %}
 
+{% if account_pool | default(none) %}
+<section class="board rail-panel" aria-labelledby="account-pool-heading" data-account-pool>
+  <h2 id="account-pool-heading">Account distribution
+    <span class="h2-note">{{ 'Round-robin · equal token work' if account_pool.mode == 'round_robin' else account_pool.mode }}</span>
+  </h2>
+  <p class="panel-meta">
+    {{ account_pool.eligible }} / {{ account_pool.rows | length }} eligible · since {{ account_pool.since }} (service start)
+    {% if account_pool.eligible == 1 %} · single-account service while siblings are unavailable{% endif %}
+  </p>
+  <div class="bearers-wrap" tabindex="0" role="region" aria-label="Per-account request and token distribution">
+    <table class="bearers">
+      <thead><tr>
+        <th scope="col">account</th><th scope="col">routing state</th>
+        <th scope="col" title="Upstream attempts, including retries; cancelled queued requests are excluded">requests · share</th>
+        <th scope="col" title="Observed input, cached-input and output tokens; not provider quota or USD cost">observed tokens · share</th>
+        <th scope="col">5h quota used</th><th scope="col">7d quota used</th>
+      </tr></thead>
+      <tbody>
+      {% for a in account_pool.rows %}
+        <tr data-pool-account="{{ a.label }}">
+          <th scope="row">{{ a.label }}</th>
+          <td>{{ a.reason }}</td>
+          <td>{{ "{:,}".format(a.attempts) }} · {{ (a.request_share | string) + '%' if a.request_share is not none else 'no samples' }}</td>
+          <td>{{ "{:,}".format(a.tokens) }} · {{ (a.token_share | string) + '%' if a.token_share is not none else 'no samples' }}
+            {% if a.estimated %}<span class="tag-stale">{{ a.estimated }} unmetered attempt{{ 's' if a.estimated != 1 else '' }} · balancing estimated</span>{% endif %}
+          </td>
+          <td>{{ (a.quota_5h | string) + '%' if a.quota_5h is not none else 'unknown' }}</td>
+          <td>{{ (a.quota_7d | string) + '%' if a.quota_7d is not none else 'unknown' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="panel-meta">Equal-size work rotates; larger measured responses are compensated. Shares describe local direct traffic, not equal billing-window percentages. Quota holds are never bypassed.</p>
+</section>
+{% endif %}
+
 {# ── CAPACITY BOARD — the payload ──────────────────────────────────────────── #}
 {% if subscriptions %}
 <section class="board" aria-label="Configured subscription meters; observed usage does not prove model eligibility">

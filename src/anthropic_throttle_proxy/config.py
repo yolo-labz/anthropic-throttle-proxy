@@ -476,7 +476,7 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
 ACCOUNT_ROUTING_MODE = (
     _ACCOUNT_ROUTING_MODE
-    if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded", "budget_paced"}
+    if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded", "budget_paced", "round_robin"}
     else "off"
 )
 

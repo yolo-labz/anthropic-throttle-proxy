@@ -16,13 +16,18 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import web
 
-from . import config, prospective_runtime
+from . import account_pool, config, prospective_runtime
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
 from .prospective_calibration import calibration_attempt
 from .prospective_refusal import strip_incoming_provenance
-from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
+from .ratelimit import (
+    _bearer_id,
+    _extract_ratelimit,
+    _extract_zai_ratelimit_from_body,
+    _parse_sse_usage,
+)
 from .routing import fit_chat_completions_body, normalize_text_content_blocks
 
 
@@ -457,6 +462,15 @@ async def _forward_once(
             with calibration_attempt(permit) as calibration:
                 if permit is not None:
                     permit.handoff()
+                pool_ticket = None
+                if (
+                    config.ACCOUNT_ROUTING_MODE == "round_robin"
+                    and request.method == "POST"
+                    and request.path.rstrip("/") in {"/v1/messages", "/v1/chat/completions"}
+                    and url.startswith(config.UPSTREAM.rstrip("/") + "/")
+                ):
+                    pool_ticket = account_pool.BALANCER.begin(_bearer_id(headers))
+                pool_usage = None
                 try:
                     async with session.request(
                         request.method,
@@ -467,6 +481,7 @@ async def _forward_once(
                     ) as upstream:
                         if retryable_statuses and upstream.status in retryable_statuses:
                             payload = await upstream.read()
+                            pool_usage = _parse_sse_usage(payload)
                             calibration.response(
                                 payload[: 1024 * 1024],
                                 upstream.status,
@@ -484,6 +499,7 @@ async def _forward_once(
                                 _extract_ratelimit(upstream.headers),
                             )
                         result = await _stream_response(request, upstream)
+                        pool_usage = _parse_sse_usage(bytes(result[2])) if result[2] else None
                         calibration.response(
                             result[2], upstream.status, upstream.headers, request.path, result[3]
                         )
@@ -494,3 +510,5 @@ async def _forward_once(
                 except (TimeoutError, aiohttp.ClientError) as exc:
                     calibration.transport_error()
                     return None, None, None, exc, None
+                finally:
+                    account_pool.BALANCER.finish(pool_ticket, pool_usage)

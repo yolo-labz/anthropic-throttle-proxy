@@ -68,6 +68,7 @@ def _hide_primary(result: dict) -> None:
     result["bearers"], result["signals"] = [], []
     result["tps"] = None
     result["identity"] = {}
+    result["account_pool"] = None
     result["status"] = _subscriptions_only_status()
 
 
@@ -127,6 +128,8 @@ def apply_display(view: dict, config: dict) -> dict:
     result = deepcopy(view)
     defaults = config.get("defaults") or {}
     hidden = _hidden_families(defaults)
+    if "anthropic" in hidden:
+        result["account_pool"] = None
     result["subscriptions"] = _visible_subscriptions(
         result.get("subscriptions", []), hidden, set(defaults.get("hidden_subscriptions", []))
     )
