@@ -76,6 +76,10 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
 
 # The team seat row's lane id: sibling of the individual plan row, never a
 # replacement for it and never additive with it (two independent allowances).
+# One spelling for the fail-closed reasons and the console endpoints: the same
+# strings are asserted in the collector tests, so a typo must fail loudly.
+_TEAM_INVALID = "Team seat reading invalid"
+_USER_PROFILE_PATH = "/api/v1/userProfile"
 _TEAM_LANE_ID = "mimo:team-owner"
 # The Team B seat's lane id (second Team seat, per-assigned-seat catalog): its
 # own allowance, never summed with the owner seat or the individual plan row.
@@ -131,6 +135,37 @@ def _team_fail(reason: str) -> dict:
     return {"id": _TEAM_LANE_ID, "kind": "mimo", "status": "unknown", "reason": reason}
 
 
+def _team_seat_shape(seat_response: object) -> tuple[str | None, dict, dict, float, float]:
+    """Validate the team-seat envelope; return (failure reason or None, parts).
+
+    Split out of `team_seat_lane` so the fail-closed ladder reads as one list of
+    reasons instead of seven nested branches.
+    """
+    if not isinstance(seat_response, dict) or seat_response.get("code") != 0:
+        return "Team seat reading unavailable", {}, {}, 0, 0
+    data = seat_response.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("seat"), dict):
+        return _TEAM_INVALID, {}, {}, 0, 0
+    if type(data.get("expired")) is not bool or not isinstance(data.get("planName"), str):
+        return _TEAM_INVALID, {}, {}, 0, 0
+    seat = data["seat"]
+    status_raw = seat.get("seatStatus")
+    if not isinstance(status_raw, str):
+        return _TEAM_INVALID, {}, {}, 0, 0
+    if status_raw != "ASSIGNED":
+        return "Team seat unassigned — not usable capacity", {}, {}, 0, 0
+    total = seat.get("creditsTotal")
+    used = seat.get("creditsUsed")
+    try:
+        valid = all(type(x) in (int, float) and math.isfinite(x) for x in (total, used))
+    except OverflowError:
+        valid = False
+    # Historical/display counters are not prerequisites for current quota.
+    if not valid or total <= 0 or used < 0:
+        return "Team seat counters invalid", {}, {}, 0, 0
+    return None, data, seat, total, used
+
+
 def team_seat_lane(seat_response: object, now: datetime) -> dict:
     """The `mimo:team-owner` row from one team-seat console reading.
 
@@ -142,30 +177,9 @@ def team_seat_lane(seat_response: object, now: datetime) -> dict:
     seat ids stay in the payload — the allowlisted output must not carry them.
     A quota row is not proof of account authorization.
     """
-    if not isinstance(seat_response, dict) or seat_response.get("code") != 0:
-        return _team_fail("Team seat reading unavailable")
-    data = seat_response.get("data")
-    if not isinstance(data, dict) or not isinstance(data.get("seat"), dict):
-        return _team_fail("Team seat reading invalid")
-    if type(data.get("expired")) is not bool or not isinstance(data.get("planName"), str):
-        return _team_fail("Team seat reading invalid")
-    seat = data["seat"]
-    status_raw = seat.get("seatStatus")
-    if not isinstance(status_raw, str):
-        return _team_fail("Team seat reading invalid")
-    if status_raw != "ASSIGNED":
-        return _team_fail("Team seat unassigned — not usable capacity")
-    total = seat.get("creditsTotal")
-    used = seat.get("creditsUsed")
-    try:
-        valid = all(type(x) in (int, float) and math.isfinite(x) for x in (total, used))
-    except OverflowError:
-        valid = False
-    if not valid:
-        return _team_fail("Team seat counters invalid")
-    # Historical/display counters are not prerequisites for current quota.
-    if total <= 0 or used < 0:
-        return _team_fail("Team seat counters invalid")
+    shape_failure, data, seat, total, used = _team_seat_shape(seat_response)
+    if shape_failure is not None:
+        return _team_fail(shape_failure)
     try:
         # Coordinator fix (live protocol check 30/09): the console serialises
         # team period ends with a literal `T` separator. Accept both
@@ -279,14 +293,14 @@ def read_team_b_seat(interactive, project: str, expected: str, deadline: float) 
             wait_until="domcontentloaded",
             timeout=remaining_ms(20000),
         )
-        profile = page.evaluate(_SEAT_FETCH_SCRIPT, ["/api/v1/userProfile", remaining_ms(15000)])
+        profile = page.evaluate(_SEAT_FETCH_SCRIPT, [_USER_PROFILE_PATH, remaining_ms(15000)])
         if profile.get("code") != 0 or str(profile["data"]["userId"]) != expected:
             raise ValueError("Team B browser identity does not match the expected account")
         seat = page.evaluate(
             _SEAT_FETCH_SCRIPT,
             [f"/api/v1/project/{project}/teamTokenPlan/my/seat", remaining_ms(15000)],
         )
-        verified = page.evaluate(_SEAT_FETCH_SCRIPT, ["/api/v1/userProfile", remaining_ms(15000)])
+        verified = page.evaluate(_SEAT_FETCH_SCRIPT, [_USER_PROFILE_PATH, remaining_ms(15000)])
         if verified.get("code") != 0 or str(verified["data"]["userId"]) != expected:
             raise ValueError("Team B browser identity changed during the reading")
         return seat
