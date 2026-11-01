@@ -1341,7 +1341,11 @@ async def test_upstream_400_log_identifies_request_without_bearer_secret(
     status, _ = await _post_and_settle(
         client,
         data=b'{"model":"claude-opus-4-8","max_tokens":0}',
-        headers={"Authorization": bearer, "X-Stub-Mode": "400"},
+        headers={
+            "Authorization": bearer,
+            "X-Stub-Mode": "400",
+            "x-anthropic-throttle-seat": "Side-Projects/W2P/wk-demand",
+        },
     )
 
     assert status == 400
@@ -1365,6 +1369,7 @@ async def test_upstream_400_log_identifies_request_without_bearer_secret(
     assert "cid=" in done
     assert "via=direct" in done
     assert "project=_direct" in done
+    assert "seat=side-projects/w2p/wk-demand" in done
     assert "elapsed_ms=" in done
     assert "secret-value" not in "\n".join(lines)
     assert "gsk_reflected_test_secret" not in "\n".join(lines)
