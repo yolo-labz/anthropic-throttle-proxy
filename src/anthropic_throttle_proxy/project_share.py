@@ -83,6 +83,22 @@ def sanitize(raw: object) -> str:
     return slug or DIRECT
 
 
+# Seat identity (observation only, never an allocator key). Keeps "/" so the
+# <herdr-session>/<workspace>/<role> value survives intact.
+SEAT_HEADER: Final[str] = "x-anthropic-throttle-seat"
+_SEAT_RE = re.compile(r"[^a-z0-9._/-]+")
+
+
+def seat_of(headers: object) -> str:
+    """The request's seat id, or ``-`` when absent or nothing usable remains."""
+    get = getattr(headers, "get", None)
+    raw = get(SEAT_HEADER) if get else None
+    if not isinstance(raw, str):
+        return "-"
+    seat = _SEAT_RE.sub("-", raw.strip().lower()).strip("-._/")[:_MAX_SLUG].rstrip("-._/")
+    return seat or "-"
+
+
 def project_of(headers: object) -> str:
     """The request's project (``headers`` is any mapping with ``.get``)."""
     get = getattr(headers, "get", None)

@@ -162,8 +162,10 @@ from .metrics import (
 )
 from .pricing import _pricing_for, rates_for_usage
 from .project_share import PROJECT_HEADER as _PROJECT_HEADER
+from .project_share import SEAT_HEADER as _SEAT_HEADER
 from .project_share import SHARE as _PROJECT_SHARE
 from .project_share import project_of as _project_of
+from .project_share import seat_of as _seat_of
 from .ratelimit import (
     API_KEY_BEARER_ID,
     _api_key_id,
@@ -5243,7 +5245,7 @@ async def _finalize(
     log(
         f"done   method={request.method} path=/{safe_path} status={final_status} bid={bid} "
         f"cid={safe_cid} via={safe_via} model={safe_model} elapsed_ms={elapsed_ms} "
-        f"project={_project_of(request.headers)} "
+        f"project={_project_of(request.headers)} seat={_seat_of(request.headers)} "
         f"inflight={counters.s['inflight']} "
         f"queued={counters.s['queued']} served={counters.s['served']} "
         f"disc={counters.s['client_disconnects']} retries={counters.s['upstream_retries']}"
@@ -5461,7 +5463,7 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
         and k.lower() != config.WAIT_BUDGET_HEADER
         and k.lower() != config.PATIENCE_HEADER
         # attribution is this tier's business, never Anthropic's
-        and k.lower() != _PROJECT_HEADER
+        and k.lower() not in (_PROJECT_HEADER, _SEAT_HEADER)
     }
 
 
