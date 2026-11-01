@@ -29,11 +29,11 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0          # full history so the gates can diff the PR
           persist-credentials: false
@@ -46,7 +46,7 @@ jobs:
       # silent no-op until a repo has .feature files), an alignment-gate
       # path-mode fix, and that gate's first test suite.
       - name: Quality gates on the PR diff
-        uses: yolo-labz/quality-gates@6a3b407c8de40e0be9fc470ee832af82531b39b2 # v1 + #2..#8 (jscpd ratchet)
+        uses: yolo-labz/quality-gates@570bc2fbbd0cc1ad7bec76e90d87b36af814c7f8 # v1 + #2..#8 (jscpd ratchet)
         with:
           base-ref: origin/main
           # HONEST accounting (a prior version of this comment falsely claimed
