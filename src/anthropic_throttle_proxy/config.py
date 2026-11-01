@@ -588,6 +588,12 @@ MARKER_HEADER = "x-anthropic-throttle-proxy"
 # bearer's upstream behavior.
 QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 
+# Stamped on that same 503 when WEEKLY PACING, not the queue, refused the call.
+# The queue-timeout stamp alone makes a wall reachable only by matching the
+# response text — which is exactly how the 31/10 wall stayed invisible to the
+# resume hook, to Prometheus, and to the incident journal for five days.
+PACING_HEADER = "x-anthropic-throttle-pacing"
+
 # Request header carrying the REMAINING queue-wait budget (milliseconds) down
 # the local→central chain. Without it the two tiers' QUEUE_MAX_WAIT_S bounds
 # STACK — local waits 30 s, then central waits another 30 s, and the client

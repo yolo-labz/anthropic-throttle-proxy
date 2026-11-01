@@ -25,6 +25,7 @@ __all__ = [
     "M_TOKENS",
     "M_WEEKLY_BURN",
     "M_WEEKLY_BURN_ALERTS",
+    "M_WEEKLY_PACING_DEFERS",
     "M_COST",
     "M_DURATION",
     "M_INFLIGHT",
@@ -139,6 +140,12 @@ M_WEEKLY_BURN_ALERTS = Counter(
     "anthropic_weekly_burn_alerts_total",
     "Multi-window burn alert transitions (24h and 6h projections both above 1.0).",
     ["bearer"],
+    registry=REGISTRY,
+)
+M_WEEKLY_PACING_DEFERS = Counter(
+    "anthropic_weekly_pacing_defers_total",
+    "Non-priority requests refused by weekly pacing, by verdict.",
+    ["reason"],
     registry=REGISTRY,
 )
 M_INFLIGHT = Gauge("anthropic_inflight", "Current in-flight requests.", registry=REGISTRY)
