@@ -1098,6 +1098,21 @@ def _apply_usage_failure(
     )
 
 
+def _maybe_guard_five_hour(token: str, usage: dict[str, Any], now: float) -> None:
+    """Hand a fresh usage reading to the opt-in 5h guard in ``proxy``.
+
+    Late import, mirroring the existing ``from . import accounts`` idiom in
+    ``proxy``: a top-level import here would cycle. Skipped entirely while
+    ``THROTTLE_5H_SOURCE`` is off, so the default path gains no work and touches
+    no shared state.
+    """
+    if config.FIVE_HOUR_SOURCE == "off":
+        return
+    from . import proxy as _proxy
+
+    _proxy._maybe_guard_five_hour(_token_bearer_id(token), usage, now)
+
+
 async def _refresh_one(path: str, now: float) -> None:
     """TTL-gated, single-flight refresh of one account's endpoint entry."""
     if not _endpoint_cache_loaded:
@@ -1127,6 +1142,7 @@ async def _refresh_one(path: str, now: float) -> None:
         )
         if status == 200 and body is not None:
             usage = _apply_usage_success(path, now, body, retry_after_remaining)
+            _maybe_guard_five_hour(token, usage, now)
             _maybe_clear_stale_retry_after(token, usage, now)
             await _refresh_email(path, token, expect_mtime=token_mtime)
         else:

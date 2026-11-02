@@ -519,6 +519,57 @@ def _note_brake_disabled_hot(
     )
 
 
+# A five_hour reset is at most 5 h away; anything longer is a bad reading, not a
+# window we should hold a bearer for. Slack covers clock skew on the reset epoch.
+_FIVE_HOUR_MAX_PAUSE_S = 5 * 3600 + 300
+
+
+def _maybe_guard_five_hour(bid: str, usage: Mapping[str, object], now: float) -> None:
+    """Opt-in 5h guard fed by the account usage endpoint (THROTTLE_5H_SOURCE).
+
+    Exists because upstream stopped sending ``anthropic-ratelimit-unified-5h-*``
+    (last observed 2026-10-31T20:45Z): ``_apply_unified`` then has no 5h window to
+    bind on and ``_binding_utilization`` silently falls back to 7d, so a five-hour
+    wall can only be met reactively by a 429. This feeds the same helpers the
+    header path uses instead of inventing a second policy:
+
+    * ``observe`` — ``_maybe_warn_unified`` on a synthetic five_hour window: one
+      log line + ``anthropic_ratelimit_unified_warnings_total{window="5h"}``,
+      debounced once per reset.
+    * ``enforce`` — additionally hold the bearer until the 5h reset the way a
+      rejected window does (``note_retry_after``), so dispatch waits instead of
+      spending the wall.
+
+    ``off`` is a pure no-op, and absent five_hour data always falls through to
+    today's behaviour: this must never harden UNKNOWN into a block.
+    """
+    mode = config.FIVE_HOUR_SOURCE
+    if mode == "off":
+        return
+    util_5h = usage.get("util_5h")
+    reset_5h = usage.get("reset_5h")
+    if not isinstance(util_5h, (int, float)) or not isinstance(reset_5h, (int, float)):
+        return
+    unified: dict[str, object] = {
+        "util_5h": float(util_5h),
+        "reset_5h": int(reset_5h),
+        "representative_claim": "five_hour",
+    }
+    bstate = config.bearer_state.setdefault(bid, {})
+    _maybe_warn_unified(bid, bstate, unified)
+    if mode != "enforce" or float(util_5h) < 1.0:
+        return
+    pause = min(max(0.0, float(reset_5h) - now), _FIVE_HOUR_MAX_PAUSE_S)
+    if pause <= 0:
+        return
+    limiter = config.bearer_limiters.get(bid)
+    note = getattr(limiter, "note_retry_after", None)
+    if note is None:
+        return
+    note(pause)
+    log(f"five-hour-enforce bid={bid} util={float(util_5h):.2f} pause={int(pause)}s until 5h reset")
+
+
 def _publish_unified_gauges(bid: str, unified: Mapping[str, object]) -> None:
     """Mirror the 5h/7d utilization fractions onto their Prometheus gauges."""
     if unified.get("util_5h") is not None:

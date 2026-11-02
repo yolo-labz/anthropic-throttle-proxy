@@ -507,6 +507,13 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 # Spec 377 phase 1. Off by default; observe computes and publishes only.
 # THROTTLE_WEEKLY_PACING=off|observe|enforce; burst is a finite fraction of the week.
 WEEKLY_PACING_MODE = _usage_allocator.parse_mode(os.environ.get("THROTTLE_WEEKLY_PACING"))
+# 5h-window guard fed by the account usage endpoint (off|observe|enforce).
+# Anthropic stopped sending anthropic-ratelimit-unified-5h-* on 31/10/2026, so the
+# header-driven guard in proxy._apply_unified no longer sees that window; this knob
+# lets /api/oauth/usage five_hour.utilization feed the same warn/pause helpers.
+# Default off: nothing changes until an operator opts in.
+_FIVE_HOUR_RAW = os.environ.get("THROTTLE_5H_SOURCE", "off").strip().lower()
+FIVE_HOUR_SOURCE = _FIVE_HOUR_RAW if _FIVE_HOUR_RAW in ("off", "observe", "enforce") else "off"
 # Per-request quota ledger (usage_ledger.py): off|observe. Measurement only; read per call.
 USAGE_LEDGER_MODE = os.environ.get("THROTTLE_USAGE_LEDGER", "off")
 # Session->account affinity (session_affinity.py): on|off kill switch. A session stays on
