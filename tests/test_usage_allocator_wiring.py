@@ -73,10 +73,10 @@ def test_all_ahead_defers_non_priority_and_passes_priority(monkeypatch, two_acco
     assert proxy._weekly_pacing_defer(priority=True) is None
 
 
-def test_deferred_response_is_the_stamped_503_with_the_computed_retry_after() -> None:
+def test_deferred_response_is_the_stamped_429_with_the_computed_retry_after() -> None:
     defers = _defers("all_ahead")
     resp = proxy._weekly_pacing_response(4242)
-    assert resp.status == 503
+    assert resp.status == 429
     assert resp.headers["retry-after"] == "4242"
     assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
     # The wall must be classifiable without matching its prose, and counted.

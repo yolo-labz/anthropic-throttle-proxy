@@ -1216,8 +1216,18 @@ async def _send_upstream(
 
 
 def _queue_timeout_503(upstream: aiohttp.ClientResponse) -> bool:
-    """A sibling proxy lane's own queue-wait timeout, stamped on its 503."""
-    return upstream.status == 503 and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
+    """A sibling proxy lane's own admission refusal, whatever status it carries.
+
+    The STAMP is the signal, not the status: a queue-wait timeout is a 503 and a
+    weekly-pacing deferral is a 429, and both mean "this lane's own policy said
+    stop". Spilling away from it would hand the caller a different model, and
+    attributing pushback to it would misread the lane's admission for its
+    upstream's behaviour.
+    """
+    return (
+        upstream.status in (429, 503)
+        and upstream.headers.get(QUEUE_TIMEOUT_HEADER, "").strip() == "1"
+    )
 
 
 def _entitlement_refusal(upstream: aiohttp.ClientResponse) -> bool:

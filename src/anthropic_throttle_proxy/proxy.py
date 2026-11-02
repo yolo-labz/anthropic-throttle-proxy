@@ -1162,19 +1162,21 @@ def _weekly_pacing_response(
     reason: str = "every account is ahead of schedule",
     verdict: str = "all_ahead",
 ) -> web.Response:
-    """The stamped 503 for a weekly-pacing refusal, marked as pacing.
+    """A weekly-pacing refusal, shaped as a rate limit rather than an outage.
 
     The queue-timeout stamp is kept so a client re-enters through Retry-After and
-    the local tier relays it verbatim. The pacing stamp + counter + log line are
-    what a wall previously lacked: on 31/10 twenty-two panes sat on this response
-    for days while Prometheus showed nothing, the journal showed nothing, and the
-    only way to recognise it was the prose. ``verdict`` separates the two ways in
-    (every account ahead vs client over its share).
+    the local tier relays it verbatim; the stamp — not the status — is what keeps
+    this response out of pushback-retry and AIMD shrink. 429, because the fleet's
+    only wall-recovery helper (`herdr-429-resume`) resumes a pane whose last line
+    reads as a rate limit, and a bare 503 there means "the lane is broken" — how the
+    31/10 panes were lost. The pacing stamp + counter + log line are what a wall
+    previously lacked (22 panes, days, nothing in Prometheus or the journal);
+    ``verdict`` separates the two ways in (every account ahead vs over its share).
     """
     M_WEEKLY_PACING_DEFERS.labels(reason=verdict).inc()
     log(f"weekly-pacing-defer verdict={verdict} retry_after_s={retry_after_s}")
     return web.Response(
-        status=503,
+        status=429,
         headers={
             "retry-after": str(retry_after_s),
             config.QUEUE_TIMEOUT_HEADER: "1",
