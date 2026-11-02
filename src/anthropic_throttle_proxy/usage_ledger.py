@@ -40,6 +40,7 @@ import time
 from pathlib import Path
 
 from . import config
+from .ratelimit import inflate_capture
 
 log = logging.getLogger(__name__)
 
@@ -85,7 +86,12 @@ def parse_usage(captured: bytes, tail: str | None = None) -> tuple[dict | None, 
     ``None`` when no usage block was found. ``complete`` is True when a
     terminal ``message_delta`` (or a non-stream JSON body) was seen.
     """
-    text = captured.decode("utf-8", "replace")
+    raw = inflate_capture(captured)
+    if raw is not captured:
+        # The tail is the last bytes of the COMPRESSED stream: not decodable on
+        # its own, so the decoded head is the only evidence.
+        tail = None
+    text = raw.decode("utf-8", "replace")
     stripped = text.lstrip()
     if stripped.startswith("{"):
         try:
