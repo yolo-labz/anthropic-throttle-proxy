@@ -53,6 +53,26 @@ def _isolate_retry_probe_gates():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_retry_after_state_file(monkeypatch, tmp_path):
+    """Never let the suite read or write the operator's live state file.
+
+    ``RETRY_AFTER_STATE_FILE`` defaults to the XDG state dir since the 19/10
+    state-persistence hardening (config._resolve_retry_after_state_file), so
+    without this fixture every test that notes a window would mutate the
+    developer's real ``~/.local/state/.../retry-after-state.json`` and would
+    load real bearer windows into the module-global cache. The cache is
+    forced to ``None`` (not monkeypatched) so teardown also drops any dict a
+    test populated.
+    """
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(tmp_path / "retry-after-state.json"))
+    limiter._retry_after_state = None
+    yield
+    # Drain the background writer so no write lands in the NEXT test's file.
+    limiter.flush_retry_after_writes()
+    limiter._retry_after_state = None
+
+
+@pytest.fixture(autouse=True)
 def _isolate_lane_report(monkeypatch, tmp_path_factory):
     """Point the lane reader at a path that does not exist.
 

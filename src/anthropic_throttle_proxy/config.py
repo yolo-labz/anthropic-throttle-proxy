@@ -360,12 +360,37 @@ QUEUE_RETRY_AFTER_MAX_S = max(
     QUEUE_TIMEOUT_RETRY_AFTER_S, int(os.environ.get("THROTTLE_QUEUE_RETRY_AFTER_MAX_S", "300"))
 )
 
-# Optional JSON file for per-bearer Retry-After windows. Live hotfix deploys
-# restart the user service while account windows are still cooling down; without
-# a persisted floor, the new process forgets the window and rediscovers it with
-# one fresh 429. Empty default keeps tests and stateless containers side-effect
-# free. Nix/host units should set this to an XDG state path.
-RETRY_AFTER_STATE_FILE = os.environ.get("THROTTLE_RETRY_AFTER_STATE_FILE", "").strip()
+
+# JSON file for per-bearer Retry-After windows. Live hotfix deploys restart
+# the user service while account windows are still cooling down; without a
+# persisted floor, the new process forgets the window and rediscovers it with
+# one fresh 429 (19/10 go-gate: the 18:48:57 restart forgot every noted
+# window and re-descended the AIMD ladder with real 429s — 18:49:02 cap=8 → 5
+# → 3 → 2 → 1, each rung a live hit against the shared upstream).
+#
+# Resolution (audit 19/10/2026, tests/test_state_persistence_hardening.py):
+#   * explicit THROTTLE_RETRY_AFTER_STATE_FILE=path → that path;
+#   * explicit "off"/"none"/"disabled"/"" (set-but-empty) → disabled,
+#     preserving the legacy side-effect-free meaning for stateless
+#     containers and test suites that opt out;
+#   * unset → $XDG_STATE_HOME/anthropic-throttle-proxy/retry-after-state.json
+#     (falling back to ~/.local/state/...), mirroring ENDPOINT_CACHE_FILE's
+#     zero-config default. The opencode go/zen units never set the knob —
+#     that is exactly why they persisted nothing (runbook §8.3 open item).
+#     Each gate already scopes its own XDG_STATE_HOME, so every instance
+#     gets its own file with no unit change.
+def _resolve_retry_after_state_file() -> str:
+    # ``key in os.environ`` (not ``get``): set-but-empty must keep the legacy
+    # "disabled" meaning for deployments that export the knob blank, while
+    # fully UNSET gets the zero-config default.
+    if "THROTTLE_RETRY_AFTER_STATE_FILE" in os.environ:
+        raw = os.environ["THROTTLE_RETRY_AFTER_STATE_FILE"].strip()
+        return "" if (not raw or raw.lower() in {"off", "none", "disabled"}) else raw
+    base = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "anthropic-throttle-proxy", "retry-after-state.json")
+
+
+RETRY_AFTER_STATE_FILE = _resolve_retry_after_state_file()
 
 # Ceiling on a Retry-After window RESTORED from the state file (seconds; 0 =
 # uncapped legacy). A live-noted window is evidence; a restored one is hearsay

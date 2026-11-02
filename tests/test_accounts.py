@@ -1052,6 +1052,8 @@ async def test_maybe_clear_stale_retry_after_drops_long_window_on_usage_decay(
     accounts._maybe_clear_stale_retry_after(
         token, accounts._parse_usage(_usage_body(u5=40.0, u7=84.0)), real_now
     )
+    # Disk is written by the background writer; drain it, as process exit does.
+    limiter.flush_retry_after_writes()
     assert bid not in json.loads(state_file.read_text())
 
     # Short window remaining (< 600 s) -> left alone: input-bucket rate pushback

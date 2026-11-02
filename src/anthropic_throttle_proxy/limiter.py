@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import concurrent.futures
+import contextlib
 import json
 import math
 import os
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -208,18 +211,42 @@ def _load_retry_after_state() -> dict[str, float]:
         return _retry_after_state
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        # Nothing persisted yet — the NORMAL cold start, not an error.
+        _retry_after_state = {}
+        return _retry_after_state
+    except (OSError, ValueError) as exc:
+        # Corrupt JSON (torn write by an older version, hand edit): cold start
+        # is the designed degradation, but SAY SO — silently forgetting every
+        # window is how the 18:48-class restart went unexplained.
+        log(f"retry-after-state-load-error path={path} err={exc!r}")
         _retry_after_state = {}
         return _retry_after_state
     if not isinstance(raw, dict):
+        log(f"retry-after-state-load-error path={path} err=non-object root")
         _retry_after_state = {}
         return _retry_after_state
     now = time.time()
     cap = config.RETRY_AFTER_RESTORE_CAP_S
     state: dict[str, float] = {}
     capped_any = False
+    dropped_any = False
     for bid, until in raw.items():
-        if not isinstance(until, (int, float)) or float(until) <= now:
+        # Trust boundary (audit 19/10): Python's json.loads accepts the
+        # non-standard NaN/Infinity literals. NaN fails BOTH comparisons it
+        # meets below (``nan <= now`` False, ``nan > now+cap`` False), so it
+        # used to slip through unclamped and then crash the request path with
+        # ``int(nan)`` inside ``_restore_retry_after``; Infinity crashed the
+        # ``int(...)`` in the cap LOG line HERE, and because the cache stayed
+        # unset, every later caller re-raised — one poison value took the
+        # whole process down. Reject anything non-finite before it can be
+        # compared, logged, restored, or re-written to disk.
+        if not isinstance(until, (int, float)) or not math.isfinite(float(until)):
+            dropped_any = True
+            log(f"retry-after-state-reject-nonfinite bid={bid}")
+            continue
+        if float(until) <= now:
+            dropped_any = True  # expired: scrub it from disk, not just memory
             continue
         capped = float(until)
         if cap > 0 and capped > now + cap:
@@ -231,9 +258,12 @@ def _load_retry_after_state() -> dict[str, float]:
             capped_any = True
         state[str(bid)] = capped
     _retry_after_state = state
-    if capped_any:
-        # Persist the capped deadlines so a restart does not re-grant a fresh
-        # stale window from the original multi-day value on disk each time.
+    if capped_any or dropped_any or len(state) != len(raw):
+        # Self-heal the file ONCE per process load: capped deadlines must not
+        # re-grant the stale multi-day window each restart, and expired /
+        # poison entries must stop lingering on disk (measured 19/10: a
+        # 39-day-old entry still in the anthropic gate's file — pruned from
+        # memory on every load, never from disk).
         _persist_retry_after_state()
     return _retry_after_state
 
@@ -247,13 +277,74 @@ def _persist_retry_after_state() -> None:
     live = {bid: until for bid, until in state.items() if until > now}
     _retry_after_state.clear()
     _retry_after_state.update(live)
+    # The in-memory cache above is authoritative for this process; the disk
+    # copy only matters to the NEXT process. The durable write fsyncs file +
+    # directory, measured at up to 780 ms under disk load (02/11/2026) — run
+    # inline it froze the event loop for every in-flight request and outlived
+    # the very Retry-After window it was recording. On a running loop the
+    # write goes to a single FIFO worker (ordered: a later snapshot can never
+    # be overwritten by an earlier one); without a loop it stays synchronous.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _write_retry_after_file(path, live)
+        return
+    _retry_after_writer().submit(_write_retry_after_file, path, live)
+
+
+_RETRY_AFTER_WRITER: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def _retry_after_writer() -> concurrent.futures.ThreadPoolExecutor:
+    global _RETRY_AFTER_WRITER
+    if _RETRY_AFTER_WRITER is None:
+        _RETRY_AFTER_WRITER = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="retry-after-state"
+        )
+    return _RETRY_AFTER_WRITER
+
+
+def flush_retry_after_writes() -> None:
+    """Block until every queued retry-after state write has landed on disk."""
+    if _RETRY_AFTER_WRITER is not None:
+        _RETRY_AFTER_WRITER.submit(lambda: None).result()
+
+
+def _write_retry_after_file(path: Path, live: dict[str, float]) -> None:
+    tmp_name: str | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_text(json.dumps(live, sort_keys=True), encoding="utf-8")
+        # Unique tmp name per write (mkstemp): the previous fixed
+        # ``<file>.tmp`` collided across two writers sharing one state file.
+        fd, tmp = tempfile.mkstemp(
+            dir=os.fspath(path.parent), prefix=f"{path.name}.", suffix=".tmp"
+        )
+        tmp_name = tmp
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            # allow_nan=False: a non-finite value must fail HERE (logged) rather
+            # than become a poison literal on disk for the next process.
+            json.dump(live, handle, sort_keys=True, allow_nan=False)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
-    except OSError as exc:
+        tmp_name = None
+        # Directory fsync makes the rename itself durable, matching the
+        # ledger's save contract: without it a power loss can leave an EMPTY
+        # file after the replace and silently forget every window — the exact
+        # cold start this feature exists to prevent.
+        dir_fd = os.open(os.fspath(path.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except (OSError, ValueError) as exc:
+        # Never raises into callers (also runs on the background writer).
         log(f"retry-after-state-write-error path={path} err={exc!r}")
+    finally:
+        if tmp_name is not None:
+            # Best-effort tmp cleanup; the write error itself is logged above.
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
 
 
 def _persist_retry_after_until(bid: str, until: float) -> None:
@@ -1151,8 +1242,15 @@ class FairBearerLimiter:
         window, never shortens it. Honored uncapped — the Anthropic input
         bucket has been observed to return >120 s, so clamping would defeat the
         back-off.
+
+        Non-finite input (a malformed ``Retry-After: Infinity`` parses to
+        ``inf`` via ``float()``) is IGNORED, matching ``ratelimit.
+        _parse_retry_after``'s treatment of unparseable input: latching it
+        would persist an ``Infinity`` literal to disk and
+        ``wait_retry_after`` would ``asyncio.sleep(inf)`` — a hang no restart
+        of the window can end (audit 19/10).
         """
-        if seconds <= 0:
+        if not math.isfinite(seconds) or seconds <= 0:
             return self._retry_after_until
         if seconds > config.MAX_HOLD_RETRY_AFTER_S:
             self.require_retry_probe(block_while_retry=True)

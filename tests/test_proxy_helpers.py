@@ -2217,6 +2217,8 @@ async def test_retry_after_state_restored_for_new_limiter(tmp_path, monkeypatch)
 
     lim = await proxy._get_bearer_limiter("bid1", "fair", 3)
     lim.note_retry_after(60)
+    # Simulated restart: exit joins the background writer before the new process.
+    limiter.flush_retry_after_writes()
     config.bearer_limiters.clear()
     config.bearer_state.clear()
     monkeypatch.setattr(limiter, "_retry_after_state", None)
@@ -2287,6 +2289,8 @@ async def test_clear_retry_after_drops_live_and_persisted_window(tmp_path, monke
 
     assert cleared > 49_000
     assert lim.retry_after_remaining() == 0.0
+    # Disk is written by the background writer; drain it, as process exit does.
+    limiter.flush_retry_after_writes()
     assert "bid1" not in json.loads(state_file.read_text())
     assert limiter.clear_retry_after("bid1") == 0.0  # idempotent
 

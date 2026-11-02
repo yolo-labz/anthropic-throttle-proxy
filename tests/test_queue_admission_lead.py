@@ -145,9 +145,23 @@ async def test_hold_window_at_the_240s_contract_is_honoured_not_fast_failed() ->
 async def test_hold_then_release_completes_inside_the_client_budget() -> None:
     """A <=240 s window parks the request and returns it to the lane afterwards."""
     lim = make_free_lane()
-    lim.note_retry_after(0.2)
-    assert lim.retry_after_remaining() > 0
+    # A 0.2 s window made this flaky: `note_retry_after` persists the window to
+    # disk, so by the time the next statement read `retry_after_remaining()` the
+    # window had already elapsed under suite load and the assertion saw 0.0.
+    # Arm a window long enough to still be observably open afterwards.
+    # Capture the clock BEFORE the call: comparing `until` against a later
+    # `time.time()` races the clock and made this intermittently red under
+    # suite load.
+    before = time.time()
+    until = lim.note_retry_after(3.0)
+    assert until >= before + 3.0
+    assert lim.retry_after_remaining() <= config.MAX_HOLD_RETRY_AFTER_S
+
+    start = time.monotonic()
     await lim.wait_retry_after()  # must not raise / fast-fail
+    elapsed = time.monotonic() - start
+    # Bounded by the hold contract, never an unbounded sleep.
+    assert elapsed <= config.MAX_HOLD_RETRY_AFTER_S
     assert lim.retry_after_remaining() == 0
     # The lane is dispatchable again: a parked request can now take a slot.
     async with lim.slot("127.0.0.1:1", max_wait=5.0) as _held:
