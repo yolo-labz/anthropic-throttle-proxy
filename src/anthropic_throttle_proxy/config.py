@@ -929,6 +929,10 @@ def _set_weekly_pacing_law(v: str) -> None:
     _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_LAW", v)
 
 
+def _set_client_shares(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "CLIENT_SHARES", _usage_allocator.parse_shares(v))
+
+
 def _set_body_shrink_cap_bytes(v: int) -> None:
     _set_module_attr(_MOD_BODY_SHRINK, "CAP_BYTES", v)
 
@@ -1266,6 +1270,20 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "budget still unspent. Takes effect when mode is observe or enforce."
         ),
     },
+    "client_shares": {
+        "label": "Client shares",
+        "type": "shares",
+        "getter": lambda: _usage_allocator.format_shares(CLIENT_SHARES),
+        "setter": _set_client_shares,
+        "units": "",
+        "help": (
+            "Per-workspace share of the weekly budget as name:share,... "
+            "(e.g. side-projects:0.4,home:0.3). Deferral needs weekly pacing "
+            "mode=enforce AND the fleet ahead; an unlisted workspace is never "
+            "share-deferred, an idle sibling's share is lent, and priority "
+            "calls are exempt. Empty = no shares configured."
+        ),
+    },
     "queue_max_patient_wait_s": {
         "label": "Max patient queue wait",
         "type": "float",
@@ -1408,6 +1426,13 @@ def _coerce(spec: dict[str, _Any], raw: _Any) -> _Any:
         if v not in spec["choices"]:
             raise ValueError(f"{spec['label']}: {raw!r} is not one of {list(spec['choices'])}")
         return v
+    if t == "shares":
+        # Strict parse: the canonical string is stored in the override file and
+        # read back by ``parse_shares`` on the next start, so both paths agree.
+        try:
+            return _usage_allocator.validate_shares(str(raw))
+        except ValueError as exc:
+            raise ValueError(f"{spec['label']}: {exc}") from None
     if t == "int":
         v = int(raw)
     elif t == "float":

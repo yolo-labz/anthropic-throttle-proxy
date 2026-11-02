@@ -91,6 +91,38 @@ def parse_shares(raw: str | None) -> dict[str, float]:
     return shares
 
 
+def format_shares(shares: Mapping[str, float]) -> str:
+    """Canonical ``name:share`` text that ``parse_shares`` reads back unchanged."""
+    return ",".join(f"{name}:{share:g}" for name, share in shares.items())
+
+
+def validate_shares(raw: str | None) -> str:
+    """Strict sibling of ``parse_shares`` for a live edit; raises ``ValueError``.
+
+    The env path drops a malformed entry so one typo in a unit file cannot take
+    the rest of the map with it. A value typed into the admin form is refused
+    instead, so saving it can never silently delete a workspace's share. Empty
+    (or whitespace) is the valid "no shares configured" state.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    shares: dict[str, float] = {}
+    for item in text.split(","):
+        name, sep, value = item.partition(":")
+        name = name.strip()
+        if not sep or not name:
+            raise ValueError(f"client shares: {item!r} is not name:share")
+        try:
+            share = float(value)
+        except ValueError:
+            raise ValueError(f"client shares: {value!r} is not a number") from None
+        if not math.isfinite(share) or not 0.0 < share <= 1.0:
+            raise ValueError(f"client shares: {share!r} is outside (0, 1]")
+        shares[name] = share
+    return format_shares(shares)
+
+
 def allowed_7d(now: float, reset_7d: float, burst: float | None = None) -> float | None:
     """Elapsed fraction of the 7d window plus burst; None when the reset is unknown or past."""
     if reset_7d is None or reset_7d <= now:
