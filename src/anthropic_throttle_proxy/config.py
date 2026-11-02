@@ -883,6 +883,14 @@ def _set_queue_max_patient_wait_s(v: float) -> None:
     _set_module_attr(_MOD_CONFIG, "QUEUE_MAX_PATIENT_WAIT_S", v)
 
 
+def _set_weekly_pacing_mode(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_MODE", v)
+
+
+def _set_weekly_pacing_law(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_LAW", v)
+
+
 def _set_body_shrink_cap_bytes(v: int) -> None:
     _set_module_attr(_MOD_BODY_SHRINK, "CAP_BYTES", v)
 
@@ -1196,6 +1204,30 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "the SDK retries transparently instead. 0 disables the bound."
         ),
     },
+    "weekly_pacing_mode": {
+        "label": "Weekly pacing mode",
+        "type": "choice",
+        "choices": list(_usage_allocator.MODES),
+        "getter": lambda: WEEKLY_PACING_MODE,
+        "setter": _set_weekly_pacing_mode,
+        "units": "",
+        "help": (
+            "off: no weekly pacing. observe: sample and report only, never defers. "
+            "enforce: defer accounts that are ahead of their weekly pace."
+        ),
+    },
+    "weekly_pacing_law": {
+        "label": "Weekly pacing law",
+        "type": "choice",
+        "choices": list(_usage_allocator.LAWS),
+        "getter": lambda: WEEKLY_PACING_LAW,
+        "setter": _set_weekly_pacing_law,
+        "units": "",
+        "help": (
+            "line: pace against the elapsed-week line. remaining: pace against the "
+            "budget still unspent. Takes effect when mode is observe or enforce."
+        ),
+    },
     "queue_max_patient_wait_s": {
         "label": "Max patient queue wait",
         "type": "float",
@@ -1332,6 +1364,12 @@ def _coerce(spec: dict[str, _Any], raw: _Any) -> _Any:
         if isinstance(raw, bool):
             return raw
         return str(raw).strip().lower() in {"true", "1", "on", "yes"}
+    if t == "choice":
+        # Finite enum: anything outside ``choices`` is refused, never coerced.
+        v = str(raw).strip().lower()
+        if v not in spec["choices"]:
+            raise ValueError(f"{spec['label']}: {raw!r} is not one of {list(spec['choices'])}")
+        return v
     if t == "int":
         v = int(raw)
     elif t == "float":
@@ -1485,6 +1523,7 @@ def knob_snapshot() -> list[dict[str, _Any]]:
                 "key": key,
                 "label": spec["label"],
                 "type": spec["type"],
+                "choices": spec.get("choices"),
                 "value": current,
                 "default": ENV_DEFAULTS.get(key),
                 "override": key in RUNTIME_OVERRIDES,
