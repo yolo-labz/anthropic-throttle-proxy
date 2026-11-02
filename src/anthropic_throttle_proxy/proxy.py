@@ -157,6 +157,7 @@ from .metrics import (
     M_UTIL_WARNINGS,
     M_WEEKLY_BURN,
     M_WEEKLY_BURN_ALERTS,
+    M_WEEKLY_PACING_DEFERS,
     REGISTRY,
     generate_latest,
 )
@@ -1157,12 +1158,28 @@ def _weekly_pacing_defer(priority: bool) -> int | None:
 
 
 def _weekly_pacing_response(
-    retry_after_s: int, reason: str = "every account is ahead of schedule"
+    retry_after_s: int,
+    reason: str = "every account is ahead of schedule",
+    verdict: str = "all_ahead",
 ) -> web.Response:
-    """Same stamped 503 as a queue-wait timeout, so clients re-enter via Retry-After."""
+    """The stamped 503 for a weekly-pacing refusal, marked as pacing.
+
+    The queue-timeout stamp is kept so a client re-enters through Retry-After and
+    the local tier relays it verbatim. The pacing stamp + counter + log line are
+    what a wall previously lacked: on 31/10 twenty-two panes sat on this response
+    for days while Prometheus showed nothing, the journal showed nothing, and the
+    only way to recognise it was the prose. ``verdict`` separates the two ways in
+    (every account ahead vs client over its share).
+    """
+    M_WEEKLY_PACING_DEFERS.labels(reason=verdict).inc()
+    log(f"weekly-pacing-defer verdict={verdict} retry_after_s={retry_after_s}")
     return web.Response(
         status=503,
-        headers={"retry-after": str(retry_after_s), config.QUEUE_TIMEOUT_HEADER: "1"},
+        headers={
+            "retry-after": str(retry_after_s),
+            config.QUEUE_TIMEOUT_HEADER: "1",
+            config.PACING_HEADER: "1",
+        },
         text=f"weekly pacing: {reason}; retry after catch-up\n",
     )
 
@@ -1173,12 +1190,25 @@ def _weekly_pacing_view() -> dict:
 
     now = time.time()
     snapshot = accounts.routing_snapshot(now) if _account_routing_enabled() else []
+    states = _weekly_pacing_states(snapshot, now)
     view = _usage_allocator.publish(
-        _weekly_pacing_states(snapshot, now),
+        states,
         mode=config.WEEKLY_PACING_MODE,
         burst=config.WEEKLY_BURST,
         shares=config.CLIENT_SHARES,
     )
+    # The number a non-priority call would be told right now. Publishing it makes
+    # the wall readable from the endpoint clients already poll, instead of
+    # re-deriving the verdict from the per-account block.
+    verdict, detail = _usage_allocator.decide_pacing(
+        states,
+        mode=config.WEEKLY_PACING_MODE,
+        priority=False,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    view["retry_after_s"] = detail if verdict == "defer" else None
     view["client_shares"]["enforced"] = config.WEEKLY_PACING_MODE == "enforce"
     view["client_shares"]["phase"] = (
         "enforced-when-fleet-ahead" if view["client_shares"]["enforced"] else "observe-only"
@@ -6545,7 +6575,9 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if share_retry_after is not None:
         if not _stream_hold_wanted(request, body):
             return _weekly_pacing_response(
-                share_retry_after, "client over its weekly share while the fleet is ahead"
+                share_retry_after,
+                "client over its weekly share while the fleet is ahead",
+                verdict="client_share",
             )
         terminal = await _hold_deferral(
             request,

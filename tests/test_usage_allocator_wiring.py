@@ -8,6 +8,14 @@ import pytest
 
 from anthropic_throttle_proxy import config, proxy
 from anthropic_throttle_proxy import usage_allocator as ua
+from anthropic_throttle_proxy.metrics import REGISTRY
+
+
+def _defers(reason: str) -> float:
+    """Process-local pacing-defer counter for one verdict (0.0 before the first)."""
+    return (
+        REGISTRY.get_sample_value("anthropic_weekly_pacing_defers_total", {"reason": reason}) or 0.0
+    )
 
 
 @pytest.fixture
@@ -66,10 +74,36 @@ def test_all_ahead_defers_non_priority_and_passes_priority(monkeypatch, two_acco
 
 
 def test_deferred_response_is_the_stamped_503_with_the_computed_retry_after() -> None:
+    defers = _defers("all_ahead")
     resp = proxy._weekly_pacing_response(4242)
     assert resp.status == 503
     assert resp.headers["retry-after"] == "4242"
     assert resp.headers[config.QUEUE_TIMEOUT_HEADER] == "1"
+    # The wall must be classifiable without matching its prose, and counted.
+    assert resp.headers[config.PACING_HEADER] == "1"
+    assert _defers("all_ahead") == defers + 1
+
+
+def test_share_deferral_is_counted_under_its_own_verdict() -> None:
+    before = _defers("client_share")
+    other = _defers("all_ahead")
+    proxy._weekly_pacing_response(60, "client over its weekly share", verdict="client_share")
+    assert _defers("client_share") == before + 1
+    assert _defers("all_ahead") == other
+
+
+def test_admission_view_publishes_the_deferral_a_normal_call_would_get(
+    monkeypatch, two_accounts
+) -> None:
+    now, _ = two_accounts
+    _set_util(now, 0.70, 0.60, 0.5)
+    monkeypatch.setattr(config, "WEEKLY_PACING_MODE", "enforce")
+    view = proxy._weekly_pacing_view()
+    assert view["retry_after_s"] is not None
+    assert view["retry_after_s"] == proxy._weekly_pacing_defer(priority=False)
+
+    monkeypatch.setattr(config, "WEEKLY_PACING_MODE", "observe")
+    assert proxy._weekly_pacing_view()["retry_after_s"] is None
 
 
 def test_admission_view_is_read_only_marks_shares_observe_only(monkeypatch, two_accounts) -> None:
