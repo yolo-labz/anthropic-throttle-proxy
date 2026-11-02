@@ -64,6 +64,7 @@ from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
 from . import pacing as _pacing
+from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
 
 # Re-exported config (env scalars + shared mutable state + log + HOP_HEADERS).
@@ -338,6 +339,16 @@ _TYPICAL_MAX_TOKENS = 4096.0
 # it is strong enough that the selector does not keep spending a near-empty
 # window just because its current queue is short.
 _OVERPACE_SURCHARGE = 60.0
+# budget_paced weekly share: an account whose 7d pace exceeds 1x has its share
+# scaled by max(0, 1 - k*(pace-1)); at k=2 it reaches zero share at 1.5x.
+_WEEKLY_PACE_K = 2.0
+# Weekly share term: S*(1-exp(-k/K)), monotone in k=(requests+1)/w, bounded by S.
+# S must stay below the warning step (80) and the queue-vs-warning margin (100-80=20),
+# so queue dominance and the warning surcharge still decide the old backpressure tests.
+# It may exceed one inflight step (10): that is the deliberate relaxation that lets the
+# weekly share steer the split under load. Queue depth (100) still outranks it.
+_WEEKLY_SHARE_SPAN = 19.0
+_WEEKLY_SHARE_K = 1000.0
 _QUEUE_SPILLOVER_LOAD_THRESHOLD = 100.0
 _TARGET_SPILLOVER_SURCHARGE = 100.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
@@ -927,6 +938,83 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
     )
 
 
+def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list[dict]:
+    """Per-account 7d pace from the unified readings the proxy already holds (spec 377)."""
+    states = []
+    for acct in snapshot:
+        bid = str(acct.get("bearer_id", ""))
+        unified = (config.bearer_state.get(bid) or {}).get("unified") or {}
+        states.append(
+            _usage_allocator.account_state(
+                str(acct.get("label", bid)),
+                unified.get("util_7d"),
+                unified.get("reset_7d"),
+                now,
+                config.WEEKLY_BURST,
+            )
+        )
+    return states
+
+
+def _weekly_pacing_filter(snapshot: list[dict[str, object]], now: float) -> list[dict[str, object]]:
+    """Spill-only: drop ahead-of-schedule accounts when a sibling has room (enforce only)."""
+    if config.WEEKLY_PACING_MODE != "enforce" or not snapshot:
+        return snapshot
+    verdict, labels = _usage_allocator.decide_pacing(
+        _weekly_pacing_states(snapshot, now),
+        mode="enforce",
+        priority=False,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    if verdict != "route" or labels is None:
+        return snapshot
+    return [acct for acct in snapshot if str(acct.get("label")) in labels]
+
+
+def _weekly_pacing_defer(priority: bool) -> int | None:
+    """Honest Retry-After when every account is ahead and the call is non-priority."""
+    if config.WEEKLY_PACING_MODE != "enforce" or not _account_routing_enabled():
+        return None
+    from . import accounts
+
+    now = time.time()
+    states = _weekly_pacing_states(accounts.routing_snapshot(now), now)
+    verdict, retry_after = _usage_allocator.decide_pacing(
+        states,
+        mode="enforce",
+        priority=priority,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    return retry_after if verdict == "defer" else None
+
+
+def _weekly_pacing_response(retry_after_s: int) -> web.Response:
+    """Same stamped 503 as a queue-wait timeout, so clients re-enter via Retry-After."""
+    return web.Response(
+        status=503,
+        headers={"retry-after": str(retry_after_s), config.QUEUE_TIMEOUT_HEADER: "1"},
+        text="weekly pacing: every account is ahead of schedule; retry after catch-up\n",
+    )
+
+
+def _weekly_pacing_view() -> dict:
+    """Read-only publication for /__throttle/admission (never changes a decision)."""
+    from . import accounts
+
+    now = time.time()
+    snapshot = accounts.routing_snapshot(now) if _account_routing_enabled() else []
+    return _usage_allocator.publish(
+        _weekly_pacing_states(snapshot, now),
+        mode=config.WEEKLY_PACING_MODE,
+        burst=config.WEEKLY_BURST,
+        shares=config.CLIENT_SHARES,
+    )
+
+
 def _account_routing_enabled() -> bool:
     return config.ACCOUNT_ROUTING_MODE in {"least_loaded", "budget_paced", "round_robin"} and bool(
         config.ACCOUNT_CRED_PATHS
@@ -1355,6 +1443,11 @@ def _account_routing_candidate_score(
     # window: otherwise the -0.01 bonus lets a windowed incoming (even a
     # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
     stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
+    weekly = None
+    if isinstance(unified, dict) and isinstance(unified.get("util_7d"), (int, float)):
+        weekly = (float(unified["util_7d"]), unified.get("reset_7d"))
+    lim = config.bearer_limiters.get(bid)
+    request_count = (lim.queued_total + lim.priority_queued + lim.inflight) if lim else 0.0
     return _routing_pressure_score(
         load=load,
         util=util,
@@ -1366,6 +1459,8 @@ def _account_routing_candidate_score(
         max_tokens=max_tokens,
         now=now,
         allow_target_spillover=allow_target_spillover,
+        weekly=weekly,
+        request_count=float(request_count),
     )
 
 
@@ -1517,6 +1612,70 @@ def _scoped_window_pressure(
     return util, under_pressure
 
 
+def _weekly_pace(util_7d: float, reset_7d: float | None, now: float) -> float:
+    """7d pace = utilization ÷ elapsed fraction of the 7d window (1.0 = on pace).
+
+    An unknown or already-passed reset reads as a fresh window (elapsed floor),
+    which is the same convention ``_window_elapsed_fraction`` uses for pacing.
+    """
+    return util_7d / _window_elapsed_fraction(reset_7d, _WINDOW_7D_S, now)
+
+
+def _bearer_weekly_pace(bstate: dict, now: float) -> float | None:
+    """Health-facing 7d pace for one bearer, or None when 7d data is absent."""
+    unified = bstate.get("unified") or {}
+    util = unified.get("util_7d")
+    if not isinstance(util, (int, float)):
+        return None
+    return round(_weekly_pace(float(util), unified.get("reset_7d"), now), 3)
+
+
+def _weekly_share_health(
+    bearers: dict[str, dict], usable: dict[str, bool], now: float
+) -> tuple[dict[str, float | None], float | None]:
+    """Per-bearer share target w_i/Σw over usable bearers, and fleet pace.
+
+    ``weekly_pace_aggregate`` = Σutil_7d / Σelapsed_fraction over bearers with
+    7d data (1.0 = fleet on pace). Both are None when no bearer has 7d data.
+    """
+    weights: dict[str, float] = {}
+    util_sum = 0.0
+    elapsed_sum = 0.0
+    for bid, bstate in bearers.items():
+        unified = bstate.get("unified") or {}
+        util = unified.get("util_7d")
+        if not isinstance(util, (int, float)):
+            continue
+        reset = unified.get("reset_7d")
+        util_sum += float(util)
+        elapsed_sum += _window_elapsed_fraction(reset, _WINDOW_7D_S, now)
+        if usable.get(bid):
+            weights[bid] = _weekly_share_weight(float(util), reset, now)
+    total = sum(weights.values())
+    targets: dict[str, float | None] = {
+        bid: (round(w / total, 4) if total > 0 else None) for bid, w in weights.items()
+    }
+    aggregate = round(util_sum / elapsed_sum, 3) if elapsed_sum > 0 else None
+    return targets, aggregate
+
+
+def _weekly_share_weight(util_7d: float, reset_7d: float | None, now: float) -> float:
+    """Remaining weekly allowance RATE, pace-penalised (0 = no share).
+
+    ``headroom ÷ hours-to-reset`` (1 h floor), scaled by
+    ``max(0, 1 - k·(pace-1))`` once pace exceeds 1x. Under-pace accounts keep
+    their full share; an account past 1.5x gets none while over pace.
+    """
+    headroom = max(0.0, 1.0 - util_7d)
+    if reset_7d is None or reset_7d <= now:
+        hours = _WINDOW_7D_S / 3600.0
+    else:
+        hours = min(reset_7d - now, _WINDOW_7D_S) / 3600.0
+    pace = _weekly_pace(util_7d, reset_7d, now)
+    penalty = max(0.0, 1.0 - _WEEKLY_PACE_K * (pace - 1.0)) if pace > 1.0 else 1.0
+    return headroom * penalty / max(hours, 1.0)
+
+
 def _routing_pressure_score(
     *,
     load: float,
@@ -1529,6 +1688,8 @@ def _routing_pressure_score(
     max_tokens: int | None,
     now: float,
     allow_target_spillover: bool,
+    weekly: tuple[float, float | None] | None = None,
+    request_count: float = 0.0,
 ) -> float:
     """Combine the surviving gate readings into the ranking score.
 
@@ -1546,13 +1707,23 @@ def _routing_pressure_score(
         pressure = _budget_pacing_pressure(windows, expected_cost, now)
         overpace = _budget_pacing_overpace(windows, expected_cost, now)
         target_surcharge = _TARGET_SPILLOVER_SURCHARGE if target_crossed else 0.0
+        if weekly is not None:
+            # Weekly share replaces only the pacing tail. Bounded below the
+            # inflight/queue/warning weights, so queue dominance is untouched.
+            weight = _weekly_share_weight(weekly[0], weekly[1], now)
+            if weight > 0:
+                k = (request_count + 1.0) / weight
+                pacing_tail = _WEEKLY_SHARE_SPAN * (1.0 - math.exp(-k / _WEEKLY_SHARE_K))
+            else:
+                pacing_tail = _WEEKLY_SHARE_SPAN
+        else:
+            pacing_tail = pressure + overpace * _OVERPACE_SURCHARGE
         return (
             load
             + warning_surcharge
             + target_surcharge
             + retry_after_surcharge
-            + overpace * _OVERPACE_SURCHARGE
-            + pressure
+            + pacing_tail
             + stickiness
         )
     return load + warning_surcharge + retry_after_surcharge + util * 5.0 + stickiness
@@ -1919,7 +2090,7 @@ def _route_account_if_enabled(
 
         # One clock for the snapshot and every pacing score: budget_paced divides
         # by time-to-reset, so a split clock can change the winner at the edge.
-        snapshot = accounts.routing_snapshot(now)
+        snapshot = _weekly_pacing_filter(accounts.routing_snapshot(now), now)
         if allow_retry_probe:
             # Routing runs before limiter allocation. Seed probation for
             # configured cold-start accounts synchronously (no first-await race).
@@ -5869,6 +6040,9 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if early_response is not None:
         return early_response
     body = _shrink_forward_body(request, body, path, model_label, headers)
+    paced_retry_after = _weekly_pacing_defer(is_priority)
+    if paced_retry_after is not None:
+        return _weekly_pacing_response(paced_retry_after)
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
         request, path, headers, bid, model, req_max_tokens, via
@@ -6906,6 +7080,7 @@ async def admission(_request: web.Request) -> web.Response:
     # which is the difference between a pause and an outage.
     retry_after_s = 0.0 if allow else _soonest_bearer_due(bearers, now)
     saturation = _lane_saturation(bearers, usable)
+    share_targets, weekly_aggregate = _weekly_share_health(bearers, usable, now)
 
     return web.json_response(
         {
@@ -6918,6 +7093,8 @@ async def admission(_request: web.Request) -> web.Response:
             "retry_after_s": retry_after_s,
             "lane": {"open": lane_open, "detail": lane_detail},
             "saturation": saturation,
+            "weekly_pacing": _weekly_pacing_view(),
+            "weekly_pace_aggregate": weekly_aggregate,
             "bearers": {
                 bid: {
                     "usable": ok,
@@ -6925,6 +7102,8 @@ async def admission(_request: web.Request) -> web.Response:
                     "status_7d": (bearers[bid].get("unified") or {}).get("status_7d"),
                     "util_5h": (bearers[bid].get("unified") or {}).get("util_5h"),
                     "util_7d": (bearers[bid].get("unified") or {}).get("util_7d"),
+                    "weekly_pace": _bearer_weekly_pace(bearers[bid], now),
+                    "weekly_share_target": share_targets.get(bid),
                 }
                 for bid, ok in usable.items()
             },

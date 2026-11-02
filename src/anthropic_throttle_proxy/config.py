@@ -18,6 +18,8 @@ import math
 import os
 import sys
 
+from . import usage_allocator as _usage_allocator
+
 UPSTREAM = os.environ.get("THROTTLE_UPSTREAM", "https://api.anthropic.com")
 LISTEN_HOST = os.environ.get("THROTTLE_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("THROTTLE_PORT", "8765"))
@@ -473,6 +475,11 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 # scoped window is treated as a resource budget scored by how fast it burns
 # relative to its reset, so windows near a reset with slack are cheaper and a
 # hot early-cycle window is expensive. Same hard safety gates in both modes.
+# Spec 377 phase 1. Off by default; observe computes and publishes only.
+# THROTTLE_WEEKLY_PACING=off|observe|enforce; burst is a finite fraction of the week.
+WEEKLY_PACING_MODE = _usage_allocator.parse_mode(os.environ.get("THROTTLE_WEEKLY_PACING"))
+WEEKLY_BURST = _usage_allocator.parse_burst(os.environ.get("THROTTLE_WEEKLY_BURST"))
+CLIENT_SHARES = _usage_allocator.parse_shares(os.environ.get("THROTTLE_CLIENT_SHARES"))
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
 ACCOUNT_ROUTING_MODE = (
     _ACCOUNT_ROUTING_MODE
