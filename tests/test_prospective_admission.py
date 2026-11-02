@@ -29,11 +29,19 @@ def scope_at(tmp_path, *, key=KEY, name="ledger.json", cold=True):
     return Scope(key, Budgets(2, 100), str(tmp_path / name), allow_cold_start=cold)
 
 
+# Deadline for every wait that is NOT the bound under test (setup, rollback after
+# a gate is released, close). It must cover real fsync latency: the shared CI
+# runner measured >0.8 s per fsync under disk pressure (02/11/2026), and a 2 s
+# budget over several fsyncs failed main run 68 (8e59d10) and PR #9 with
+# TimeoutError while nothing was wrong. Short bounds stay explicit per test.
+SETTLE_WAIT_S = 30.0
+
+
 @pytest.fixture
 async def owners(tmp_path):
     created = []
 
-    async def make(*, scopes=None, max_pending=4, wait_timeout=2.0, clock=lambda: 1000.0):
+    async def make(*, scopes=None, max_pending=4, wait_timeout=SETTLE_WAIT_S, clock=lambda: 1000.0):
         owner = PersistenceOwner(
             scopes if scopes is not None else [scope_at(tmp_path)],
             max_pending=max_pending,
@@ -75,7 +83,7 @@ class FsyncGate:
         monkeypatch.setattr(ledger_module.os, "fsync", blocked)
 
     async def wait(self):
-        await asyncio.wait_for(self.entered.wait(), 2)
+        await asyncio.wait_for(self.entered.wait(), SETTLE_WAIT_S)
 
 
 async def dispatch(owner, *, key=KEY, sent=None, amount=50):
@@ -159,8 +167,7 @@ async def test_acquisition_abandonment_rolls_back_after_worker_finishes(
     finally:
         gate.release.set()
     # The 100ms deadline tests abandonment, not durable rollback/shutdown.
-    # Keep the normal fixture deadline for cleanup on slower CI disks.
-    monkeypatch.setattr(owner, "_wait_timeout", 2.0)
+    monkeypatch.setattr(owner, "_wait_timeout", SETTLE_WAIT_S)
     await owner.aclose()
     restored = await owners()
     assert await restored.snapshot(KEY) == {"requests": 0, "tokens": 0}
@@ -352,7 +359,7 @@ async def test_failed_rollback_blocks_already_queued_admission(owners, monkeypat
 
 
 async def test_cancelled_rollback_wait_stays_owned_and_close_is_bounded(owners, monkeypatch):
-    owner = await owners(max_pending=1, wait_timeout=0.1)
+    owner = await owners(max_pending=1)
     gate = FsyncGate(monkeypatch, call=3)
 
     async def unsent():
@@ -362,6 +369,9 @@ async def test_cancelled_rollback_wait_stays_owned_and_close_is_bounded(owners, 
     task = asyncio.create_task(unsent())
     try:
         await gate.wait()
+        # The bound under test is the wait on the HELD rollback, so it is armed only
+        # once the rollback's fsync is gated; the two fsyncs before it ran at disk speed.
+        monkeypatch.setattr(owner, "_wait_timeout", 0.1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -373,6 +383,8 @@ async def test_cancelled_rollback_wait_stays_owned_and_close_is_bounded(owners, 
             await dispatch(owner)
     finally:
         gate.release.set()
+    # Boundedness was asserted above; the post-release rollback + close is not.
+    monkeypatch.setattr(owner, "_wait_timeout", SETTLE_WAIT_S)
     await owner.aclose()
     restored = await owners()
     assert await restored.snapshot(KEY) == {"requests": 0, "tokens": 0}
