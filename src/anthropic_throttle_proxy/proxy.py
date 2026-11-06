@@ -3047,7 +3047,7 @@ async def _oauth_telemetry_serve(request: web.Request) -> web.StreamResponse:
                 retry_after = up.headers.get("Retry-After")
                 ctype = up.headers.get("Content-Type", ctype)
         except (aiohttp.ClientError, TimeoutError):
-            pass  # status 0: transport failure, handled as a 5xx below
+            status = 0  # Transport/read failure: use the unavailable/backoff path below.
         now = time.time()
         if status == 200:
             _oauth_telemetry_cache[key] = (now, 200, body, ctype)
@@ -3479,7 +3479,7 @@ async def _emit_sse_error_terminal(
         # Client already gone; write_eof on a dead socket is expected.
         # ConnectionResetError and aiohttp's ClientConnectionResetError are both
         # OSError subclasses — naming them again adds nothing.
-        pass
+        return
 
 
 async def _capture_throttle_upstream(
@@ -3588,8 +3588,10 @@ async def _forward_once_into_sse(
         headers = strip_incoming_provenance(headers)
     selected = get_selected_dispatch(request)
     connector = aiohttp.TCPConnector(ssl=True)
+    # The hold already committed plaintext SSE headers (and possibly pings).
+    # Decode here: compressed bytes cannot be spliced into that open stream.
     async with aiohttp.ClientSession(
-        timeout=client_timeout, connector=connector, auto_decompress=False
+        timeout=client_timeout, connector=connector, auto_decompress=True
     ) as session:
         await _pace_dispatch()
         # Post-pacer reservation over the exact final bytes; the synchronous
