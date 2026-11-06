@@ -151,3 +151,77 @@ def test_publish_is_read_only_and_leaves_unknown_out_of_pace() -> None:
     # used = 0.6 + 0.47 = 1.07; elapsed (allowed minus burst) = 0.5 each, so pace = 1.07 / 1.0
     assert view["fleet_pace"] == pytest.approx(1.07 / (2 * 0.5), rel=1e-3)
     assert ua.publish([], mode="off", burst=BURST, shares={})["fleet_pace"] is None
+
+
+def _incident_rows(epoch_start: float, restart: float, step_at: float, reset: float):
+    """Persisted meter rows for the 06/11/2026 proton shape: 0.00 for 7 h, one 1 pt step."""
+    rows = []
+    t = epoch_start + 60.0
+    while t < restart:
+        rows.append({"bearer": "p", "sampled_at": t, "util_7d": 0.0, "reset_7d": reset})
+        t += 60.0
+    # A stale repeat (no new header) and a torn/foreign row must both be ignored.
+    rows.append(
+        {"bearer": "p", "sampled_at": t - 60.0, "util_7d": 0.0, "reset_7d": reset, "stale": True}
+    )
+    rows.append({"bearer": "p", "sampled_at": "garbage", "util_7d": 0.5, "reset_7d": reset})
+    return rows
+
+
+def test_restart_without_history_reads_one_meter_step_as_overpace() -> None:
+    """Reproduces the bug: history that starts at the restart turns one 1 pt step
+    into a burn far above the remaining-law cap (proton read 1.78x at 0.29x)."""
+    reset = 1_794_564_000.0
+    epoch_start = reset - ua.WEEK_S
+    restart = epoch_start + 7.4 * 3600
+    step_at = restart + 45 * 60
+    now = restart + 55 * 60
+    live = ua.WeekSamples()
+    for t in range(int(restart), int(now), 60):
+        live.observe("p", float(t), 0.01 if t >= step_at else 0.0, reset)
+    burn = ua.burn_per_h(live.samples("p"), now, 1800.0)
+    state = ua.account_state("p", 0.01, reset, now, law="remaining", burn=burn)
+    assert state["state"] == "ahead"
+
+
+def test_seeded_history_keeps_burn_honest_across_a_restart() -> None:
+    """With the persisted readings restored, the same step is averaged over its
+    real 0.00 plateau and the account is on schedule — no fleet-wide defer."""
+    reset = 1_794_564_000.0
+    epoch_start = reset - ua.WEEK_S
+    restart = epoch_start + 7.4 * 3600
+    step_at = restart + 45 * 60
+    now = restart + 55 * 60
+    samples = ua.WeekSamples()
+    seeded = samples.seed(_incident_rows(epoch_start, restart, step_at, reset), now)
+    assert seeded > 0
+    for t in range(int(restart), int(now), 60):
+        samples.observe("p", float(t), 0.01 if t >= step_at else 0.0, reset)
+    burn = ua.burn_per_h(samples.samples("p"), now, 1800.0)
+    state = ua.account_state("p", 0.01, reset, now, law="remaining", burn=burn)
+    assert state["state"] == "on_schedule", state
+
+
+def test_seed_skips_stale_future_and_expired_rows() -> None:
+    now = 2_000_000.0
+    rows = [
+        {
+            "bearer": "a",
+            "sampled_at": now - ua.SAMPLE_KEEP_S - 10,
+            "util_7d": 0.1,
+            "reset_7d": now + 9,
+        },
+        {
+            "bearer": "a",
+            "sampled_at": now - 300,
+            "util_7d": 0.2,
+            "reset_7d": now + 9,
+            "stale": True,
+        },
+        {"bearer": "a", "sampled_at": now + 300, "util_7d": 0.3, "reset_7d": now + 9},
+        {"bearer": "a", "sampled_at": now - 120, "util_7d": 0.4, "reset_7d": now + 9},
+        {"bearer": None, "sampled_at": now - 60, "util_7d": 0.5, "reset_7d": now + 9},
+    ]
+    samples = ua.WeekSamples()
+    assert samples.seed(rows, now) == 1
+    assert samples.samples("a") == [(now - 120, 0.4, now + 9)]

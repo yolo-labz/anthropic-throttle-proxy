@@ -15,7 +15,7 @@ accounts are ahead, priority calls still dispatch and non-priority calls get a
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from .project_share import DIRECT as DIRECT_PROJECT
@@ -417,12 +417,42 @@ class WeekSamples:
         if not (math.isfinite(util) and math.isfinite(reset)):
             return
         series = self._series.setdefault(key, [])
-        if series and t - series[-1][0] < BURN_SAMPLE_GAP_S and series[-1][2] == reset:
+        if series and (reset != series[-1][2] or util < series[-1][1]):
+            # A reset/recalibration changes the baseline, not consumption. Cut
+            # BEFORE downsampling so a nearby rebase cannot hide subsequent burn.
+            series.clear()
+        if series and t - series[-1][0] < BURN_SAMPLE_GAP_S:
             return
         series.append((t, float(util), float(reset)))
         cutoff = t - SAMPLE_KEEP_S
         while series and series[0][0] < cutoff:
             series.pop(0)
+
+    def seed(self, rows: Iterable[Mapping[str, object]], now: float) -> int:
+        """Restore persisted meter readings so burn survives a process restart.
+
+        Without history, the first 1 pt meter step after a restart is divided by
+        the minutes since the restart instead of the real plateau: on 06/11/2026
+        proton (0.29x of its remaining-law cap) read as 1.78x, gmail likewise,
+        and the fleet-wide defer stalled every pane for 11 minutes. Rows are the
+        meter recorder's (``bearer``, ``sampled_at``, ``util_7d``, ``reset_7d``);
+        stale repeats, rows older than ``SAMPLE_KEEP_S`` and future rows are
+        skipped. Returns how many readings were kept.
+        """
+        valid: list[tuple[float, str, object, object]] = []
+        for row in rows:
+            if row.get("stale"):
+                continue
+            key, t = row.get("bearer"), row.get("sampled_at")
+            if not isinstance(key, str) or not key or not isinstance(t, (int, float)):
+                continue
+            if not math.isfinite(t) or t > now or t < now - SAMPLE_KEEP_S:
+                continue
+            valid.append((float(t), key, row.get("util_7d"), row.get("reset_7d")))
+        before = sum(len(s) for s in self._series.values())
+        for t, key, util, reset in sorted(valid, key=lambda v: v[0]):
+            self.observe(key, t, util, reset)
+        return sum(len(s) for s in self._series.values()) - before
 
     def samples(self, key: str) -> list[tuple[float, float, float]]:
         return list(self._series.get(key, []))

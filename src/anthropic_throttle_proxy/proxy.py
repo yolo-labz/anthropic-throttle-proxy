@@ -1073,6 +1073,29 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
 # Spec 377 phase 2: process-local, bounded. Tokens are measured upstream usage only.
 _WEEKLY_TOKENS = _usage_allocator.WeeklyTokens()
 _WEEK_SAMPLES = _usage_allocator.WeekSamples()
+
+
+def _seed_week_samples(path: object = None, now: float | None = None) -> int:
+    """Restore the burn history from the persisted meter log (startup only).
+
+    Without it, every restart re-derives burn from a few minutes of samples and
+    can misread one 1 pt meter step as a fleet-wide overpace (06/11/2026).
+    Failure is logged and leaves today's behaviour: an empty history.
+    """
+    from . import meter_recorder
+
+    now = time.time() if now is None else now
+    path = meter_recorder.default_path() if path is None else path
+    try:
+        rows = meter_recorder.recent_rows(path, now - _usage_allocator.SAMPLE_KEEP_S)
+    except OSError as exc:
+        log(f"week-samples-seed-error path={path}: {exc!r}")
+        return 0
+    kept = _WEEK_SAMPLES.seed(rows, now)
+    log(f"week-samples-seeded readings={kept} bearers={len(_WEEK_SAMPLES.keys())}")
+    return kept
+
+
 _BURN_EVAL_S = 60.0
 _burn_last_eval = float("-inf")
 _burn_firing: set[str] = set()
@@ -6289,10 +6312,13 @@ async def _hold_deferral(
     """Hold a streaming request while ``poll`` reports a deferral.
 
     Returns ``None`` once the deferral clears (the hold stays on the request
-    for the queue dispatch). Returns the terminal SSE response when the wait
-    budget expires: the same queue-timeout text, no hang.
+    for the queue dispatch). Expiry remains fail-closed: waiting must never
+    bypass pacing or hard account eligibility. Sequential pacing/share waits
+    reuse the same committed SSE response and spend one end-to-end budget.
     """
-    hold = await _open_deferral_hold(request, bid)
+    hold = request.get(_DEFER_HOLD_KEY)
+    if hold is None:
+        hold = await _open_deferral_hold(request, bid)
     budget = max_wait if max_wait is not None else config.QUEUE_MAX_PATIENT_WAIT_S
     deadline = time.monotonic() + budget
     while True:
@@ -6303,6 +6329,7 @@ async def _hold_deferral(
         if remaining <= 0:
             await hold.stop()
             await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
+            log(f"deferral-hold-expired bid={bid} path={request.path} budget_s={budget:g}")
             return hold.sse
         await asyncio.sleep(min(remaining, max(0.5, min(float(retry_after), 15.0))))
 
@@ -6648,7 +6675,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if request.method == "POST" and MESSAGES_SUBPATH in path:
         _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
-    max_wait_for_hold = _effective_queue_max_wait(request.headers)
+    max_wait, wait_deadline = _queue_wait_budget(request, handler_start)
     paced_retry_after = _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens)
     if paced_retry_after is not None:
         if not _stream_hold_wanted(request, body):
@@ -6657,7 +6684,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
             request,
             bid,
             lambda: _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens),
-            max_wait_for_hold,
+            _slot_remaining_wait(wait_deadline),
         )
         if terminal is not None:
             return terminal
@@ -6673,7 +6700,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
             request,
             bid,
             lambda: _weekly_share_defer(wproject, is_priority),
-            max_wait_for_hold,
+            _slot_remaining_wait(wait_deadline),
         )
         if terminal is not None:
             return terminal
@@ -6691,7 +6718,6 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if handler_task is not None:
         handler_task.add_done_callback(lambda _task: finish_probe(success=False))
 
-    max_wait, wait_deadline = _queue_wait_budget(request, handler_start)
     if max_wait is not None and max_wait <= 0.0:
         # The upstream tier already spent the whole wait budget; don't park.
         return await _expired_wait_budget_response(bid, cid, path, max_wait, finish_probe)
@@ -8252,6 +8278,8 @@ def main() -> None:
     # Restore credential quarantines BEFORE the listener accepts anything, so a
     # restart cannot re-derive a known-dead account at the cost of client turns.
     load_credential_state()
+    # Same restore-before-serve rule for the weekly burn history.
+    _seed_week_samples()
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)

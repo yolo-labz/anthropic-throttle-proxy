@@ -2650,3 +2650,135 @@ async def test_weekly_pacing_deferral_holds_then_resumes(client, monkeypatch) ->
     assert body.find(b": keepalive") != -1
     assert b"event:" in body[body.find(b": keepalive") :]
     assert calls["n"] >= 4
+
+
+async def test_weekly_pacing_expiry_does_not_bypass_the_consumption_gate(
+    client, monkeypatch
+) -> None:
+    """An over-pace fleet stays blocked; expiry is not permission to spend."""
+    _stream_setup(monkeypatch, hold_knob=True)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.3)
+    monkeypatch.setattr(proxy, "_weekly_pacing_defer", lambda priority, **_scope: 1800)
+    resp = await asyncio.wait_for(
+        client.post(
+            "/v1/messages",
+            data=STREAM_BODY,
+            headers={"Authorization": "Bearer pacing-never-clears", config.PATIENCE_HEADER: "5000"},
+        ),
+        timeout=10,
+    )
+    body = await asyncio.wait_for(resp.read(), timeout=10)
+
+    assert resp.status == 200  # keepalive headers are already committed
+    assert b"event: error" in body
+    assert b"proxy queue wait exceeded" in body
+    assert b"event: message_start" not in body
+    for _ in range(100):
+        if config.state["keepalive_holds_active"] == 0:
+            break
+        await asyncio.sleep(0.02)
+    assert config.state["keepalive_holds_active"] == 0
+
+
+async def test_pacing_then_share_deferral_reuse_one_committed_hold(client, monkeypatch) -> None:
+    """A pacing hold that clears into a share defer must reuse the SAME committed
+    200 SSE: preparing a second response on one request cannot work."""
+    _stream_setup(monkeypatch, hold_knob=True)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    pace, share = {"n": 0}, {"n": 0}
+
+    def pacing(priority: bool, **_scope) -> int | None:
+        pace["n"] += 1
+        return 1 if pace["n"] <= 2 else None
+
+    def sharing(project: str, priority: bool) -> int | None:
+        share["n"] += 1
+        return 1 if share["n"] <= 2 else None
+
+    monkeypatch.setattr(proxy, "_weekly_pacing_defer", pacing)
+    monkeypatch.setattr(proxy, "_weekly_share_defer", sharing)
+    resp = await asyncio.wait_for(
+        client.post(
+            "/v1/messages",
+            data=STREAM_BODY,
+            headers={"Authorization": "Bearer pacing-then-share", config.PATIENCE_HEADER: "5000"},
+        ),
+        timeout=15,
+    )
+    body = await asyncio.wait_for(resp.read(), timeout=15)
+
+    assert resp.status == 200
+    assert b"event: error" not in body, body[-300:]
+    assert b"event:" in body
+    assert pace["n"] >= 3 and share["n"] >= 3
+
+
+async def test_pacing_cannot_renew_an_inherited_queue_budget(client, monkeypatch) -> None:
+    """A 1 s inherited allowance is shared by pacing and the queue, not renewed.
+
+    Pacing clears after 0.8 s; the held slot frees at 1.3 s. Upstream dispatch
+    must NOT be allowed by granting a second 1 s allowance after pacing.
+    """
+    _stream_setup(monkeypatch, hold_knob=True)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 1.0)
+    auth = "Bearer pacing-then-slot"
+    bid = proxy._bearer_id({"authorization": auth})
+    lim = await proxy._get_bearer_limiter(bid, "fair", config.MAX_CONCURRENT)
+    await lim.acquire("holder")
+    loop = asyncio.get_running_loop()
+    clears_at = loop.time() + 0.8
+
+    def pacing(priority: bool, **_scope) -> int | None:
+        return None if loop.time() >= clears_at else 1
+
+    async def release_later() -> None:
+        await asyncio.sleep(1.3)
+        await lim.release()
+
+    monkeypatch.setattr(proxy, "_weekly_pacing_defer", pacing)
+    releaser = asyncio.create_task(release_later())
+    resp = await asyncio.wait_for(
+        client.post(
+            "/v1/messages",
+            data=STREAM_BODY,
+            headers={"Authorization": auth, config.WAIT_BUDGET_HEADER: "1000"},
+        ),
+        timeout=10,
+    )
+    body = await asyncio.wait_for(resp.read(), timeout=10)
+    await releaser
+
+    assert resp.status == 200
+    assert b"event: error" in body, body[-300:]
+    assert b"event: message_start" not in body
+
+
+async def test_pacing_and_share_holds_spend_one_inherited_budget(client, monkeypatch) -> None:
+    _stream_setup(monkeypatch, hold_knob=True)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 10.0)
+    pace = {"n": 0}
+    budgets = []
+    original = proxy._hold_deferral
+
+    def pacing(priority, **_scope):
+        pace["n"] += 1
+        return 1 if pace["n"] <= 2 else None
+
+    async def hold(request, bid, poll, max_wait):
+        budgets.append(max_wait)
+        return await original(request, bid, poll, max_wait)
+
+    monkeypatch.setattr(proxy, "_weekly_pacing_defer", pacing)
+    monkeypatch.setattr(proxy, "_weekly_share_defer", lambda project, priority: 1800)
+    monkeypatch.setattr(proxy, "_hold_deferral", hold)
+    resp = await client.post(
+        "/v1/messages",
+        data=STREAM_BODY,
+        headers={"Authorization": "Bearer shared-deadline", config.WAIT_BUDGET_HEADER: "300"},
+    )
+    body = await asyncio.wait_for(resp.read(), timeout=5)
+    assert len(budgets) == 2
+    assert 0 < budgets[0] <= 0.3
+    assert budgets[1] <= 0.02, budgets
+    assert b"event: error" in body
+    assert b"event: message_start" not in body

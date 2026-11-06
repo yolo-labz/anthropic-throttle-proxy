@@ -138,3 +138,39 @@ async def test_disabled_context_starts_nothing(monkeypatch, tmp_path):
     except StopAsyncIteration:
         pass
     assert list(tmp_path.glob("**/*.jsonl")) == []
+
+
+def test_startup_seed_restores_burn_history_from_the_persisted_log(tmp_path, monkeypatch) -> None:
+    """End to end on the 06/11/2026 restart shape: the persisted log (with a torn
+    first line and stale repeats) restores the plateau, so one 1 pt step after
+    the restart is judged on schedule instead of as a fleet-wide overpace."""
+    import json as _json
+
+    from anthropic_throttle_proxy import meter_recorder as mr
+    from anthropic_throttle_proxy import proxy
+    from anthropic_throttle_proxy import usage_allocator as ua
+
+    reset = 1_794_564_000.0
+    restart = reset - ua.WEEK_S + 7.4 * 3600
+    now = restart + 55 * 60
+    log_path = tmp_path / "quota-meter.jsonl"
+    lines = ['{"torn": tr']
+    t = restart - 20 * 3600
+    while t < restart:
+        row = {"bearer": "b144f62f", "sampled_at": t, "util_7d": 0.0, "reset_7d": reset}
+        lines.append(_json.dumps(row))
+        lines.append(_json.dumps({**row, "stale": True}))
+        t += 60.0
+    log_path.write_text("\n".join(lines) + "\n")
+
+    monkeypatch.setattr(proxy, "_WEEK_SAMPLES", ua.WeekSamples())
+    assert mr.recent_rows(None, 0.0) == []
+    assert mr.recent_rows(tmp_path / "missing.jsonl", 0.0) == []
+    assert proxy._seed_week_samples(log_path, now) > 0
+    for s in range(int(restart), int(now), 60):
+        proxy._WEEK_SAMPLES.observe(
+            "b144f62f", float(s), 0.01 if s >= restart + 2700 else 0.0, reset
+        )
+    burn = ua.burn_per_h(proxy._WEEK_SAMPLES.samples("b144f62f"), now, 1800.0)
+    state = ua.account_state("proton", 0.01, reset, now, law="remaining", burn=burn)
+    assert state["state"] == "on_schedule", state
