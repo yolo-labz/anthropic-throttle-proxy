@@ -1172,12 +1172,37 @@ def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list
     return states
 
 
-def _weekly_pacing_filter(snapshot: list[dict[str, object]], now: float) -> list[dict[str, object]]:
-    """Spill-only: drop ahead-of-schedule accounts when a sibling has room (enforce only)."""
+def _weekly_pacing_eligible(
+    snapshot: list[dict[str, object]], now: float, *, model: str = "", max_tokens: int | None = None
+) -> list[dict[str, object]]:
+    """Only hard-routable accounts can offer a pacing spill target or suppress deferral."""
+    return [
+        acct
+        for acct in snapshot
+        if math.isfinite(
+            _account_routing_candidate_score(
+                acct,
+                "",
+                allow_pressure=True,
+                allow_target_spillover=True,
+                allow_retry_probe=True,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            )
+        )
+    ]
+
+
+def _weekly_pacing_filter(
+    snapshot: list[dict[str, object]], now: float, *, model: str = "", max_tokens: int | None = None
+) -> list[dict[str, object]]:
+    """Spill-only: drop ahead accounts only when a hard-eligible sibling has room."""
     if config.WEEKLY_PACING_MODE != "enforce" or not snapshot:
         return snapshot
+    eligible = _weekly_pacing_eligible(snapshot, now, model=model, max_tokens=max_tokens)
     verdict, labels = _usage_allocator.decide_pacing(
-        _weekly_pacing_states(snapshot, now),
+        _weekly_pacing_states(eligible, now),
         mode="enforce",
         priority=False,
         now=now,
@@ -1189,14 +1214,19 @@ def _weekly_pacing_filter(snapshot: list[dict[str, object]], now: float) -> list
     return [acct for acct in snapshot if str(acct.get("label")) in labels]
 
 
-def _weekly_pacing_defer(priority: bool) -> int | None:
-    """Honest Retry-After when every account is ahead and the call is non-priority."""
+def _weekly_pacing_defer(
+    priority: bool, *, model: str = "", max_tokens: int | None = None
+) -> int | None:
+    """Honest Retry-After when every hard-eligible account is ahead, except priority."""
     if config.WEEKLY_PACING_MODE != "enforce" or not _account_routing_enabled():
         return None
     from . import accounts
 
     now = time.time()
-    states = _weekly_pacing_states(accounts.routing_snapshot(now), now)
+    eligible = _weekly_pacing_eligible(
+        accounts.routing_snapshot(now), now, model=model, max_tokens=max_tokens
+    )
+    states = _weekly_pacing_states(eligible, now)
     verdict, retry_after = _usage_allocator.decide_pacing(
         states,
         mode="enforce",
@@ -1254,7 +1284,7 @@ def _weekly_pacing_view() -> dict:
     # the wall readable from the endpoint clients already poll, instead of
     # re-deriving the verdict from the per-account block.
     verdict, detail = _usage_allocator.decide_pacing(
-        states,
+        _weekly_pacing_states(_weekly_pacing_eligible(snapshot, now), now),
         mode=config.WEEKLY_PACING_MODE,
         priority=False,
         now=now,
@@ -2453,7 +2483,9 @@ def _route_account_if_enabled(
 
         # One clock for the snapshot and every pacing score: budget_paced divides
         # by time-to-reset, so a split clock can change the winner at the edge.
-        snapshot = _weekly_pacing_filter(accounts.routing_snapshot(now), now)
+        snapshot = _weekly_pacing_filter(
+            accounts.routing_snapshot(now), now, model=model, max_tokens=max_tokens
+        )
         if allow_retry_probe:
             # Routing runs before limiter allocation. Seed probation for
             # configured cold-start accounts synchronously (no first-await race).
@@ -6617,12 +6649,15 @@ async def _serve(request: web.Request) -> web.StreamResponse:
         _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
     max_wait_for_hold = _effective_queue_max_wait(request.headers)
-    paced_retry_after = _weekly_pacing_defer(is_priority)
+    paced_retry_after = _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens)
     if paced_retry_after is not None:
         if not _stream_hold_wanted(request, body):
             return _weekly_pacing_response(paced_retry_after)
         terminal = await _hold_deferral(
-            request, bid, lambda: _weekly_pacing_defer(is_priority), max_wait_for_hold
+            request,
+            bid,
+            lambda: _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens),
+            max_wait_for_hold,
         )
         if terminal is not None:
             return terminal

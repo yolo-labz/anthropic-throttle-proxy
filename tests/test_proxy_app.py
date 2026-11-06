@@ -2634,7 +2634,7 @@ async def test_weekly_pacing_deferral_holds_then_resumes(client, monkeypatch) ->
     monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
     calls = {"n": 0}
 
-    def pacing(priority: bool) -> float | None:
+    def pacing(priority: bool, **_request) -> float | None:
         calls["n"] += 1
         return 0.5 if calls["n"] <= 3 else None
 
