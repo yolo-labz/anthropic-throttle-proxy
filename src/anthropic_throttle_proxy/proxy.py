@@ -109,6 +109,7 @@ from .forwarding import (
     _forward_once,
     central_health_loop,
     direct_target,
+    is_central_response,
     note_upstream_auth,
     notify_success_headers,
     pick_target,
@@ -3564,9 +3565,8 @@ async def _capture_throttle_upstream(
     Surfaces the proxy-private queue-timeout marker to the caller so the hold
     can classify a relayed central queue-timeout 503 (no AIMD shrink —
     invariant 7). ``_extract_ratelimit`` does NOT capture this header, so add
-    it explicitly — and ONLY from a sibling proxy tier (MARKER_HEADER present),
-    never a spoofing upstream (anti-spoof, matching ``_stream_response``;
-    Codex BLOCKER).
+    it explicitly — ONLY from the configured central transport plus marker,
+    never a raw upstream asserting its own provenance (same as ``_stream_response``).
     """
     from .ratelimit import _extract_zai_ratelimit_from_body
 
@@ -3578,7 +3578,7 @@ async def _capture_throttle_upstream(
             quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
         )
     )
-    if config.MARKER_HEADER in upstream.headers:
+    if is_central_response(upstream):
         # A sibling tier answered. Record THAT — an entitlement verdict is
         # authoritative in both directions (present = gate, absent = central
         # already ruled it out), so the hold must be able to tell "no sibling

@@ -108,6 +108,15 @@ class StreamCommittedError(RuntimeError):
         self.__cause__ = cause
 
 
+def is_central_response(upstream: aiohttp.ClientResponse) -> bool:
+    """Only the configured central transport may endorse reserved refusal stamps."""
+    return bool(
+        config.CENTRAL_URL
+        and str(getattr(upstream, "url", "")).startswith(config.CENTRAL_URL.rstrip("/") + "/")
+        and upstream.headers.get(config.MARKER_HEADER) == "1"
+    )
+
+
 async def stamp_proxy_marker(_request: web.Request, response: web.StreamResponse) -> None:
     """``on_response_prepare`` hook: mark every response this proxy serves.
 
@@ -312,24 +321,13 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     in the final few KB of any claude response, even for long generations.
     """
     drop_headers = config.HOP_HEADERS
-    if config.MARKER_HEADER not in upstream.headers:
-        # Only a sibling proxy tier (marker-stamped) may assert the
-        # queue-timeout contract. A raw upstream 429/503 carrying the header
-        # verbatim would exempt REAL pushback from pushback-retry and AIMD
-        # shrink (Codex MAJOR on PR #83). A double-spoof (marker + stamp) is
-        # the same accepted trust boundary as the PR #81 marker itself.
-        #
-        # The entitlement stamp rides the SAME boundary, and for a sharper
-        # reason (Codex second pass, blocking finding 2): with local→central
-        # account routing, CENTRAL chose the account that actually reached
-        # Anthropic, so central's bearer, cache, and unified windows are the
-        # authoritative evidence. The local tier's `bearer_state` may be keyed
-        # to a different account entirely, so re-deriving locally could label a
-        # genuine budget 429 as an entitlement refusal (skipping a shrink the
-        # walled account needs) or the reverse. Relay a sibling tier's verdict;
-        # strip and re-derive only for a RAW upstream, which cannot have one.
+    if not is_central_response(upstream):
+        # on_prepare marks every relay, so an upstream marker/body is not
+        # provenance. Strip reserved verdicts before our own marker is added.
         drop_headers = config.HOP_HEADERS | {
+            "x-throttle-admission-closed",
             config.QUEUE_TIMEOUT_HEADER,
+            config.PACING_HEADER,
             config.ENTITLEMENT_REFUSAL_HEADER,
         }
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
@@ -510,7 +508,7 @@ async def _forward_once(
                                 bytearray(payload[: 1024 * 1024]),
                                 RetryableStatusError(
                                     f"retryable upstream status {upstream.status}",
-                                    proxy_served=config.MARKER_HEADER in upstream.headers,
+                                    proxy_served=is_central_response(upstream),
                                 ),
                                 _extract_ratelimit(upstream.headers),
                             )

@@ -529,6 +529,7 @@ async def test_queue_timeout_503_then_capacity(monkeypatch) -> None:
         fail_count=1, fail_status=503, fail_headers=queue_timeout_headers
     )
     test_client, upstream_server = await _make_client_with_upstream(monkeypatch, upstream_app)
+    monkeypatch.setattr(config, "CENTRAL_URL", str(upstream_server.make_url("")).rstrip("/"))
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
         resp = await test_client.post(
@@ -814,6 +815,7 @@ async def test_marked_queue_timeout_hold_no_shrink(monkeypatch) -> None:
     test_client, upstream_server = await _make_client_with_upstream(
         monkeypatch, upstream_app, queue_max_wait_s=0.8
     )
+    monkeypatch.setattr(config, "CENTRAL_URL", str(upstream_server.make_url("")).rstrip("/"))
     before = _aimd_shrink_total()
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
