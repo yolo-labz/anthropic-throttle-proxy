@@ -5889,9 +5889,25 @@ def _claim_route(
 
 
 def _queue_wait_budget(
-    request: web.Request, handler_start: float
+    request: web.Request, handler_start: float, body: bytes | None
 ) -> tuple[float | None, float | None]:
-    """(max_wait, wait_deadline) — the queue-wait budget this request may spend."""
+    """(max_wait, wait_deadline) — the queue-wait budget this request may spend.
+
+    A held request (200 SSE committed, keepalive pings flowing) has no client
+    idle timer to beat, which is the only reason the bound exists. It therefore
+    waits until it is served or its client disconnects: every message is queued
+    and answered as capacity frees (Pedro, 07/11/2026 — 126 held Pi turns/hour
+    were being dropped at the 240 s bound while weekly pacing deferred them).
+    An explicit bound still applies — a patience header (the client asked for a
+    limit) or an inherited wait budget (a sibling tier is spending its own).
+    """
+    asked = _patience_bound(request.headers) is not None
+    if (
+        _stream_hold_wanted(request, body)
+        and not asked
+        and (config.WAIT_BUDGET_HEADER not in request.headers)
+    ):
+        return None, None
     max_wait = _effective_queue_max_wait(request.headers)
     return max_wait, None if max_wait is None else handler_start + max_wait
 
@@ -6319,14 +6335,19 @@ async def _hold_deferral(
     hold = request.get(_DEFER_HOLD_KEY)
     if hold is None:
         hold = await _open_deferral_hold(request, bid)
-    budget = max_wait if max_wait is not None else config.QUEUE_MAX_PATIENT_WAIT_S
-    deadline = time.monotonic() + budget
+    # None = a held request without a client-asked bound: wait for capacity.
+    deadline = None if max_wait is None else time.monotonic() + max_wait
     while True:
         retry_after = poll()
         if retry_after is None:
             return None
-        remaining = deadline - time.monotonic()
+        if _request_disconnected(request):
+            await hold.stop()
+            log(f"deferral-hold-client-gone bid={bid} path={request.path}")
+            return hold.sse
+        remaining = math.inf if deadline is None else deadline - time.monotonic()
         if remaining <= 0:
+            budget = max_wait
             await hold.stop()
             await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
             log(f"deferral-hold-expired bid={bid} path={request.path} budget_s={budget:g}")
@@ -6357,6 +6378,13 @@ async def _dispatch_into_hold(
     attempt.started_at = t0
     try:
         while True:
+            if _request_disconnected(request):
+                # The wait is unbounded for a held request, so the client may be
+                # long gone by the time a slot frees: never spend quota on it.
+                await hold.stop()
+                attempt.final_status = 499
+                attempt.response = hold.sse
+                return hold.sse
             if wait_deadline is not None and time.time() >= wait_deadline:
                 await hold.stop()
                 await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
@@ -6675,7 +6703,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if request.method == "POST" and MESSAGES_SUBPATH in path:
         _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
-    max_wait, wait_deadline = _queue_wait_budget(request, handler_start)
+    max_wait, wait_deadline = _queue_wait_budget(request, handler_start, body)
     paced_retry_after = _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens)
     if paced_retry_after is not None:
         if not _stream_hold_wanted(request, body):
