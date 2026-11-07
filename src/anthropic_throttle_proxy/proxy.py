@@ -67,6 +67,7 @@ from . import pacing as _pacing
 from . import session_affinity as _session_affinity
 from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
+from .capability import attach_capability, record_loaded_module
 
 # Re-exported config (env scalars + shared mutable state + log + HOP_HEADERS).
 # These are the proxy module's stable public surface; ``ui.routes`` does
@@ -202,6 +203,8 @@ if TYPE_CHECKING:
     _Reroute = Callable[[], tuple[str, dict[str, str]]]
     _WaitAlternate = Callable[[], Awaitable[bool]]
     _WaitReval = Callable[[Callable[[], Awaitable[None]]], Awaitable[bool]]
+
+record_loaded_module(__file__)
 
 # Public surface re-exported from the focused sibling modules + defined here.
 # Declared so static analysis treats the re-exports above as intentional.
@@ -8396,6 +8399,7 @@ def main() -> None:
     # dokku nginx answering for a dead container (mark central down).
     app.on_response_prepare.append(stamp_proxy_marker)
     app.router.add_get("/", root_probe)
+    attach_capability(app)
     app.router.add_get("/__throttle/health", health)
     app.router.add_get("/__throttle/admission", admission)
     app.router.add_post("/__throttle/quiesce", quiesce)

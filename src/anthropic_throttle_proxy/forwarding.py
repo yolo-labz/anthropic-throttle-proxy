@@ -17,6 +17,7 @@ import aiohttp
 from aiohttp import web
 
 from . import account_pool, config, prospective_runtime
+from .capability import record_loaded_module
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
@@ -29,6 +30,8 @@ from .ratelimit import (
     _parse_sse_usage,
 )
 from .routing import fit_chat_completions_body, normalize_text_content_blocks
+
+record_loaded_module(__file__)
 
 
 def _prospective_reservation(request: web.Request, body: bytes | None):
