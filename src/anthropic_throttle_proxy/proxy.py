@@ -4100,6 +4100,20 @@ async def _keepalive_reclassified_terminal(
         attempt.final_status = status
         attempt.response = sse_resp
         return sse_resp
+    if status not in config.THROTTLE_STATUSES:
+        # A committed hold cannot relay HTTP401, but must preserve the fatal
+        # provider envelope rather than invent a retryable quota timeout.
+        error_type, message = "api_error", f"upstream returned HTTP {status}"
+        if attempt.captured:
+            try:
+                error_type, message = _error_envelope_fields(attempt.captured)
+            except (ValueError, TypeError) as exc:
+                log(f"hold-error-invalid status={status} error={type(exc).__name__}")
+        log(f"keepalive-hold-upstream-fatal bid={bid} status={status}")
+        await _emit_sse_error_terminal(sse_resp, message, error_type)
+        attempt.final_status = status
+        attempt.response = sse_resp
+        return sse_resp
     # The hold OWNS AIMD (`aimd_owned`), so `_finalize` will skip its
     # own call — and this terminal branch never made one, letting a
     # genuine budget 429 that arrived mid-hold escape the shrink
