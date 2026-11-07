@@ -6535,6 +6535,10 @@ async def _run_slot(
             counters.enter_inflight()
             hold = request.get(_DEFER_HOLD_KEY)
             if hold is not None:
+                if probe_lease["bid"] == bid:
+                    set_success_headers_callback(
+                        request, lambda: _finish_retry_probe(probe_lease, success=True)
+                    )
                 held_response = await _dispatch_into_hold(
                     request=request,
                     hold=hold,
@@ -6815,6 +6819,10 @@ async def _serve(request: web.Request) -> web.StreamResponse:
         return bid, headers
 
     async def wait_for_revalidation(waiter: Callable[[], Awaitable[None]]) -> bool:
+        # A probe gate precedes slot admission; it must not be a silent wait.
+        # Only real upstream success settles the lease, never this SSE 200.
+        if request.get(_DEFER_HOLD_KEY) is None and _stream_hold_wanted(request, body):
+            await _open_deferral_hold(request, bid, reason="retry_after")
         return await _wait_for_revalidation(waiter, wait_deadline)
 
     def try_retry_after_reroute(
