@@ -3488,10 +3488,17 @@ def _is_transient_throttle(
     return not _budget_under_pressure(meta, bid)
 
 
-async def _emit_keepalive_frames(response: web.StreamResponse, interval_ms: int) -> None:
+async def _emit_keepalive_frames(
+    response: web.StreamResponse,
+    interval_ms: int,
+    *,
+    on_disconnect: Callable[[], object] | None = None,
+    queue_status: dict[str, str | int] | None = None,
+) -> None:
     """Emit SSE comment keepalive frames until cancelled.
 
-    Writes ``: keepalive\n\n`` every ``interval_ms`` milliseconds. The
+    Writes ``: keepalive\n\n`` every ``interval_ms`` milliseconds, plus an
+    advisory Anthropic-compatible ping when queue status is supplied. The
     Anthropic SDK parser silently drops SSE comment lines (spec 092 invariant 3)
     so the client receives heartbeats that reset its idle timer without seeing
     any message content. Must be cancelled from the outside (via Task.cancel).
@@ -3501,14 +3508,26 @@ async def _emit_keepalive_frames(response: web.StreamResponse, interval_ms: int)
     in config). This coroutine trusts the caller-validated value.
     """
     interval_s = max(0.5, interval_ms / 1000.0)
+    started = time.monotonic()
     while True:
         await asyncio.sleep(interval_s)
+        frame = b": keepalive\n\n"
+        if queue_status is not None:
+            payload = {
+                "type": "ping",
+                "throttler_queue": {
+                    **queue_status,
+                    "elapsed_ms": max(0, int((time.monotonic() - started) * 1000)),
+                },
+            }
+            frame += f"event: ping\ndata: {json.dumps(payload)}\n\n".encode()
         try:
-            await response.write(b": keepalive\n\n")
+            await response.write(frame)
         except OSError:
-            # Client disconnected while we were holding; stop silently.
-            # ConnectionResetError and aiohttp's ClientConnectionResetError are
-            # both OSError subclasses — naming them again adds nothing.
+            # Production does not automatically cancel disconnected handlers.
+            # An unbounded deferral must also cancel its parked queue acquire.
+            if on_disconnect is not None:
+                on_disconnect()
             return
 
 
@@ -5889,9 +5908,25 @@ def _claim_route(
 
 
 def _queue_wait_budget(
-    request: web.Request, handler_start: float
+    request: web.Request, handler_start: float, body: bytes | None
 ) -> tuple[float | None, float | None]:
-    """(max_wait, wait_deadline) — the queue-wait budget this request may spend."""
+    """(max_wait, wait_deadline) — the queue-wait budget this request may spend.
+
+    A held request (200 SSE committed, keepalive pings flowing) has no client
+    idle timer to beat, which is the only reason the bound exists. It therefore
+    waits until it is served or its client disconnects: every message is queued
+    and answered as capacity frees (Pedro, 07/11/2026 — 126 held Pi turns/hour
+    were being dropped at the 240 s bound while weekly pacing deferred them).
+    An explicit bound still applies — a patience header (the client asked for a
+    limit) or an inherited wait budget (a sibling tier is spending its own).
+    """
+    asked = _patience_bound(request.headers) is not None
+    if (
+        _stream_hold_wanted(request, body)
+        and not asked
+        and (config.WAIT_BUDGET_HEADER not in request.headers)
+    ):
+        return None, None
     max_wait = _effective_queue_max_wait(request.headers)
     return max_wait, None if max_wait is None else handler_start + max_wait
 
@@ -6264,13 +6299,16 @@ class _DeferralHold:
     the terminal event) and drops the active-hold gauge exactly once.
     """
 
-    __slots__ = ("sse", "task", "bid", "open")
+    __slots__ = ("sse", "task", "bid", "open", "status")
 
-    def __init__(self, sse: web.StreamResponse, task: asyncio.Task, bid: str) -> None:
+    def __init__(
+        self, sse: web.StreamResponse, task: asyncio.Task, bid: str, status: dict[str, str | int]
+    ) -> None:
         self.sse = sse
         self.task = task
         self.bid = bid
         self.open = True
+        self.status = status
 
     async def stop(self) -> None:
         if self.open:
@@ -6286,18 +6324,32 @@ def _stream_hold_wanted(request: web.Request, body: bytes | None) -> bool:
     return config.STREAM_HOLD_ON_DEFER or config.PATIENCE_HEADER in request.headers
 
 
-async def _open_deferral_hold(request: web.Request, bid: str) -> _DeferralHold:
+async def _open_deferral_hold(
+    request: web.Request, bid: str, *, reason: str = "queue"
+) -> _DeferralHold:
     """Commit the 200 SSE and start pings, then park the hold on the request."""
     sse = web.StreamResponse(
         status=200, headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
     )
     await sse.prepare(request)
     interval_ms = min(config.KEEPALIVE_INTERVAL_MS, _DEFER_PING_CAP_MS)
-    task = asyncio.create_task(_emit_keepalive_frames(sse, interval_ms))
+    owner = asyncio.current_task()
+    status: dict[str, str | int] = {
+        "version": 1,
+        "source": "throttler-gateway",
+        "state": "waiting",
+        "reason": reason,
+        "next_check_ms": interval_ms,
+    }
+    task = asyncio.create_task(
+        _emit_keepalive_frames(
+            sse, interval_ms, on_disconnect=owner.cancel if owner else None, queue_status=status
+        )
+    )
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     state["keepalive_holds_active"] = int(state["keepalive_holds_active"]) + 1
-    hold = _DeferralHold(sse, task, bid)
+    hold = _DeferralHold(sse, task, bid, status)
     request[_DEFER_HOLD_KEY] = hold
     log(f"deferral-hold-open bid={bid} path={request.path} interval_ms={interval_ms}")
     return hold
@@ -6318,20 +6370,28 @@ async def _hold_deferral(
     """
     hold = request.get(_DEFER_HOLD_KEY)
     if hold is None:
-        hold = await _open_deferral_hold(request, bid)
-    budget = max_wait if max_wait is not None else config.QUEUE_MAX_PATIENT_WAIT_S
-    deadline = time.monotonic() + budget
+        hold = await _open_deferral_hold(request, bid, reason="weekly_pacing")
+    hold.status["reason"] = "weekly_pacing"
+    # None = a held request without a client-asked bound: wait for capacity.
+    deadline = None if max_wait is None else time.monotonic() + max_wait
     while True:
         retry_after = poll()
         if retry_after is None:
             return None
-        remaining = deadline - time.monotonic()
+        if _request_disconnected(request):
+            await hold.stop()
+            log(f"deferral-hold-client-gone bid={bid} path={request.path}")
+            return hold.sse
+        remaining = math.inf if deadline is None else deadline - time.monotonic()
         if remaining <= 0:
+            budget = max_wait
             await hold.stop()
             await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
             log(f"deferral-hold-expired bid={bid} path={request.path} budget_s={budget:g}")
             return hold.sse
-        await asyncio.sleep(min(remaining, max(0.5, min(float(retry_after), 15.0))))
+        delay = min(remaining, max(0.5, min(float(retry_after), 15.0)))
+        hold.status["next_check_ms"] = max(0, int(delay * 1000))
+        await asyncio.sleep(delay)
 
 
 async def _dispatch_into_hold(
@@ -6357,12 +6417,22 @@ async def _dispatch_into_hold(
     attempt.started_at = t0
     try:
         while True:
+            if _request_disconnected(request):
+                # The wait is unbounded for a held request, so the client may be
+                # long gone by the time a slot frees: never spend quota on it.
+                await hold.stop()
+                attempt.final_status = 499
+                attempt.response = hold.sse
+                return hold.sse
             if wait_deadline is not None and time.time() >= wait_deadline:
                 await hold.stop()
                 await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
                 attempt.final_status = 503
                 attempt.response = hold.sse
                 return hold.sse
+            hold.status["reason"] = (
+                "retry_after" if limiter.retry_after_remaining() > 0 else "queue"
+            )
             await _keepalive_wait_out_retry_after(limiter, wait_deadline)
             terminal = await _keepalive_one_attempt(
                 request=request,
@@ -6447,6 +6517,11 @@ async def _run_slot(
     rerouted = False
     if request.get(_DEFER_HOLD_KEY) is None and _stream_hold_wanted(request, body):
         await _open_deferral_hold(request, bid)
+    hold = request.get(_DEFER_HOLD_KEY)
+    if hold is not None:
+        hold.status.update(
+            reason="queue", next_check_ms=min(config.KEEPALIVE_INTERVAL_MS, _DEFER_PING_CAP_MS)
+        )
     wait_mark = _QueueWaitMark(patient=_patience_bound(request.headers) is not None)
     try:
         async with limiter.slot(
@@ -6675,7 +6750,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if request.method == "POST" and MESSAGES_SUBPATH in path:
         _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
-    max_wait, wait_deadline = _queue_wait_budget(request, handler_start)
+    max_wait, wait_deadline = _queue_wait_budget(request, handler_start, body)
     paced_retry_after = _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens)
     if paced_retry_after is not None:
         if not _stream_hold_wanted(request, body):

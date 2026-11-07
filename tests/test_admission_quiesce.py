@@ -95,9 +95,12 @@ def _drained() -> bool:
 
 
 async def _settle():
-    """Let the server-side guaranteed finally unwind before asserting."""
-    for _ in range(20):
-        await asyncio.sleep(0)
+    """Wait for server-side cleanup, not an arbitrary count of local loop turns."""
+    for _ in range(200):
+        if _drained():
+            return
+        await asyncio.sleep(0.01)
+    assert _drained(), "server cleanup did not finish within two seconds"
 
 
 async def _stalled_request(client, stall: asyncio.Event):
@@ -105,9 +108,11 @@ async def _stalled_request(client, stall: asyncio.Event):
     task = asyncio.create_task(
         client.post("/v1/messages", data=_stalled_body(stall), headers=_HEADERS)
     )
-    for _ in range(20):
-        await asyncio.sleep(0)
-    return task
+    for _ in range(200):
+        if config.state["admitted_holds"] == 1:
+            return task
+        await asyncio.sleep(0.01)
+    raise AssertionError("stalled upload never passed the admission gate")
 
 
 async def _refused(client):
@@ -151,8 +156,7 @@ async def test_cancelled_upload_releases_admission_hold(monkeypatch):
             await task
         except asyncio.CancelledError:
             pass
-        for _ in range(20):
-            await asyncio.sleep(0)
+        await _settle()
         assert config.state["admitted_holds"] == 0, "cancellation must release the hold"
         assert _drained()
         assert upstream.hits == 0
@@ -191,8 +195,7 @@ async def test_request_in_the_quiesce_gap_is_refused_and_inflight_completes(monk
         await response.read()
         assert response.status == 200
 
-        for _ in range(20):
-            await asyncio.sleep(0)
+        await _settle()
         assert _drained(), "drain must include admitted_holds"
         await _refused(client)
         assert upstream.hits == 1
