@@ -163,3 +163,24 @@ def test_pin_ttl_and_bound() -> None:
         sa.pin(f"k{i}", "b", now=1.0)
     assert sa.stats()["pins"] == sa.MAX_PINS
     sa.reset()
+
+
+def test_weekly_pacing_spill_places_new_sessions_but_keeps_warm_pins(
+    pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spill-only weekly pacing must not hop a pinned session (Token Diet 08/11/2026).
+
+    Live 24 h: 905 affinity-migrate lines, 626 of them flip-backs, every one
+    while both accounts were ``allowed`` with 7d utils 1-3 points apart; each
+    hop re-wrote the session's whole conversation (29/29 full prefix misses
+    on a bearer change versus 1/1557 warm hits). The filter ran before the pin
+    lookup, so the pinned account vanished from the snapshot and looked gone.
+    """
+    body = _body()
+    first = _route(pool, body)
+    other = "B" if first == "A" else "A"
+    monkeypatch.setattr(config, "WEEKLY_PACING_MODE", "enforce")
+    monkeypatch.setattr(proxy._usage_allocator, "decide_pacing", lambda *a, **k: ("route", {other}))
+    assert _route(pool, body) == first  # warm session stays on its strictly-routable home
+    assert sa.stats()["migrated"] == 0
+    assert _route(pool, _body(first="a new session")) == other  # pacing still places new work

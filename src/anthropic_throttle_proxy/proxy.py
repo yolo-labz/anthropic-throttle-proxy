@@ -2379,8 +2379,12 @@ def _account_route_decision(
     now: float,
     allow_retry_probe: bool,
     session_key: str | None = None,
+    pin_snapshot: list[dict[str, object]] | None = None,
 ) -> tuple[dict[str, object] | None, bool]:
     """Return ``(credential rewrite, used_dead_fallback)`` for one message.
+
+    ``pin_snapshot`` is the routable pool BEFORE soft weekly-pacing spill: a warm
+    pin is checked against it, so pacing places new sessions and never hops one.
 
     This is the side-effect-free top-level routing decision shared by the hot
     path and ``/__throttle/statusline``. ``None`` means preserve the caller's
@@ -2395,7 +2399,7 @@ def _account_route_decision(
     if not _account_routing_enabled():
         return api_key, False
     pinned = _pinned_account(
-        snapshot,
+        snapshot if pin_snapshot is None else pin_snapshot,
         session_key,
         incoming_bid,
         model=model,
@@ -2533,6 +2537,7 @@ def _route_account_if_enabled(
     now = time.time()
     session_key = _session_affinity.current_key()
     snapshot: list[dict[str, object]] = []
+    routable: list[dict[str, object]] = []
     if (
         not explicit_api_key
         and not (api_key is not None and config.API_KEY_ROUTING_MODE == "prefer")
@@ -2542,9 +2547,14 @@ def _route_account_if_enabled(
 
         # One clock for the snapshot and every pacing score: budget_paced divides
         # by time-to-reset, so a split clock can change the winner at the edge.
-        snapshot = _weekly_pacing_filter(
-            accounts.routing_snapshot(now), now, model=model, max_tokens=max_tokens
-        )
+        routable = accounts.routing_snapshot(now)
+        # Spill-only pacing chooses where NEW sessions start; a pinned session keeps
+        # its warm account (a hop re-writes its whole conversation, TD-B0a) until
+        # the strict gate or the queue spill in ``_pinned_account`` releases it.
+        # ponytail: an active session stays home for life; pacing balances through new
+        # sessions while the strict gate (util >= target, warn, 429, brake) still caps
+        # each account. Upgrade path: one dwell-limited pacing hop per session per hour.
+        snapshot = _weekly_pacing_filter(routable, now, model=model, max_tokens=max_tokens)
         if allow_retry_probe:
             # Routing runs before limiter allocation. Seed probation for
             # configured cold-start accounts synchronously (no first-await race).
@@ -2559,10 +2569,11 @@ def _route_account_if_enabled(
         now=now,
         allow_retry_probe=allow_retry_probe,
         session_key=session_key,
+        pin_snapshot=routable,
     )
     if selected is None:
         return incoming_bid, None
-    _remember_session_account(snapshot, session_key, selected, now)
+    _remember_session_account(routable, session_key, selected, now)
     if dead_fallback:
         log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
     if config.ACCOUNT_ROUTING_MODE == "round_robin":
