@@ -1,8 +1,8 @@
 """Per-request quota ledger: one JSONL row per ``/v1/messages`` attempt.
 
 Measurement only. ``THROTTLE_USAGE_LEDGER=off|observe`` (default ``off``,
-hot-tunable through ``config.USAGE_LEDGER_MODE``). Nothing here touches a
-request, a header, a limiter or an admission decision.
+configured through ``config.USAGE_LEDGER_MODE``). Observation never changes
+wire bytes, headers, limiters or admission decisions.
 
 Why: the minute meter gives 1-point steps per account and no request-level
 attribution, so a utilisation-per-token model cannot be fitted. Each row ties
@@ -14,8 +14,13 @@ Row shape (never prompt content, never a token)::
     {"epoch", "bearer", "model", "project", "status", "session"?, "usage_complete"?,
      "input", "output", "cacheRead", "cacheWrite"?}
 
-* Every message attempt writes one row. Token fields appear only for a 2xx
-  whose usage block was parsed. A 429 or entitlement refusal is a status row.
+* Observed token counts can include aborted, possibly billed work. They are
+  lower bounds, not useful native completions or a billing guarantee.
+* ``response_id_hash`` is SHA256 of the actual upstream message ID, never a
+  client identity, authorization or idempotency key. Central relay accounts
+  remain unknown; only actual direct-egress auth identifies the selected account.
+* ``settlement`` separates terminal+EOF from errors and incomplete evidence;
+  a native normal terminal must still be joined independently by response ID.
 * ``output`` is the LAST cumulative ``message_delta`` value, not a sum.
   ``usage_complete`` is False when the terminal ``message_delta`` was not in
   the captured bytes (capture is capped at 1 MiB); the counts are then lower
@@ -32,6 +37,7 @@ Upgrade path: dated rotation if more than two generations are needed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import queue
@@ -39,8 +45,10 @@ import threading
 import time
 from pathlib import Path
 
+from aiohttp import web
+
 from . import config
-from .ratelimit import inflate_capture
+from .ratelimit import _bearer_id, inflate_capture
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +56,80 @@ MODES = ("off", "observe")
 MAX_BYTES = 64 * 1024 * 1024
 _QUEUE_MAX = 4096
 _BATCH = 256
+CAPTURE_KEY = web.RequestKey("usage_ledger.upstream_capture", dict)
+
+
+def save_capture(request, upstream, captured: bytearray, tail: bytearray, error: bool) -> None:
+    """Keep existing bounded upstream buffers across aborts; never touch wire bytes."""
+    try:
+        url = str(getattr(upstream, "url", ""))
+        central, direct = config.CENTRAL_URL.rstrip("/"), config.UPSTREAM.rstrip("/")
+        via = "unknown"
+        if central and url.startswith(central + "/"):
+            via = "central"
+        elif direct and url.startswith(direct + "/"):
+            via = "direct"
+        request[CAPTURE_KEY] = {
+            "captured": captured,
+            "tail": tail.decode("utf-8", "replace"),
+            "eof": getattr(upstream.content, "at_eof", lambda: None)(),
+            "error": error,
+            "via": via,
+            # Actual server-sent auth after routing, never caller identity headers.
+            "bearer": _bearer_id(upstream.request_info.headers) if via == "direct" else None,
+        }
+    except Exception:  # observation must never change response/error behavior
+        _stats["dropped"] += 1
+
+
+def _events(text: str):
+    for frame in text.replace("\r\n", "\n").split("\n\n"):
+        data = "\n".join(
+            line[5:].lstrip(" ") for line in frame.splitlines() if line.startswith("data:")
+        )
+        try:
+            event = json.loads(data)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            yield event
+
+
+def _settlement(captured: bytes, tail: str | None) -> dict:
+    raw = inflate_capture(captured)
+    text = raw.decode("utf-8", "replace")
+    identities = set()
+    terminal, error = False, False
+    if text.lstrip().startswith("{"):
+        try:
+            message = json.loads(text)
+        except ValueError:
+            message = {}
+        message = message if isinstance(message, dict) else {}
+        events = (
+            [{"type": "message_start", "message": message}]
+            if message.get("type") == "message"
+            else []
+        )
+        terminal = bool(message.get("type") == "message" and message.get("stop_reason"))
+    else:
+        # Compressed tails start mid-member; never interpret them as plaintext.
+        events = _events(text + ("\n\n" + tail if raw is captured and tail else ""))
+    for event in events:
+        kind = event.get("type")
+        if kind == "message_start":
+            message = event.get("message")
+            identity = message.get("id") if isinstance(message, dict) else None
+            if isinstance(identity, str) and 0 < len(identity) <= 256:
+                identities.add(hashlib.sha256(identity.encode()).hexdigest())
+        terminal = terminal or kind == "message_stop"
+        error = error or kind == "error"
+    return {
+        "response_id_hash": next(iter(identities)) if len(identities) == 1 else None,
+        "terminal_seen": terminal,
+        "stream_error_seen": error,
+    }
+
 
 _queue: queue.Queue | None = None
 _writer: threading.Thread | None = None
@@ -122,15 +204,7 @@ def _sse_events(text: str) -> tuple[dict | None, int | None]:
     """``(message_start usage, last message_delta output_tokens)`` in one SSE text."""
     start: dict | None = None
     delta: int | None = None
-    for line in text.splitlines():
-        if not line.startswith("data:"):
-            continue
-        try:
-            event = json.loads(line[5:].strip())
-        except ValueError:
-            continue
-        if not isinstance(event, dict):
-            continue
+    for event in _events(text):
         kind = event.get("type")
         if kind == "message_start":
             usage = _usage_from_message_obj(event.get("message") or {})
@@ -154,7 +228,7 @@ def _counts(usage: dict, output) -> dict:
 
 def record(
     *,
-    bearer: str,
+    bearer: str | None,
     model: str,
     project: str | None,
     status: int | None,
@@ -162,21 +236,41 @@ def record(
     tail: str | None = None,
     now: float | None = None,
     session: str | None = None,
+    eof: bool | None = None,
+    stream_error: bool | None = None,
+    via: str = "direct",
 ) -> None:
     """Queue one row for this attempt. No-op when the ledger is off. Never raises."""
     if mode() == "off":
         return
     try:
+        authoritative = via == "direct" and isinstance(bearer, str) and bearer not in {"", "_anon"}
         row: dict = {
             "epoch": int(time.time() if now is None else now),
-            "bearer": bearer,
+            "bearer": bearer if authoritative else None,
+            "account_authoritative": authoritative,
+            "account_scope": "selected_upstream" if authoritative else "unknown_" + via,
             "model": model,
             "project": project or "_direct",
             "status": status,
         }
         if session:
             row["session"] = session  # hashed session key (session_affinity.derive_key)
-        if status is not None and 200 <= status < 300 and captured:
+        metadata = _settlement(bytes(captured or b""), tail)
+        row.update(metadata, upstream_eof=eof)
+        failed = bool(stream_error or metadata["stream_error_seen"] or (status and status >= 400))
+        normal = bool(
+            metadata["response_id_hash"]
+            and metadata["terminal_seen"]
+            and eof is True
+            and stream_error is False
+            and status
+            and 200 <= status < 300
+        )
+        row["settlement"] = "error" if failed else "normal" if normal else "unknown"
+        # Aborted work can still consume quota. Parsed counts are observed lower
+        # bounds, never a billing guarantee or proof of a useful native terminal.
+        if captured and (metadata["response_id_hash"] or (status and 200 <= status < 300)):
             counts, complete = parse_usage(bytes(captured), tail)
             if counts is not None:
                 row.update(counts)

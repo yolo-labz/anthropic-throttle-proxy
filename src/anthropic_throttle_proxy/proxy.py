@@ -3613,13 +3613,24 @@ async def _pipe_sse_upstream(
         await cancel_keepalive()
     captured = bytearray()
     cap_limit = 1024 * 1024
-    async for chunk in upstream.content.iter_any():
-        if not chunk:
-            break
-        await sse_resp.write(chunk)
-        if len(captured) < cap_limit:
-            captured.extend(chunk[: cap_limit - len(captured)])
-    await sse_resp.write_eof()
+    tail = bytearray()
+    ledger_on = config.USAGE_LEDGER_MODE != "off"
+    stream_error = True
+    try:
+        async for chunk in upstream.content.iter_any():
+            if not chunk:
+                break
+            if len(captured) < cap_limit:
+                captured.extend(chunk[: cap_limit - len(captured)])
+            if ledger_on:
+                tail.extend(chunk[-65536:])
+                del tail[: max(0, len(tail) - 65536)]
+            await sse_resp.write(chunk)
+        await sse_resp.write_eof()
+        stream_error = False
+    finally:
+        if ledger_on:
+            usage_ledger.save_capture(request, upstream, captured, tail, stream_error)
     return captured
 
 
@@ -5403,14 +5414,18 @@ async def _finalize(
             weekly_project=_weekly_project_of(request.headers),
         )
     if request.method == "POST" and MESSAGES_SUBPATH in path:
+        observed = request.get(usage_ledger.CAPTURE_KEY, {})
         usage_ledger.record(
-            bearer=bid,
+            bearer=observed.get("bearer", bid),
             model=model_label,
             project=_project_of(request.headers),
             session=_session_affinity.current_key(),
             status=final_status,
-            captured=attempt.captured,
-            tail=(attempt.meta or {}).get("usage_tail"),
+            captured=observed.get("captured", attempt.captured),
+            tail=observed.get("tail", (attempt.meta or {}).get("usage_tail")),
+            eof=observed.get("eof"),
+            stream_error=observed.get("error"),
+            via=observed.get("via", attempt.context.get("via", "unknown")),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)

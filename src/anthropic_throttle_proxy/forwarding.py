@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import web
 
-from . import account_pool, config, prospective_runtime
+from . import account_pool, config, prospective_runtime, usage_ledger
 from .capability import record_loaded_module
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
@@ -370,17 +370,19 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     ledger_on = config.USAGE_LEDGER_MODE != "off"
     tail = bytearray()
     total = 0
+    stream_error = True
     try:
         async for chunk in upstream.content.iter_any():
             if not chunk:
                 break
-            await response.write(chunk)
             if len(captured) < cap_limit:
                 captured.extend(chunk[: cap_limit - len(captured)])
             if ledger_on:
                 total += len(chunk)
                 tail.extend(chunk[-_LEDGER_TAIL_BYTES:])
                 del tail[: max(0, len(tail) - _LEDGER_TAIL_BYTES)]
+            await response.write(chunk)
+        stream_error = False
     except Exception as mid_exc:
         # Upstream stalled/errored AFTER 200 + headers + partial body are on the
         # wire. End the stream cleanly (write_eof → the client sees a valid
@@ -391,6 +393,9 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
         with contextlib.suppress(Exception):
             await response.write_eof()
         return response, upstream.status, captured, StreamCommittedError(mid_exc), meta
+    finally:
+        if ledger_on:
+            usage_ledger.save_capture(request, upstream, captured, tail, stream_error)
     if ledger_on:
         meta["usage_tail"] = tail.decode("utf-8", "replace")
         meta["usage_stream_bytes"] = str(total)
