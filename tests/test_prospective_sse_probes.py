@@ -63,7 +63,7 @@ def test_auth_probe_local_refusal_is_inconclusive_verdict_free(monkeypatch):
     # (never quarantine a valid credential), no fabricated probe budget.
     calls = []
 
-    monkeypatch.setattr(proxy, "_api_key_candidate", lambda: {"token": "t"})
+    monkeypatch.setattr(proxy, "_api_key_candidate", lambda model: {"token": "t"})
     monkeypatch.setattr(proxy.config, "AUTH_PROBE_MODEL", "probe-model", raising=False)
     monkeypatch.setattr(proxy, "note_upstream_auth", lambda *a, **k: calls.append(("verdict", a)))
 

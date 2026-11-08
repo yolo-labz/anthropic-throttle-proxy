@@ -957,9 +957,10 @@ async def test_request_bearer_context_preserves_a_healthy_unconfigured_account(
 
 @pytest.mark.parametrize("mode", ["prefer", "overflow"])
 async def test_proxy_api_key_routing_is_part_of_statusline_election(
-    client: TestClient, tmp_path, monkeypatch, mode: str
+    client: TestClient, tmp_path, monkeypatch, funded_api_metadata, mode: str
 ) -> None:
     """FR-004 includes the router's pay-go prefer/overflow branches."""
+    funded_api_metadata("claude-sonnet-4-6")
     (oauth_bid,) = _configure_accounts(tmp_path, monkeypatch, "token-a")
     monkeypatch.setattr(config, "ACCOUNT_ROUTING_MODE", "least_loaded")
     key_file = tmp_path / "api-key"
@@ -970,12 +971,16 @@ async def test_proxy_api_key_routing_is_part_of_statusline_election(
     if mode == "overflow":
         _seed_bearer(oauth_bid, {"status": "rejected", "util_5h": 1.0})
 
-    body = await (await client.get(f"/__throttle/statusline?bearer={oauth_bid}")).json()
+    response = await client.get(
+        f"/__throttle/statusline?bearer={oauth_bid}&model=claude-sonnet-4-6"
+    )
+    body = await response.json()
     routed, _ = proxy._route_account_if_enabled(
         {"Authorization": "Bearer token-a"},
         oauth_bid,
         method="POST",
         path="/v1/messages",
+        model="claude-sonnet-4-6",
         allow_retry_probe=True,
     )
 

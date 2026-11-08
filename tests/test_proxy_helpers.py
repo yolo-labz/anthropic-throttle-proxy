@@ -741,8 +741,9 @@ def test_account_routing_selects_least_loaded_and_rewrites_authorization(
 
 
 def test_api_key_routing_prefer_rewrites_to_metered_key(
-    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    isolated_account_routing, funded_api_metadata, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
+    funded_api_metadata("claude-sonnet-4-6")
     key_file = tmp_path / "api-key"
     key_file.write_text("sk-ant-api03-SIM-KEY\n")
     monkeypatch.setattr(config, "API_KEY_FILE", str(key_file))
@@ -753,7 +754,7 @@ def test_api_key_routing_prefer_rewrites_to_metered_key(
     headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A", "X-Test": "1"}
 
     selected, label = proxy._route_account_if_enabled(
-        headers, "oauth-a", method="POST", path="v1/messages"
+        headers, "oauth-a", method="POST", path="v1/messages", model="claude-sonnet-4-6"
     )
 
     assert selected == proxy._api_key_bid("sk-ant-api03-SIM-KEY")

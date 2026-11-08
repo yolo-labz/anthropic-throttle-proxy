@@ -58,6 +58,7 @@ from aiohttp import web
 from . import __build__ as _build_identity
 from . import __version__ as _version
 from . import account_pool as _account_pool
+from . import api_credits as _api_credits
 from . import config, usage_ledger
 from . import free_budget as _free_budget
 from . import history as _history
@@ -1348,15 +1349,46 @@ def _bearer_retry_after_remaining(bid: str) -> float:
     return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
 
 
-def _api_key_candidate() -> dict[str, object] | None:
+def _api_key_candidate(model: str = "") -> dict[str, object] | None:
     """Return the configured API-key candidate, or None when disabled/unusable.
 
+    Anthropic automatic routing also requires fresh funding for the bound
+    account, workspace and exact model. Other configured providers retain their
+    existing key routing. Explicit caller API keys bypass this owned candidate.
     The key stays in a 0600 runtime file. The hot path caches by (mtime, size)
     so a request normally pays one stat(), while key rotation is picked up
     without a restart. The raw key is returned only to the header-rewrite helper.
     """
     if not _api_key_routing_enabled():
         return None
+    upstream = urlsplit(config.UPSTREAM)
+    if upstream.scheme == "https" and upstream.hostname == "api.anthropic.com":
+        if not all(
+            (model, config.API_KEY_ACCOUNT_ID, config.API_KEY_WORKSPACE_ID, config.API_KEY_SCOPE)
+        ):
+            return None
+        try:
+            with open(config.API_CREDITS_FILE, "rb") as receipt:
+                encoded = receipt.read(256 * 1024 + 1)
+            if len(encoded) > 256 * 1024:
+                return None
+            raw = json.loads(encoded)
+        except (OSError, ValueError):
+            return None
+        credits = _api_credits.normalize(
+            raw.get("apiCredits", raw) if isinstance(raw, dict) else raw, time.time()
+        )
+        matching = [
+            account
+            for account in credits["accounts"]
+            if account["provider"] == "anthropic"
+            and account["accountId"] == config.API_KEY_ACCOUNT_ID
+            and account["workspaceId"] == config.API_KEY_WORKSPACE_ID
+        ]
+        if len(matching) != 1 or not _api_credits.capacity_for(
+            matching[0], model, config.API_KEY_SCOPE
+        ):
+            return None
     try:
         st = os.stat(config.API_KEY_FILE)
     except OSError:
@@ -2497,7 +2529,7 @@ def _route_account_if_enabled(
     # member — strip it so the account router rewrites Authorization.
     if explicit_api_key and _strip_sentinel_api_key(headers):
         explicit_api_key = False
-    api_key = None if explicit_api_key else _api_key_candidate()
+    api_key = None if explicit_api_key else _api_key_candidate(model)
     now = time.time()
     session_key = _session_affinity.current_key()
     snapshot: list[dict[str, object]] = []
@@ -2631,7 +2663,7 @@ def _retry_after_reroute_headers(
             for acct in accounts.routing_snapshot(time.time())
             if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
         }
-        api_key = _api_key_candidate()
+        api_key = _api_key_candidate(model)
         if api_key is not None and isinstance(api_key.get("bearer_id"), str):
             allowed_bids.add(str(api_key["bearer_id"]))
         if rerouted_bid not in allowed_bids:
@@ -7050,7 +7082,7 @@ async def _probe_upstream_auth_once(*, prospective: ProbeProspective | None = No
     answers **200** with a ``url.not_found`` body, so a status-only probe would
     have reopened a lane whose key is dead.
     """
-    candidate = _api_key_candidate()
+    candidate = _api_key_candidate(config.AUTH_PROBE_MODEL)
     if candidate is None or not config.AUTH_PROBE_MODEL:
         return
     url = config.UPSTREAM.rstrip("/") + MESSAGES_PATH
@@ -8117,7 +8149,7 @@ def _statusline_elect(
         snapshot,
         incoming_bid,
         explicit_api_key=incoming_bid == "api-key",
-        api_key=None if incoming_bid == "api-key" else _api_key_candidate(),
+        api_key=None if incoming_bid == "api-key" else _api_key_candidate(model),
         model=model,
         max_tokens=max_tokens,
         now=now,

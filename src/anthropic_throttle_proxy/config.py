@@ -551,6 +551,15 @@ API_KEY_ROUTING_MODE = (
     _API_KEY_ROUTING_MODE if _API_KEY_ROUTING_MODE in {"off", "overflow", "prefer"} else "off"
 )
 API_KEY_LABEL = os.environ.get("THROTTLE_API_KEY_LABEL", "API").strip() or "API"
+# Automatic paid routing needs a collector receipt bound to this key's account
+# and workspace. Empty binding or stale/unknown funding disables the candidate.
+API_KEY_ACCOUNT_ID = os.environ.get("THROTTLE_API_KEY_ACCOUNT_ID", "").strip()
+API_KEY_WORKSPACE_ID = os.environ.get("THROTTLE_API_KEY_WORKSPACE_ID", "").strip()
+API_KEY_SCOPE = os.environ.get("THROTTLE_API_KEY_SCOPE", "").strip()
+API_CREDITS_FILE = os.environ.get(
+    "THROTTLE_API_CREDITS_FILE",
+    os.path.expanduser("~/.local/state/throttle-lanes/api-credits.json"),
+).strip()
 # 22/10/2026 — local sentinel lane key. When set, a request whose x-api-key
 # equals this sentinel is NOT treated as an explicit API-key request: the
 # header is stripped and account routing rewrites Authorization to a

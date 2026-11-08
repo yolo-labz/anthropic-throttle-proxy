@@ -108,3 +108,56 @@ def meter_rows():
         ]
 
     return rows
+
+
+@pytest.fixture
+def funded_api_metadata(monkeypatch, tmp_path):
+    """Explicit fresh receipt for owned automatic API routing in local tests."""
+    import json
+    import time
+    from datetime import UTC, datetime
+
+    from anthropic_throttle_proxy import config
+
+    def seed(model):
+        path = tmp_path / "api-funding.json"
+        now = time.time()
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "accounts": [
+                        {
+                            "id": "fixture",
+                            "provider": "anthropic",
+                            "accountId": "owned",
+                            "workspaceId": "fleet",
+                            "currency": "USD",
+                            "source": "operator-receipt",
+                            "observedAt": datetime.fromtimestamp(now - 1, UTC).isoformat(),
+                            "validUntil": datetime.fromtimestamp(now + 60, UTC).isoformat(),
+                            "credit": {"status": "available", "remaining": 1},
+                            "authorized": True,
+                            "spendLimit": {"remaining": 1, "enforced": True},
+                            "rateLimits": [
+                                {
+                                    "model": model,
+                                    "scope": "fleet",
+                                    "rpmRemaining": 5,
+                                    "tpmRemaining": 5000,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        for name, value in {
+            "API_KEY_ACCOUNT_ID": "owned",
+            "API_KEY_WORKSPACE_ID": "fleet",
+            "API_KEY_SCOPE": "fleet",
+            "API_CREDITS_FILE": str(path),
+        }.items():
+            monkeypatch.setattr(config, name, value)
+
+    return seed
