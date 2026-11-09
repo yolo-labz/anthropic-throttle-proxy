@@ -45,6 +45,7 @@ from .. import project_share as _project_share
 # Lazy import: keep the proxy hot path free of UI deps.
 from .. import proxy as _proxy
 from ..limiter import FairBearerLimiter
+from . import auth as _auth
 from . import signals as _signals
 from .presentation import apply_display, apply_workload, attach_provider_capacity, capacity_summary
 
@@ -1602,13 +1603,16 @@ async def _stop_history_sampler(app: web.Application) -> None:
 def attach_ui(app: web.Application) -> None:
     """Wire jinja2 + the /ui routes onto an existing aiohttp app."""
     aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(str(_TEMPLATES)))
-    app.router.add_get("/ui", index)
-    app.router.add_get("/ui/stats", stats_partial)
-    app.router.add_get("/ui/config", config_form)
-    app.router.add_post("/ui/config", config_set)
-    app.router.add_post("/ui/config/reset", config_reset)
-    app.router.add_get("/ui/projects", projects_partial)
-    app.router.add_post("/ui/projects/weight", project_weight_set)
+    # Every dynamic /ui route goes through the opt-in gate (ui/auth.py); the
+    # static assets stay open so the sign-in page can be styled.
+    app.router.add_get("/ui", _auth.guard(index))
+    app.router.add_get("/ui/stats", _auth.guard(stats_partial))
+    app.router.add_get("/ui/config", _auth.guard(config_form))
+    app.router.add_post("/ui/config", _auth.guard(config_set))
+    app.router.add_post("/ui/config/reset", _auth.guard(config_reset))
+    app.router.add_get("/ui/projects", _auth.guard(projects_partial))
+    app.router.add_post("/ui/projects/weight", _auth.guard(project_weight_set))
+    _auth.attach_login(app)
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
     app.on_startup.append(_start_account_refresher)
     app.on_cleanup.append(_stop_account_refresher)
