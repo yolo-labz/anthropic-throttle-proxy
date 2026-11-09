@@ -58,6 +58,47 @@ def sample(used=41_000_000_000, limit=82_000_000_000):
     return report(plan_detail(), plan_usage(used, limit), NOW)
 
 
+# Live shape 09/11/2026: the individual plan expired on 23/10 and the console
+# now answers `monthUsage.items: null`, `usage: null`. That raised a bare
+# TypeError and left mimo-plan.json (Team rows included) 16 days stale.
+EXPIRED_USAGE = {"code": 0, "data": {"monthUsage": {"percent": 0, "items": None}, "usage": None}}
+
+
+def expired_detail():
+    detail = plan_detail("2026-10-23 23:59:59")
+    detail["data"]["expired"] = True
+    return detail
+
+
+def test_expired_plan_without_counter_writes_an_exhausted_row():
+    result = report(expired_detail(), EXPIRED_USAGE, NOW)
+    (row,) = result["lanes"]
+    assert (row["id"], row["status"], row["plan"]) == ("mimo:plan", "exhausted", "Max")
+    assert "meters" not in row  # nothing measured, nothing invented
+    assert "plan expired 2026-10-23" in row["reason"]
+    assert "must-not-escape" not in json.dumps(result)
+
+
+def test_expired_plan_keeps_the_team_row_fresh():
+    seat = {"code": 0, "data": {"expired": True}}
+    ids = [lane["id"] for lane in team_report(expired_detail(), EXPIRED_USAGE, seat, NOW)["lanes"]]
+    assert ids == ["mimo:plan", "mimo:team-owner"]
+
+
+@pytest.mark.parametrize(
+    "detail,usage",
+    [
+        (plan_detail(), EXPIRED_USAGE),  # live plan, counter gone: still a failure
+        ({"code": 0, "data": None}, plan_usage()),
+        (plan_detail(), {"code": 0, "data": None}),
+        (plan_detail(), {"code": 0, "data": {"monthUsage": None}}),
+    ],
+)
+def test_missing_shapes_fail_with_a_readable_reason(detail, usage):
+    with pytest.raises(ValueError):
+        report(detail, usage, NOW)
+
+
 @pytest.mark.parametrize("used,limit", [(-1, 82), (0, 0), (True, 82), (1, float("inf"))])
 def test_bad_counters_fail_closed(used, limit):
     with pytest.raises(ValueError):
