@@ -8491,6 +8491,9 @@ def main() -> None:
     from .ui.routes import attach_ui
 
     attach_ui(app)
+    from .ui.usage import attach_usage
+
+    attach_usage(app)  # spec 380: read-only, env-gated
     app.router.add_route("*", "/{path:.*}", handler)
     if config.log_mode:
         log(f"invalid THROTTLE_QUEUE_MODE={config.log_mode!r}; falling back to off")

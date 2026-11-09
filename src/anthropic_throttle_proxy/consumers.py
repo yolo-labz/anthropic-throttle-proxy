@@ -258,7 +258,5 @@ def attach_consumers(app: web.Application) -> None:
     """Register the read-only routes iff the env flag is on (default off)."""
     if not enabled():
         return
-    from .ui.auth import guard
-
-    app.router.add_get("/__throttle/consumers", guard(consumers_json))
-    app.router.add_get("/ui/consumers", guard(consumers_html))
+    app.router.add_get("/__throttle/consumers", consumers_json)
+    app.router.add_get("/ui/consumers", consumers_html)

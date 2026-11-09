@@ -45,7 +45,6 @@
               hx-trigger="change delay:250ms"
               class="config-form">
           <input type="hidden" name="key" value="{{ k.key }}">
-          {% if ui_csrf %}<input type="hidden" name="csrf" value="{{ ui_csrf }}">{% endif %}
           {% if k.type == "bool" %}
             <label class="switch" title="default: {{ default }}">
               <input type="checkbox" name="value" value="true"{% if k.value %} checked{% endif %}>
@@ -93,7 +92,6 @@
                 hx-confirm="reset {{ k.label }} to env default ({{ default }})?"
                 class="config-reset">
             <input type="hidden" name="key" value="{{ k.key }}">
-            {% if ui_csrf %}<input type="hidden" name="csrf" value="{{ ui_csrf }}">{% endif %}
             <button type="submit" class="reset" title="reset to env default">↻</button>
           </form>
         {% endif %}

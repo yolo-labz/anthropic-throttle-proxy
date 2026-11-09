@@ -21,22 +21,9 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
     """Allowlist measured fields; never forward cookies, API keys or raw responses."""
     if detail.get("code") != 0 or usage.get("code") != 0:
         raise ValueError("console rejected the reading")
-    plan = detail.get("data")
-    if not isinstance(plan, dict):
-        raise ValueError("plan detail has no data")
-    month = (usage.get("data") or {}).get("monthUsage")
-    items = month.get("items") if isinstance(month, dict) else None
-    if items is None and plan.get("expired") is True:
-        # Observed 09/11/2026: after the individual Max plan expired (period end
-        # 23/10/2026 23:59:59) the console answers `monthUsage.items: null`.
-        # Iterating that raised a bare TypeError, so the report was never
-        # written and the Team rows went stale with it for 16 days. An expired
-        # plan is a fact, not a failed reading: write it as exhausted, with no
-        # meter, because there is no counter to report.
-        return _expired_plan_report(plan, now)
-    if not isinstance(items, list):
-        raise ValueError("monthly counter missing or ambiguous")
-    counters = [x for x in items if isinstance(x, dict) and x.get("name") == "month_total_token"]
+    plan = detail["data"]
+    items = usage["data"]["monthUsage"]["items"]
+    counters = [x for x in items if x.get("name") == "month_total_token"]
     if len(counters) != 1:
         raise ValueError("monthly counter missing or ambiguous")
     used, limit = counters[0]["used"], counters[0]["limit"]
@@ -82,31 +69,6 @@ def report(detail: dict, usage: dict, now: datetime) -> dict:
                         "windowMins": None,
                     }
                 ],
-            }
-        ],
-    }
-
-
-def _expired_plan_report(plan: dict, now: datetime) -> dict:
-    """An expired individual plan with no monthly counter: closed, nothing measured."""
-    if not isinstance(plan.get("planName"), str):
-        raise ValueError("plan state missing")
-    end = plan.get("currentPeriodEnd")
-    ended = f" · plan expired {end[:10]}" if isinstance(end, str) else " · plan expired"
-    return {
-        "schema": 1,
-        "generatedAt": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "intervalSeconds": 900,
-        "lanes": [
-            {
-                "id": "mimo:plan",
-                "kind": "mimo",
-                "status": "exhausted",
-                "plan": plan["planName"],
-                "reason": "Public-class work only"
-                + ended
-                + " · no monthly counter · console sample "
-                + now.strftime("%d/%m/%Y %H:%M UTC"),
             }
         ],
     }

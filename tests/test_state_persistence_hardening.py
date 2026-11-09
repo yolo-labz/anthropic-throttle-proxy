@@ -293,20 +293,15 @@ def test_restart_with_stale_file_starts_clean(tmp_path, monkeypatch):
 # ── F4: ledger clock-skew (backward jump / corrupt future at) ───────────────
 
 
-def _saved_single_debit(tmp_path):
-    """Persist one debit made at t=1000 against a one-request budget."""
-    state = tmp_path / "ledger.json"
-    pool = LedgerPool(Budgets(max_requests=1, max_tokens=1_000), str(state), FakeClock(1_000.0))
-    assert pool.check_and_debit(KEY, 10, 90) is not None
-    pool.save()
-    return state
-
-
 def test_future_entry_clamped_on_restore_bounds_backward_jump(tmp_path):
     """Backward clock jump between save and restart (or a corrupt far-future
     ``at``): the entry used to stay "younger than now" until the clock caught
     up, holding budget debt past one window — forever for a corrupt value."""
-    state = _saved_single_debit(tmp_path)
+    state = tmp_path / "ledger.json"
+    save_clock = FakeClock(1_000.0)
+    pool = LedgerPool(Budgets(max_requests=1, max_tokens=1_000), str(state), save_clock)
+    assert pool.check_and_debit(KEY, 10, 90) is not None
+    pool.save()
 
     # restart with the clock 100 s BEHIND the save point
     back = FakeClock(900.0)
@@ -322,7 +317,11 @@ def test_future_entry_clamped_on_restore_bounds_backward_jump(tmp_path):
 def test_corrupt_far_future_entry_never_permanently_blocks_budget(tmp_path):
     """A hand-edited ``at`` far in the future held the lane's single request
     slot against ``max_requests=1`` permanently (until the clock reached it)."""
-    state = _saved_single_debit(tmp_path)
+    state = tmp_path / "ledger.json"
+    save_clock = FakeClock(1_000.0)
+    pool = LedgerPool(Budgets(max_requests=1, max_tokens=1_000), str(state), save_clock)
+    assert pool.check_and_debit(KEY, 10, 90) is not None
+    pool.save()
     payload = json.loads(state.read_text(encoding="utf-8"))
     payload["lanes"][0]["entries"][0]["at"] = 1e18
     state.write_text(json.dumps(payload), encoding="utf-8")

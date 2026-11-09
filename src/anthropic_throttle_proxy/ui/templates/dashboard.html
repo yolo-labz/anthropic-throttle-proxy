@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/ui/static/style.css?v={{ asset_v }}">
   <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
 </head>
-<body{% if ui_csrf %} hx-headers='{"X-Throttle-CSRF": "{{ ui_csrf }}"}'{% endif %}>
+<body>
   <header>
     <div class="brand">
       <h1>Throttler</h1>
@@ -69,6 +69,13 @@
        (x-anthropic-throttle-seat, observation only). THROTTLE_CONSUMERS_VIEW=1. #}
     {% if consumers_view | default(false) %}
     <section id="consumers" aria-label="consumer burn by project and seat" hx-get="/ui/consumers" hx-trigger="load, every 10s" hx-target="#consumers" hx-swap="innerHTML">
+      <p class="muted">Loading…</p>
+    </section>
+    {% endif %}
+
+    {# Token usage by provider/model/pane (spec 380) — only when THROTTLE_USAGE_SUMMARY_PATH is set. #}
+    {% if usage_panel_enabled is defined and usage_panel_enabled() %}
+    <section id="usage" aria-label="token usage" hx-get="/ui/usage" hx-trigger="load, every 30s" hx-target="#usage" hx-swap="innerHTML">
       <p class="muted">Loading…</p>
     </section>
     {% endif %}
