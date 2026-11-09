@@ -189,6 +189,7 @@ from .ratelimit import (
     _publish_ratelimit_gauges,
     _short_request_hint,
 )
+from .routing import LANE_UNMARKED_BODY as _LANE_UNMARKED_BODY
 from .routing import bearer_usable as _bearer_usable
 from .routing import lane_usable as _lane_usable
 from .routing import unified_live_view as _unified_live_view
@@ -5937,6 +5938,14 @@ def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> byte
     traffic is forwarded byte-identical, and a body whose first system block
     already IS the marker is left untouched. Best-effort: unparsable bodies
     pass through unchanged.
+
+    The rewrite is OAuth-specific, so the unmarked body is stashed for the
+    transport (``_forward_once``) to send on any attempt that ends up holding a
+    metered ``x-api-key`` credential instead. Measured 09/11/2026: the marker on
+    an API-key request bills it to the Claude Code credit pool, which is empty,
+    and Anthropic answers ``400 invalid_request_error: Your credit balance is
+    too low`` even while the org holds $200 of API credits — the same request
+    without the marker returns 200.
     """
     if body is None or not _is_sentinel_lane_request(request):
         return body
@@ -5948,6 +5957,7 @@ def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> byte
         return body
     _fold_pi_system_into_first_message(obj)
     obj["system"] = [{"type": "text", "text": marker}]
+    request[_LANE_UNMARKED_BODY] = body
     return json.dumps(obj).encode("utf-8", "replace")
 
 
@@ -5960,8 +5970,12 @@ def _shrink_forward_body(
     breadcrumb stubs, hard floor on single-attachment overruns).
     """
     if body is not None and request.method == "POST":
-        body = _inject_lane_system_prompt(request, body)
-        return _apply_body_shrink(request, body, path, model_label, headers)
+        # Shrink the client's real body first, then apply the OAuth-only
+        # identity rewrite: the unmarked body it stashes must already be the
+        # final payload an api-key attempt would send. See
+        # ``lane_body_for_attempt``.
+        body = _apply_body_shrink(request, body, path, model_label, headers)
+        return _inject_lane_system_prompt(request, body)
     return body
 
 

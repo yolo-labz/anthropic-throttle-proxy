@@ -29,7 +29,7 @@ from .ratelimit import (
     _extract_zai_ratelimit_from_body,
     _parse_sse_usage,
 )
-from .routing import fit_chat_completions_body, normalize_text_content_blocks
+from .routing import fit_chat_completions_body, lane_body_for_attempt, normalize_text_content_blocks
 
 record_loaded_module(__file__)
 
@@ -438,6 +438,17 @@ async def _forward_once(
     """
     if request.method == "POST" and prospective_runtime.get_runtime(request).mode != "off":
         headers = strip_incoming_provenance(headers)
+    # Per-attempt body/credential reconciliation: the Claude Code identity block
+    # is an OAuth entitlement requirement, and carrying it on a metered
+    # x-api-key attempt bills that request to the empty Claude Code pool (400
+    # credit-balance) instead of the org's API credits. The router can switch
+    # credentials between attempts, so this is resolved here, at the single
+    # transport choke point, and not once per request.
+    if request.method == "POST" and body is not None:
+        reconciled = lane_body_for_attempt(request, body, headers)
+        if reconciled is not None and reconciled != body:
+            body = reconciled
+            headers = _rebind_headers(headers, len(body))
     # Per-attempt target identity: central receives the original body, while a
     # direct Z.AI retry gets the same shaping as an initial direct request. Both
     # transforms are no-ops off the Z.AI coding endpoint, which is why they can
