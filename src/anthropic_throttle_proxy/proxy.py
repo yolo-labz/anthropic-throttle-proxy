@@ -116,6 +116,7 @@ from .forwarding import (
     note_upstream_auth,
     notify_success_headers,
     pick_target,
+    reconcile_attempt_body,
     set_success_headers_callback,
     stamp_proxy_marker,
 )
@@ -3746,6 +3747,11 @@ async def _forward_once_into_sse(
     runtime = get_runtime(request)
     if runtime.mode != "off":
         headers = strip_incoming_provenance(headers)
+    # The hold builds its OWN request, so it needs the same per-attempt body
+    # reconciliation as the direct transport. Streaming is a pane's common case:
+    # without this a metered attempt carried the OAuth identity block and
+    # answered 400 credit-balance (measured 09/11/2026, stream=true).
+    body, headers = reconcile_attempt_body(request, body, headers)
     selected = get_selected_dispatch(request)
     connector = aiohttp.TCPConnector(ssl=True)
     # The hold already committed plaintext SSE headers (and possibly pings).

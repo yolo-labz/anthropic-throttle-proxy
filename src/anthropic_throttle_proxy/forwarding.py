@@ -419,6 +419,31 @@ def _rebind_headers(headers: Mapping[str, str], body_length: int) -> dict[str, s
     return out
 
 
+def reconcile_attempt_body(
+    request: web.Request, body: bytes | None, headers: Mapping[str, str]
+) -> tuple[bytes | None, dict[str, str]]:
+    """Resolve the per-attempt body shape against the credential actually sent.
+
+    The Claude Code identity block is an OAuth entitlement requirement and a
+    BILLING reclassification for a metered ``x-api-key`` attempt: measured
+    09/11/2026 on the proton Ultra account, the byte-identical request returns
+    200 without the marker and ``400 "Your credit balance is too low"`` with it
+    while the org holds $200 of API credits. The router can switch credentials
+    between attempts, so BOTH transports — this direct one and the SSE
+    keepalive-hold, which builds its own request — resolve it here instead of
+    once per request. Streaming is the common case for a pane, so a hold that
+    skipped this reconciliation failed where the same non-streaming body
+    succeeded.
+    """
+    plain = headers if isinstance(headers, dict) else dict(headers)
+    if request.method != "POST" or body is None:
+        return body, plain
+    reconciled = lane_body_for_attempt(request, body, plain)
+    if reconciled is None or reconciled == body:
+        return body, plain
+    return reconciled, _rebind_headers(plain, len(reconciled))
+
+
 async def _forward_once(
     request: web.Request,
     headers: Mapping[str, str],
@@ -438,17 +463,7 @@ async def _forward_once(
     """
     if request.method == "POST" and prospective_runtime.get_runtime(request).mode != "off":
         headers = strip_incoming_provenance(headers)
-    # Per-attempt body/credential reconciliation: the Claude Code identity block
-    # is an OAuth entitlement requirement, and carrying it on a metered
-    # x-api-key attempt bills that request to the empty Claude Code pool (400
-    # credit-balance) instead of the org's API credits. The router can switch
-    # credentials between attempts, so this is resolved here, at the single
-    # transport choke point, and not once per request.
-    if request.method == "POST" and body is not None:
-        reconciled = lane_body_for_attempt(request, body, headers)
-        if reconciled is not None and reconciled != body:
-            body = reconciled
-            headers = _rebind_headers(headers, len(body))
+    body, headers = reconcile_attempt_body(request, body, headers)
     # Per-attempt target identity: central receives the original body, while a
     # direct Z.AI retry gets the same shaping as an initial direct request. Both
     # transforms are no-ops off the Z.AI coding endpoint, which is why they can

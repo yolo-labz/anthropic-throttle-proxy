@@ -26,7 +26,7 @@ import json
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
-from anthropic_throttle_proxy import config, proxy, routing
+from anthropic_throttle_proxy import config, forwarding, proxy, routing
 
 SENTINEL = "local-lane-via-8765"
 
@@ -286,3 +286,25 @@ def test_non_lane_request_has_no_unmarked_body():
     body = _cc_body()
     assert proxy._inject_lane_system_prompt(request, body) is body
     assert routing.lane_body_for_attempt(request, body, {"x-api-key": "sk-ant-us"}) is body
+
+
+def test_both_transports_share_attempt_body_reconciliation(monkeypatch):
+    """The SSE keepalive-hold builds its own request, so a streaming pane needs
+    the same per-attempt shape swap as the direct transport.
+
+    Measured 09/11/2026: the identical opus body answered 200 with
+    ``stream:false`` and 400 "credit balance is too low" with ``stream:true``,
+    because only the direct transport reconciled the body for the metered key.
+    """
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    request = _req({"x-api-key": SENTINEL})
+    marked = proxy._inject_lane_system_prompt(request, _pi_body())
+    headers = {"x-api-key": "sk-ant-api03-x", "Content-Length": str(len(marked))}
+    body, sent = forwarding.reconcile_attempt_body(request, marked, headers)
+    assert body == _pi_body()
+    assert sent["Content-Length"] == str(len(_pi_body()))
+    oauth_body, oauth_headers = forwarding.reconcile_attempt_body(
+        request, marked, {"Authorization": "Bearer oauth"}
+    )
+    assert oauth_body == marked
+    assert oauth_headers == {"Authorization": "Bearer oauth"}
