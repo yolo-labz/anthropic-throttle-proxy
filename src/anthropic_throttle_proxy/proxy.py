@@ -1351,12 +1351,17 @@ def _bearer_retry_after_remaining(bid: str) -> float:
     return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
 
 
-def _api_key_candidate(model: str = "") -> dict[str, object] | None:
+def _api_key_candidate(
+    model: str = "", *, allow_model_less: bool = False
+) -> dict[str, object] | None:
     """Return the configured API-key candidate, or None when disabled/unusable.
 
     Anthropic automatic routing also requires fresh funding for the bound
-    account, workspace and exact model. Other configured providers retain their
-    existing key routing. Explicit caller API keys bypass this owned candidate.
+    account and workspace. ``model`` scopes the rate evidence to that model's
+    measured window when the collector sampled one; ``allow_model_less`` exists
+    for reads that carry no model at all (``GET /v1/models``), which only the
+    metered key can serve. Other configured providers retain their existing key
+    routing. Explicit caller API keys bypass this owned candidate.
     The key stays in a 0600 runtime file. The hot path caches by (mtime, size)
     so a request normally pays one stat(), while key rotation is picked up
     without a restart. The raw key is returned only to the header-rewrite helper.
@@ -1365,9 +1370,9 @@ def _api_key_candidate(model: str = "") -> dict[str, object] | None:
         return None
     upstream = urlsplit(config.UPSTREAM)
     if upstream.scheme == "https" and upstream.hostname == "api.anthropic.com":
-        if not all(
-            (model, config.API_KEY_ACCOUNT_ID, config.API_KEY_WORKSPACE_ID, config.API_KEY_SCOPE)
-        ):
+        if not all((config.API_KEY_ACCOUNT_ID, config.API_KEY_WORKSPACE_ID, config.API_KEY_SCOPE)):
+            return None
+        if not model and not allow_model_less:
             return None
         try:
             with open(config.API_CREDITS_FILE, "rb") as receipt:
@@ -2539,6 +2544,16 @@ def _route_account_if_enabled(
     scoped weekly meter.
     """
     if method != "POST" or (MESSAGES_SUBPATH not in path and CHAT_COMPLETIONS_SUBPATH not in path):
+        # The sentinel asks for routing on EVERY path, but a read like
+        # GET /v1/models carries no model and only the metered key can serve it:
+        # left in place the sentinel reaches Anthropic verbatim and comes back
+        # 401 "invalid x-api-key" (measured 09/11/2026 once the metered lane
+        # started carrying traffic). Leave the header untouched when there is no
+        # candidate, so the upstream verdict never describes a credential we did
+        # not send.
+        api_key = _api_key_candidate(allow_model_less=True)
+        if api_key is not None and _strip_sentinel_api_key(headers):
+            return _route_to_selected_auth(headers, incoming_bid, api_key)
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys

@@ -55,8 +55,12 @@ def funded(monkeypatch, tmp_path):
 
 def test_fresh_matching_candidate(funded):
     assert proxy._api_key_candidate(MODEL)["token"] == Path(config.API_KEY_FILE).read_text()
+    # Model-less routing is opt-in: reads such as GET /v1/models carry no model
+    # and only the metered key can serve them.
     assert proxy._api_key_candidate() is None
-    assert proxy._api_key_candidate("different-model") is None
+    assert proxy._api_key_candidate(allow_model_less=True)
+    # A model the collector never sampled is a sampling gap, not a spent window.
+    assert proxy._api_key_candidate("different-model")
 
 
 @pytest.mark.parametrize(

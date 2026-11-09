@@ -35,11 +35,28 @@ def account(item=None, **kwargs):
 def test_funding_rate_and_route_are_independent():
     row = account()
     assert capacity_for(row, "gpt-example", "fleet")
-    assert not capacity_for(row, "different-model", "fleet")
     assert not capacity_for(row, "gpt-example", "different-workspace")
     row["rateLimits"][0]["tpmRemaining"] = 0
     assert row["credit"]["remaining"] == 12.5
     assert not capacity_for(row, "gpt-example", "fleet")
+
+
+def test_unsampled_model_is_not_an_absent_rate():
+    """The report samples a few windows; an unsampled model must not wall a lane.
+
+    Measured 09/11/2026: claude-haiku-4-5 was absent from the 5-model receipt,
+    the candidate gate refused it, and the stripped sentinel reached Anthropic
+    with no credential (401 "x-api-key header is required"). Funding is
+    account-level; the per-model window is enforced upstream.
+    """
+    row = account()
+    assert capacity_for(row, "unsampled-model", "fleet")
+    row["rateLimits"][0]["rpmRemaining"] = 0
+    assert not capacity_for(row, "gpt-example", "fleet")
+    assert capacity_for(row, "unsampled-model", "fleet")
+    assert not capacity_for(row, "unsampled-model", "unmeasured-scope")
+    empty = account({**record(), "rateLimits": []})
+    assert not capacity_for(empty, "gpt-example", "fleet")
 
 
 @pytest.mark.parametrize("amount", [True, False, -1, float("inf"), float("nan"), 10**400, "12"])

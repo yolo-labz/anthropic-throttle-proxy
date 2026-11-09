@@ -134,8 +134,13 @@ def normalize(raw: Any, now: float, *, report_stale: bool = False) -> dict[str, 
 def capacity_for(account: dict[str, Any], model: str, scope: str) -> bool:
     """Whether fresh metadata supports a route, not permission to spend money.
 
-    Unknown rate windows fail closed. A configured informational spend ceiling
-    is not a hard refusal; only explicitly enforced ceilings bind this verdict.
+    Funded and measured bind the verdict; a MODEL the collector never sampled
+    does not. The report samples a handful of model windows, so an absent row is
+    a sampling gap, not an absent rate: Anthropic enforces the model's own window
+    upstream (429 + AIMD), while the funding this function exists to verify is
+    account-level. A scope with no row at all is different — nothing measured
+    that binding, so it fails closed. A configured informational spend ceiling is
+    not a hard refusal; only explicitly enforced ceilings bind this verdict.
     """
     credit = account["credit"]
     spend = account["spendLimit"]
@@ -147,9 +152,15 @@ def capacity_for(account: dict[str, Any], model: str, scope: str) -> bool:
         return False
     if spend["enforced"] and (spend["remaining"] is None or spend["remaining"] <= 0):
         return False
-    matches = [r for r in account["rateLimits"] if r["model"] == model and r["scope"] == scope]
-    return bool(matches) and all(
+    match = [r for r in account["rateLimits"] if r["model"] == model and r["scope"] == scope]
+    if not match:
+        # Sampling gap, not an absent rate: nothing measured this model, but the
+        # scope is measured. Measured 09/11/2026 — claude-haiku-4-5 was absent
+        # from the 5-model receipt, the candidate gate refused it, and the
+        # stripped sentinel then reached Anthropic with no credential.
+        return any(r["scope"] == scope for r in account["rateLimits"])
+    return all(
         rate[key] is not None and rate[key] > 0
-        for rate in matches
+        for rate in match
         for key in ("rpmRemaining", "tpmRemaining")
     )
