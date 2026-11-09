@@ -2318,8 +2318,9 @@ def _pinned_account(
     Prompt caches are per account, so a hop re-writes the whole conversation
     (TD-B0a). Pure: it reads the pin and the STRICT gate (``allow_pressure`` off),
     which is ``inf`` for Retry-After/429, brake, dead credential, rejected,
-    util >= 1 and util >= warn. An open Retry-After window, or a queue on the
-    pinned account while a sibling has room, also release the pin. Any release,
+    util >= 1 and util >= warn. An open Retry-After window, or a request that
+    would queue on the pinned account while a sibling dispatches at once, also
+    release the pin. Any release,
     or no pin, returns ``None`` and the normal pool/pacing choice runs (that
     choice is then re-pinned by the caller).
     """
@@ -2356,16 +2357,27 @@ def _pinned_account(
         return None
     # A cache hop costs one rewrite; waiting behind a full account costs up to the
     # queue budget on every turn, and sessions sharing a key (identical prompts)
-    # would otherwise all pile onto one account.
-    if _bearer_local_load_score(pinned_bid) >= _QUEUE_SPILLOVER_LOAD_THRESHOLD and any(
+    # would otherwise all pile onto one account. Release only on an actual wait:
+    # the load score crosses its threshold at 10 inflight of 20 free slots, when
+    # the pinned account would still dispatch at once (Token Diet 08/11/2026).
+    if _bearer_would_queue(pinned_bid) and any(
         acct is not pinned
         and isinstance(acct.get("token"), str)
         and strict_ok(acct)
-        and _bearer_local_load_score(str(acct["bearer_id"])) < _QUEUE_SPILLOVER_LOAD_THRESHOLD
+        and not _bearer_would_queue(str(acct["bearer_id"]))
         for acct in snapshot
     ):
         return None
     return pinned
+
+
+def _bearer_would_queue(bid: str) -> bool:
+    """A new normal-lane request on ``bid`` would park instead of dispatching now."""
+    lim = config.bearer_limiters.get(bid)
+    if lim is None or not lim.queue_enabled:
+        return False
+    busy = _limiter.normal_busy(lim.inflight, lim.priority_inflight)
+    return lim.queued_total > 0 or busy >= lim.max_concurrent
 
 
 def _account_route_decision(

@@ -13,6 +13,7 @@ import pytest
 from test_account_pool_integration import _write_cred
 
 from anthropic_throttle_proxy import account_pool, accounts, config, proxy
+from anthropic_throttle_proxy import limiter as _limiter
 from anthropic_throttle_proxy import session_affinity as sa
 
 
@@ -111,10 +112,37 @@ def test_queue_on_pinned_account_releases_the_pin_only_when_a_sibling_has_room(
     busy = pool[first]
     loads = {pool["A"]: 0.0, pool["B"]: 0.0}
     monkeypatch.setattr(proxy, "_bearer_local_load_score", lambda bid: loads[bid])
+    monkeypatch.setattr(proxy, "_bearer_would_queue", lambda bid: loads[bid] >= 100.0)
     loads[busy] = 100.0  # a request is queued behind the pinned account
     assert _route(pool, body) == other
     loads[pool[other]] = 100.0  # now the new home is queued too: nothing to gain by hopping
     assert _route(pool, body) == other
+
+
+def test_busy_but_unqueued_pinned_account_keeps_the_session(
+    pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live 08/11/2026 (pacing observe): 66 hops in 15 min, nothing queued anywhere.
+
+    The load score is inflight * 10, so 10 inflight crossed the spill threshold
+    while the pinned account still had 10 of its 20 slots free.
+    """
+    body = _body()
+    first = _route(pool, body)
+    other = "B" if first == "A" else "A"
+    monkeypatch.setattr(config, "MAX_CONCURRENT", 20)
+    lims = {}
+    for label in "AB":
+        lims[label] = _limiter.FairBearerLimiter(20, "fair", bearer_id=pool[label])
+        lims[label].max_concurrent = 20  # AIMD-grown live cap, as on the desktop gateway
+        config.bearer_limiters[pool[label]] = lims[label]
+        _limiter.clear_retry_probe(pool[label])  # both accounts already serve traffic
+    lims[first].inflight = 12  # busy, score 120 >= 100, but 8 slots still free
+    assert proxy._bearer_local_load_score(pool[first]) >= proxy._QUEUE_SPILLOVER_LOAD_THRESHOLD
+    assert _route(pool, body) == first
+    lims[first].inflight = 20  # full: the next request would queue
+    assert _route(pool, body) == other
+    assert sa.stats()["migrated"] == 1
 
 
 def test_new_sessions_are_still_balanced(pool, monkeypatch: pytest.MonkeyPatch) -> None:
