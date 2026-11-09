@@ -8522,6 +8522,9 @@ def main() -> None:
     from .consumers import attach_consumers
 
     attach_consumers(app)  # spec 378 phase 1: read-only, env-gated
+    from .api_capacity import attach_api_capacity  # api-capacity.v1, read-only
+
+    attach_api_capacity(app)
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
     from .ui.routes import attach_ui
 
@@ -8529,6 +8532,9 @@ def main() -> None:
     from .ui.usage import attach_usage
 
     attach_usage(app)  # spec 380: read-only, env-gated
+    from .api_capacity import attach_api_capacity_globals
+
+    attach_api_capacity_globals(app)  # api-capacity card flag, needs the jinja env
     app.router.add_route("*", "/{path:.*}", handler)
     if config.log_mode:
         log(f"invalid THROTTLE_QUEUE_MODE={config.log_mode!r}; falling back to off")

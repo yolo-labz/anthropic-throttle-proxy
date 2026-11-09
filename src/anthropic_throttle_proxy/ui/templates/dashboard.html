@@ -73,6 +73,14 @@
     </section>
     {% endif %}
 
+    {# Metered API allowance (api-capacity.v1) — receipts projected read-only, one
+       meter per account, every value carrying its own observed_at/freshness. #}
+    {% if api_capacity_enabled is defined and api_capacity_enabled() %}
+    <section id="api-capacity" aria-label="API allowance" hx-get="/ui/api-capacity" hx-trigger="load, every 30s" hx-target="#api-capacity" hx-swap="innerHTML">
+      <p class="muted">Loading…</p>
+    </section>
+    {% endif %}
+
     {# Token usage by provider/model/pane (spec 380) — only when THROTTLE_USAGE_SUMMARY_PATH is set. #}
     {% if usage_panel_enabled is defined and usage_panel_enabled() %}
     <section id="usage" aria-label="token usage" hx-get="/ui/usage" hx-trigger="load, every 30s" hx-target="#usage" hx-swap="innerHTML">
