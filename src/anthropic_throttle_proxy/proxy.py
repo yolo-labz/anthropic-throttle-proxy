@@ -60,6 +60,7 @@ from . import __version__ as _version
 from . import account_pool as _account_pool
 from . import api_credits as _api_credits
 from . import config, usage_ledger
+from . import consumers as _consumers
 from . import free_budget as _free_budget
 from . import history as _history
 from . import lanes as _lanes
@@ -5154,6 +5155,7 @@ def _record_usage(
     lane: str = "",
     project: str | None = None,
     weekly_project: str | None = None,
+    seat_headers: object = None,
 ) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
@@ -5190,6 +5192,9 @@ def _record_usage(
         if project is not None:
             # Unknown-cost models still mark the project active (0 USD).
             _PROJECT_SHARE.record_spend(project, spend_usd)
+        if seat_headers is not None:
+            # Spec 378: who spent it — observation only, env-gated, never routed on.
+            _consumers.record_seat(seat_headers, project, spend_usd)
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
@@ -5467,6 +5472,7 @@ async def _finalize(
             lane=_spend_lane_label(),
             project=_project_of(request.headers),
             weekly_project=_weekly_project_of(request.headers),
+            seat_headers=request.headers,
         )
     if request.method == "POST" and MESSAGES_SUBPATH in path:
         observed = request.get(usage_ledger.CAPTURE_KEY, {})

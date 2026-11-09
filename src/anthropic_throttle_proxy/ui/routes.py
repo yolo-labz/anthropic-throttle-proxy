@@ -32,6 +32,7 @@ from aiohttp import web
 
 from .. import accounts as _accounts
 from .. import config as _config
+from .. import consumers as _consumers
 from .. import copilot as _copilot
 from .. import fleet as _fleet
 from .. import fleet_ui_config as _fleet_ui_config
@@ -1319,7 +1320,12 @@ async def index(
     return aiohttp_jinja2.render_template(
         "dashboard.html",
         request,
-        {**await _collect_view(source=request.query.get("source")), "asset_v": _ASSET_V},
+        {
+            **await _collect_view(source=request.query.get("source")),
+            "asset_v": _ASSET_V,
+            # Spec 378: the consumer panel exists only when its routes do.
+            "consumers_view": _consumers.enabled(),
+        },
     )
 
 

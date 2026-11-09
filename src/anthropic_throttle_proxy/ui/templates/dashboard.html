@@ -65,6 +65,14 @@
       <p class="muted">Loading…</p>
     </section>
 
+    {# Spec 378: who burns the window — per-project spend plus the seats seen
+       (x-anthropic-throttle-seat, observation only). THROTTLE_CONSUMERS_VIEW=1. #}
+    {% if consumers_view | default(false) %}
+    <section id="consumers" aria-label="consumer burn by project and seat" hx-get="/ui/consumers" hx-trigger="load, every 10s" hx-target="#consumers" hx-swap="innerHTML">
+      <p class="muted">Loading…</p>
+    </section>
+    {% endif %}
+
   </main>
 
   <div class="bottom-bar">
