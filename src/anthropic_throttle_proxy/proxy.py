@@ -2385,7 +2385,10 @@ def _pinned_account(
     # would otherwise all pile onto one account. Release only on an actual wait:
     # the load score crosses its threshold at 10 inflight of 20 free slots, when
     # the pinned account would still dispatch at once (Token Diet 08/11/2026).
-    if _bearer_would_queue(pinned_bid) and any(
+    # And only on a LONG wait: at 20/20 on both accounts the pinned one frees a
+    # slot within seconds, and 392 hops in 89 min re-wrote 19.9 M cache tokens
+    # (33 % of all writes) to dodge a median 3.3 s wait (Throttler 11/11/2026).
+    if _pinned_wait_worth_a_hop(pinned_bid) and any(
         acct is not pinned
         and isinstance(acct.get("token"), str)
         and strict_ok(acct)
@@ -2403,6 +2406,23 @@ def _bearer_would_queue(bid: str) -> bool:
         return False
     busy = _limiter.normal_busy(lim.inflight, lim.priority_inflight)
     return lim.queued_total > 0 or busy >= lim.max_concurrent
+
+
+def _pinned_wait_worth_a_hop(bid: str, min_wait_s: float = 60.0) -> bool:
+    """``bid`` would queue a new request, and long enough to justify a cache rewrite.
+
+    Only an EVIDENCED drain estimate at or under ``min_wait_s`` (about how long a
+    client tolerates a silent request) keeps the session where it is. No limiter,
+    or a cold limiter that only guesses its wait, keeps the plain release-on-queue
+    rule: like admission (``DrainEstimate.rejects``), a guess never changes traffic.
+    """
+    if not _bearer_would_queue(bid):
+        return False
+    lim = config.bearer_limiters.get(bid)
+    if lim is None:
+        return True
+    estimate = lim.drain_estimate()
+    return not estimate.evidenced or estimate.wait_s > min_wait_s
 
 
 def _account_route_decision(
