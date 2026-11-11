@@ -65,6 +65,7 @@ from . import free_budget as _free_budget
 from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
+from . import model_retry as _model_retry
 from . import pacing as _pacing
 from . import session_affinity as _session_affinity
 from . import usage_allocator as _usage_allocator
@@ -597,6 +598,9 @@ def _maybe_pause_rejected(
     bid: str,
     limiter: FairBearerLimiter,
     unified: Mapping[str, object],
+    *,
+    model: str = "",
+    meta: Mapping[str, str] | None = None,
 ) -> bool:
     """Pause the bearer until reset when a window is already "rejected".
 
@@ -618,7 +622,7 @@ def _maybe_pause_rejected(
         log(f"unified-rejected-capped bid={bid} orig={int(pause)}s cap={int(cap)}s")
         pause = cap
     if pause > 0:
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, meta, model)
         log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
     return True
 
@@ -660,6 +664,8 @@ async def _apply_unified(
     bstate: dict[str, object],
     limiter: FairBearerLimiter,
     meta: Mapping[str, str],
+    *,
+    model: str = "",
 ) -> None:
     """React to OAuth unified-window headers (WS-B2).
 
@@ -678,6 +684,10 @@ async def _apply_unified(
     unified = _parse_unified(meta)
     if not unified:
         return
+    if _model_retry.fable_window(meta, model):
+        # Generic rejected describes the representative Fable bucket, not the week.
+        unified["status"] = unified.get("status_7d")
+        unified["reset"] = unified.get("reset_7d")
     bstate["unified"] = unified
     # Per-project 5 h share (advisory): the pace projector's only meter input.
     _PROJECT_SHARE.observe_meter(unified)
@@ -690,7 +700,12 @@ async def _apply_unified(
     # _budget_under_pressure / UNIFIED_CACHE_FRESH_S.
     bstate["unified_at"] = time.time()
     _publish_unified_gauges(bid, unified)
-    if _maybe_pause_rejected(bid, limiter, unified):
+    if _model_retry.fable_window(meta, model):
+        pause = _parse_retry_after(meta) or max(
+            0, float(unified.get("reset_7d_oi") or 0) - time.time()
+        )
+        _model_retry.note_pause(limiter, pause, meta, model)
+    if _maybe_pause_rejected(bid, limiter, unified, model=model, meta=meta):
         # Rejected = already hard-locked. If the brake is off, this IS the
         # "hard-lock while unbraked" event the visibility metric must catch —
         # the warn path below is never reached (Codex MAJOR).
@@ -1779,6 +1794,8 @@ def _account_routing_candidate_score(
     now = time.time() if now is None else now
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
+        return math.inf
+    if _model_retry.scoped_remaining(bid, model) > 0:
         return math.inf
     retry_after_remaining = _bearer_routing_retry_after(bid, allow_retry_probe=allow_retry_probe)
     if retry_after_remaining is None:
@@ -4574,7 +4591,7 @@ async def _pushback_retry_step(
         # see remaining<=0 and re-probe this same bearer forever. Recording
         # it also arms `require_retry_probe(block_while_retry=True)`, which
         # is what makes the pre-dispatch reroute branch fire on re-entry.
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, attempt.meta, str(attempt.context.get("model", "")))
         raise _RetryAfterArmed(pause)
     if _account_routing_enabled():
         # ACTIVE ROUTING (S1, docs/ACTIVE-ROUTING-DESIGN-2026-10-09.md): a
@@ -4592,7 +4609,7 @@ async def _pushback_retry_step(
         # metrics run exactly once via the handler's finalize on the raise
         # path — the same contract as the armed-Retry-After branch above — so
         # this raise happens BEFORE `_aimd_feedback`, never after.
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, attempt.meta, str(attempt.context.get("model", "")))
         raise _RetryAfterArmed(pause)
     await _aimd_feedback(bid, limiter, attempt)
     await limiter.wait_retry_after()
@@ -4873,7 +4890,7 @@ def _note_retry_after_if_set(
     """Apply pushback pause to limiter when one is set; return (pause, synthetic_pause)."""
     pause, synthetic_pause = _pushback_pause(meta, bid)
     if pause > 0:
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, meta)
     return pause, synthetic_pause
 
 
@@ -4989,6 +5006,12 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
     are evidence about this bearer's ceiling.
     """
     final_status = attempt.final_status
+    if final_status in AIMD_STATUSES and _model_retry.fable_window(
+        attempt.meta, str(attempt.context.get("model", ""))
+    ):
+        pause, _ = _pushback_pause(attempt.meta, bid)
+        _model_retry.note_pause(limiter, pause, attempt.meta, str(attempt.context.get("model", "")))
+        return  # A model quota says nothing about the shared concurrency ceiling.
     retry_after = _parse_retry_after(attempt.meta)
     if _aimd_skip_queue_timeout(bid, attempt, final_status):
         return
@@ -5375,7 +5398,9 @@ async def _finalize_ratelimit_feedback(
     bstate["last_ratelimit"] = meta
     _publish_ratelimit_gauges(bid, meta)
     try:
-        await _apply_unified(bid, bstate, limiter, meta)
+        await _apply_unified(
+            bid, bstate, limiter, meta, model=str(attempt.context.get("model", ""))
+        )
     except Exception as ue:
         log(f"unified-error bid={bid}: {ue!r}")
 
@@ -6254,6 +6279,77 @@ async def _park_on_pre_dispatch_retry_after(
     return limiter, bid, headers, None, "reroute"
 
 
+def _model_pause_response(seconds: float) -> web.Response:
+    return web.Response(
+        status=429,
+        headers={"retry-after": str(max(1, math.ceil(seconds)))},
+        text="Selected model subscription allowance is temporarily held; retry the same model.\n",
+    )
+
+
+async def _recheck_subscription_pause(limiter, model, headers, prospective) -> None:
+    authorization = next(
+        (value for name, value in headers.items() if name.lower() == "authorization"), ""
+    )
+    if (
+        not _account_routing_enabled()
+        or not authorization.startswith("Bearer ")
+        or not model
+        or not _meter_binding_allows(limiter.bearer_id)
+    ):
+        return
+    if "x-api-key" in {name.lower() for name in headers}:
+        return
+    from . import accounts
+
+    if not any(
+        acct.get("bearer_id") == limiter.bearer_id
+        and authorization == "Bearer " + str(acct.get("token", ""))
+        for acct in accounts.routing_snapshot()
+    ):
+        return  # Caller-supplied Bearer API keys must never fund synthetic probes.
+
+    async def send():
+        payload = {
+            "model": model,
+            "max_tokens": 8,
+            "system": [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PROMPT}],
+            "messages": [{"role": "user", "content": "Reply OK."}],
+        }
+        if model.startswith("claude-fable-"):
+            payload.update(max_tokens=64, thinking={"type": "adaptive"})
+            payload["output_config"] = {"effort": "low"}
+        probe_headers = {
+            "authorization": authorization,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "content-type": CONTENT_TYPE_JSON,
+        }
+        return await _post_internal_probe_headers(
+            prospective,
+            config.UPSTREAM.rstrip("/") + MESSAGES_PATH,
+            probe_headers,
+            payload,
+            aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT),
+        )
+
+    try:
+        meta = await _model_retry.recheck(limiter, model, send)
+        if meta:
+            await _apply_unified(
+                limiter.bearer_id,
+                bearer_state.setdefault(limiter.bearer_id, {}),
+                limiter,
+                meta,
+                model=model,
+            )
+    except Exception as exc:
+        log(
+            f"subscription-recheck bid={limiter.bearer_id} "
+            f"result=inconclusive type={type(exc).__name__}"
+        )
+
+
 async def _pre_dispatch_gate(
     *,
     path: str,
@@ -6268,6 +6364,7 @@ async def _pre_dispatch_gate(
     reroute: _Reroute,
     wait_reval: _WaitReval,
     meter_wait_bounded: bool,
+    prospective: ProbeProspective | None = None,
 ) -> tuple[FairBearerLimiter | None, str, dict[str, str], web.Response | None, str]:
     """The pre-dispatch admission gate: Retry-After, then half-open probe ownership.
 
@@ -6292,6 +6389,25 @@ async def _pre_dispatch_gate(
             new_bid, new_headers = reroute()
             return limiter, new_bid, new_headers, None, "reroute"
         return limiter, bid, headers, _meter_refusal_response(bid, path), "answer"
+    if _retry_after_blocks_path(path):
+        if not await wait_reval(
+            lambda: _recheck_subscription_pause(limiter, model, headers, prospective)
+        ):
+            finish_probe(success=False)
+            return (
+                limiter,
+                bid,
+                headers,
+                _queue_wait_timeout_response(bid, cid, path, limiter, 0.0),
+                "answer",
+            )
+        scoped_wait = _model_retry.scoped_remaining(bid, model)
+        if scoped_wait > 0:
+            alternate = try_reroute(bid, scoped_wait, "model-pre-dispatch")
+            if alternate is not None:
+                finish_probe(success=False)
+                return limiter, alternate[0], alternate[1], None, "reroute"
+            return limiter, bid, headers, _model_pause_response(scoped_wait), "answer"
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if (
         _retry_after_blocks_path(path)
@@ -6374,6 +6490,15 @@ async def _post_slot_recheck(
     # A bearer can cross its 5h/7d target while this request is parked in its
     # local fair queue. Re-run account routing from the original auth headers
     # before surfacing a stale 429.
+    scoped_wait = _model_retry.scoped_remaining(bid, model_label)
+    if _retry_after_blocks_path(path) and scoped_wait > 0:
+        rerouted = try_reroute(bid, scoped_wait, "model-post-slot")
+        if rerouted is not None:
+            counters.exit_inflight(0)
+            return rerouted[0], rerouted[1], None, True
+        attempt.final_status = 429
+        attempt.aimd_owned = True  # Local quota refusal is not upstream congestion.
+        return bid, headers, _model_pause_response(scoped_wait), False
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if retry_after_remaining > 0:
         rerouted = try_reroute(bid, retry_after_remaining, "post-slot")
@@ -7033,6 +7158,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
             reroute=reroute_after_revalidation,
             wait_reval=wait_for_revalidation,
             meter_wait_bounded=wait_deadline is not None,
+            prospective=_app_probe(request.app),
         )
         if action == "answer":
             assert response is not None
@@ -7156,6 +7282,13 @@ def _app_probe(app: web.Application) -> ProbeProspective:
 
 
 async def _post_internal_probe(prospective, url, headers, payload, client_timeout):
+    status, body, _ = await _post_internal_probe_headers(
+        prospective, url, headers, payload, client_timeout
+    )
+    return status, body
+
+
+async def _post_internal_probe_headers(prospective, url, headers, payload, client_timeout):
     """Reserve the serialized body once, then retain sent debt through the reply."""
     final_bytes = json.dumps(payload).encode()
     probe = prospective or ProbeProspective(None, _unconfigured_probe_dispatch())
@@ -7164,8 +7297,10 @@ async def _post_internal_probe(prospective, url, headers, payload, client_timeou
         probe.reserve(final_bytes) as permit,
     ):
         permit.handoff()
-        async with session.post(url, headers=headers, data=final_bytes) as response:
-            return response.status, await response.read()
+        async with session.post(
+            url, headers=headers, data=final_bytes, allow_redirects=False
+        ) as response:
+            return response.status, await response.read(), _extract_ratelimit(response.headers)
 
 
 async def _probe_upstream_auth_once(*, prospective: ProbeProspective | None = None) -> None:

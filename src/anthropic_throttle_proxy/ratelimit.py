@@ -113,6 +113,9 @@ _RATELIMIT_HEADER_KEYS = (
     "anthropic-ratelimit-unified-7d-status",
     "anthropic-ratelimit-unified-7d-utilization",
     "anthropic-ratelimit-unified-7d-reset",
+    "anthropic-ratelimit-unified-7d_oi-status",
+    "anthropic-ratelimit-unified-7d_oi-utilization",
+    "anthropic-ratelimit-unified-7d_oi-reset",
 )
 
 _ZAI_QUOTA_CODES = {"1308", "1316", "1317"}
@@ -374,6 +377,9 @@ def _parse_unified(meta: Mapping[str, str] | None) -> dict[str, object]:
         "util_7d": _f("anthropic-ratelimit-unified-7d-utilization"),
         "status_7d": meta.get("anthropic-ratelimit-unified-7d-status"),
         "reset_7d": _i("anthropic-ratelimit-unified-7d-reset"),
+        "status_7d_oi": meta.get("anthropic-ratelimit-unified-7d_oi-status"),
+        "util_7d_oi": _f("anthropic-ratelimit-unified-7d_oi-utilization"),
+        "reset_7d_oi": _i("anthropic-ratelimit-unified-7d_oi-reset"),
     }
 
 

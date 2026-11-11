@@ -80,10 +80,23 @@ def test_genuine_subscription_message_preserves_model_and_secret(checker, creden
     assert len(requests) == 1
     request = requests[0]
     assert json.loads(request.data)["model"] == "claude-opus-5-5"
+    payload = json.loads(request.data)
+    assert payload["max_tokens"] == 8
+    assert "thinking" not in payload and "output_config" not in payload
     assert request.headers["Authorization"] == "Bearer test-subscription-secret"
     assert not any(key.lower() == "x-api-key" for key in request.headers)
     assert "test-subscription-secret" not in json.dumps(result)
     assert "set-cookie" not in result["headers"]
+
+
+def test_fable_probe_uses_supported_bounded_thinking(checker, credentials, monkeypatch):
+    requests = provider(monkeypatch, checker, message(model="claude-fable-5-2"))
+    result = checker.check("account", credentials, "claude-fable-5-2")
+    assert result["message_ok"] is True
+    payload = json.loads(requests[0].data)
+    assert payload["thinking"] == {"type": "adaptive"}
+    assert payload["output_config"] == {"effort": "low"}
+    assert payload["max_tokens"] == 64
 
 
 @pytest.mark.parametrize(
@@ -258,11 +271,15 @@ def configure_recovery(checker, monkeypatch):
 
 
 @pytest.mark.parametrize("socket_active", [True, False])
+@pytest.mark.parametrize("model", ["claude-fable-5-2", "claude-opus-5-5"])
 def test_release_preserves_other_holds_and_socket_state(
-    checker, monkeypatch, tmp_path, socket_active, configure_recovery
+    checker, monkeypatch, tmp_path, socket_active, model, configure_recovery
 ):
     state = tmp_path / "holds.json"
-    original = {"verified": time.time() + 3600, "other": time.time() + 7200}
+    original = {
+        key: time.time() + 7200
+        for key in ("verified", "other", "verified:model:fable", "verified:model:other")
+    }
     state.write_text(json.dumps(original))
     calls = []
     configure_recovery(state)
@@ -273,9 +290,13 @@ def test_release_preserves_other_holds_and_socket_state(
 
     monkeypatch.setattr(checker.subprocess, "run", run)
     result = checker.release_verified_holds(
-        [{"message_ok": True, "bearer_id": "verified", "observed_at": time.time()}]
+        [{"message_ok": True, "bearer_id": "verified", "observed_at": time.time(), "model": model}]
     )
-    assert json.loads(state.read_text()) == {"other": original["other"]}
+    released = {"verified"}
+    if model == "claude-fable-5-2":
+        released.add("verified:model:fable")
+    assert json.loads(state.read_text()) == {k: v for k, v in original.items() if k not in released}
+    assert result["released_keys"] == sorted(released)
     assert json.loads(Path(result["backup"]).read_text()) == original
     assert Path(result["backup"]).stat().st_mode & 0o777 == 0o600
     assert result["released_bearers"] == ["verified"]

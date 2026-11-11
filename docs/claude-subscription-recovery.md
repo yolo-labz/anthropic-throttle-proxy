@@ -32,7 +32,9 @@ When the current subscription check contradicts old local holds, add
 **before** checking accounts, refuses unknown/busy state or any failed account,
 then stops the canonical gateway and its active socket at an idle boundary.
 It backs up the state with restricted permissions and atomically removes only
-successfully checked bearers' holds. Unrelated holds remain. The service and
+successfully checked bearers' holds. An exact Fable check also removes that
+bearer's scoped Fable hold; other model scopes remain. The result lists each
+released key for audit. Unrelated holds remain. The service and
 previously active socket are restored, and admission is reopened on exit.
 There is no automatic bypass of a genuine provider limit.
 
@@ -52,3 +54,18 @@ Regression checks:
 uv run pytest -q tests/test_claude_subscription_check.py
 uv run ruff check scripts/claude-subscription-check.py tests/test_claude_subscription_check.py
 ```
+
+The gateway also revalidates a held **selected model** on demand, at most once
+per account/model every five minutes. It sends a tiny synthetic subscription
+message through the existing prospective admission boundary; it never replays
+user context, changes models, or uses an API key. Fable requires adaptive
+thinking with low effort and a 64-token output ceiling; other models keep the
+eight-token probe. A genuine same-model assistant answer can clear only the
+unchanged hold snapshot, and a whole-account recovery retains the normal
+single-flight message gate. A concurrent newer rejection wins over the probe.
+
+A fresh explicit Fable `7d_oi` rejection with measured whole-week headroom is
+stored separately from the account's whole-week hold. It blocks Fable, while
+Opus and Sonnet keep their own eligibility. A genuine whole-week/five-hour
+rejection or ambiguous evidence keeps the account-wide pause. Scoped holds use
+the existing durable Retry-After state writer, so restarting preserves them.

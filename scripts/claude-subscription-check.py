@@ -46,6 +46,10 @@ def check(label: str, path: Path, model: str) -> dict:
         "system": [{"type": "text", "text": MARKER}],
         "messages": [{"role": "user", "content": "Reply OK."}],
     }
+    if model.startswith("claude-fable-"):
+        # Fable requires adaptive thinking; eight tokens can yield no visible answer.
+        payload.update(max_tokens=64, thinking={"type": "adaptive"})
+        payload["output_config"] = {"effort": "low"}
     # A fixed HTTPS connection cannot follow redirects or change credential origin.
     with contextlib.closing(
         http.client.HTTPSConnection("api.anthropic.com", timeout=45)
@@ -148,6 +152,11 @@ def release_verified_holds(results: list[dict]) -> dict:
     if not results or not all(r.get("message_ok") for r in results):
         raise ValueError("every subscription check must succeed")
     bids = {r["bearer_id"] for r in results}
+    keys = bids | {
+        r["bearer_id"] + ":model:fable"
+        for r in results
+        if str(r.get("model", "")).startswith("claude-fable-")
+    }
     if any(not 0 <= time.time() - r["observed_at"] <= 120 for r in results):
         raise ValueError("fresh successful message evidence required")
     env = subprocess.check_output(
@@ -205,7 +214,7 @@ def release_verified_holds(results: list[dict]) -> dict:
         state = json.loads(path.read_text())
         if not isinstance(state, dict):
             raise ValueError("invalid Retry-After state")
-        before = {bid: state.pop(bid) for bid in bids if bid in state}
+        before = {key: state.pop(key) for key in keys if key in state}
         backup = path.with_name(path.name + f".before-recheck-{time.time_ns()}")
         with backup.open("x") as handle:
             os.chmod(backup, 0o600)
@@ -220,7 +229,11 @@ def release_verified_holds(results: list[dict]) -> dict:
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
-        return {"released_bearers": sorted(before), "backup": str(backup)}
+        return {
+            "released_bearers": sorted(bids.intersection(before)),
+            "released_keys": sorted(before),
+            "backup": str(backup),
+        }
     finally:
         if stopped:
             subprocess.run(
