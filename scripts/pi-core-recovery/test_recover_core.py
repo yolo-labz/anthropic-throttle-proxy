@@ -1,6 +1,8 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +11,54 @@ spec = importlib.util.spec_from_file_location(
 )
 core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        subprocess.CalledProcessError(1, "herdr", stderr=b"private"),
+        TimeoutError(),
+        subprocess.TimeoutExpired("herdr", 35),
+    ],
+)
+@pytest.mark.parametrize("started", [True, False])
+def test_launch_response_never_causes_duplicate_dispatch(monkeypatch, capsys, failure, started):
+    args = SimpleNamespace(session="infra", pane="w:p", transcript="/native.jsonl", cwd="/original")
+    calls = []
+
+    def dispatch(*command):
+        calls.append(command)
+        if failure is not None:
+            raise failure
+
+    state = {
+        "agent": "pi",
+        "agent_status": "idle",
+        "cwd": "/original",
+        "agent_session": {
+            "source": "herdr:pi",
+            "value": "/native.jsonl" if started else "/wrong.jsonl",
+        },
+    }
+    ticks = iter([0, 0, 31])
+    monkeypatch.setattr(core, "call", dispatch)
+    monkeypatch.setattr(core, "agent", lambda *unused: state)
+    monkeypatch.setattr(core.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(core.time, "sleep", lambda unused: None)
+    if started:
+        core.dispatch_and_detect(args, "exact immutable command")
+    else:
+        with pytest.raises(RuntimeError, match="never retry"):
+            core.dispatch_and_detect(args, "exact immutable command")
+    assert calls == [
+        ("herdr", "--session", "infra", "pane", "run", "w:p", "exact immutable command")
+    ]
+    diagnostic = capsys.readouterr().err
+    assert "private" not in diagnostic
+    assert "exact immutable command" not in diagnostic
+    if failure is not None:
+        assert json.loads(diagnostic)["event"] == "native_launch_uncertain"
 
 
 def test_shell_requires_original_pid_and_cwd():

@@ -110,3 +110,10 @@ acknowledgement or matching native nonce receipt permits progress. Each command
 is sent once. Missing proof, a global timeout or changed identity stops the
 controller; inspect nonce receipts and started markers before another attempt.
 This is a reviewed single-seat operation, not broad fleet restart authorization.
+
+A failed or timed-out `pane run` response is an uncertain launch result. The
+helper never resends it: one bounded native detection must prove the original
+session and cwd before registration and subsequent native state verification.
+If detection cannot prove that identity, the started marker remains and recovery
+stops for explicit diagnosis. The two 11/11/2026 infrastructure trials established
+that a nonzero response can follow a successful core launch.
