@@ -1278,3 +1278,5 @@ rect.u-cache_write { fill: var(--ctp-peach); }  span.u-cache_write { background:
 rect.u-cache_read  { fill: var(--ctp-teal); }   span.u-cache_read  { background: var(--ctp-teal); }
 rect.u-output      { fill: var(--ctp-green); }  span.u-output      { background: var(--ctp-green); }
 rect.u-reasoning   { fill: var(--ctp-mauve); }  span.u-reasoning   { background: var(--ctp-mauve); }
+#cache { margin-top: 1rem; }
+.cache-affinity { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--ctp-surface0); }

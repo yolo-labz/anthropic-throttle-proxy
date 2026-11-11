@@ -9,7 +9,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 from anthropic_throttle_proxy import consumers as cs
-from anthropic_throttle_proxy.ui import auth, usage
+from anthropic_throttle_proxy.ui import auth, cache_health, usage
 from anthropic_throttle_proxy.ui.routes import attach_ui
 
 FIXTURE_KEY = "fixture-ui-token-7f3a"
@@ -41,6 +41,7 @@ def _app(*, remote: bool) -> web.Application:
     cs.attach_consumers(app)
     attach_ui(app)
     usage.attach_usage(app)
+    cache_health.attach_cache_health(app)
     app.on_startup.clear()  # no account refresher / history sampler in unit tests
     return app
 
@@ -246,3 +247,66 @@ async def test_usage_fragment_is_gated_for_remote(gated, tmp_path, monkeypatch):
         assert (await local.get("/ui/usage")).status == 200
     finally:
         await local.close()
+
+
+async def test_cache_fragment_is_gated_for_remote(gated, monkeypatch):
+    """Spec 381: /ui/cache reports live token counters; remote needs the token."""
+    routes = {r.resource.canonical: r.handler for r in _app(remote=True).router.routes()}
+    assert getattr(routes["/ui/cache"], "__wrapped__", None) is cache_health.cache_health_partial
+    monkeypatch.setattr(cache_health, "token_samples", lambda: [])
+    client = await _client(remote=True)
+    try:
+        assert (await client.get("/ui/cache", headers=HX)).status == 401
+        ok = await client.get("/ui/cache", headers={auth.AUTH_HEADER: FIXTURE_KEY})
+        assert ok.status == 200 and "no traffic yet" in await ok.text()
+    finally:
+        await client.close()
+
+
+def _main_attach_calls() -> list:
+    """Every ``attach_*`` that ``proxy.main`` mounts, resolved in source order."""
+    import importlib
+    import inspect
+    import re
+
+    from anthropic_throttle_proxy import proxy
+
+    src = inspect.getsource(proxy.main)
+    where = {n: m for m, n in re.findall(r"from (\.[\w.]*) import (attach_\w+)", src)}
+    out = []
+    for name in re.findall(r"^\s+(attach_\w+)\(app\)", src, re.M):
+        mod = where.get(name)
+        pkg = importlib.import_module(mod, "anthropic_throttle_proxy") if mod else proxy
+        out.append(getattr(pkg, name))
+    return out
+
+
+async def test_every_ui_route_refuses_an_untokened_remote(gated):
+    """Tripwire: mount exactly what ``proxy.main`` mounts, then require the gate on
+    every /ui route (bar login and static assets) and on the two inspection JSONs.
+    A new route that forgets ``guard`` fails here instead of shipping open."""
+    app = web.Application(middlewares=[_as_remote])
+    app[_REMOTE] = True
+    for attach in _main_attach_calls():
+        attach(app)
+    app.on_startup.clear()
+    open_ok = (auth.LOGIN_PATH, "/ui/static/")
+    guarded_api = {"/__throttle/consumers", "/__throttle/api-capacity"}
+    checked = []
+    for r in app.router.routes():
+        path = r.resource.canonical if r.resource else ""
+        is_ui = path == "/ui" or path.startswith("/ui/")
+        if r.method == "HEAD" or not (is_ui or path in guarded_api):
+            continue
+        if path.startswith(open_ok):
+            continue
+        checked.append((r.method, path))
+    assert {p for _, p in checked} >= {"/ui", "/ui/usage", "/ui/cache"} | guarded_api
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        for method, path in checked:
+            resp = await client.request(method, path, headers=HX, allow_redirects=False)
+            assert resp.status in (401, 403), (method, path, resp.status)
+    finally:
+        await client.close()

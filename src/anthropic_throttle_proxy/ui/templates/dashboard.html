@@ -88,6 +88,11 @@
     </section>
     {% endif %}
 
+    {# Live prompt-cache health, this process only (spec 381). #}
+    <section id="cache" aria-label="prompt-cache health" hx-get="/ui/cache" hx-trigger="load, every 10s" hx-target="#cache" hx-swap="innerHTML">
+      <p class="muted">Loading…</p>
+    </section>
+
   </main>
 
   <div class="bottom-bar">

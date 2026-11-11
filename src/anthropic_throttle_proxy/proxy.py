@@ -8702,6 +8702,9 @@ def main() -> None:
     from .ui.usage import attach_usage
 
     attach_usage(app)  # spec 380: read-only, env-gated
+    from .ui.cache_health import attach_cache_health
+
+    attach_cache_health(app)  # spec 381: live, in-process counters only
     from .api_capacity import attach_api_capacity_globals
 
     attach_api_capacity_globals(app)  # api-capacity card flag, needs the jinja env
