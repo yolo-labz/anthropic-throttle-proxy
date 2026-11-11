@@ -76,3 +76,19 @@ The known Gama identity correction uses native Herdr preregistration and an
 immutable launcher through a self-removing shell function. The canonical Zsh
 `nocorrect pi` alias remains unchanged. This exception is scoped to that exact
 seat; it does not qualify unknown original bootstrap flags for other seats.
+
+Historical cross-family targets qualify only when the **latest target on the
+active parent lineage** has a matching applied receipt on that same lineage.
+Receipt target ID, provider, and actual normalized model must agree; Codex receipts
+must name `gpt-6.1-sol`, matching the installed parity startup skip rule. This
+permits Plane's already-consumed target without replaying its historical model.
+Unapplied targets, another branch's receipt, context-recovery markers, duplicate
+IDs and cycles remain blocked. Native selection must still match the operator's
+current selection before shutdown and after restart.
+
+The normal upgrade path can preserve any qualified Claude seat whose existing
+native bootstrap name exactly matches its Herdr name, whose role/environment are
+captured, and whose native launch flags pass qualification. The Gama-specific
+identity reconstruction exception is unnecessary for such seats and remains
+restricted. Working or compacting seats must reach the native idle boundary;
+there is no forced cancellation.

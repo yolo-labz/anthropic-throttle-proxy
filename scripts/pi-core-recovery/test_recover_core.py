@@ -116,3 +116,83 @@ def test_removed_expired_registration_escape_hatch(monkeypatch):
     with pytest.raises(SystemExit) as error:
         core.main()
     assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "provider,model,accepted",
+    [
+        ("openai-codex", "gpt-6.1-sol", True),
+        ("openai-codex", "gpt-6-astra", False),
+    ],
+)
+def test_consumed_startup_target_matches_installed_parity_semantics(
+    tmp_path, provider, model, accepted
+):
+    path = tmp_path / "native.jsonl"
+    entries = [
+        {
+            "id": "target",
+            "parentId": None,
+            "type": "custom",
+            "customType": "cross-family-model-target",
+            "data": {"provider": "openai-codex", "model": "gpt-6.1-sol", "thinking": "xhigh"},
+        },
+        {
+            "id": "applied",
+            "parentId": "target",
+            "type": "custom",
+            "customType": "cross-family-model-target-applied",
+            "data": {"targetEntryId": "target", "provider": provider, "model": model},
+        },
+        {
+            "id": "human-selection",
+            "parentId": "applied",
+            "type": "model_change",
+            "provider": "claude-lane",
+            "modelId": "claude-opus-5-5",
+        },
+    ]
+    path.write_text("\n".join(map(json.dumps, entries)))
+    if accepted:
+        core.require_safe_branch(path)
+    else:
+        with pytest.raises(RuntimeError, match="startup target"):
+            core.require_safe_branch(path)
+    # An applied receipt on an abandoned branch cannot suppress a current startup target.
+    entries[-1]["parentId"] = "target"
+    path.write_text("\n".join(map(json.dumps, entries)))
+    with pytest.raises(RuntimeError, match="startup target"):
+        core.require_safe_branch(path)
+
+
+@pytest.mark.parametrize("mutation", ["no-receipt", "wrong-target", "wrong-provider", "context"])
+def test_startup_target_consumption_refuses_near_misses(tmp_path, mutation):
+    path = tmp_path / "native.jsonl"
+    target = {
+        "id": "target",
+        "parentId": None,
+        "type": "custom",
+        "customType": "cross-family-model-target",
+        "data": {"provider": "openai-codex", "model": "gpt-6.1-sol", "thinking": "xhigh"},
+    }
+    receipt = {
+        "id": "receipt",
+        "parentId": "target",
+        "type": "custom",
+        "customType": "cross-family-model-target-applied",
+        "data": {"targetEntryId": "target", "provider": "openai-codex", "model": "gpt-6.1-sol"},
+    }
+    entries = [target, receipt]
+    if mutation == "no-receipt":
+        entries = [target]
+    elif mutation == "wrong-target":
+        receipt["data"]["targetEntryId"] = "other"
+    elif mutation == "wrong-provider":
+        receipt["data"]["provider"] = "other"
+    else:
+        entries.append(
+            {"id": "ctx", "parentId": "receipt", "type": "custom", "customType": "context-recovery"}
+        )
+    path.write_text("\n".join(map(json.dumps, entries)))
+    with pytest.raises(RuntimeError, match="startup target"):
+        core.require_safe_branch(path)
