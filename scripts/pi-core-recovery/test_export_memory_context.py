@@ -346,3 +346,91 @@ def test_export_completion_never_extends_operation_deadline(monkeypatch):
     with pytest.raises(TimeoutError, match="close-write"):
         export.wait_closed(SimpleNamespace(fd=123, deadline=107), Path("exact.jsonl"))
     assert observed == [7]
+
+
+def preexport_hold(flow):
+    operation, expected, directory, _, _, encoded = flow
+    identity = operation.identity
+    key = export.digest([identity["herdrSession"], identity["pane"], identity["pid"]])
+    marker = export.context.core.ROOT / f"{key}.memory-export-intent.json"
+    previous = {
+        "identity": dict(identity),
+        "artifact": str(directory / "previous.jsonl"),
+        "originalSha256": export.hashlib.sha256(encoded()).hexdigest(),
+        "expectedNativeContext": dict(expected),
+        "inference": False,
+    }
+    outcome = {
+        "held": True,
+        "reason": "native branch advanced since baseline; hold without export",
+        "pid": identity["pid"],
+        "artifact": previous["artifact"],
+        "inference": False,
+        "resendPermitted": False,
+    }
+    return marker, previous, outcome
+
+
+def save_hold(marker, previous, outcome):
+    export.context.write_once(marker, previous)
+    export.context.write_once(marker.with_suffix(".result.json"), outcome)
+
+
+def test_complete_proven_preexport_hold_once_preserves_old_receipts(flow):
+    operation, expected, directory, rows, commands, _ = flow
+    marker, previous, outcome = preexport_hold(flow)
+    save_hold(marker, previous, outcome)
+    original = marker.read_bytes(), marker.with_suffix(".result.json").read_bytes()
+    advanced = [*rows, {"type": "message", "id": "new-work", "parentId": "reply"}]
+    expected.update(
+        branchEntries=3,
+        branchIdDigest=export.digest(["user", "reply", "new-work"]),
+        workEntries=3,
+        workIdDigest=export.digest(["user", "reply", "new-work"]),
+    )
+
+    def advanced_export(command):
+        commands.append(command)
+        Path(command[-1].removeprefix("/export ")).write_text(
+            "\n".join(json.dumps(row) for row in advanced) + "\n"
+        )
+
+    operation.run = advanced_export
+    result = export.export_once(operation, expected, directory, True)
+    assert result["previousNativeWorkPrefixRetained"]
+    assert original == (marker.read_bytes(), marker.with_suffix(".result.json").read_bytes())
+    with pytest.raises(FileExistsError):
+        export.export_once(operation, expected, directory, True)
+    assert len(commands) == 1
+
+
+@pytest.mark.parametrize("near_miss", ["reason", "pid", "identity", "hash", "artifact"])
+def test_preexport_completion_refuses_unproven_hold(flow, near_miss):
+    operation, expected, directory, _, commands, _ = flow
+    marker, previous, outcome = preexport_hold(flow)
+    if near_miss == "reason":
+        outcome["reason"] = "native export close-write completion not observed"
+    elif near_miss == "pid":
+        outcome["pid"] += 1
+    elif near_miss == "identity":
+        previous["identity"]["pid"] += 1
+    elif near_miss == "hash":
+        previous["originalSha256"] = "wrong"
+    else:
+        Path(previous["artifact"]).write_text("existing")
+    save_hold(marker, previous, outcome)
+    with pytest.raises(RuntimeError, match="pre-export-only"):
+        export.export_once(operation, expected, directory, True)
+    assert not commands and not operation.state_commands
+
+
+def test_preexport_completion_missing_old_work_prefix_holds_without_resend(flow):
+    operation, expected, directory, _, commands, _ = flow
+    marker, previous, outcome = preexport_hold(flow)
+    previous["expectedNativeContext"]["workIdDigest"] = export.digest(["lost", "reply"])
+    save_hold(marker, previous, outcome)
+    with pytest.raises(RuntimeError, match="work prefix missing"):
+        export.export_once(operation, expected, directory, True)
+    with pytest.raises(FileExistsError):
+        export.export_once(operation, expected, directory, True)
+    assert len(commands) == 1
