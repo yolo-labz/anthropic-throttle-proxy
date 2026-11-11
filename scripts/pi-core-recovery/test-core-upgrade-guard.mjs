@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import factory, { qualify, bootstrap } from './core-upgrade-guard.ts';
+import factory, { qualify, bootstrap, nativeContext } from './core-upgrade-guard.ts';
 
 const now = 1000000;
 const request = { schema: 1, nonce: 'a'.repeat(64), expires: now + 60000, pid: 123,
@@ -50,10 +50,13 @@ test('registered handler cannot shut down unsafe state and state command never q
     const directory = join(home, '.local/state/throttler-recovery-20261111/core-upgrades');
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     const commands = {};
+    const transcript = join(home, 'native.jsonl');
+    const work = { type: 'message', id: 'work', parentId: null };
+    writeFileSync(transcript, JSON.stringify(work) + '\n');
     let shutdowns = 0;
     const pi = { registerCommand: (name, definition) => { commands[name] = definition; }, getThinkingLevel: () => 'max' };
     const ctx = { cwd: '/project', model: { provider: 'claude-lane', id: 'claude-fable-5-2' }, hasUI: true,
-      sessionManager: { getSessionFile: () => '/original.jsonl' }, isIdle: () => true, hasPendingMessages: () => false,
+      sessionManager: { getSessionFile: () => transcript, getLeafId: () => 'work', getBranch: () => [work] }, isIdle: () => true, hasPendingMessages: () => false,
       ui: { getEditorText: () => '', notify: () => {} }, shutdown: () => { shutdowns++; } };
     factory(pi);
     const loadedPath = join(directory, `${process.pid}.loaded.json`);
@@ -67,7 +70,8 @@ test('registered handler cannot shut down unsafe state and state command never q
     let sequence = 0;
     const invoke = (patch = {}, context = ctx, mode = 'ready', permissions = 0o600, failReceipt = false) => {
       const nonce = (++sequence).toString(16).padStart(64, '0');
-      const body = { ...request, nonce, pid: process.pid, expires: Date.now() + 60000,
+      const body = { ...request, session: transcript, nonce, pid: process.pid, expires: Date.now() + 60000,
+        expectedNativeContext: nativeContext(ctx.sessionManager),
         expectedBootstrapHash: bootstrap(process.argv).hash, ...patch };
       writeFileSync(join(directory, `${nonce}.request.json`), JSON.stringify(body), { mode: permissions });
       if (failReceipt) mkdirSync(join(directory, `${nonce}.${mode}.json`));
@@ -112,6 +116,10 @@ test('registered handler cannot shut down unsafe state and state command never q
     assert.equal(JSON.stringify(failure).includes(directory), false);
     invoke({}, ctx, 'state');
     assert.equal(shutdowns, 0);
+    const missingLeaf = { ...ctx, sessionManager: { ...ctx.sessionManager, getLeafId: () => 'missing' } };
+    const refused = invoke({}, missingLeaf);
+    assert.equal(shutdowns, 0);
+    assert.equal(JSON.parse(readFileSync(join(directory, `${refused}.refused.json`))).reason, 'native-context-mismatch');
     invoke();
     assert.equal(shutdowns, 1);
   } finally {

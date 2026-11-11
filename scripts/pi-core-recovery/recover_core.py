@@ -195,6 +195,59 @@ def fingerprint(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def disk_context(path):
+    """Metadata-only physical-tail proof, matching the synchronous native guard."""
+    raw = Path(path).read_bytes()
+    entries = [json.loads(line) for line in raw.splitlines() if line]
+    indexed = {}
+    for entry in entries:
+        if entry.get("type") == "session":
+            continue
+        if not entry.get("id") or entry["id"] in indexed:
+            raise RuntimeError("ambiguous disk context")
+        indexed[entry["id"]] = entry
+    leaf = next(reversed(indexed), None)
+    branch = []
+    seen = set()
+    current = leaf
+    while current is not None:
+        if current in seen or current not in indexed:
+            raise RuntimeError("ambiguous disk context")
+        seen.add(current)
+        entry = indexed[current]
+        branch.append(entry)
+        current = entry.get("parentId")
+    branch.reverse()
+    work = [entry for entry in branch if entry.get("type") in {"message", "compaction"}]
+
+    def ids_digest(values):
+        return hashlib.sha256(
+            json.dumps([entry["id"] for entry in values], separators=(",", ":")).encode()
+        ).hexdigest()
+
+    branch_digest = ids_digest(branch)
+    work_digest = ids_digest(work)
+    return {
+        "schema": 1,
+        "leaf": leaf,
+        "branchEntries": len(branch),
+        "branchIdDigest": branch_digest,
+        "workEntries": len(work),
+        "workIdDigest": work_digest,
+        "diskLeaf": leaf,
+        "diskBranchIdDigest": branch_digest,
+        "diskWorkIdDigest": work_digest,
+        "transcriptSha256": hashlib.sha256(raw).hexdigest(),
+        "agrees": True,
+    }
+
+
+def require_context_agreement(path, native):
+    if not isinstance(native, dict) or native != disk_context(path):
+        raise RuntimeError("native context does not match exact disk branch; no shutdown")
+    return native
+
+
 def launcher_tool(launcher, name):
     match = re.search(
         r"(/nix/store/[A-Za-z0-9-]+-coreutils-[^:/\"]+/bin)", Path(launcher).read_text()
@@ -506,6 +559,9 @@ def main():
             or request["expires"] <= time.time() * 1000
         ):
             raise RuntimeError("bootstrap state is stale or does not match exact request")
+        request["expectedNativeContext"] = require_context_agreement(
+            request["session"], state.get("nativeContext")
+        )
         native = state["nativeBootstrap"]
         if native.get("qualified") is not True or not native["node"].startswith("/nix/store/"):
             raise RuntimeError("native launch flags or node binary are unrecognized")

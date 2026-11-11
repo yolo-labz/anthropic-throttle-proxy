@@ -110,10 +110,18 @@ def test_orphan_metadata_cannot_qualify_as_preserved_work_context(tmp_path, atta
     path = tmp_path / "native.jsonl"
     entries = [
         {"type": "session", "id": "session"},
-        {"type": "message", "id": "work", "parentId": None,
-         "message": {"role": "assistant", "content": []}},
-        {"type": "custom", "id": "cleanup", "parentId": "work" if attached else None,
-         "customType": "pi-artifact-cleanup"},
+        {
+            "type": "message",
+            "id": "work",
+            "parentId": None,
+            "message": {"role": "assistant", "content": []},
+        },
+        {
+            "type": "custom",
+            "id": "cleanup",
+            "parentId": "work" if attached else None,
+            "customType": "pi-artifact-cleanup",
+        },
         {"type": "session_info", "id": "last", "parentId": "cleanup"},
     ]
     path.write_text("\n".join(map(json.dumps, entries)))
@@ -271,3 +279,34 @@ def test_startup_target_consumption_refuses_near_misses(tmp_path, mutation):
     path.write_text("\n".join(map(json.dumps, entries)))
     with pytest.raises(RuntimeError, match="startup target"):
         core.require_safe_branch(path)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "leaf", "work", "append", "dangling"])
+def test_context_proof_rejects_stale_native_or_disk(tmp_path, mutation):
+    path = tmp_path / "context.jsonl"
+    entries = [
+        {"type": "session", "id": "header"},
+        {"type": "message", "id": "work", "parentId": None},
+    ]
+    path.write_text("\n".join(map(json.dumps, entries)) + "\n")
+    proof = core.disk_context(path)
+    assert proof["branchEntries"] == proof["workEntries"] == 1
+    assert core.require_context_agreement(path, proof) == proof
+    if mutation == "missing":
+        proof = None
+    elif mutation in {"leaf", "work"}:
+        proof["leaf" if mutation == "leaf" else "workIdDigest"] = "stale"
+    else:
+        with path.open("a") as output:
+            output.write(
+                json.dumps(
+                    {
+                        "type": "custom",
+                        "id": "later",
+                        "parentId": "work" if mutation == "append" else "absent",
+                    }
+                )
+                + "\n"
+            )
+    with pytest.raises(RuntimeError, match="context"):
+        core.require_context_agreement(path, proof)

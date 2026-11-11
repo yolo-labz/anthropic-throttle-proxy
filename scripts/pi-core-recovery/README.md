@@ -123,3 +123,12 @@ session and cwd before registration and subsequent native state verification.
 If detection cannot prove that identity, the started marker remains and recovery
 stops for explicit diagnosis. The two 11/11/2026 infrastructure trials established
 that a nonzero response can follow a successful core launch.
+
+STATE and READY also attest the native leaf and ordered branch/work ID digests
+against the exact raw transcript tail and its SHA-256. Bootstrap qualification
+binds that STATE proof into the request; the controller rechecks it immediately
+before READY, and READY repeats the comparison synchronously before graceful
+shutdown. Missing parents, stale in-memory branches, or any intervening append
+refuse shutdown and leave the running Pi intact. Older STATE receipts without
+this context proof cannot authorize an upgrade. These receipts contain metadata
+and hashes, never message contents.
