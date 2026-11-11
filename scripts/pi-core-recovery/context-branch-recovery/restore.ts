@@ -6,6 +6,11 @@ import { qualify } from '../core-upgrade-guard.ts';
 
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
+export const observeNative = (pi, ctx) => ({ pid: process.pid, install: process.env.PI_FLEET_INSTALL,
+          role: process.env.PI_ROLE_RESOLVED, session: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd,
+          provider: ctx.model?.provider, model: ctx.model?.id, effort: pi.getThinkingLevel(),
+          idle: ctx.isIdle(), pending: ctx.hasPendingMessages(), editor: ctx.hasUI ? ctx.ui.getEditorText() : null });
+
 function privatePath(path, directory = false) {
   const stat = lstatSync(path);
   if (stat.uid !== process.getuid() || (stat.mode & 0o777) !== (directory ? 0o700 : 0o600) ||
@@ -73,10 +78,7 @@ export function registerRecovery(pi, directory) {
         if (request.nonce !== nonce) throw Error('nonce mismatch');
         ownedRequest = true;
         if (typeof request.role !== 'string' || !request.role) throw Error('role required');
-        const observe = () => ({ pid: process.pid, install: process.env.PI_FLEET_INSTALL,
-          role: process.env.PI_ROLE_RESOLVED, session: ctx.sessionManager.getSessionFile(), cwd: ctx.cwd,
-          provider: ctx.model?.provider, model: ctx.model?.id, effort: pi.getThinkingLevel(),
-          idle: ctx.isIdle(), pending: ctx.hasPendingMessages(), editor: ctx.hasUI ? ctx.ui.getEditorText() : null });
+        const observe = () => observeNative(pi, ctx);
         const before = observe(); qualify(request, before);
         const original = readFileSync(request.session);
         if (digest(original) !== request.transcriptSha256) throw Error('snapshot mismatch');
