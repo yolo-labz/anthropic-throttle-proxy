@@ -2,6 +2,7 @@
 """One bounded idle-boundary upgrade. No inference, retry, or forced cancellation."""
 
 import argparse
+import asyncio
 import ctypes
 import fcntl
 import hashlib
@@ -77,13 +78,32 @@ def last_json(output):
     raise RuntimeError("phase returned no structured receipt")
 
 
+async def execute(arguments, duration):
+    if arguments[0] not in {
+        sys.executable,
+        "/etc/profiles/per-user/notroot/bin/herdr",
+        HERDR_PROMPT,
+    }:
+        raise ValueError("unsupported operational executable")
+    process = await asyncio.create_subprocess_exec(
+        *arguments, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=duration)
+    except TimeoutError as error:
+        process.kill()
+        await process.wait()
+        raise subprocess.TimeoutExpired(arguments, duration) from error
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, arguments, stderr=stderr)
+    return stdout.decode()
+
+
 def run(arguments, deadline, cap=40):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("recovery deadline")
-    return subprocess.run(  # noqa: S603 — fixed executables and structured argv, no shell
-        arguments, check=True, capture_output=True, text=True, timeout=min(cap, remaining)
-    ).stdout
+    return asyncio.run(execute(arguments, min(cap, remaining)))
 
 
 def require_reserve(deadline):

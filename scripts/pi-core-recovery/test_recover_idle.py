@@ -254,3 +254,33 @@ def test_uncertain_native_delivery_requires_actual_receipts(
     ]
     assert sum("restart" in c for c in calls) == 1
     assert sum("wait" in c for c in calls) == int(initially_working)
+
+
+@pytest.mark.parametrize("status", [0, 7])
+def test_operational_child_output_and_failure(status):
+    command = [sys.executable, "-c", f"print('native-proof'); raise SystemExit({status})"]
+    if status:
+        with pytest.raises(idle.subprocess.CalledProcessError) as caught:
+            idle.run(command, time.monotonic() + 2)
+        assert caught.value.returncode == status
+    else:
+        assert idle.run(command, time.monotonic() + 2) == "native-proof\n"
+
+
+def test_operational_timeout_reaps_actual_child(tmp_path):
+    marker = tmp_path / "child-pid"
+    command = [
+        sys.executable,
+        "-c",
+        "import os,time; from pathlib import Path; "
+        f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(5)",
+    ]
+    with pytest.raises(idle.subprocess.TimeoutExpired):
+        idle.run(command, time.monotonic() + 2, cap=0.2)
+    assert marker.exists()
+    assert not Path("/proc", marker.read_text()).exists()
+
+
+def test_operational_executable_is_allowlisted():
+    with pytest.raises(ValueError, match="unsupported operational executable"):
+        idle.run(["/unapproved/executable"], time.monotonic() + 2)
