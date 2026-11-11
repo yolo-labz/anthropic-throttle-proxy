@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import re
 import time
@@ -455,6 +456,18 @@ def account_view(
         bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
         endpoint_entry = _endpoint_cache.get(acct["path"]) or (endpoint or {}).get(acct["path"])
         fields, endpoint_err = _account_fields(acct, bearer, endpoint, now)
+        observed = (
+            (bearer or {}).get("unified_at")
+            if fields["src"] == "proxy"
+            else (endpoint_entry or {}).get("fetched")
+        )
+        valid_clock = (
+            isinstance(observed, (int, float))
+            and not isinstance(observed, bool)
+            and math.isfinite(observed)
+            and 0 < observed <= now
+        )
+        sample_age = now - observed if valid_clock else None
         email, email_verified = guard_email(acct["path"])
         out.append(
             {
@@ -467,6 +480,14 @@ def account_view(
                 # not be treated as a probed identity (promote-swap false alarm)
                 "verified": email_verified,
                 "endpoint_err": endpoint_err,
+                "sample_age_s": sample_age,
+                "sample_observed_at": datetime.fromtimestamp(observed, UTC).strftime(
+                    "%d/%m/%Y %H:%M UTC"
+                )
+                if valid_clock
+                else None,
+                "reading_stale": fields["src"] != "none"
+                and (sample_age is None or sample_age > ENDPOINT_STALE_MAX_S),
                 "token": _token_view(acct["expires_at"], now),
                 # Upstream REFUSED this credential (403 org-policy, revoked
                 # token). Not a budget state — it carries no window and no

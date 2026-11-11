@@ -63,6 +63,7 @@ class _BearerView(TypedDict, total=False):
     served: int
     last_ratelimit: dict[str, Any] | None
     unified: dict[str, Any] | None
+    unified_at: float | None
 
 
 def _asset_version(
@@ -731,6 +732,8 @@ def _account_status(account: dict) -> tuple[str, str]:
         return "refused", " · ".join([reason, *notes])
     if account.get("error"):
         return "error", " · ".join([str(account["error"]), *notes])
+    if account.get("reading_stale"):
+        return "stale", " · ".join(["quota observation aged; current capacity unverified", *notes])
     for window, name in ((account.get("win5"), "5h"), (account.get("win7"), "7d")):
         if window and window.get("rejected"):
             return "rejected", " · ".join([f"{name} window rejected", *notes])
@@ -834,6 +837,9 @@ def _anthropic_subscription_row(account: dict) -> dict:
         "family": "anthropic",
         "plan": "",
         "src": account.get("src") or "",
+        "sample_age_s": account.get("sample_age_s"),
+        "sample_observed_at": account.get("sample_observed_at"),
+        "sample_interval_s": None,
         "meters": _anthropic_meters(account),
         "pace": account.get("pace"),
         "pace_warn": bool(account.get("pace_warn")),
@@ -1186,6 +1192,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
                 # operator has to divide by 3600 mid-incident. It is 41h 20m.
                 "retry_after_in": _retry_after_text(bstate.get("last_ratelimit")),
                 "unified": unified,
+                "unified_at": bstate.get("unified_at"),
                 # 5h reading frozen from before its own reset — render as
                 # "0% · reset" so the bearer column matches the accounts panel.
                 "unified_5h_stale": _window_stale(unified, "reset_5h", now),
