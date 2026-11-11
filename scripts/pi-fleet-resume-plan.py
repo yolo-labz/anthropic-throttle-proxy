@@ -49,7 +49,7 @@ def disposition(path, resume_pending_user=False):
     return "hold_unconsumed_human" if role == "user" else "hold_completed_or_uncertain"
 
 
-def inspect(seat, resume_pending_user=False, resume_visible_abort=False):
+def inspect(seat, resume_pending_user=False, resume_visible_abort=False, *, expected_effort="max"):
     key = f"{seat['session']}:{seat['pane_id']}"
     try:
         state = json.loads(
@@ -59,8 +59,15 @@ def inspect(seat, resume_pending_user=False, resume_visible_abort=False):
         if status not in {"idle", "done"}:
             return {"seat": key, "disposition": "leave_active_or_unknown", "status": status}
         model, effort = migration.inspect(seat)
-        if (model, effort) != (migration.TARGET, "max"):
-            return {"seat": key, "disposition": "hold_selection_not_opus_max"}
+        if expected_effort not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("unknown expected effort")
+        if (model, effort) != (migration.TARGET, expected_effort):
+            return {
+                "seat": key,
+                "disposition": "hold_selection_not_opus_max"
+                if expected_effort == "max"
+                else "hold_selection_not_expected_opus",
+            }
         visible = migration.call(
             "herdr",
             "--session",
@@ -95,7 +102,9 @@ def inspect(seat, resume_pending_user=False, resume_visible_abort=False):
         return {"seat": key, "disposition": "hold_unverified", "reason": type(error).__name__}
 
 
-def resume_once(seat, receipts, resume_pending_user=False, resume_visible_abort=False):
+def resume_once(
+    seat, receipts, resume_pending_user=False, resume_visible_abort=False, *, expected_effort="max"
+):
     key = f"{seat['session']}:{seat['pane_id']}"
     digest = hashlib.sha256(key.encode()).hexdigest()
     with open(
@@ -105,12 +114,8 @@ def resume_once(seat, receipts, resume_pending_user=False, resume_visible_abort=
         marker = receipts / f"{digest}.attempt.json"
         if marker.exists():
             return {"seat": key, "disposition": "hold_previous_attempt_no_resend"}
-        fresh = (
-            inspect(seat, resume_pending_user, True)
-            if resume_visible_abort
-            else inspect(seat, True)
-            if resume_pending_user
-            else inspect(seat)
+        fresh = inspect(
+            seat, resume_pending_user, resume_visible_abort, expected_effort=expected_effort
         )
         if not fresh["disposition"].startswith("eligible_"):
             return fresh
@@ -120,6 +125,8 @@ def resume_once(seat, receipts, resume_pending_user=False, resume_visible_abort=
                     "seat": key,
                     "transcript": seat["transcript"],
                     "disposition": fresh["disposition"],
+                    "expectedModel": migration.TARGET,
+                    "expectedEffort": expected_effort,
                 },
                 output,
             )
@@ -132,9 +139,13 @@ def resume_once(seat, receipts, resume_pending_user=False, resume_visible_abort=
             return {
                 "seat": key,
                 "disposition": "attempt_unverified_no_resend",
-                "after": inspect(seat)["disposition"],
+                "after": inspect(seat, expected_effort=expected_effort)["disposition"],
             }
-        return {"seat": key, "disposition": "submitted_once", "after": inspect(seat)["disposition"]}
+        return {
+            "seat": key,
+            "disposition": "submitted_once",
+            "after": inspect(seat, expected_effort=expected_effort)["disposition"],
+        }
 
 
 def main():

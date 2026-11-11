@@ -100,7 +100,9 @@ def test_policy_error_is_not_a_retriable_turn(tmp_path):
 def test_resume_timeout_never_retries_and_never_targets_working(tmp_path, monkeypatch):
     seat = {"session": "home", "pane_id": "w:p", "transcript": "/same"}
     calls = []
-    monkeypatch.setattr(plan, "inspect", lambda unused: {"disposition": "eligible_error"})
+    monkeypatch.setattr(
+        plan, "inspect", lambda *unused, **kwargs: {"disposition": "eligible_error"}
+    )
 
     def fail(*args):
         calls.append(args)
@@ -111,7 +113,9 @@ def test_resume_timeout_never_retries_and_never_targets_working(tmp_path, monkey
     assert plan.resume_once(seat, tmp_path)["disposition"] == "hold_previous_attempt_no_resend"
     assert len(calls) == 1
     seat["pane_id"] = "w:working"
-    monkeypatch.setattr(plan, "inspect", lambda unused: {"disposition": "leave_active_or_unknown"})
+    monkeypatch.setattr(
+        plan, "inspect", lambda *unused, **kwargs: {"disposition": "leave_active_or_unknown"}
+    )
     assert plan.resume_once(seat, tmp_path)["disposition"] == "leave_active_or_unknown"
     assert len(calls) == 1
 
@@ -207,7 +211,7 @@ def test_pending_user_opt_in_passes_fresh_inspection_and_once_gate(tmp_path, mon
     monkeypatch.setattr(
         plan,
         "inspect",
-        lambda unused, pending=False: {
+        lambda unused, pending=False, visible=False, **kwargs: {
             "disposition": "eligible_pending_user" if pending else "hold_unconsumed_human"
         },
     )
@@ -242,3 +246,50 @@ def test_visible_abort_opt_in_requires_exact_standalone_safe_error(monkeypatch, 
     )
     assert plan.inspect(seat)["disposition"] == "hold_no_assistant"
     assert plan.inspect(seat, resume_visible_abort=True)["disposition"] == expected
+
+
+@pytest.mark.parametrize(
+    "observed,expected,eligible",
+    [("high", "high", True), ("max", "high", False), ("high", "max", False), ("high", None, False)],
+)
+def test_recovery_preserves_exact_previously_verified_effort(
+    monkeypatch, observed, expected, eligible
+):
+    seat = {"session": "home", "pane_id": "w:p", "transcript": "/same"}
+    monkeypatch.setattr(plan.migration, "inspect", lambda unused: (plan.migration.TARGET, observed))
+    monkeypatch.setattr(plan, "disposition", lambda *unused: "eligible_error")
+    monkeypatch.setattr(
+        plan.migration,
+        "call",
+        lambda *args: (
+            json.dumps({"result": {"agent": {"agent_status": "idle"}}}) if "get" in args else ""
+        ),
+    )
+    assert (
+        plan.inspect(seat, expected_effort=expected)["disposition"].startswith("eligible_")
+        is eligible
+    )
+
+
+def test_nondefault_effort_is_rechecked_and_recorded_without_selection_commands(
+    tmp_path, monkeypatch
+):
+    seat = {"session": "home", "pane_id": "w:p", "transcript": "/same"}
+    expected_efforts, commands = [], []
+
+    def inspect(*args, expected_effort="max"):
+        expected_efforts.append(expected_effort)
+        return {"disposition": "eligible_error"}
+
+    monkeypatch.setattr(plan, "inspect", inspect)
+    monkeypatch.setattr(plan.migration, "call", lambda *args: commands.append(args))
+    assert (
+        plan.resume_once(seat, tmp_path, expected_effort="high")["disposition"] == "submitted_once"
+    )
+    assert expected_efforts == ["high", "high"]
+    assert commands == [("prompt", "-s", "home", "w:p", "Continue the work")]
+    assert json.loads(next(tmp_path.glob("*.attempt.json")).read_text())["expectedEffort"] == "high"
+    assert (
+        plan.resume_once(seat, tmp_path, expected_effort="high")["disposition"]
+        == "hold_previous_attempt_no_resend"
+    )
