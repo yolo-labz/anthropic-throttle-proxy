@@ -194,6 +194,8 @@ async def usage_partial(request: web.Request) -> web.Response:
 
 def attach_usage(app: web.Application) -> None:
     """Mount the route; call after ``attach_ui`` (needs its jinja env)."""
-    app.router.add_get("/ui/usage", usage_partial)
+    from .auth import guard  # the same opt-in remote gate as every other /ui route
+
+    app.router.add_get("/ui/usage", guard(usage_partial))
     env = aiohttp_jinja2.get_env(app)
     env.globals["usage_panel_enabled"] = enabled

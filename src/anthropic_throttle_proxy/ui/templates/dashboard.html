@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/ui/static/style.css?v={{ asset_v }}">
   <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
 </head>
-<body>
+<body{% if ui_csrf %} hx-headers='{"X-Throttle-CSRF": "{{ ui_csrf }}"}'{% endif %}>
   <header>
     <div class="brand">
       <h1>Throttler</h1>
