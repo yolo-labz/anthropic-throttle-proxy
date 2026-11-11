@@ -54,6 +54,16 @@ outcome. Do not repeat STATE/export, delete the intent, or resume work merely
 because the export succeeded. Subsequent settlement needs a separately reviewed
 plan and authorization.
 
+An explicitly reviewed `--complete-preexport-hold` invocation is limited to a
+previous canonical hold whose exact reason was `native branch advanced since
+baseline; hold without export`. It requires the same identity/PID, unchanged
+original hash and an absent old artifact. It preserves both old receipts and
+binds their hashes into a deterministic second write-once intent. Supply the
+new STATE refusal as `--refusal`; another fresh STATE must match that baseline.
+This permits the first export only, and its work IDs must retain the entire
+previous native work prefix. A timeout, uncertain export delivery, existing
+artifact or any other prior reason is ineligible. Never use the flag as a retry.
+
 Offline acceptance:
 
 ```sh

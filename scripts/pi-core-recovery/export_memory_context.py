@@ -203,7 +203,33 @@ def wait_closed(changes, artifact):
             return
 
 
-def export_once(operation, expected, directory):
+def preexport_completion(marker, identity, original):
+    previous = context.owned_json(marker)
+    outcome_path = marker.with_suffix(".result.json")
+    outcome = context.owned_json(outcome_path)
+    old_artifact = Path(previous["artifact"])
+    if (
+        previous.get("identity") != identity
+        or previous.get("originalSha256") != hashlib.sha256(original).hexdigest()
+        or previous.get("inference") is not False
+        or outcome.get("held") is not True
+        or outcome.get("reason") != "native branch advanced since baseline; hold without export"
+        or outcome.get("pid") != identity["pid"]
+        or outcome.get("artifact") != str(old_artifact)
+        or outcome.get("inference") is not False
+        or outcome.get("resendPermitted") is not False
+        or old_artifact.exists()
+        or old_artifact.is_symlink()
+    ):
+        raise RuntimeError("not a proven pre-export-only hold")
+    return {
+        "previousIntentSha256": hashlib.sha256(marker.read_bytes()).hexdigest(),
+        "previousResultSha256": hashlib.sha256(outcome_path.read_bytes()).hexdigest(),
+        "previousNativeContext": previous["expectedNativeContext"],
+    }
+
+
+def export_once(operation, expected, directory, complete_preexport_hold=False):
     private_directory(directory)
     identity = operation.identity
     operation.native_identity()
@@ -216,6 +242,11 @@ def export_once(operation, expected, directory):
     artifact = directory / f"{nonce}.jsonl"
     key = digest([identity["herdrSession"], identity["pane"], identity["pid"]])
     marker = context.core.ROOT / f"{key}.memory-export-intent.json"
+    completion = (
+        preexport_completion(marker, identity, original) if complete_preexport_hold else None
+    )
+    if completion:
+        marker = context.core.ROOT / f"{key}.memory-export-preexport-completion-intent.json"
     context.write_once(
         marker,
         {
@@ -224,6 +255,7 @@ def export_once(operation, expected, directory):
             "originalSha256": hashlib.sha256(original).hexdigest(),
             "expectedNativeContext": expected,
             "inference": False,
+            **({"preexportCompletion": completion} if completion else {}),
         },
     )
     descriptor = os.open(marker, os.O_RDONLY)
@@ -244,6 +276,19 @@ def export_once(operation, expected, directory):
         wait_closed(changes, artifact)
         snapshot = artifact.read_bytes()
         report = verify_export(original, snapshot, identity, expected)
+        if completion:
+            old = completion["previousNativeContext"]
+            work = [
+                row["id"]
+                for row in entries(snapshot)[0][1:]
+                if row.get("type") in {"message", "compaction"}
+            ]
+            if (
+                len(work) < old["workEntries"]
+                or digest(work[: old["workEntries"]]) != old["workIdDigest"]
+            ):
+                raise RuntimeError("previous native work prefix missing; retain artifact and hold")
+            report["previousNativeWorkPrefixRetained"] = True
         stat = artifact.lstat()
         if artifact.is_symlink() or stat.st_uid != os.getuid() or not artifact.is_file():
             raise RuntimeError("export artifact is not private")
@@ -292,6 +337,7 @@ def main():
     parser.add_argument("--before", type=Path, required=True)
     parser.add_argument("--refusal", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--complete-preexport-hold", action="store_true")
     args = parser.parse_args()
     _, identity = fence.qualification(args.before, args.refusal)
     loaded = context.core.ROOT / f"{identity['pid']}.loaded.json"
@@ -307,7 +353,11 @@ def main():
     operation = None
     try:
         operation = context.Recovery(identity, time.monotonic() + 90)
-        print(json.dumps(export_once(operation, expected, args.directory)))
+        print(
+            json.dumps(
+                export_once(operation, expected, args.directory, args.complete_preexport_hold)
+            )
+        )
     finally:
         if operation:
             operation.changes.close()
