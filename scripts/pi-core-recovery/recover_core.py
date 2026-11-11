@@ -176,22 +176,56 @@ def require_safe_branch(path):
     for line in Path(path).read_text().splitlines():
         entry = json.loads(line)
         if "id" in entry:
+            if entry["id"] in entries:
+                raise RuntimeError("ambiguous native branch")
             entries[entry["id"]] = entry
     if not entries:
         raise RuntimeError("empty native session")
     current = next(reversed(entries))
     seen = set()
+    branch = []
     while current is not None:
         if current in seen or current not in entries:
             raise RuntimeError("ambiguous native branch")
         seen.add(current)
         entry = entries[current]
-        if entry.get("type") == "custom" and entry.get("customType") in {
-            "cross-family-model-target",
-            "context-recovery",
-        }:
+        branch.append(entry)
+        if entry.get("type") == "custom" and entry.get("customType") == "context-recovery":
             raise RuntimeError("historical startup target requires separate review")
         current = entry.get("parentId")
+    target = next(
+        (
+            entry
+            for entry in branch
+            if entry.get("type") == "custom"
+            and entry.get("customType") == "cross-family-model-target"
+        ),
+        None,
+    )
+    if target is not None:
+        # Installed parity session_start consumes only its newest target, once.
+        codex = {"openai-codex", "codex-a", "codex-b", "codex-c"}
+        intent = target.get("data")
+        if not isinstance(intent, dict) or not intent.get("provider") or not intent.get("model"):
+            raise RuntimeError("historical startup target requires separate review")
+        normalized_model = intent["model"]
+        if intent["provider"] in codex and normalized_model == "gpt-6-astra":
+            normalized_model = "gpt-6.1-sol"
+        applied = False
+        for entry in branch:
+            data = entry.get("data")
+            if (
+                entry.get("type") == "custom"
+                and entry.get("customType") == "cross-family-model-target-applied"
+                and isinstance(data, dict)
+                and data.get("targetEntryId") == target["id"]
+                and data.get("provider") == intent["provider"]
+                and data.get("model") == normalized_model
+                and (data.get("provider") not in codex or data.get("model") == "gpt-6.1-sol")
+            ):
+                applied = True
+        if not applied:
+            raise RuntimeError("historical startup target requires separate review")
 
 
 def audit():
