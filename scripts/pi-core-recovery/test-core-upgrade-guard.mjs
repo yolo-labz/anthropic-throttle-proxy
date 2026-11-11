@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import factory, { qualify, bootstrap } from './core-upgrade-guard.ts';
@@ -72,12 +72,44 @@ test('registered handler cannot shut down unsafe state and state command never q
       writeFileSync(join(directory, `${nonce}.request.json`), JSON.stringify(body), { mode: permissions });
       if (failReceipt) mkdirSync(join(directory, `${nonce}.${mode}.json`));
       commands[`core-upgrade-${mode}`].handler(nonce, context);
+      return nonce;
     };
     for (const context of [{ ...ctx, isIdle: () => false }, { ...ctx, hasPendingMessages: () => true },
-      { ...ctx, ui: { ...ctx.ui, getEditorText: () => 'draft' } }]) invoke({}, context);
+      { ...ctx, ui: { ...ctx.ui, getEditorText: () => 'private human draft' } }]) {
+      const nonce = invoke({}, context);
+      const path = join(directory, `${nonce}.refused.json`);
+      const refusal = JSON.parse(readFileSync(path, 'utf8'));
+      assert.equal(refusal.nonce, nonce);
+      assert.equal(refusal.command, 'core-upgrade-ready');
+      assert.equal(refusal.reason, 'native-not-idle');
+      assert.equal(refusal.actual.pid, process.pid);
+      assert.equal(refusal.actual.model, ctx.model.id);
+      assert.equal(lstatSync(path).mode & 0o777, 0o600);
+      assert.equal(JSON.stringify(refusal).includes('private human draft'), false);
+      assert.equal('editor' in refusal.actual, false);
+    }
     for (const patch of [{ pid: -1 }, { model: 'wrong' }, { expires: 1 }, { nonce: 'b'.repeat(64) }]) invoke(patch);
-    invoke({}, ctx, 'ready', 0o644);
-    invoke({}, ctx, 'ready', 0o600, true);
+    const unavailableNonce = invoke({}, { ...ctx, isIdle: () => { throw Error('private native failure'); } });
+    const unavailable = JSON.parse(readFileSync(join(directory, `${unavailableNonce}.refused.json`), 'utf8'));
+    assert.equal(unavailable.reason, 'native-observation-unavailable');
+    assert.equal(unavailable.identityMismatchKey, null);
+    assert.equal(unavailable.actual.pid, process.pid);
+    assert.equal(unavailable.actual.install, '/old');
+    assert.equal(unavailable.actual.idle, null);
+    assert.equal(unavailable.actual.pending, null);
+    assert.equal(unavailable.actual.editorBytes, null);
+    assert.equal(JSON.stringify(unavailable).includes('private native failure'), false);
+    const mismatchNonce = invoke({ model: 'private unexpected model' });
+    const mismatch = JSON.parse(readFileSync(join(directory, `${mismatchNonce}.refused.json`), 'utf8'));
+    assert.equal(mismatch.reason, 'identity-mismatch');
+    assert.equal(mismatch.identityMismatchKey, 'model');
+    assert.equal(JSON.stringify(mismatch).includes('private unexpected model'), false);
+    const unsafeNonce = invoke({}, ctx, 'ready', 0o644);
+    assert.equal(existsSync(join(directory, `${unsafeNonce}.refused.json`)), false);
+    const failedNonce = invoke({}, ctx, 'ready', 0o600, true);
+    const failure = JSON.parse(readFileSync(join(directory, `${failedNonce}.refused.json`), 'utf8'));
+    assert.equal(failure.reason, 'internal-error');
+    assert.equal(JSON.stringify(failure).includes(directory), false);
     invoke({}, ctx, 'state');
     assert.equal(shutdowns, 0);
     invoke();

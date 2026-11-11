@@ -2468,7 +2468,7 @@ async def test_meter_refused_a_parks_on_fresh_b_probe_then_routes_b(
     meter 503 — and A must never reach upstream.
     """
     raw_a, raw_b = _bound_probe_accounts(monkeypatch, tmp_path, meter_rows, "ok")
-    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", queue_wait)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 0.0)
 
     bid_b = proxy._bearer_id({"Authorization": f"Bearer {raw_b}"})
     lim_b = await proxy._get_bearer_limiter(bid_b, "off", 6)
@@ -2480,8 +2480,19 @@ async def test_meter_refused_a_parks_on_fresh_b_probe_then_routes_b(
     probe_state = client.probe_state
     body = {"model": "claude-opus-4-8", "max_tokens": 1024, "messages": []}
     headers_a = {"Authorization": f"Bearer {raw_a}", "X-Stub-Mode": "probe-block-headers"}
+    read_body = proxy._read_forward_body
+
+    async def delayed_setup_body(*args):
+        # Force setup past the second request's 20 ms budget, as on a busy runner.
+        await asyncio.sleep(0.05)
+        return await read_body(*args)
+
+    monkeypatch.setattr(proxy, "_read_forward_body", delayed_setup_body)
     first = asyncio.create_task(client.post("/v1/messages", headers=headers_a, json=body))
     await asyncio.wait_for(probe_state["b_started"].wait(), timeout=1)
+    monkeypatch.setattr(proxy, "_read_forward_body", read_body)
+    # The bounded wait belongs to the second request, not the setup probe.
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", queue_wait)
 
     second = asyncio.create_task(client.post("/v1/messages", headers=headers_a, json=body))
     try:

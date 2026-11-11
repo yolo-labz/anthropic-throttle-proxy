@@ -14,6 +14,63 @@ idle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(idle)
 
 
+def native_reload_frame(command):
+    text = command[command.index("--match") + 1]
+    restored = text == idle.RELOADED
+    if restored:
+        text += "\n" + "─" * 40 + "\n\n" + "─" * 40 + "\n🧠"
+    return json.dumps(
+        {
+            "result": {
+                "read": {
+                    "pane_id": "w:p",
+                    "source": "visible",
+                    "text": text,
+                    "revision": 0,
+                }
+            }
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "problem", [None, "unobserved-loading", "still-loading", "draft", "missing-loading"]
+)
+def test_reload_editor_barrier_requires_observed_transition(problem):
+    editor = "─" * 40 + "\n\n" + "─" * 40 + "\n🧠"
+    calls = []
+
+    def output(match):
+        if match == idle.RELOADING:
+            if problem == "missing-loading":
+                raise TimeoutError("fast reload frame missed")
+            text = (
+                idle.RELOADED + "\n" + editor if problem == "unobserved-loading" else idle.RELOADING
+            )
+            return {"text": text, "revision": 0}
+        text = idle.RELOADED + "\n" + editor
+        if problem == "still-loading":
+            text += "\n" + idle.RELOADING
+        if problem == "draft":
+            text = text.replace("\n\n", "\nhuman draft\n")
+        return {"text": text, "revision": 0}
+
+    if problem:
+        with pytest.raises(TimeoutError if problem == "missing-loading" else RuntimeError):
+            idle.reload_editor_barrier(calls.append, output, editor)
+    else:
+        idle.reload_editor_barrier(calls.append, output, editor)
+    assert calls == ["/reload"]  # Never a STATE, READY, or repeated reload command.
+
+
+def test_reload_barrier_refuses_old_loading_text_before_delivery():
+    def forbidden(*args):
+        pytest.fail("unqualified existing reload frame must not deliver or arm a waiter")
+
+    with pytest.raises(RuntimeError, match="initial native editor"):
+        idle.reload_editor_barrier(forbidden, forbidden, idle.RELOADING)
+
+
 def test_editor_requires_empty_native_boundary():
     border = "─" * 40
     assert idle.empty_editor(f"{border}\n\n{border}\n🧠 native footer")
@@ -67,7 +124,7 @@ def recovery_seat(tmp_path, monkeypatch):
     return transcript
 
 
-@pytest.mark.parametrize("drift", [None, "stale", "name", "session", "cwd"])
+@pytest.mark.parametrize("drift", [None, "stale", "name", "session", "cwd", "reload-focus"])
 def test_reload_without_fresh_ack_never_delivers_native_command(
     tmp_path, monkeypatch, drift, recovery_seat
 ):
@@ -92,10 +149,15 @@ def test_reload_without_fresh_ack_never_delivers_native_command(
         loaded.chmod(0o600)
 
     def run(command, _deadline, **_kwargs):
+        if "wait-output" in command:
+            output = json.loads(native_reload_frame(command))
+            if drift == "reload-focus" and idle.RELOADED in command:
+                output["result"]["read"]["text"] += "\n" + idle.RELOADING
+            return json.dumps(output)
         calls.append(command)
         if "get" in command:
             state = idle.core.agent()
-            if drift not in {None, "stale"} and sum("get" in call for call in calls) > 1:
+            if drift in {"name", "session", "cwd"} and sum("get" in call for call in calls) > 1:
                 if drift == "session":
                     state["agent_session"]["value"] = "/different"
                 else:
@@ -108,6 +170,14 @@ def test_reload_without_fresh_ack_never_delivers_native_command(
         if "read" in command:
             return "unchanged reload toast" + "\n" + "─" * 40 + "\n\n" + "─" * 40 + "\n🧠"
         if command[0] == idle.HERDR_PROMPT:
+            if drift == "reload-focus" and command[-1] == "/reload":
+                loaded = tmp_path / "123.loaded.json"
+                loaded.write_text(
+                    json.dumps(
+                        {"pid": 123, "guardVersion": idle.GUARD_VERSION, "generation": "d" * 64}
+                    )
+                )
+                loaded.chmod(0o600)
             raise idle.subprocess.CalledProcessError(10, command)
         return ""
 
@@ -119,11 +189,15 @@ def test_reload_without_fresh_ack_never_delivers_native_command(
     )
     with pytest.raises(
         RuntimeError if drift not in {None, "stale"} else TimeoutError,
-        match="identity changed" if drift not in {None, "stale"} else "missing native load",
+        match="editor restoration"
+        if drift == "reload-focus"
+        else "identity changed"
+        if drift not in {None, "stale"}
+        else "missing native load",
     ):
         idle.main()
     delivered = [c[-1] for c in calls if c[0] == idle.HERDR_PROMPT]
-    assert delivered == ([] if drift not in {None, "stale"} else ["/reload"])
+    assert delivered == ([] if drift in {"name", "session", "cwd"} else ["/reload"])
     assert not any("restart" in c or "qualify-bootstrap" in c for c in calls)
 
 
@@ -186,6 +260,8 @@ def test_uncertain_native_delivery_requires_actual_receipts(
     waited = False
 
     def run(command, _deadline, **_kwargs):
+        if "wait-output" in command:
+            return native_reload_frame(command)
         nonlocal waited
         calls.append(command)
         if "wait" in command:

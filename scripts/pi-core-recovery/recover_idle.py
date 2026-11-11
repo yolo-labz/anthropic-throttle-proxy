@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+import concurrent.futures
 import ctypes
 import fcntl
 import hashlib
@@ -19,6 +20,30 @@ import recover_core as core
 
 GUARD_VERSION = "native-load-v1"
 HERDR_PROMPT = "/etc/profiles/per-user/notroot/bin/herdr-prompt"
+RELOADING = "Reloading keybindings, extensions, skills, prompts, themes, and context files..."
+RELOADED = "Reloaded keybindings, extensions, skills, prompts, themes, and context files"
+
+
+def reload_editor_barrier(deliver, wait_output, initial_screen):
+    """Observe a real loading frame before accepting a later restored editor frame."""
+    if RELOADING in initial_screen or not empty_editor(initial_screen):
+        raise RuntimeError("initial native editor is not qualified")
+    # The native waiter must run alongside reload; a missed fast frame holds safely.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        loading = pool.submit(wait_output, RELOADING)
+        deliver("/reload")
+        first = loading.result()
+    if RELOADING not in first["text"]:
+        raise RuntimeError("native loading frame was not observed")
+    restored = wait_output(RELOADED)
+    # Herdr visible reads report revision=0. Freshness comes from the ordered
+    # actual loading -> restored frame transition, never a fabricated counter.
+    if (
+        RELOADED not in restored["text"]
+        or RELOADING in restored["text"]
+        or not empty_editor(restored["text"])
+    ):
+        raise RuntimeError("native editor restoration not proven; no state command sent")
 
 
 class Changes:
@@ -225,6 +250,32 @@ def main():
             raise RuntimeError("native pane identity changed; no command sent")
         return state
 
+    def wait_output(text):
+        output = run(
+            [
+                "/etc/profiles/per-user/notroot/bin/herdr",
+                "--session",
+                args.session,
+                "pane",
+                "wait-output",
+                args.pane,
+                "--source",
+                "visible",
+                "--lines",
+                "300",
+                "--match",
+                text,
+                "--timeout",
+                "20000",
+            ],
+            deadline,
+            cap=25,
+        )
+        read = json.loads(output)["result"]["read"]
+        if read.get("pane_id") != args.pane or read.get("source") != "visible":
+            raise RuntimeError("native reload frame identity changed")
+        return read
+
     def deliver(command):
         if command != "/reload" and not re.fullmatch(
             r"/core-upgrade-(?:state|ready) [a-f0-9]{64}", command
@@ -296,7 +347,7 @@ def main():
         nonce = prepared["nonce"]
         request = json.loads((core.ROOT / f"{nonce}.request.json").read_text())
         baseline = loaded_generation(request["pid"])
-        deliver("/reload")
+        reload_editor_barrier(deliver, wait_output, screen())
         # Native registration, not a rendered toast, proves these commands are loaded.
         previous_deadline = changes.deadline
         changes.deadline = min(previous_deadline, time.monotonic() + 20)
