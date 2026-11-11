@@ -10,6 +10,12 @@ from anthropic_throttle_proxy.prospective_config import acquire_custody, runtime
 
 
 @pytest.fixture
+def tmp_path(tmpfs_state_path):
+    """Ledger state on tmpfs: these tests bound worker hand-offs, not host fsync."""
+    return tmpfs_state_path
+
+
+@pytest.fixture
 def manifest(tmp_path):
     return {
         "sources": ["operator-slot"],
