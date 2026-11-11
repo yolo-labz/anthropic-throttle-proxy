@@ -86,6 +86,11 @@ Unapplied targets, another branch's receipt, context-recovery markers, duplicate
 IDs and cycles remain blocked. Native selection must still match the operator's
 current selection before shutdown and after restart.
 
+A metadata-only active branch also refuses qualification when the transcript
+contains conversation or compaction history outside that branch. The same session
+file alone does not prove the original task context will survive a reload. Resolve
+the selected native branch separately; the upgrade tool never guesses a target.
+
 The normal upgrade path can preserve any qualified Claude seat whose existing
 native bootstrap name exactly matches its Herdr name, whose role/environment are
 captured, and whose native launch flags pass qualification. The Gama-specific

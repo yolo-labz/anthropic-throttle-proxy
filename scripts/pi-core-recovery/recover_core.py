@@ -230,6 +230,11 @@ def require_safe_branch(path):
         if entry.get("type") == "custom" and entry.get("customType") == "context-recovery":
             raise RuntimeError("historical startup target requires separate review")
         current = entry.get("parentId")
+    work_types = {"message", "compaction"}
+    if not any(entry.get("type") in work_types for entry in branch) and any(
+        entry.get("type") in work_types for entry in entries.values()
+    ):
+        raise RuntimeError("metadata-only branch would displace existing work context")
     target = next(
         (
             entry
