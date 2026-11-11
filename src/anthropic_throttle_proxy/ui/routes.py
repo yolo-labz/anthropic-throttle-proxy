@@ -46,6 +46,7 @@ from .. import project_share as _project_share
 from .. import proxy as _proxy
 from ..limiter import FairBearerLimiter
 from . import auth as _auth
+from . import runway as _runway
 from . import signals as _signals
 from .presentation import apply_display, apply_workload, attach_provider_capacity, capacity_summary
 
@@ -845,6 +846,13 @@ def _anthropic_subscription_row(account: dict) -> dict:
         "pace": account.get("pace"),
         "pace_warn": bool(account.get("pace_warn")),
         "eta": account.get("eta") or "",
+        # Recent-slope runway replaces the cycle-average ETA for this row: on
+        # 11/11/2026 the average said "no exhaustion" while the meter rose 0.35/h.
+        "runway": _runway.runway(
+            _proxy._WEEK_SAMPLES.samples(account.get("bearer_id") or ""),
+            time.time(),
+            stale=bool(account.get("reading_stale")),
+        ),
         "status": status,
         "status_icon": _STATUS_ICONS.get(status, "❔"),
         "detail": detail,
@@ -947,6 +955,7 @@ def _build_subscriptions(
     for row in rows:
         if row.get("status") in _CLOSED_STATUSES:
             row["pace"], row["pace_warn"], row["eta"] = None, False, ""
+            row["runway"] = None
 
     _sort_subscription_rows(rows)
     return rows

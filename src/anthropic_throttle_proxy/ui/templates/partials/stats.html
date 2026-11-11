@@ -399,7 +399,11 @@
           {% set refusing = s.status in ("rejected", "exhausted", "refused", "error", "token expired") %}
           {% if s.pace is not none %}
             <span class="pace{% if s.pace_warn %} is-warn{% endif %}" title="Usage divided by elapsed window: a linear projection, not a guarantee">{{ "%.2f×" | format(s.pace) }}</span>
+            {% set runway = s.runway | default(none) %}{% if runway %}
+            <span class="burn-eta{% if runway.state == 'runs_out' %} is-warn{% endif %}" title="{{ runway.reason or 'Robust slope of the 7d meter over the last 30 min, since its last reset' }}">{{ runway.text }}{% if runway.reason %} · {{ runway.reason }}{% endif %}</span>
+            {% else %}
             <span class="burn-eta{% if s.pace_warn and s.eta %} is-warn{% endif %}">{% if s.eta %}out in {{ s.eta }}{% else %}no exhaustion{% endif %}</span>
+            {% endif %}
           {% else %}
             {# Both branches used to spell the reason out — `refusing, not
                projected` / `no window to project` — which wrapped to two lines on
