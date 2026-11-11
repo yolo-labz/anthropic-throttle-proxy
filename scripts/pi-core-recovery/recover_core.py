@@ -84,6 +84,43 @@ def native_started(state, transcript, cwd):
     )
 
 
+def dispatch_and_detect(args, command):
+    try:
+        call("herdr", "--session", args.session, "pane", "run", args.pane, command)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, TimeoutError) as error:
+        # An uncertain response can follow a successful launch. Never dispatch twice.
+        print(
+            json.dumps(
+                {
+                    "event": "native_launch_uncertain",
+                    "exceptionType": type(error).__name__,
+                    "returncode": getattr(error, "returncode", None),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return detect_native_start(args)
+    return detect_native_start(args)
+
+
+def detect_native_start(args):
+    # Detection may lag pane.run. One bounded wait, without launching again.
+    deadline = time.monotonic() + 30
+    detection_error = None
+    while True:
+        try:
+            state = agent(args.session, args.pane)
+            if native_started(state, args.transcript, args.cwd):
+                break
+        except subprocess.CalledProcessError as error:
+            detection_error = error
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "launched core detection did not settle; never retry launch blindly"
+            ) from detection_error
+        time.sleep(0.2)
+
+
 def start_registered_repair(args, request, launcher):
     """Repair a known identity through native preregistration."""
     marker = ROOT / f"{args.nonce}.{args.phase}.shell-ready"
@@ -563,23 +600,9 @@ def main():
     )
     if request.get("identityRepair") is True:
         start_registered_repair(args, request, launcher)
+        detect_native_start(args)
     else:
-        call("herdr", "--session", args.session, "pane", "run", args.pane, command)
-    # Detection may lag pane.run. One bounded wait, without launching again.
-    deadline = time.monotonic() + 30
-    detection_error = None
-    while True:
-        try:
-            state = agent(args.session, args.pane)
-            if native_started(state, args.transcript, args.cwd):
-                break
-        except subprocess.CalledProcessError as error:
-            detection_error = error
-        if time.monotonic() >= deadline:
-            raise RuntimeError(
-                "launched core detection did not settle; never retry launch blindly"
-            ) from detection_error
-        time.sleep(0.2)
+        dispatch_and_detect(args, command)
     # pane.run starts the exact binary but does not register a native agent name.
     call("herdr", "--session", args.session, "agent", "rename", args.pane, args.name)
     state = agent(args.session, args.pane)

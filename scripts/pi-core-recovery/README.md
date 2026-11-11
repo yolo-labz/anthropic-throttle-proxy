@@ -92,3 +92,29 @@ captured, and whose native launch flags pass qualification. The Gama-specific
 identity reconstruction exception is unnecessary for such seats and remains
 restricted. Working or compacting seats must reach the native idle boundary;
 there is no forced cancellation.
+
+`recover_idle.py` composes that protocol for **one explicitly identified seat**.
+Pass the same required identity/accepted-source flags as `recover_core.py`, plus
+`--timeout 870` (maximum870s). A nonblocking per-seat lock refuses duplicate
+controllers. At least600s must remain before the graceful shutdown command;
+otherwise it stops while the old process is still running. Native receipt waits
+are capped at20s and restart orchestration at300s. It uses one bounded native Herdr agent wait for an idle/done boundary, then
+rechecks exact native identity and requires a visibly empty editor. An idle pane
+with a draft is held without spinning or changing its editor. Linux filesystem
+notifications await native load and nonce receipts. It sends `/reload`
+once and refuses extension commands until a fresh PID-bound private load receipt
+proves both command registrations completed. Its random generation must differ
+from the baseline and its guard version must match; rendered toasts are ignored. Native receipts, bootstrap qualification, graceful quit,
+restart and a fresh native state receipt follow. No work continuation is sent.
+A delivery helper exit or timeout is uncertain: only a fresh native load
+generation or matching native nonce receipt permits progress. Each command
+is sent once. Missing proof, a global timeout or changed identity stops the
+controller; inspect nonce receipts and started markers before another attempt.
+This is a reviewed single-seat operation, not broad fleet restart authorization.
+
+A failed or timed-out `pane run` response is an uncertain launch result. The
+helper never resends it: one bounded native detection must prove the original
+session and cwd before registration and subsequent native state verification.
+If detection cannot prove that identity, the started marker remains and recovery
+stops for explicit diagnosis. The two 11/11/2026 infrastructure trials established
+that a nonzero response can follow a successful core launch.

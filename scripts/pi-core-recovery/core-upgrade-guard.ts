@@ -1,7 +1,7 @@
-import { lstatSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { lstatSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export function bootstrap(argv) {
   const valueOptions = new Set(['--name', '--exclude-tools', '--session-id', '--session', '--session-dir', '--model',
@@ -24,6 +24,8 @@ export function bootstrap(argv) {
   }
   return { qualified: true, args, replayArgs, node: argv[0], hash: createHash('sha256').update(JSON.stringify(argv)).digest('hex') };
 }
+
+export const GUARD_VERSION = 'native-load-v1';
 
 // Explicit command only: no event handlers, timer, model selection, or inference.
 export function qualify(request, actual, now = Date.now()) {
@@ -66,4 +68,13 @@ export default function (pi) {
       } catch (error) { ctx.ui.notify(`Core upgrade refused: ${error.message}`, 'warning'); }
     },
   });
+  const directory = join(homedir(), '.local/state/throttler-recovery-20261111/core-upgrades');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = lstatSync(directory);
+  if (!stat.isDirectory() || stat.uid !== process.getuid() || (stat.mode & 0o777) !== 0o700) throw Error('unsafe load receipt directory');
+  const generation = randomBytes(32).toString('hex');
+  const receipt = join(directory, `${process.pid}.loaded.json`);
+  const staging = `${receipt}.${generation}`;
+  writeFileSync(staging, JSON.stringify({ pid: process.pid, guardVersion: GUARD_VERSION, generation }) + '\n', { mode: 0o600, flag: 'wx' });
+  renameSync(staging, receipt);
 }

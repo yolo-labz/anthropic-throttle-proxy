@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import factory, { qualify, bootstrap } from './core-upgrade-guard.ts';
@@ -48,7 +48,7 @@ test('registered handler cannot shut down unsafe state and state command never q
   process.env.PI_FLEET_INSTALL = '/old';
   try {
     const directory = join(home, '.local/state/throttler-recovery-20261111/core-upgrades');
-    mkdirSync(directory, { recursive: true });
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
     const commands = {};
     let shutdowns = 0;
     const pi = { registerCommand: (name, definition) => { commands[name] = definition; }, getThinkingLevel: () => 'max' };
@@ -56,6 +56,14 @@ test('registered handler cannot shut down unsafe state and state command never q
       sessionManager: { getSessionFile: () => '/original.jsonl' }, isIdle: () => true, hasPendingMessages: () => false,
       ui: { getEditorText: () => '', notify: () => {} }, shutdown: () => { shutdowns++; } };
     factory(pi);
+    const loadedPath = join(directory, `${process.pid}.loaded.json`);
+    const firstLoad = JSON.parse(readFileSync(loadedPath, 'utf8'));
+    factory(pi);
+    const secondLoad = JSON.parse(readFileSync(loadedPath, 'utf8'));
+    assert.notEqual(firstLoad.generation, secondLoad.generation);
+    assert.equal(secondLoad.pid, process.pid);
+    assert.equal(secondLoad.guardVersion, 'native-load-v1');
+    assert.equal(lstatSync(loadedPath).mode & 0o777, 0o600);
     let sequence = 0;
     const invoke = (patch = {}, context = ctx, mode = 'ready', permissions = 0o600, failReceipt = false) => {
       const nonce = (++sequence).toString(16).padStart(64, '0');
