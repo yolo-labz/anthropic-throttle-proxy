@@ -29,6 +29,7 @@ def _full_pinned(pool, monkeypatch: pytest.MonkeyPatch, *, samples: list[float])
     first = _route(pool, body)
     other = "B" if first == "A" else "A"
     monkeypatch.setattr(config, "MAX_CONCURRENT", 20)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 240.0)  # the desktop gateway's bound
     lims = {}
     for label in "AB":
         lim = _limiter.FairBearerLimiter(20, "fair", bearer_id=pool[label])
@@ -72,9 +73,20 @@ def test_only_a_wait_over_sixty_seconds_releases(
     pool, monkeypatch: pytest.MonkeyPatch, wait_s: float, hops: bool
 ) -> None:
     body, first, other, lims = _full_pinned(pool, monkeypatch, samples=[2.0] * 3)
-    estimate = SimpleNamespace(evidenced=True, wait_s=wait_s)
+    estimate = SimpleNamespace(evidenced=True, rejects=False, wait_s=wait_s)
     monkeypatch.setattr(lims[first], "drain_estimate", lambda *a, **k: estimate)
     assert _route(pool, body) == (other if hops else first)
+
+
+def test_a_wait_admission_would_refuse_moves_the_session(
+    pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under the default 30 s queue bound a 45 s wait is a 503, not a wait: hop instead."""
+    body, first, other, lims = _full_pinned(pool, monkeypatch, samples=[45.0] * 3)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    estimate = lims[first].drain_estimate()
+    assert estimate.rejects and estimate.wait_s <= 60.0
+    assert _route(pool, body) == other
 
 
 def test_a_sibling_that_would_queue_too_never_takes_the_session(

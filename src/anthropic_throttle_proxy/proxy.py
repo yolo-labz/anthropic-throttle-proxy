@@ -2412,9 +2412,11 @@ def _pinned_wait_worth_a_hop(bid: str, min_wait_s: float = 60.0) -> bool:
     """``bid`` would queue a new request, and long enough to justify a cache rewrite.
 
     Only an EVIDENCED drain estimate at or under ``min_wait_s`` (about how long a
-    client tolerates a silent request) keeps the session where it is. No limiter,
-    or a cold limiter that only guesses its wait, keeps the plain release-on-queue
-    rule: like admission (``DrainEstimate.rejects``), a guess never changes traffic.
+    client tolerates a silent request) keeps the session where it is, and only
+    while admission would still take the arrival: under a 30 s queue bound a 45 s
+    wait is a pre-queue 503, so the session moves instead. No limiter, or a cold
+    limiter that only guesses its wait, keeps the plain release-on-queue rule:
+    like admission (``DrainEstimate.rejects``), a guess never changes traffic.
     """
     if not _bearer_would_queue(bid):
         return False
@@ -2422,7 +2424,7 @@ def _pinned_wait_worth_a_hop(bid: str, min_wait_s: float = 60.0) -> bool:
     if lim is None:
         return True
     estimate = lim.drain_estimate()
-    return not estimate.evidenced or estimate.wait_s > min_wait_s
+    return not estimate.evidenced or estimate.rejects or estimate.wait_s > min_wait_s
 
 
 def _account_route_decision(
