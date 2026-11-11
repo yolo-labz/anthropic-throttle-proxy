@@ -1,13 +1,15 @@
 """Owned API overflow requires fresh funding bound to the configured account."""
 
 import copy
+import importlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from anthropic_throttle_proxy import config, proxy
+from anthropic_throttle_proxy import config, metered_spend, proxy
+from anthropic_throttle_proxy.ratelimit import API_KEY_BEARER_ID
 
 MODEL = "claude-sonnet-4-6"
 NOW = 1794171600
@@ -26,6 +28,8 @@ def funded(monkeypatch, tmp_path):
         "API_KEY_WORKSPACE_ID": "workspace",
         "API_KEY_SCOPE": "fleet",
         "API_CREDITS_FILE": str(cache),
+        "API_KEY_USD_CEILING": 10.0,
+        "API_KEY_SPEND_FILE": str(tmp_path / "spend.json"),
     }.items():
         monkeypatch.setattr(config, name, value)
     monkeypatch.setattr(proxy.time, "time", lambda: NOW)
@@ -59,8 +63,11 @@ def test_fresh_matching_candidate(funded):
     # and only the metered key can serve them.
     assert proxy._api_key_candidate() is None
     assert proxy._api_key_candidate(allow_model_less=True)
-    # A model the collector never sampled is a sampling gap, not a spent window.
-    assert proxy._api_key_candidate("different-model")
+    # A priced model the collector never sampled is a sampling gap, not a spent
+    # window. An UNPRICED model is refused: its USD spend could never be counted
+    # against the ceiling (test_metered_usd_ceiling.py).
+    assert proxy._api_key_candidate("claude-haiku-4-5")
+    assert proxy._api_key_candidate("different-model") is None
 
 
 @pytest.mark.parametrize(
@@ -144,3 +151,100 @@ def test_oversized_metadata_fails_closed(funded):
         json.dumps({"schema": 1, "accounts": [account], "padding": " " * (256 * 1024)})
     )
     assert proxy._api_key_candidate(MODEL) is None
+
+
+# --- USD ceiling on the owned metered key (09/11: $299.27 in 69 min, $200 credit) ---
+
+WINDOW = 86400.0
+
+
+@pytest.fixture
+def logs(monkeypatch):
+    lines = []
+    monkeypatch.setattr(proxy, "log", lines.append)
+    monkeypatch.setattr(proxy, "_metered_refusal_logged", "")
+    return lines
+
+
+def spend(usd, at=NOW):
+    assert metered_spend.record(config.API_KEY_SPEND_FILE, usd, WINDOW, at)
+
+
+def test_spend_below_ceiling_allows_metered_candidate(funded, logs):
+    spend(9.99)
+    candidate = proxy._api_key_candidate(MODEL)
+    assert candidate is not None and candidate["auth_type"] == "api_key"
+
+
+def test_at_ceiling_refuses_with_logged_reason_and_oauth_unaffected(funded, logs, monkeypatch):
+    spend(10.0)
+    assert proxy._api_key_candidate(MODEL) is None
+    assert logs == [
+        "api-key-candidate refused reason=usd-ceiling spend=10.00 ceiling=10.00 window_s=86400"
+    ]
+    # Overflow: the router picks OAuth first and only falls back to `api_key`.
+    oauth = {"bearer_id": "acct-a", "token": "oauth-token"}
+    monkeypatch.setattr(proxy, "_account_routing_enabled", lambda: True)
+    monkeypatch.setattr(proxy, "_pinned_account", lambda *a, **k: None)
+    monkeypatch.setattr(proxy, "_account_selection", lambda *a, **k: (oauth, 0.0))
+    monkeypatch.setattr(proxy, "_healthy_known_unconfigured_bearer", lambda *a, **k: False)
+    route = dict(
+        explicit_api_key=False, model=MODEL, max_tokens=1, now=NOW, allow_retry_probe=False
+    )
+    assert proxy._account_route_decision(
+        [oauth], "acct-a", api_key=proxy._api_key_candidate(MODEL), **route
+    ) == (oauth, False)
+    # No OAuth account dispatchable: the refused metered key is NOT the escape.
+    monkeypatch.setattr(proxy, "_account_selection", lambda *a, **k: (None, None))
+    chosen, _ = proxy._account_route_decision(
+        [oauth], "acct-a", api_key=proxy._api_key_candidate(MODEL), **route
+    )
+    assert chosen is None or chosen.get("auth_type") != "api_key"
+
+
+def test_overflow_without_ceiling_does_not_route(funded, logs, monkeypatch):
+    monkeypatch.setattr(config, "API_KEY_USD_CEILING", 0.0)
+    assert config.API_KEY_ROUTING_MODE == "overflow"
+    assert proxy._api_key_candidate(MODEL) is None
+    assert logs == ["api-key-candidate refused reason=no-usd-ceiling"]
+
+
+def test_window_spend_survives_restart(funded, logs, monkeypatch):
+    spend(6.0)
+    spend(4.0, at=NOW + 61)
+    importlib.reload(metered_spend)  # in-process state gone, as after a restart
+    monkeypatch.setattr(proxy, "_metered_spend", metered_spend)
+    assert metered_spend.window_spend(config.API_KEY_SPEND_FILE, WINDOW, NOW + 61) == 10.0
+    assert proxy._api_key_candidate(MODEL) is None
+
+
+def test_recorded_from_real_usage_path_only_for_owned_anthropic_key(funded, logs):
+    body = b'data: {"type":"message_delta","usage":{"input_tokens":1000000,"output_tokens":0}}\n'
+    proxy._record_usage(MODEL, MODEL, bytearray(body), "v1/messages", seat="acct-a")
+    assert metered_spend.window_spend(config.API_KEY_SPEND_FILE, WINDOW, NOW) == 0
+    proxy._record_usage(MODEL, MODEL, bytearray(body), "v1/messages", seat=API_KEY_BEARER_ID)
+    assert metered_spend.window_spend(config.API_KEY_SPEND_FILE, WINDOW, NOW) > 0
+
+
+@pytest.mark.parametrize("content", ["{", json.dumps({"entries": [[1, -1]]}), "[]"])
+def test_unreadable_spend_fails_closed_and_is_never_overwritten(funded, logs, content):
+    path = config.API_KEY_SPEND_FILE
+    with open(path, "w") as handle:
+        handle.write(content)
+    assert proxy._api_key_candidate(MODEL) is None
+    assert not metered_spend.record(path, 1.0, WINDOW, NOW)
+    with open(path) as handle:
+        assert handle.read() == content
+
+
+def test_unpriced_model_refused(funded, logs):
+    assert proxy._api_key_candidate("model-with-no-price") is None
+    assert logs == ["api-key-candidate refused reason=unpriced-model"]
+
+
+async def test_health_reports_ceiling_and_window_spend(funded):
+    spend(2.5)
+    body = json.loads((await proxy.health(None)).body)["api_key"]
+    assert body["usd_ceiling"] == 10.0
+    assert body["usd_window_s"] == WINDOW
+    assert body["usd_window_spend"] == 2.5

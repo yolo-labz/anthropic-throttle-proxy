@@ -560,6 +560,36 @@ API_CREDITS_FILE = os.environ.get(
     "THROTTLE_API_CREDITS_FILE",
     os.path.expanduser("~/.local/state/throttle-lanes/api-credits.json"),
 ).strip()
+
+
+def _usd_ceiling(raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError:
+        return 0.0
+    return value if math.isfinite(value) and value > 0 else 0.0
+
+
+def _window_s(raw: str) -> float:
+    try:
+        value = float(raw)
+    except ValueError:
+        return 86400.0
+    return value if math.isfinite(value) and value >= 60 else 86400.0
+
+
+# 11/11/2026 — USD ceiling for the gateway-owned Anthropic API key. On 09/11
+# ``overflow`` carried $299.27 against a $200 credit in 69 min; the receipt's
+# spendLimit binds only when enforced. Unset, invalid or <= 0 reads as 0.0 = NO
+# ceiling, and with no ceiling the metered candidate never routes. Spend over the rolling
+# window persists in API_KEY_SPEND_FILE so a restart cannot reopen it.
+API_KEY_USD_CEILING = _usd_ceiling(os.environ.get("THROTTLE_API_KEY_USD_CEILING", "").strip())
+API_KEY_USD_WINDOW_S = _window_s(os.environ.get("THROTTLE_API_KEY_USD_WINDOW_S", "86400").strip())
+API_KEY_SPEND_FILE = os.environ.get(
+    "THROTTLE_API_KEY_SPEND_FILE",
+    os.path.expanduser("~/.local/state/throttle-lanes/api-key-spend.json"),
+).strip()
+
 # 22/10/2026 — local sentinel lane key. When set, a request whose x-api-key
 # equals this sentinel is NOT treated as an explicit API-key request: the
 # header is stripped and account routing rewrites Authorization to a

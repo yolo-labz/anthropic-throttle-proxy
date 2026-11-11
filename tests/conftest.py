@@ -46,6 +46,13 @@ def tmpfs_state_path(tmp_path_factory):
         yield Path(path)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_api_key_spend(monkeypatch, tmp_path_factory):
+    """No test may write the real metered spend file under ~/.local/state."""
+    path = tmp_path_factory.mktemp("spend") / "api-key-spend.json"
+    monkeypatch.setattr(config, "API_KEY_SPEND_FILE", str(path))
+
+
 @pytest.fixture
 def proxy_admission_state(monkeypatch):
     """Shared isolation for HTTP admission tests; never use another test's pools."""
@@ -156,6 +163,8 @@ def funded_api_metadata(monkeypatch, tmp_path):
     from anthropic_throttle_proxy import config
 
     def seed(model):
+        # Owned routing also needs a USD ceiling (metered_spend; 09/11 incident).
+        monkeypatch.setattr(config, "API_KEY_USD_CEILING", 100.0)
         path = tmp_path / "api-funding.json"
         now = time.time()
         path.write_text(
