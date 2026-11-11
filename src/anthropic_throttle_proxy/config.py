@@ -341,6 +341,15 @@ QUEUE_ALLOW_FIRST_WAITER = (
 # retry re-enters the per-client round-robin fairly and the SDK layers its own
 # exponential backoff on repeated failures.
 QUEUE_TIMEOUT_RETRY_AFTER_S = 5
+# POST /__throttle/quiesce lifetime (11/11/2026 incident: a seat quiesced, died
+# before resume, and the gateway refused every pane for 4 min until a human
+# reopened it). A quiesce closes admission for ``?ttl_s=`` seconds (default
+# QUIESCE_DEFAULT_S) and reopens by itself; one closed window never lasts longer
+# than QUIESCE_MAX_S from its first close, however often it is re-quiesced.
+QUIESCE_MAX_S = max(1.0, float(os.environ.get("THROTTLE_QUIESCE_MAX_S", "900")))
+QUIESCE_DEFAULT_S = min(
+    QUIESCE_MAX_S, max(1.0, float(os.environ.get("THROTTLE_QUIESCE_DEFAULT_S", "300")))
+)
 # Service-time estimate used by queue-depth admission before the lane has
 # completed enough requests to measure its own. Queue admission bounds WAIT;
 # without a service rate it cannot bound DEPTH, so it would park requests whose

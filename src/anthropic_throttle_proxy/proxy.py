@@ -6984,7 +6984,7 @@ async def _handler_core(request: web.Request) -> web.StreamResponse:
     This is what makes quiesce-then-drain race-free: the drain counters cannot
     read zero while an admitted request is alive.
     """
-    if _admission_closed:
+    if _admission_gate_closed():
         # Quiesced window: refuse before reading the body or touching any
         # limiter/queue state — existing work is already past this line.
         return _admission_closed_response()
@@ -8012,12 +8012,41 @@ def _admission_verdict(
 # never persist across a restart (a fresh process is OPEN — exactly the rollback
 # semantics) and must not reach overrides.json. The /__throttle/* routes stay
 # live while closed so drain polling and reopen keep working.
+# Every quiesce carries a lifetime (config.QUIESCE_DEFAULT_S / QUIESCE_MAX_S):
+# a caller that dies before resume can no longer close the gateway for good.
 _admission_closed = False
+_admission_closed_since: float | None = None  # monotonic, first close of this window
+_admission_deadline: float | None = None  # monotonic; None = no lifetime (tests only)
+_quiesce_clock = time.monotonic
+
+
+def _admission_gate_closed() -> bool:
+    """Whether the quiesce gate refuses now; an expired lifetime reopens it here."""
+    global _admission_closed, _admission_closed_since, _admission_deadline
+    if not _admission_closed:
+        return False
+    if _admission_deadline is None or _quiesce_clock() < _admission_deadline:
+        return True
+    held = _quiesce_clock() - (_admission_closed_since or _admission_deadline)
+    _admission_closed, _admission_closed_since, _admission_deadline = False, None, None
+    log(f"admission-auto-resume held_s={held:.0f} (quiesce lifetime ended without resume)")
+    return False
+
+
+def _admission_remaining_s() -> float | None:
+    """Seconds until a closed gate reopens by itself; None when open or unbounded."""
+    if not _admission_gate_closed() or _admission_deadline is None:
+        return None
+    return max(0.0, _admission_deadline - _quiesce_clock())
 
 
 def _admission_closed_response() -> web.Response:
     """Bounded refusal for the closed-admission window: new work is not admitted."""
     retry_after_s = max(1, int(config.QUEUE_TIMEOUT_RETRY_AFTER_S))
+    remaining = _admission_remaining_s()
+    if remaining is not None:
+        # Never tell a client to wait past the moment the gate reopens.
+        retry_after_s = max(1, min(retry_after_s, math.ceil(remaining)))
     log(f"admission-closed-refusal retry_after={retry_after_s}")
     return web.Response(
         status=503,
@@ -8026,22 +8055,47 @@ def _admission_closed_response() -> web.Response:
     )
 
 
-async def quiesce(_request: web.Request) -> web.Response:
-    """POST /__throttle/quiesce — close NEW admission atomically.
+def _quiesce_ttl(request: web.Request | None) -> float | None:
+    """``?ttl_s=`` clamped to [1, QUIESCE_MAX_S]; absent → default; invalid → None."""
+    raw = request.query.get("ttl_s") if request is not None else None
+    if raw is None:
+        return config.QUIESCE_DEFAULT_S
+    try:
+        ttl = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(ttl):
+        return None
+    return min(config.QUIESCE_MAX_S, max(1.0, ttl))
+
+
+async def quiesce(request: web.Request | None) -> web.Response:
+    """POST /__throttle/quiesce[?ttl_s=N] — close NEW admission atomically, for a while.
 
     Work already past the gate keeps running to completion; after this returns,
-    no request can enter the admission path until resume. This is the
-    close-admission step that makes a subsequent drain convergent.
+    no request can enter the admission path until resume OR the lifetime ends.
+    This is the close-admission step that makes a subsequent drain convergent.
+    A repeated quiesce may move the deadline, but never past QUIESCE_MAX_S from
+    the first close of the current window.
     """
-    global _admission_closed
+    global _admission_closed, _admission_closed_since, _admission_deadline
+    ttl = _quiesce_ttl(request)
+    if ttl is None:
+        return web.json_response({"error": "ttl_s must be a finite number"}, status=400)
+    now = _quiesce_clock()
+    if not _admission_gate_closed() or _admission_closed_since is None:
+        _admission_closed_since = now
+    _admission_deadline = min(now + ttl, _admission_closed_since + config.QUIESCE_MAX_S)
     _admission_closed = True
-    return web.json_response({"admission": "closed"})
+    return web.json_response(
+        {"admission": "closed", "expires_in_s": round(_admission_deadline - now, 3)}
+    )
 
 
 async def resume(_request: web.Request) -> web.Response:
     """POST /__throttle/resume — reopen admission (also the rollback path)."""
-    global _admission_closed
-    _admission_closed = False
+    global _admission_closed, _admission_closed_since, _admission_deadline
+    _admission_closed, _admission_closed_since, _admission_deadline = False, None, None
     return web.json_response({"admission": "open"})
 
 
@@ -8103,9 +8157,10 @@ async def admission(_request: web.Request) -> web.Response:
 
     # `capped` means no bearer can serve the next token — the only conclusive
     # stop. The verdict itself lives in `_admission_verdict`.
-    allow = bool(lane_open and serving and not _admission_closed)
+    closed = _admission_gate_closed()
+    allow = bool(lane_open and serving and not closed)
     state_name, reason = _admission_verdict(allow, bearers, serving, lane_open, lane_detail)
-    if _admission_closed:
+    if closed:
         # Quiesced: the HANDLER gate (PR #298) ENFORCES closure at request level;
         # this verdict only REFLECTS it for the consumers that already read
         # `/__throttle/admission` (the ingress endpoint reader, routing URLs and
@@ -8209,7 +8264,8 @@ async def health(_request: web.Request) -> web.Response:
         # counter here (spec 092 T003).
         "keepalive_holds_active": state["keepalive_holds_active"],
         "admitted_holds": state.get("admitted_holds", 0),
-        "admission_closed": bool(_admission_closed),
+        "admission_closed": _admission_gate_closed(),
+        "admission_closed_remaining_s": _admission_remaining_s(),
         "client_disconnects": state["client_disconnects"],
         "upstream_retries": state["upstream_retries"],
         "max_concurrent": config.MAX_CONCURRENT,
