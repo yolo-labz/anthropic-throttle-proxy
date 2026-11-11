@@ -6819,6 +6819,36 @@ async def handler(request: web.Request) -> web.StreamResponse:
     return hold.sse
 
 
+# Read-only inspection surfaces: everything under /__throttle/* plus /metrics.
+# They are registered ABOVE the catch-all in main(), so a registered one never
+# reaches this handler. One that is not registered — an env-gated view with its
+# flag off — used to fall through into the forwarding path and be refused by the
+# weekly-pacing brake: measured 04/11/2026, `GET /__throttle/consumers` answered
+# "weekly pacing: every account is ahead of schedule", i.e. the instrument that
+# reports who is consuming the lane was itself throttled. Route CLASS, not a
+# path allowlist, so a future read-only endpoint cannot inherit the bug.
+_INSPECTION_PREFIX = "__throttle"
+_INSPECTION_PATHS = frozenset({"metrics"})
+
+
+def _is_read_only_inspection(request: web.Request, path: str) -> bool:
+    """True for GET/HEAD on the inspection route class, registered or not."""
+    if request.method not in ("GET", "HEAD"):
+        return False
+    if path in _INSPECTION_PATHS:
+        return True
+    return path == _INSPECTION_PREFIX or path.startswith(f"{_INSPECTION_PREFIX}/")
+
+
+def _unmatched_inspection_response(path: str) -> web.Response:
+    """Answer an unclaimed inspection path locally: never paced, never forwarded."""
+    return web.Response(
+        status=404,
+        text=f"unknown inspection endpoint: /{path}\n",
+        content_type="text/plain",
+    )
+
+
 async def _handler_core(request: web.Request) -> web.StreamResponse:
     """Request core behind ``handler``: quiesce gate + liveness claim BEFORE any await.
 
@@ -6860,6 +6890,11 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     """
     handler_start = time.time()
     path = request.match_info.get("path", "")
+    if _is_read_only_inspection(request, path):
+        # An inspection route that no resource claimed (feature flag off) must
+        # answer locally: pacing it makes the observability surface the outage,
+        # and forwarding it would send an internal path upstream.
+        return _unmatched_inspection_response(path)
     headers = _forward_headers(request)
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
