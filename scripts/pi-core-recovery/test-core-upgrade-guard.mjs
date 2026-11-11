@@ -1,0 +1,83 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import factory, { qualify, bootstrap } from './core-upgrade-guard.ts';
+
+const now = 1000000;
+const request = { schema: 1, nonce: 'a'.repeat(64), expires: now + 60000, pid: 123,
+  session: '/original.jsonl', cwd: '/project', provider: 'claude-lane', model: 'claude-fable-5-2',
+  effort: 'max', install: '/old' };
+const actual = { ...request, idle: true, pending: false, editor: '' };
+test('exact empty native idle state qualifies', () => assert.doesNotThrow(() => qualify(request, actual, now)));
+for (const [key, value] of Object.entries({ idle: false, pending: true, editor: 'human draft', pid: 124,
+  session: '/other.jsonl', cwd: '/other', provider: 'api', model: 'other', effort: 'high', install: '/other' })) {
+  test(`refuses changed ${key}`, () => assert.throws(() => qualify(request, { ...actual, [key]: value }, now)));
+}
+for (const patch of [{ expires: now }, { expires: now + 300001 }, { expires: 'later' }, { nonce: '../bad' }, { schema: 2 }]) {
+  test(`refuses invalid request ${JSON.stringify(patch)}`, () => assert.throws(() => qualify({ ...request, ...patch }, actual, now)));
+}
+test('unknown native flags are not idle evidence', () => {
+  for (const patch of [{ idle: undefined }, { pending: undefined }, { editor: null }]) {
+    assert.throws(() => qualify(request, { ...actual, ...patch }, now));
+  }
+});
+test('recorded bootstrap role must match actual native role', () => {
+  assert.throws(() => qualify({ ...request, role: 'review' }, { ...actual, role: 'pearson~' }, now));
+  assert.doesNotThrow(() => qualify({ ...request, role: 'review' }, { ...actual, role: 'review' }, now));
+});
+test('native bootstrap rejects unknown flags and all positional inference input', () => {
+  for (const flags of [['--api-key', 'do-not-copy'], ['--unknown', 'value'], ['human prompt'], ['--print'], ['--model']]) {
+    const result = bootstrap(['/nix/store/node/bin/node', '/core/dist/cli.js', ...flags]);
+    assert.equal(result.qualified, false);
+    assert.equal(result.args, undefined);
+  }
+  assert.equal(bootstrap(['/nix/store/node/bin/node', '/core/dist/cli.js', '--no-skills', '--skill', '/skill', '--thinking', 'max']).qualified, true);
+  assert.deepEqual(bootstrap(['/node', '/cli', '--append-system-prompt', '-c', '--model', 'old', '--continue']).replayArgs,
+    ['--append-system-prompt', '-c']);
+});
+
+test('registered handler cannot shut down unsafe state and state command never quits', () => {
+  const home = mkdtempSync(join(tmpdir(), 'core-guard-test-'));
+  const previousHome = process.env.HOME;
+  const previousInstall = process.env.PI_FLEET_INSTALL;
+  const previousArgv = process.argv;
+  process.argv = [process.execPath, '/old/dist/cli.js', '--name', 'review'];
+  process.env.HOME = home;
+  process.env.PI_FLEET_INSTALL = '/old';
+  try {
+    const directory = join(home, '.local/state/throttler-recovery-20261111/core-upgrades');
+    mkdirSync(directory, { recursive: true });
+    const commands = {};
+    let shutdowns = 0;
+    const pi = { registerCommand: (name, definition) => { commands[name] = definition; }, getThinkingLevel: () => 'max' };
+    const ctx = { cwd: '/project', model: { provider: 'claude-lane', id: 'claude-fable-5-2' }, hasUI: true,
+      sessionManager: { getSessionFile: () => '/original.jsonl' }, isIdle: () => true, hasPendingMessages: () => false,
+      ui: { getEditorText: () => '', notify: () => {} }, shutdown: () => { shutdowns++; } };
+    factory(pi);
+    let sequence = 0;
+    const invoke = (patch = {}, context = ctx, mode = 'ready', permissions = 0o600, failReceipt = false) => {
+      const nonce = (++sequence).toString(16).padStart(64, '0');
+      const body = { ...request, nonce, pid: process.pid, expires: Date.now() + 60000,
+        expectedBootstrapHash: bootstrap(process.argv).hash, ...patch };
+      writeFileSync(join(directory, `${nonce}.request.json`), JSON.stringify(body), { mode: permissions });
+      if (failReceipt) mkdirSync(join(directory, `${nonce}.${mode}.json`));
+      commands[`core-upgrade-${mode}`].handler(nonce, context);
+    };
+    for (const context of [{ ...ctx, isIdle: () => false }, { ...ctx, hasPendingMessages: () => true },
+      { ...ctx, ui: { ...ctx.ui, getEditorText: () => 'draft' } }]) invoke({}, context);
+    for (const patch of [{ pid: -1 }, { model: 'wrong' }, { expires: 1 }, { nonce: 'b'.repeat(64) }]) invoke(patch);
+    invoke({}, ctx, 'ready', 0o644);
+    invoke({}, ctx, 'ready', 0o600, true);
+    invoke({}, ctx, 'state');
+    assert.equal(shutdowns, 0);
+    invoke();
+    assert.equal(shutdowns, 1);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousInstall === undefined) delete process.env.PI_FLEET_INSTALL; else process.env.PI_FLEET_INSTALL = previousInstall;
+    process.argv = previousArgv;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
