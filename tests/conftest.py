@@ -3,11 +3,47 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 from aiohttp import web
 
 from anthropic_throttle_proxy import config, fleet_ui_config, forwarding, limiter, pacing, proxy
+
+
+def _shared_memory_dir() -> Path | None:
+    """The host's writable tmpfs ``.../shm`` mount, read from /proc/mounts."""
+    try:
+        with open("/proc/mounts", encoding="ascii", errors="replace") as mounts:
+            rows = [line.split() for line in mounts]
+    except OSError:
+        return None
+    for row in rows:
+        if len(row) > 2 and row[2] == "tmpfs" and row[1].endswith("/shm"):
+            path = Path(row[1])
+            if path.is_dir() and os.access(path, os.W_OK):
+                return path
+    return None
+
+
+@pytest.fixture
+def tmpfs_state_path(tmp_path_factory):
+    """Per-test directory on tmpfs when the host has one, else a normal tmp dir.
+
+    For tests that time loop/worker hand-offs around REAL ledger saves. The file,
+    replace and directory-fsync code paths still run; only the host disk's
+    journal latency is gone. On ext4 one small-file fsync waits for every other
+    writer's dirty data: the shared CI runner stalled one past the 30 s settle
+    wait (main run 102, PR #9 run 106) while nothing in the owner was wrong.
+    """
+    shm = _shared_memory_dir()
+    if shm is None:
+        yield tmp_path_factory.mktemp("state")
+        return
+    with tempfile.TemporaryDirectory(dir=shm, prefix="pytest-state-") as path:
+        yield Path(path)
 
 
 @pytest.fixture

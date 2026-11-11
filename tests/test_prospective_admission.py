@@ -25,6 +25,12 @@ KEY = ("fixture-upstream", "account-one", "fixture-model")
 OTHER = (KEY[0], "account-two", KEY[2])
 
 
+@pytest.fixture
+def tmp_path(tmpfs_state_path):
+    """Ledger state on tmpfs: these tests bound worker hand-offs, not host fsync."""
+    return tmpfs_state_path
+
+
 def scope_at(tmp_path, *, key=KEY, name="ledger.json", cold=True):
     return Scope(key, Budgets(2, 100), str(tmp_path / name), allow_cold_start=cold)
 

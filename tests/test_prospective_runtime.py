@@ -40,6 +40,12 @@ class Request(dict):
         raise AssertionError("runtime accessors must not read headers")
 
 
+@pytest.fixture
+def tmp_path(tmpfs_state_path):
+    """Ledger state on tmpfs: these tests bound worker hand-offs, not host fsync."""
+    return tmpfs_state_path
+
+
 def configured(tmp_path, *, mode="strict", budgets=None, output_default=7, **changes):
     budgets = budgets or Budgets(3, 500)
     rows = [
