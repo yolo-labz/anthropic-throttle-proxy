@@ -8,6 +8,12 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from anthropic_throttle_proxy import config, proxy
 
+# The 429's pause, in real seconds. It must outlast the setup between the 429
+# and the third call on a loaded host: at 0.08 s, 16 CPU burners on one core let
+# it lapse first (`retry_after_remaining() == 0.0`, or the "expired" call served
+# 200). A budget below it expires; one above outlasts it.
+PAUSE_S = 0.4
+
 
 @pytest.mark.parametrize("path", ["/v1/messages", "/v1/chat/completions", "/v1/responses"])
 @pytest.mark.parametrize("max_wait", [0.02, 1.0])
@@ -37,9 +43,13 @@ async def test_warm_bearer_short_cooldown_waits_before_slot(
             "MAX_CONCURRENT": 2,
             "AIMD_INITIAL_CONCURRENT": 2,
             "RATE_PUSHBACK_RETRIES": 0,
-            "AIMD_BACKOFF_S": 0.08,
+            "AIMD_BACKOFF_S": PAUSE_S,
             "MIN_DISPATCH_GAP_S": 0,
-            "QUEUE_MAX_WAIT_S": max_wait,
+            # Unbounded for the two setup calls: the budget is END-TO-END from
+            # handler start, so 20 ms of wall time was also charged to cold-start
+            # probation, and CI run 251 got a queue-timeout 503 on the FIRST
+            # call. The bound under test is set right before the third call.
+            "QUEUE_MAX_WAIT_S": 0,
         }.items():
             monkeypatch.setattr(config, key, value)
         monkeypatch.setenv("THROTTLE_ACCOUNT_ROUTING", "off")
@@ -62,9 +72,10 @@ async def test_warm_bearer_short_cooldown_waits_before_slot(
             assert not lim.retry_probe_required()
             assert lim.retry_after_remaining() > 0
             lines.clear()
+            monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", max_wait)
             status = await asyncio.wait_for(call(), timeout=2)
 
-        expired = max_wait < 0.08
+        expired = max_wait < PAUSE_S
         assert status == (503 if expired else 200)
         assert calls == (2 if expired else 3)
         # A sleeping request does not acquire/release slots, log fake dispatches,
