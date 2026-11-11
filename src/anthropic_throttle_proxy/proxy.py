@@ -1313,6 +1313,26 @@ def _weekly_pacing_response(
     )
 
 
+def _stamp_observation(rows: list[dict], snapshot: list[dict[str, object]], now: float) -> None:
+    """Additive: when each published account's unified reading was observed.
+
+    ``rows`` are built from ``snapshot`` in order (``_weekly_pacing_states`` →
+    ``publish``). Same age rule and bound as the UI accounts path (#38).
+    """
+    from . import accounts
+
+    for row, acct in zip(rows, snapshot, strict=True):
+        bid = str(acct.get("bearer_id", ""))
+        observed = (config.bearer_state.get(bid) or {}).get("unified_at")
+        age = accounts.observation_age(observed, now)
+        # time.gmtime, not datetime.UTC: capability.config_sha256 hashes every uppercase
+        # module-level name here and fails closed on a value that is not configuration.
+        row["observed_at"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(observed)) if age is not None else None
+        )
+        row["stale"] = accounts.observation_stale(age)
+
+
 def _weekly_pacing_view() -> dict:
     """Read-only publication for /__throttle/admission (never changes a decision)."""
     from . import accounts
@@ -1326,6 +1346,7 @@ def _weekly_pacing_view() -> dict:
         burst=config.WEEKLY_BURST,
         shares=config.CLIENT_SHARES,
     )
+    _stamp_observation(view["accounts"], snapshot, now)
     # The number a non-priority call would be told right now. Publishing it makes
     # the wall readable from the endpoint clients already poll, instead of
     # re-deriving the verdict from the per-account block.

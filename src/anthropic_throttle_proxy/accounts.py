@@ -461,13 +461,8 @@ def account_view(
             if fields["src"] == "proxy"
             else (endpoint_entry or {}).get("fetched")
         )
-        valid_clock = (
-            isinstance(observed, (int, float))
-            and not isinstance(observed, bool)
-            and math.isfinite(observed)
-            and 0 < observed <= now
-        )
-        sample_age = now - observed if valid_clock else None
+        sample_age = observation_age(observed, now)
+        valid_clock = sample_age is not None
         email, email_verified = guard_email(acct["path"])
         out.append(
             {
@@ -486,8 +481,7 @@ def account_view(
                 )
                 if valid_clock
                 else None,
-                "reading_stale": fields["src"] != "none"
-                and (sample_age is None or sample_age > ENDPOINT_STALE_MAX_S),
+                "reading_stale": fields["src"] != "none" and observation_stale(sample_age),
                 "token": _token_view(acct["expires_at"], now),
                 # Upstream REFUSED this credential (403 org-policy, revoked
                 # token). Not a budget state — it carries no window and no
@@ -549,6 +543,22 @@ def _oauth_base() -> str:
 # are no better than the proxy's last-seen view and stop overriding it.
 ENDPOINT_TTL_S = 90.0
 ENDPOINT_STALE_MAX_S = 1800.0
+
+
+def observation_age(observed: object, now: float) -> float | None:
+    """Seconds since a quota observation; None for a missing, invalid or future clock."""
+    if isinstance(observed, bool) or not isinstance(observed, (int, float)):
+        return None
+    if not math.isfinite(observed) or not 0 < observed <= now:
+        return None
+    return now - observed
+
+
+def observation_stale(age: float | None) -> bool:
+    """One age rule for every quota reader: unknown age or older than the endpoint bound."""
+    return age is None or age > ENDPOINT_STALE_MAX_S
+
+
 _FETCH_TIMEOUT_S = 6.0
 
 # path -> {"fetched": epoch, "usage": parsed|None, "err": str|None}
