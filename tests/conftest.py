@@ -28,6 +28,37 @@ def _shared_memory_dir() -> Path | None:
     return None
 
 
+_STATE_KEYS = pytest.StashKey[frozenset]()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item):
+    item.stash[_STATE_KEYS] = frozenset(config.state)
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Fail the test that removes or adds a ``config.state`` key, not its victim.
+
+    ``state`` is process-global and seeded once at import, so a key a test pops
+    is gone for every later test; the failure then lands far away, and only in
+    the full suite (13/11/2026: test_admission popped ``upstream_auth_ok``).
+    Values may change; restore them with ``monkeypatch.setitem``. A hook, not an
+    autouse fixture: it must compare after EVERY fixture (monkeypatch included)
+    has been torn down, and autouse fixture order is not definition order.
+    """
+    result = yield
+    before = item.stash.get(_STATE_KEYS, None)
+    after = frozenset(config.state)
+    if before is not None and after != before:
+        raise AssertionError(
+            f"test leaked config.state keys: removed={sorted(before - after)} "
+            f"added={sorted(after - before)}"
+        )
+    return result
+
+
 @pytest.fixture
 def tmpfs_state_path(tmp_path_factory):
     """Per-test directory on tmpfs when the host has one, else a normal tmp dir.
