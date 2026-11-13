@@ -100,9 +100,10 @@ async def test_closed_account_says_closed_until_and_how_many_are_parked(page):
 
 async def test_old_reading_looks_old(page):
     row = _row(page, "gmail")
-    assert "⚠️ reading 36 h 45 min old — not current" in _text(row)
+    assert "⚠️ not current · reading 36 h 45 min old" in _text(row)
+    # The source-clock caption is kept verbatim (test_dashboard_enrollment pins it).
+    assert re.search(r"Source sample \d+s old · 11/11/2026 21:18 UTC", _text(row))
     assert 'class="sub-meters is-stale"' in row
-    assert "132320s" not in row
 
 
 async def test_status_strip_names_the_closure_not_a_reset(page):

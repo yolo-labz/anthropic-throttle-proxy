@@ -337,7 +337,8 @@
           <div class="acct-parked{% if closed %} is-warn-text{% endif %}">{{ parked.queued }} parked · {{ parked.inflight }} in flight{% if closed %} on a closed account{% endif %}</div>
           {% endif %}
           {% if s.sample_age_s | default(none) is not none %}
-          <div class="im-caption{% if s.status == 'stale' %} is-warn-text{% endif %}">{% if s.status == 'stale' %}⚠️ reading {{ s.sample_age_text | default(none) or (s.sample_age_s | int ~ 's') }} old — not current{% else %}Source sample {{ s.sample_age_text | default(none) or (s.sample_age_s | int ~ 's') }} old{% endif %}{% if s.sample_observed_at %} · {{ s.sample_observed_at }}{% endif %}{% if s.sample_interval_s %} · every {{ s.sample_interval_s | int }}s{% endif %}</div>
+          <div class="im-caption">Source sample {{ s.sample_age_s | int }}s old{% if s.sample_observed_at %} · {{ s.sample_observed_at }}{% endif %}{% if s.sample_interval_s %} · every {{ s.sample_interval_s | int }}s{% endif %}</div>
+          {% if s.status == 'stale' and s.sample_age_text | default(none) %}<div class="im-caption is-warn-text">⚠️ not current · reading {{ s.sample_age_text }} old</div>{% endif %}
           {% endif %}
           <div class="ident-meta">
             <span class="im-family">{{ s.family or "unknown family" }}</span>
