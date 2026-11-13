@@ -17,8 +17,10 @@ import math
 import os
 import tempfile
 import time
+from collections.abc import Callable, Coroutine
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from . import config
 from .config import log
@@ -895,6 +897,8 @@ class FairBearerLimiter:
         priority: bool = False,
         max_wait: float | None = None,
         project: str | None = None,
+        leave_when: Callable[[], bool] | None = None,
+        leave_poll_s: float = 1.0,
     ) -> _FairSlotContext:
         """Return an async context manager that holds one slot for ``client_id``.
 
@@ -913,8 +917,15 @@ class FairBearerLimiter:
         ``project`` only matters when the 5 h window runs hot (AMBER/RED): a
         waiter of an over-share project then yields its TURN to an under-share
         one (project_share). It is never refused and never dropped.
+
+        ``leave_when`` (queue modes only) is re-asked every ``leave_poll_s``
+        while the request is still parked; True gives the position up and
+        raises :class:`QueueLeft` before any slot is held, so the caller can
+        route the request elsewhere. ``None`` keeps the historical wait.
         """
-        return _FairSlotContext(self, client_id, priority, max_wait, project)
+        return _FairSlotContext(
+            self, client_id, priority, max_wait, project, leave_when, leave_poll_s
+        )
 
     def aimd_floor(self) -> int:
         """The lowest live ceiling AIMD is allowed to leave this lane resting at.
@@ -1667,6 +1678,14 @@ class QueueWaitTimeout(Exception):
         self.estimate = estimate
 
 
+class QueueLeft(Exception):
+    """A parked request gave up its queue position because ``leave_when`` said so.
+
+    Raised from ``slot()`` entry before any slot is held; the queue entry is
+    rolled back through acquire's cancellation path, so no release is owed.
+    """
+
+
 class _FairSlotContext:
     """Async context manager returned by ``FairBearerLimiter.slot()``."""
 
@@ -1677,12 +1696,16 @@ class _FairSlotContext:
         priority: bool = False,
         max_wait: float | None = None,
         project: str | None = None,
+        leave_when: Callable[[], bool] | None = None,
+        leave_poll_s: float = 1.0,
     ) -> None:
         self.limiter = limiter
         self.client_id = client_id
         self.priority = priority
         self.max_wait = max_wait
         self.project = project
+        self.leave_when = leave_when
+        self.leave_poll_s = leave_poll_s
         self.lease: int | None = None
 
     def _estimate(self) -> DrainEstimate:
@@ -1704,7 +1727,9 @@ class _FairSlotContext:
             max_wait=self.max_wait if bounded else None,
             project=self.project,
         )
-        if bounded:
+        if self.leave_when is not None and self.limiter.queue_enabled:
+            self.priority, self.lease = await self._acquire_or_leave(acquire, bounded)
+        elif bounded:
             # wait_for cancels the parked acquire on timeout; its
             # CancelledError path (_cancel_cleanup) rolls the queue entry —
             # or a slot dispatched during the cancellation race — back, so
@@ -1717,9 +1742,56 @@ class _FairSlotContext:
             self.priority, self.lease = await acquire
         return self
 
+    async def _acquire_or_leave(
+        self, acquire: Coroutine[Any, Any, tuple[bool, int]], bounded: bool
+    ) -> tuple[bool, int]:
+        """Wait for the slot, re-asking ``leave_when`` every ``leave_poll_s``.
+
+        Leaving and the ``max_wait`` bound both cancel the parked acquire, whose
+        CancelledError path (_cancel_cleanup) rolls the queue entry back exactly
+        as ``asyncio.wait_for`` does; no release is owed on either exit.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.max_wait if bounded and self.max_wait else None
+        # Eager: the acquire runs inline up to its first real suspension, so the
+        # request is enqueued (and counted as load by the router) in the same
+        # loop turn it would be without ``leave_when``.
+        task = asyncio.Task(acquire, loop=loop, eager_start=True)
+        try:
+            while True:
+                timeout = self.leave_poll_s
+                if deadline is not None:
+                    timeout = max(0.0, min(timeout, deadline - loop.time()))
+                done, _pending = await asyncio.wait({task}, timeout=timeout)
+                if done:
+                    return task.result()
+                if deadline is not None and loop.time() >= deadline:
+                    await _cancel_parked(task)
+                    raise QueueWaitTimeout(self.max_wait or 0.0, estimate=self._estimate())
+                assert self.leave_when is not None
+                if self.leave_when():
+                    await _cancel_parked(task)
+                    raise QueueLeft
+        except asyncio.CancelledError:
+            await _cancel_parked(task)
+            raise
+
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
         await self.limiter.release(priority=self.priority, lease=self.lease)
         return False
+
+
+async def _cancel_parked(task: asyncio.Future[tuple[bool, int]]) -> None:
+    """Cancel a parked acquire and wait for its rollback; never leak a slot.
+
+    A slot dispatched in the same loop turn as the cancellation is rolled back
+    by acquire's own CancelledError path (_cancel_cleanup).
+    """
+    if task.done():
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 async def _get_bearer_limiter(

@@ -123,6 +123,7 @@ from .forwarding import (
 )
 from .limiter import (
     FairBearerLimiter,
+    QueueLeft,
     QueueWaitTimeout,
     _FairSlotContext,
     _get_bearer_limiter,
@@ -2415,6 +2416,50 @@ def _pinned_account(
     ):
         return None
     return pinned
+
+
+def _parked_closed_for(
+    bid: str, incoming_bid: str, *, model: str, max_tokens: int | None
+) -> float | None:
+    """Seconds ``bid`` stays closed when a request parked on it should move; else None.
+
+    Pure (no pin, no log, no limiter mutation), so a queued request can ask it
+    every poll. It answers only for an account-pool bearer whose Retry-After
+    (bearer-wide or model-scoped) outlasts MAX_HOLD_RETRY_AFTER_S — the bound
+    past which the dispatch path already refuses to hold a window in place —
+    while another pool account would accept the request now and opens sooner.
+    API-key traffic and single-account setups never match: neither has a
+    sibling in the pool snapshot. 13/11/2026: ten requests parked 37 h on an
+    exhausted account while its sibling served new traffic with free slots.
+    """
+    if not _account_routing_enabled():
+        return None
+    closed = max(_bearer_retry_after_remaining(bid), _model_retry.scoped_remaining(bid, model))
+    if closed <= config.MAX_HOLD_RETRY_AFTER_S:
+        return None
+    from . import accounts
+
+    now = time.time()
+    snapshot = accounts.routing_snapshot(now)
+    if not any(acct.get("bearer_id") == bid for acct in snapshot):
+        return None
+    for acct in snapshot:
+        other = acct.get("bearer_id")
+        if other == bid or not isinstance(other, str) or not isinstance(acct.get("token"), str):
+            continue
+        if _bearer_retry_after_remaining(other) >= closed:
+            continue
+        score = _account_routing_candidate_score(
+            acct,
+            incoming_bid,
+            allow_retry_probe=True,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+        )
+        if score < math.inf:
+            return closed
+    return None
 
 
 def _bearer_would_queue(bid: str) -> bool:
@@ -6755,8 +6800,15 @@ async def _run_slot(
     probe_lease: dict[str, str],
     wait_deadline: float | None,
     try_reroute: _TryReroute,
+    parked_left: set[str] | None = None,
+    incoming_bid: str = "",
 ) -> tuple[str, dict[str, str], web.Response | None, bool]:
     """Acquire the fair-queue slot and run one dispatch attempt end to end.
+
+    While parked in the queue, the request leaves (once per account, tracked
+    in ``parked_left``) when ``_parked_closed_for`` says its account stays
+    closed past the hold bound and a sibling would take it now; the caller's
+    pre-dispatch gate then re-routes it. Nothing has been sent upstream yet.
 
     Returns (bid, headers, response, reroute): a reroute means the slot was
     given back and the caller must re-enter the pre-dispatch gate with the
@@ -6797,12 +6849,22 @@ async def _run_slot(
             reason="queue", next_check_ms=min(config.KEEPALIVE_INTERVAL_MS, _DEFER_PING_CAP_MS)
         )
     wait_mark = _QueueWaitMark(patient=_patience_bound(request.headers) is not None)
+    leave_when = None
+    if parked_left is not None and bid not in parked_left:
+
+        def leave_when() -> bool:
+            return (
+                _parked_closed_for(bid, incoming_bid, model=model, max_tokens=req_max_tokens)
+                is not None
+            )
+
     try:
         async with limiter.slot(
             cid,
             priority=is_priority,
             max_wait=slot_max_wait,
             project=_project_of(request.headers),
+            leave_when=leave_when,
         ) as held:
             wait_mark.end(served=True)
             counters.dequeue()
@@ -6914,6 +6976,20 @@ async def _run_slot(
                             _finish_retry_probe(
                                 probe_lease, success=200 <= attempt.final_status < 300
                             )
+    except QueueLeft:
+        # Gave the queue position back before any slot was held (the limiter
+        # rolled the entry back); nothing reached upstream, so re-routing
+        # cannot send this request twice.
+        counters.dequeue()
+        _finish_retry_probe(probe_lease, success=False)
+        assert parked_left is not None
+        parked_left.add(bid)
+        closed = _parked_closed_for(bid, incoming_bid, model=model, max_tokens=req_max_tokens)
+        log(
+            f"parked-reroute from={bid} cid={cid} path=/{path} "
+            f"closed_s={math.ceil(closed or 0.0)} reason=account_closed_past_hold_bound"
+        )
+        return bid, headers, None, True
     except QueueWaitTimeout as queue_timeout:
         # No slot within the wait bound: answer 503 while the client's
         # transport is still open (the limiter already rolled its queue entry
@@ -7154,6 +7230,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
         )
 
     probe_waited: set[str] = set()
+    parked_left: set[str] = set()
 
     async def wait_for_alternate_probe() -> bool:
         return await _wait_for_alternate_probe(
@@ -7200,6 +7277,8 @@ async def _serve(request: web.Request) -> web.StreamResponse:
             probe_lease=probe_lease,
             wait_deadline=wait_deadline,
             try_reroute=try_retry_after_reroute,
+            parked_left=parked_left,
+            incoming_bid=incoming_bid,
         )
         if reroute:
             continue
