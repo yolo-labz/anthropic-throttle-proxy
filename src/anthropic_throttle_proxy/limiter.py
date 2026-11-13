@@ -1766,32 +1766,37 @@ class _FairSlotContext:
                 if done:
                     return task.result()
                 if deadline is not None and loop.time() >= deadline:
-                    await _cancel_parked(task)
+                    await self._abandon(task)
                     raise QueueWaitTimeout(self.max_wait or 0.0, estimate=self._estimate())
                 assert self.leave_when is not None
                 if self.leave_when():
-                    await _cancel_parked(task)
+                    await self._abandon(task)
                     raise QueueLeft
         except asyncio.CancelledError:
-            await _cancel_parked(task)
+            await self._abandon(task)
             raise
+
+    async def _abandon(self, task: asyncio.Task[tuple[bool, int]]) -> None:
+        """Give up a parked acquire whose result will not be used; never leak a slot.
+
+        A still-parked acquire is cancelled, and its CancelledError path
+        (_cancel_cleanup) rolls the queue entry back. One that already finished
+        holds a slot nobody will enter: ``release()`` can hand the slot over
+        and the client can cancel in the same loop turn (adversarial read of
+        #76, D1). That lease is returned here.
+        """
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        if task.cancelled() or task.exception() is not None:
+            return
+        priority, lease = task.result()
+        await self.limiter.release(priority=priority, lease=lease)
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> bool:
         await self.limiter.release(priority=self.priority, lease=self.lease)
         return False
-
-
-async def _cancel_parked(task: asyncio.Future[tuple[bool, int]]) -> None:
-    """Cancel a parked acquire and wait for its rollback; never leak a slot.
-
-    A slot dispatched in the same loop turn as the cancellation is rolled back
-    by acquire's own CancelledError path (_cancel_cleanup).
-    """
-    if task.done():
-        return
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
 
 
 async def _get_bearer_limiter(

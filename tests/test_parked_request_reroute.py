@@ -24,6 +24,14 @@ from anthropic_throttle_proxy import session_affinity as sa
 pool = _seats.pool  # two accounts A/B, real handler, recording upstream
 
 
+@pytest.fixture(autouse=True)
+def _fresh_sibling_verdicts():
+    """The 1 s sibling-scan memo is process state; never carry it across tests."""
+    proxy._parked_sibling_verdicts.clear()
+    yield
+    proxy._parked_sibling_verdicts.clear()
+
+
 async def _park_on_a(pool):
     """A's only slot is busy upstream, B is closed, X queues on A."""
     lim_a = await _open_seat(pool, "A", live=1)
@@ -156,6 +164,24 @@ def test_api_key_and_off_routing_never_match(pool, monkeypatch) -> None:
     assert proxy._parked_closed_for(a, "", model="", max_tokens=None) is None
 
 
+def test_the_sibling_scan_runs_once_per_account_per_second(pool, monkeypatch) -> None:
+    """p2S S1: 200 parked requests on one closed account cost one snapshot scan."""
+    a = pool.bids["A"]
+    config.bearer_limiters.pop(a, None)
+    limiter._retry_after_state = {a: time.time() + 10 * 3600}
+    scans: list[str] = []
+    real = proxy._parked_sibling_open
+
+    def counting(*args, **kwargs):
+        scans.append(args[0])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(proxy, "_parked_sibling_open", counting)
+    verdicts = [proxy._parked_closed_for(a, "", model="m", max_tokens=8) for _ in range(200)]
+    assert None not in verdicts
+    assert scans == [a]
+
+
 async def test_a_short_window_stays_parked(pool, monkeypatch) -> None:
     """Below MAX_HOLD_RETRY_AFTER_S the request keeps its queue position."""
     lim_a, lim_b, busy, parked = await _park_on_a(pool)
@@ -168,3 +194,78 @@ async def test_a_short_window_stays_parked(pool, monkeypatch) -> None:
     lim_a._retry_after_until = 0.0  # the short window ends; X dispatches on A
     status, body = await asyncio.wait_for(parked, 5)
     assert (status, _seat_of(body)) == (200, "A")
+
+
+async def test_cancel_after_dispatch_does_not_leak_the_slot() -> None:
+    """p2S adversarial read of #76, D1: release() hands the parked acquire a
+    slot and the client cancels in the same loop turn; the slot must come back."""
+    lim = limiter.FairBearerLimiter(1, "fair")
+    lim.max_concurrent = 1
+    await lim.acquire("holder")
+
+    async def parked() -> None:
+        async with lim.slot("waiter", leave_when=lambda: False, leave_poll_s=10.0):
+            await asyncio.sleep(10)
+
+    outer = asyncio.create_task(parked())
+    for _ in range(50):
+        if lim.snapshot()["queued_total"] == 1:
+            break
+        await asyncio.sleep(0.001)
+    assert lim.snapshot()["queued_total"] == 1
+    await lim.release()
+    outer.cancel()
+    await asyncio.gather(outer, return_exceptions=True)
+    await asyncio.sleep(0)
+    snap = lim.snapshot()
+    assert snap["inflight"] == 0, f"slot leaked: {snap['inflight']} inflight after cancel"
+    assert snap["queued_total"] == 0
+
+
+async def test_an_unused_finished_acquire_is_always_given_back() -> None:
+    """Every exit (cancel, leave, timeout) abandons through one helper; a finished
+    acquire it is handed is released, a parked one is rolled back."""
+    lim = limiter.FairBearerLimiter(1, "fair")
+    lim.max_concurrent = 1
+    context = lim.slot("w", leave_when=lambda: False)
+    finished = asyncio.ensure_future(lim.acquire_lease("w"))
+    await finished
+    assert lim.snapshot()["inflight"] == 1
+    await context._abandon(finished)
+    assert lim.snapshot()["inflight"] == 0
+    await lim.acquire("holder")
+    parked_acquire = asyncio.ensure_future(lim.acquire_lease("w"))
+    await asyncio.sleep(0)
+    assert lim.snapshot()["queued_total"] == 1
+    await context._abandon(parked_acquire)
+    snap = lim.snapshot()
+    assert (snap["inflight"], snap["queued_total"]) == (1, 0)
+    await lim.release()
+    assert lim.snapshot()["inflight"] == 0
+
+
+async def test_leaving_with_the_probe_frees_it_for_the_next_cycle(pool) -> None:
+    """p2S S2: X owns A's half-open probe while parked, then leaves. The probe
+    must be free at once (closed, still required), not one extra cycle later."""
+    lim_a = await _open_seat(pool, "A", live=1)
+    lim_b = await _open_seat(pool, "B", live=1)
+    a = pool.bids["A"]
+    lim_b.note_retry_after(30)
+    busy = asyncio.create_task(_post(pool.client, tag="busy", hold=True))
+    await pool.upstream.wait_arrived("busy")
+    limiter.require_retry_probe(a)  # A half-open: the next message is its probe
+    parked = asyncio.create_task(_post(pool.client, tag="x"))
+    await _wait_for_limiter_queued(lim_a, 1)
+    assert limiter.retry_probe_inflight(a), "X claimed A's probe before parking"
+
+    lim_a.note_retry_after(10 * 3600)
+    lim_b._retry_after_until = 0.0
+    status, body = await asyncio.wait_for(parked, 5)
+    assert (status, _seat_of(body)) == (200, "B")
+
+    assert not limiter.retry_probe_inflight(a)
+    assert limiter.retry_probe_required(a)  # never reopened untried
+    lim_a._retry_after_until = 0.0  # A's window ends
+    assert limiter.try_begin_retry_probe(a) is True  # no wait for a stale lease
+    limiter.finish_retry_probe(a, success=True)
+    await _drain(pool, busy, lim_a, lim_b)

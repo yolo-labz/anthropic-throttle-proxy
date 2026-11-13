@@ -2457,8 +2457,10 @@ def _parked_closed_for(
 ) -> float | None:
     """Seconds ``bid`` stays closed when a request parked on it should move; else None.
 
-    Pure (no pin, no log, no limiter mutation), so a queued request can ask it
-    every poll. It answers only for an account-pool bearer whose Retry-After
+    No pin, no log, no limiter mutation, so a queued request can ask it every
+    poll; the sibling scan is memoised for 1 s per (account, model, size), and
+    ``incoming_bid`` only breaks ties between finite scores, so it is not keyed.
+    It answers only for an account-pool bearer whose Retry-After
     (bearer-wide or model-scoped) outlasts MAX_HOLD_RETRY_AFTER_S — the bound
     past which the dispatch path already refuses to hold a window in place —
     while another pool account would accept the request now and opens sooner.
@@ -2471,12 +2473,34 @@ def _parked_closed_for(
     closed = max(_bearer_retry_after_remaining(bid), _model_retry.scoped_remaining(bid, model))
     if closed <= config.MAX_HOLD_RETRY_AFTER_S:
         return None
+    key = (bid, model, max_tokens)
+    tick = time.monotonic()
+    cached = _parked_sibling_verdicts.get(key)
+    if cached is None or cached[0] <= tick:
+        # Measured 13/11/2026: 200 parked requests x 3 accounts cost 4.9 ms
+        # (max 8.8 ms) of event loop per poll uncached. One scan per account,
+        # model and size per second makes that independent of the queue length.
+        cached = (tick + 1.0, _parked_sibling_open(bid, incoming_bid, closed, model, max_tokens))
+        _parked_sibling_verdicts[key] = cached
+    return closed if cached[1] else None
+
+
+# (bid, model, max_tokens) -> (monotonic expiry, a sibling would take it now).
+# ponytail: unbounded in theory, but keyed by pool accounts x models x sizes,
+# which stays a handful; prune expired entries if that ever grows.
+_parked_sibling_verdicts: dict[tuple[str, str, int | None], tuple[float, bool]] = {}
+
+
+def _parked_sibling_open(
+    bid: str, incoming_bid: str, closed: float, model: str, max_tokens: int | None
+) -> bool:
+    """Whether another pool account would accept the request now and opens sooner."""
     from . import accounts
 
     now = time.time()
     snapshot = accounts.routing_snapshot(now)
     if not any(acct.get("bearer_id") == bid for acct in snapshot):
-        return None
+        return False
     for acct in snapshot:
         other = acct.get("bearer_id")
         if other == bid or not isinstance(other, str) or not isinstance(acct.get("token"), str):
@@ -2492,8 +2516,8 @@ def _parked_closed_for(
             now=now,
         )
         if score < math.inf:
-            return closed
-    return None
+            return True
+    return False
 
 
 def _bearer_would_queue(bid: str) -> bool:
