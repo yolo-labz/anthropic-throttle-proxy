@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from typing import cast
 
 import pytest
@@ -82,7 +83,7 @@ BURST = ua.DEFAULT_BURST
 
 
 @pytest.fixture
-def fleet(monkeypatch: pytest.MonkeyPatch) -> float:
+def fleet(monkeypatch: pytest.MonkeyPatch) -> Iterator[float]:
     view = [
         {"label": name, "bearer_id": bid}
         for name, bid in (("gmail", "gggg1111"), ("proton", "pppp2222"))
@@ -98,8 +99,14 @@ def fleet(monkeypatch: pytest.MonkeyPatch) -> float:
     monkeypatch.setattr(proxy, "_account_routing_enabled", lambda: True)
     monkeypatch.setattr(accounts, "routing_snapshot", lambda _now=None: list(view))
     monkeypatch.setattr(proxy, "_WEEKLY_TOKENS", ua.WeeklyTokens())
+    # bearer_state is a process-global dict read by the dashboard and collectors.
+    # Restore it on teardown: the partial `unified` rows _set_util writes otherwise
+    # leak into later tests (the dashboard render then hits a missing util_5h).
+    saved = dict(config.bearer_state)
     config.bearer_state.clear()
-    return time.time()
+    yield time.time()
+    config.bearer_state.clear()
+    config.bearer_state.update(saved)
 
 
 def _set_util(now: float, gmail: float, proton: float, elapsed: float = 0.5) -> None:

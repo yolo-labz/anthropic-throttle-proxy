@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 
 import pytest
 
@@ -200,3 +201,29 @@ def test_oversize_edit_keeps_last_good(tmp_path):
     cfg = fuc.load(p)
     assert "exceeds" in cfg["config_error"]
     assert cfg["subscriptions"] == good["subscriptions"]
+
+
+def test_rewrite_in_the_same_clock_tick_is_still_reparsed(tmp_path, monkeypatch):
+    """CI run 258: a coarse filesystem clock gave the good and the bad write the
+    same mtime/ctime, so the cached good parse came back with no config_error."""
+    p = _write(tmp_path)
+    good = fuc.load(p)
+    frozen = p.stat()
+    real_stat = type(p).stat
+
+    def same_tick(self, *args, **kwargs):
+        st = real_stat(self, *args, **kwargs)
+        if self != p:
+            return st
+        return SimpleNamespace(
+            st_mtime_ns=frozen.st_mtime_ns,
+            st_ctime_ns=frozen.st_ctime_ns,
+            st_size=st.st_size,
+            st_ino=st.st_ino,
+        )
+
+    monkeypatch.setattr(type(p), "stat", same_tick)
+    p.write_text("subscriptions: []\ndefaults: {emoji_by_family: {openai: [bad]}}\n")
+    invalid = fuc.load(p)
+    assert invalid["config_error"]
+    assert invalid["subscriptions"] == good["subscriptions"]

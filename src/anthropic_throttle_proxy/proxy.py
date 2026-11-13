@@ -1313,6 +1313,26 @@ def _weekly_pacing_response(
     )
 
 
+def _stamp_observation(rows: list[dict], snapshot: list[dict[str, object]], now: float) -> None:
+    """Additive: when each published account's unified reading was observed.
+
+    ``rows`` are built from ``snapshot`` in order (``_weekly_pacing_states`` →
+    ``publish``). Same age rule and bound as the UI accounts path (#38).
+    """
+    from . import accounts
+
+    for row, acct in zip(rows, snapshot, strict=True):
+        bid = str(acct.get("bearer_id", ""))
+        observed = (config.bearer_state.get(bid) or {}).get("unified_at")
+        age = accounts.observation_age(observed, now)
+        # time.gmtime, not datetime.UTC: capability.config_sha256 hashes every uppercase
+        # module-level name here and fails closed on a value that is not configuration.
+        row["observed_at"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(observed)) if age is not None else None
+        )
+        row["stale"] = accounts.observation_stale(age)
+
+
 def _weekly_pacing_view() -> dict:
     """Read-only publication for /__throttle/admission (never changes a decision)."""
     from . import accounts
@@ -1326,6 +1346,7 @@ def _weekly_pacing_view() -> dict:
         burst=config.WEEKLY_BURST,
         shares=config.CLIENT_SHARES,
     )
+    _stamp_observation(view["accounts"], snapshot, now)
     # The number a non-priority call would be told right now. Publishing it makes
     # the wall readable from the endpoint clients already poll, instead of
     # re-deriving the verdict from the per-account block.
@@ -2338,7 +2359,32 @@ def _pinned_account(
     now: float,
     allow_retry_probe: bool,
 ) -> dict[str, object] | None:
-    """The account this session already runs on, while it is still routable.
+    """The account this session already runs on, while it is still routable (pure)."""
+    return _pin_verdict(
+        snapshot,
+        session_key,
+        incoming_bid,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_retry_probe=allow_retry_probe,
+    )[0]
+
+
+def _pin_verdict(
+    snapshot: list[dict[str, object]],
+    session_key: str | None,
+    incoming_bid: str,
+    *,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> tuple[dict[str, object] | None, str | None]:
+    """``(pinned account, None)`` while the pin holds, else ``(None, release reason)``.
+
+    The reason is ``retry_after``, ``not_routable``, ``strict_gate`` or
+    ``would_queue``; no pin (or affinity off) is ``(None, None)``.
 
     Prompt caches are per account, so a hop re-writes the whole conversation
     (TD-B0a). Pure: it reads the pin and the STRICT gate (``allow_pressure`` off),
@@ -2350,12 +2396,19 @@ def _pinned_account(
     choice is then re-pinned by the caller).
     """
     if not session_key or not _session_affinity.enabled():
-        return None
+        return None, None
     pinned_bid = _session_affinity.pinned(session_key, now)
+    if pinned_bid is None:
+        return None, None
     # Any open Retry-After window (a 429 or the brake) releases the pin, even
     # one short enough that the score only surcharges it instead of gating it.
-    if pinned_bid is None or _bearer_retry_after_remaining(pinned_bid) > 0:
-        return None
+    # A model-scoped window (#46) would also release it via the strict score;
+    # naming it here only keeps the logged reason honest.
+    if (
+        _bearer_retry_after_remaining(pinned_bid) > 0
+        or _model_retry.scoped_remaining(pinned_bid, model) > 0
+    ):
+        return None, "retry_after"
 
     def strict_ok(acct: dict[str, object]) -> bool:
         return (
@@ -2378,8 +2431,10 @@ def _pinned_account(
         ),
         None,
     )
-    if pinned is None or not strict_ok(pinned):
-        return None
+    if pinned is None:
+        return None, "not_routable"
+    if not strict_ok(pinned):
+        return None, "strict_gate"
     # A cache hop costs one rewrite; waiting behind a full account costs up to the
     # queue budget on every turn, and sessions sharing a key (identical prompts)
     # would otherwise all pile onto one account. Release only on an actual wait:
@@ -2395,8 +2450,8 @@ def _pinned_account(
         and not _bearer_would_queue(str(acct["bearer_id"]))
         for acct in snapshot
     ):
-        return None
-    return pinned
+        return None, "would_queue"
+    return pinned, None
 
 
 def _bearer_would_queue(bid: str) -> bool:
@@ -2553,17 +2608,23 @@ def _remember_session_account(
     session_key: str | None,
     selected: dict[str, object],
     now: float,
+    release_reason: Callable[[], str | None] = lambda: None,
 ) -> None:
-    """Pin the session to the OAuth account just chosen (never the metered API-key lane)."""
+    """Pin the session to the OAuth account just chosen (never the metered API-key lane).
+
+    ``release_reason`` is evaluated only for a migration, before the re-pin, so
+    the logged reason reads the same pin and gate state the route decision did.
+    """
     bid = selected.get("bearer_id")
     if not session_key or not isinstance(bid, str) or selected.get("auth_type") == "api_key":
         return
     if not any(acct.get("bearer_id") == bid for acct in snapshot):
         return
     previous = _session_affinity.pinned(session_key, now)
+    reason = (release_reason() or "unknown") if previous not in (None, bid) else None
     _session_affinity.pin(session_key, bid, now)
-    if previous is not None and previous != bid:
-        log(f"affinity-migrate session={session_key} from={previous} to={bid}")
+    if reason is not None:
+        log(f"affinity-migrate session={session_key} from={previous} to={bid} reason={reason}")
 
 
 def _route_account_if_enabled(
@@ -2642,7 +2703,23 @@ def _route_account_if_enabled(
     )
     if selected is None:
         return incoming_bid, None
-    _remember_session_account(routable, session_key, selected, now)
+    _remember_session_account(
+        routable,
+        session_key,
+        selected,
+        now,
+        # Log-only: the same pure verdict ``_account_route_decision`` used, re-read
+        # for its reason; it never changes ``selected`` or the pin.
+        lambda: _pin_verdict(
+            routable,
+            session_key,
+            incoming_bid,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+            allow_retry_probe=allow_retry_probe,
+        )[1],
+    )
     if dead_fallback:
         log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
     if config.ACCOUNT_ROUTING_MODE == "round_robin":
