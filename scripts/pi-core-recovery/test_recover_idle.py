@@ -238,9 +238,10 @@ def test_second_controller_lock_refused(tmp_path):
 
 @pytest.mark.parametrize("failure", ["exit10", "timeout"])
 @pytest.mark.parametrize("proof", [True, False])
+@pytest.mark.parametrize("context_proof", [True, False])
 @pytest.mark.parametrize("initially_working", [True, False])
 def test_uncertain_native_delivery_requires_actual_receipts(
-    tmp_path, monkeypatch, capsys, failure, proof, recovery_seat, initially_working
+    tmp_path, monkeypatch, capsys, failure, proof, recovery_seat, initially_working, context_proof
 ):
     transcript = recovery_seat
 
@@ -311,7 +312,13 @@ def test_uncertain_native_delivery_requires_actual_receipts(
             else:
                 kind = "ready" if text.startswith("/core-upgrade-ready") else "state"
                 request = requests[-1]
-                receipt = {**request, "idle": True, "pending": False, "editorBytes": 0}
+                receipt = {
+                    **request,
+                    "idle": True,
+                    "pending": False,
+                    "editorBytes": 0,
+                    "nativeContext": idle.core.disk_context(transcript) if context_proof else None,
+                }
                 if proof:
                     (tmp_path / f"{request['nonce']}.{kind}.json").write_text(json.dumps(receipt))
             if failure == "exit10":
@@ -324,6 +331,14 @@ def test_uncertain_native_delivery_requires_actual_receipts(
         with pytest.raises(TimeoutError, match="missing native receipt"):
             idle.main()
         assert not any("restart" in c or "qualify-bootstrap" in c for c in calls)
+        return
+    if not context_proof:
+        with pytest.raises(RuntimeError, match="no shutdown"):
+            idle.main()
+        assert not any("restart" in c or "qualify-bootstrap" in c for c in calls)
+        assert not any(
+            c[-1].startswith("/core-upgrade-ready") for c in calls if c[0] == idle.HERDR_PROMPT
+        )
         return
     idle.main()
     captured = capsys.readouterr()

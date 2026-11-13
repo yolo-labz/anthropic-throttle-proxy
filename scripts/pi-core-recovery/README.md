@@ -86,6 +86,11 @@ Unapplied targets, another branch's receipt, context-recovery markers, duplicate
 IDs and cycles remain blocked. Native selection must still match the operator's
 current selection before shutdown and after restart.
 
+A metadata-only active branch also refuses qualification when the transcript
+contains conversation or compaction history outside that branch. The same session
+file alone does not prove the original task context will survive a reload. Resolve
+the selected native branch separately; the upgrade tool never guesses a target.
+
 The normal upgrade path can preserve any qualified Claude seat whose existing
 native bootstrap name exactly matches its Herdr name, whose role/environment are
 captured, and whose native launch flags pass qualification. The Gama-specific
@@ -118,3 +123,12 @@ session and cwd before registration and subsequent native state verification.
 If detection cannot prove that identity, the started marker remains and recovery
 stops for explicit diagnosis. The two 11/11/2026 infrastructure trials established
 that a nonzero response can follow a successful core launch.
+
+STATE and READY also attest the native leaf and ordered branch/work ID digests
+against the exact raw transcript tail and its SHA-256. Bootstrap qualification
+binds that STATE proof into the request; the controller rechecks it immediately
+before READY, and READY repeats the comparison synchronously before graceful
+shutdown. Missing parents, stale in-memory branches, or any intervening append
+refuse shutdown and leave the running Pi intact. Older STATE receipts without
+this context proof cannot authorize an upgrade. These receipts contain metadata
+and hashes, never message contents.

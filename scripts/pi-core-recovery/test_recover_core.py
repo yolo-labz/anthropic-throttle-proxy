@@ -105,6 +105,39 @@ def test_branch_uses_parent_lineage_and_rejects_unknown_parent(tmp_path):
         core.require_safe_branch(path)
 
 
+@pytest.mark.parametrize("attached", [False, True])
+def test_orphan_metadata_cannot_qualify_as_preserved_work_context(tmp_path, attached):
+    path = tmp_path / "native.jsonl"
+    entries = [
+        {"type": "session", "id": "session"},
+        {
+            "type": "message",
+            "id": "work",
+            "parentId": None,
+            "message": {"role": "assistant", "content": []},
+        },
+        {
+            "type": "custom",
+            "id": "cleanup",
+            "parentId": "work" if attached else None,
+            "customType": "pi-artifact-cleanup",
+        },
+        {"type": "session_info", "id": "last", "parentId": "cleanup"},
+    ]
+    path.write_text("\n".join(map(json.dumps, entries)))
+    if attached:
+        core.require_safe_branch(path)
+    else:
+        with pytest.raises(RuntimeError, match="metadata-only branch"):
+            core.require_safe_branch(path)
+
+
+def test_genuinely_new_metadata_only_session_has_no_displaced_work(tmp_path):
+    path = tmp_path / "native.jsonl"
+    path.write_text(json.dumps({"type": "custom", "id": "fresh", "parentId": None}) + "\n")
+    core.require_safe_branch(path)
+
+
 @pytest.mark.parametrize("acknowledgement", ["ready", "blocked"])
 def test_registration_waits_for_receipt_writer_and_never_repeats_start(
     tmp_path, monkeypatch, acknowledgement
@@ -246,3 +279,34 @@ def test_startup_target_consumption_refuses_near_misses(tmp_path, mutation):
     path.write_text("\n".join(map(json.dumps, entries)))
     with pytest.raises(RuntimeError, match="startup target"):
         core.require_safe_branch(path)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "leaf", "work", "append", "dangling"])
+def test_context_proof_rejects_stale_native_or_disk(tmp_path, mutation):
+    path = tmp_path / "context.jsonl"
+    entries = [
+        {"type": "session", "id": "header"},
+        {"type": "message", "id": "work", "parentId": None},
+    ]
+    path.write_text("\n".join(map(json.dumps, entries)) + "\n")
+    proof = core.disk_context(path)
+    assert proof["branchEntries"] == proof["workEntries"] == 1
+    assert core.require_context_agreement(path, proof) == proof
+    if mutation == "missing":
+        proof = None
+    elif mutation in {"leaf", "work"}:
+        proof["leaf" if mutation == "leaf" else "workIdDigest"] = "stale"
+    else:
+        with path.open("a") as output:
+            output.write(
+                json.dumps(
+                    {
+                        "type": "custom",
+                        "id": "later",
+                        "parentId": "work" if mutation == "append" else "absent",
+                    }
+                )
+                + "\n"
+            )
+    with pytest.raises(RuntimeError, match="context"):
+        core.require_context_agreement(path, proof)
