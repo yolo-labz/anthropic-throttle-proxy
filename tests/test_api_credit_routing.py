@@ -232,6 +232,7 @@ def test_recorded_from_real_usage_path_only_for_owned_anthropic_key(funded, logs
         ({"x-api-key": "callers-own-third-party-key"}, False),
         ({"Authorization": "Bearer oauth-token"}, True),  # owned key replaced OAuth
         ({"x-api-key": "local-sentinel"}, True),  # sentinel asks for routing
+        ({"x-api-key": "synthetic-key"}, True),  # the OWNED key presented by a client (N1)
     ],
 )
 def test_caller_key_shares_bearer_id_but_never_counts_as_owned_spend(

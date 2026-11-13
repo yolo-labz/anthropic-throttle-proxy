@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -1403,6 +1404,9 @@ def _caller_supplied_api_key(headers: object) -> bool:
     key = get("x-api-key") or get("X-Api-Key") or get("X-API-Key")
     if not key or get("Authorization") or get("authorization"):
         return False
+    owned = _owned_api_key_token()
+    if owned is not None and hmac.compare_digest(key.encode(), owned.encode()):
+        return False  # the owned key itself, presented by a client: still owned spend (N1)
     return key != config.LOCAL_API_KEY_SENTINEL
 
 
@@ -1437,6 +1441,30 @@ def _bearer_retry_after_remaining(bid: str) -> float:
     if callable(retry_after_remaining):
         return retry_after_remaining()
     return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
+
+
+def _owned_api_key_token() -> str | None:
+    """The gateway-owned key from its 0600 runtime file, cached by (mtime, size).
+
+    A request normally pays one stat(); rotation is picked up without restart.
+    """
+    if not config.API_KEY_FILE:
+        return None
+    try:
+        st = os.stat(config.API_KEY_FILE)
+    except OSError:
+        return None
+    global _api_key_cache
+    if _api_key_cache is None or _api_key_cache[:2] != (st.st_mtime_ns, st.st_size):
+        try:
+            with open(config.API_KEY_FILE, encoding="utf-8") as fh:
+                token = fh.read().strip()
+        except OSError:
+            return None
+        if not token:
+            return None
+        _api_key_cache = (st.st_mtime_ns, st.st_size, _api_key_bid(token), token)
+    return _api_key_cache[3]
 
 
 def _api_key_candidate(
@@ -1486,21 +1514,10 @@ def _api_key_candidate(
             return None
         if _metered_refusal(model) is not None:
             return None
-    try:
-        st = os.stat(config.API_KEY_FILE)
-    except OSError:
+    token = _owned_api_key_token()
+    if token is None:
         return None
-    global _api_key_cache
-    if _api_key_cache is None or _api_key_cache[:2] != (st.st_mtime_ns, st.st_size):
-        try:
-            with open(config.API_KEY_FILE, encoding="utf-8") as fh:
-                token = fh.read().strip()
-        except OSError:
-            return None
-        if not token:
-            return None
-        _api_key_cache = (st.st_mtime_ns, st.st_size, _api_key_bid(token), token)
-    bid, token = _api_key_cache[2], _api_key_cache[3]
+    bid = _api_key_bid(token)
     if _bearer_retry_after_remaining(bid) > 0:
         return None
     return {
