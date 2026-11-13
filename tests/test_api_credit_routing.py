@@ -226,6 +226,34 @@ def test_recorded_from_real_usage_path_only_for_owned_anthropic_key(funded, logs
     assert metered_spend.window_spend(config.API_KEY_SPEND_FILE, WINDOW, NOW) > 0
 
 
+@pytest.mark.parametrize(
+    ("incoming", "recorded"),
+    [
+        ({"x-api-key": "callers-own-third-party-key"}, False),
+        ({"Authorization": "Bearer oauth-token"}, True),  # owned key replaced OAuth
+        ({"x-api-key": "local-sentinel"}, True),  # sentinel asks for routing
+    ],
+)
+def test_caller_key_shares_bearer_id_but_never_counts_as_owned_spend(
+    funded, logs, monkeypatch, incoming, recorded
+):
+    from multidict import CIMultiDict
+
+    from anthropic_throttle_proxy.ratelimit import _bearer_id
+
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", "local-sentinel")
+    headers = CIMultiDict(incoming)
+    if "x-api-key" in headers:
+        # The hazard: any caller x-api-key maps to the owned key's bearer id.
+        assert _bearer_id(headers) == API_KEY_BEARER_ID
+    body = b'data: {"type":"message_delta","usage":{"input_tokens":1000000,"output_tokens":0}}\n'
+    proxy._record_usage(
+        MODEL, MODEL, bytearray(body), "v1/messages", seat=API_KEY_BEARER_ID, seat_headers=headers
+    )
+    spent = metered_spend.window_spend(config.API_KEY_SPEND_FILE, WINDOW, NOW)
+    assert (spent > 0) is recorded
+
+
 @pytest.mark.parametrize("content", ["{", json.dumps({"entries": [[1, -1]]}), "[]"])
 def test_unreadable_spend_fails_closed_and_is_never_overwritten(funded, logs, content):
     path = config.API_KEY_SPEND_FILE

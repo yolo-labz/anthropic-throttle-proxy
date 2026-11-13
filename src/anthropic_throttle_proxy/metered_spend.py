@@ -21,6 +21,7 @@ window/60 rows.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import math
 import os
@@ -79,7 +80,15 @@ def record(path: str, usd: float, window_s: float, now: float) -> bool:
     """Add measured spend; False when the file is unknown (left untouched)."""
     if not _number(usd) or usd <= 0:
         return True
-    with _lock:
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    # The thread lock orders writers in this process; flock on a sibling lock
+    # file orders processes (old + new gateway overlap during a restart): a
+    # bare read-modify-write lost 273 of 600 recorded dollars to a second
+    # writer (p2S adversarial read of #62, D1). The lock file is never
+    # replaced, so every writer locks the same inode.
+    with _lock, open(f"{path}.lock", "a", encoding="ascii") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # released when the file closes
         rows = _load(path)
         if rows is None:
             return False
@@ -89,8 +98,6 @@ def record(path: str, usd: float, window_s: float, now: float) -> bool:
             rows[-1][1] += usd
         else:
             rows.append([bucket, usd])
-        directory = os.path.dirname(path) or "."
-        os.makedirs(directory, mode=0o700, exist_ok=True)
         tmp = f"{path}.tmp-{os.getpid()}"
         with open(tmp, "w", encoding="ascii") as handle:
             json.dump({"schema": 1, "window_s": window_s, "entries": rows}, handle)

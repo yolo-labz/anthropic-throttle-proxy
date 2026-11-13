@@ -1388,6 +1388,24 @@ def _metered_lane_bound() -> bool:
     return upstream.scheme == "https" and upstream.hostname == "api.anthropic.com"
 
 
+def _caller_supplied_api_key(headers: object) -> bool:
+    """The client sent its OWN key: ``x-api-key``, no Authorization, not the sentinel.
+
+    Same predicate the router uses to skip the owned candidate
+    (``explicit_api_key`` in ``_route_account_if_enabled``). Such a request
+    shares the ``api-key`` bearer id with the owned key (``ratelimit._api_key_id``
+    is constant), so without this its spend would count against the owned USD
+    ceiling and refuse the owned key early (p2S adversarial read of #62, S2).
+    """
+    get = getattr(headers, "get", None)
+    if get is None:
+        return False
+    key = get("x-api-key") or get("X-Api-Key") or get("X-API-Key")
+    if not key or get("Authorization") or get("authorization"):
+        return False
+    return key != config.LOCAL_API_KEY_SENTINEL
+
+
 _metered_refusal_logged = ""
 
 
@@ -5342,6 +5360,7 @@ def _record_usage(
             seat == API_KEY_BEARER_ID
             and spend_usd > 0
             and _metered_lane_bound()
+            and not _caller_supplied_api_key(seat_headers)
             and not _metered_spend.record(
                 config.API_KEY_SPEND_FILE, spend_usd, config.API_KEY_USD_WINDOW_S, time.time()
             )
