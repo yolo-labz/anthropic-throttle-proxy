@@ -5,15 +5,13 @@ updates:
     schedule:
       interval: "weekly"
     groups:
-      python-deps:
-        patterns:
-          - "*"
+      minor-and-patch:
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     groups:
-      actions:
-        patterns:
-          - "*"
+      minor-and-patch:
+        update-types: ["minor", "patch"]
