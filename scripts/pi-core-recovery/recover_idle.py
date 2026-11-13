@@ -358,8 +358,10 @@ def main():
             changes.deadline = previous_deadline
         deliver("/core-upgrade-state " + nonce)
         old = receipt(nonce, "state")
+        core.require_context_agreement(args.transcript, old.get("nativeContext"))
         phase("qualify-bootstrap", nonce)
         require_reserve(deadline)
+        core.require_context_agreement(args.transcript, old.get("nativeContext"))
         deliver("/core-upgrade-ready " + nonce)
         receipt(nonce, "ready")
         phase("restart", nonce)

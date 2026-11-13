@@ -27,6 +27,45 @@ export function bootstrap(argv) {
 
 export const GUARD_VERSION = 'native-load-v1';
 
+// Metadata only. Compare the live branch against the exact physical transcript tail;
+// a stale writer must never be shut down merely because its process is idle.
+export function nativeContext(manager) {
+  const bytes = readFileSync(manager.getSessionFile());
+  const digest = ids => createHash('sha256').update(JSON.stringify(ids)).digest('hex');
+  const native = manager.getBranch();
+  const leaf = manager.getLeafId();
+  const nativeIds = native.map(entry => entry.id);
+  const workIds = native.filter(entry => ['message', 'compaction'].includes(entry.type)).map(entry => entry.id);
+  let disk = null;
+  let diskLeaf = null;
+  try {
+    const entries = bytes.toString('utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)).filter(entry => entry.type !== 'session');
+    const indexed = new Map();
+    for (const entry of entries) {
+      if (!entry.id || indexed.has(entry.id)) throw Error('ambiguous disk identity');
+      indexed.set(entry.id, entry);
+    }
+    diskLeaf = entries.at(-1)?.id ?? null;
+    const seen = new Set(); const branch = []; let current = diskLeaf;
+    while (current !== null) {
+      if (seen.has(current) || !indexed.has(current)) throw Error('ambiguous disk branch');
+      seen.add(current); const entry = indexed.get(current); branch.push(entry); current = entry.parentId;
+    }
+    disk = branch.reverse();
+  } catch {
+    disk = null; // Invalid raw ancestry is a refusal, never a shortened valid branch.
+  }
+  const branchIdDigest = digest(nativeIds);
+  const workIdDigest = digest(workIds);
+  const diskBranchIdDigest = disk && digest(disk.map(entry => entry.id));
+  const diskWorkIdDigest = disk && digest(disk.filter(entry => ['message', 'compaction'].includes(entry.type)).map(entry => entry.id));
+  const contiguous = native.every((entry, index) => entry.parentId === (index ? native[index - 1].id : null));
+  return { schema: 1, leaf, branchEntries: native.length, branchIdDigest, workEntries: workIds.length, workIdDigest,
+    diskLeaf, diskBranchIdDigest, diskWorkIdDigest, transcriptSha256: createHash('sha256').update(bytes).digest('hex'),
+    agrees: contiguous && new Set(nativeIds).size === nativeIds.length && leaf === diskLeaf &&
+      branchIdDigest === diskBranchIdDigest && workIdDigest === diskWorkIdDigest };
+}
+
 // Explicit command only: no event handlers, timer, model selection, or inference.
 export function qualify(request, actual, now = Date.now()) {
   if (!request || request.schema !== 1 || !/^[a-f0-9]{64}$/.test(request.nonce)) throw Error('invalid request');
@@ -50,6 +89,8 @@ function recordRefusal(directory, request, actual, observed, command, error) {
       'invalid request': 'invalid-request',
       'native state is not empty and idle': 'native-not-idle',
       'original native bootstrap has not been qualified': 'bootstrap-unqualified',
+      'native context disagrees with transcript': 'native-context-mismatch',
+      'native context changed since state': 'native-context-changed',
     };
     const reason = !observed ? 'native-observation-unavailable' : (Object.hasOwn(reasons, error.message) ? reasons[error.message] : (mismatch ? 'identity-mismatch' : 'internal-error'));
     const identity = Object.fromEntries(keys.map(key => [key, actual[key] ?? null]));
@@ -57,7 +98,8 @@ function recordRefusal(directory, request, actual, observed, command, error) {
     const staging = `${receipt}.${randomBytes(32).toString('hex')}`;
     writeFileSync(staging, JSON.stringify({ nonce: request.nonce, command, reason, identityMismatchKey: mismatch,
       actual: { ...identity, idle: actual.idle ?? null, pending: actual.pending ?? null,
-        editorBytes: typeof actual.editor === 'string' ? Buffer.byteLength(actual.editor, 'utf8') : null } }) + '\n', { mode: 0o600, flag: 'wx' });
+        editorBytes: typeof actual.editor === 'string' ? Buffer.byteLength(actual.editor, 'utf8') : null,
+        nativeContext: actual.nativeContext ?? null } }) + '\n', { mode: 0o600, flag: 'wx' });
     renameSync(staging, receipt);
     return true;
   } catch { return false; }
@@ -86,13 +128,19 @@ export default function (pi) {
           editor: ctx.hasUI ? ctx.ui.getEditorText() : null, role: process.env.PI_ROLE_RESOLVED };
         observed = true;
         qualify(request, actual);
+        actual.nativeContext = nativeContext(ctx.sessionManager);
+        if (!actual.nativeContext.agrees) throw Error('native context disagrees with transcript');
         const nativeBootstrap = bootstrap(process.argv);
         if (command === 'core-upgrade-ready' && (!nativeBootstrap.qualified || request.expectedBootstrapHash !== nativeBootstrap.hash)) {
           throw Error('original native bootstrap has not been qualified');
         }
+        if (command === 'core-upgrade-ready' && (!request.expectedNativeContext ||
+            Object.entries(actual.nativeContext).some(([key, value]) => request.expectedNativeContext[key] !== value))) {
+          throw Error('native context changed since state');
+        }
         const receipt = join(directory, `${args}.${command === 'core-upgrade-ready' ? 'ready' : 'state'}.json`);
         const staging = `${receipt}.${process.pid}`;
-        writeFileSync(staging, JSON.stringify({ ...request, nativeBootstrap, readyAt: Date.now(), idle: true, pending: false, editorBytes: 0 }) + '\n', { mode: 0o600, flag: 'wx' });
+        writeFileSync(staging, JSON.stringify({ ...request, nativeBootstrap, nativeContext: actual.nativeContext, readyAt: Date.now(), idle: true, pending: false, editorBytes: 0 }) + '\n', { mode: 0o600, flag: 'wx' });
         renameSync(staging, receipt);
         // No await between native attestation, receipt, and graceful shutdown flag.
         if (command === 'core-upgrade-ready') ctx.shutdown();
