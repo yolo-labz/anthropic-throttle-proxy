@@ -5611,6 +5611,7 @@ async def _finalize(
             eof=observed.get("eof"),
             stream_error=observed.get("error"),
             via=observed.get("via", attempt.context.get("via", "unknown")),
+            elapsed_ms=int(duration * 1000),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
