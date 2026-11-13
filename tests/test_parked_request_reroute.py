@@ -24,14 +24,6 @@ from anthropic_throttle_proxy import session_affinity as sa
 pool = _seats.pool  # two accounts A/B, real handler, recording upstream
 
 
-@pytest.fixture(autouse=True)
-def _fresh_sibling_verdicts():
-    """The 1 s sibling-scan memo is process state; never carry it across tests."""
-    proxy._parked_sibling_verdicts.clear()
-    yield
-    proxy._parked_sibling_verdicts.clear()
-
-
 async def _park_on_a(pool):
     """A's only slot is busy upstream, B is closed, X queues on A."""
     lim_a = await _open_seat(pool, "A", live=1)

@@ -89,6 +89,14 @@ def _isolate_retry_probe_gates():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_parked_sibling_verdicts():
+    """The 1 s parked-request sibling-scan memo is process state (PR #76)."""
+    proxy._parked_sibling_verdicts.clear()
+    yield
+    proxy._parked_sibling_verdicts.clear()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_retry_after_state_file(monkeypatch, tmp_path):
     """Never let the suite read or write the operator's live state file.
 
