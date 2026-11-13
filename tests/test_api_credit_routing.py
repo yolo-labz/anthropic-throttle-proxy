@@ -242,7 +242,10 @@ def test_unpriced_model_refused(funded, logs):
     assert logs == ["api-key-candidate refused reason=unpriced-model"]
 
 
-async def test_health_reports_ceiling_and_window_spend(funded):
+async def test_health_reports_ceiling_and_window_spend(funded, monkeypatch):
+    # health() reads process state the gateway seeds at import; an earlier test
+    # in the full suite can leave it without this key (CI run 351 KeyError).
+    monkeypatch.setitem(proxy.state, "upstream_auth_ok", True)
     spend(2.5)
     body = json.loads((await proxy.health(None)).body)["api_key"]
     assert body["usd_ceiling"] == 10.0
