@@ -68,6 +68,7 @@ from . import limiter as _limiter
 from . import model_retry as _model_retry
 from . import pacing as _pacing
 from . import session_affinity as _session_affinity
+from . import summary_breaker as _summary_breaker
 from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
 from .capability import attach_capability, record_loaded_module
@@ -5612,6 +5613,7 @@ async def _finalize(
             stream_error=observed.get("error"),
             via=observed.get("via", attempt.context.get("via", "unknown")),
         )
+        _summary_breaker.settle(request, final_status, duration)
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
     safe_path = _bounded_error_field(path, 256)
@@ -7117,6 +7119,10 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if early_response is not None:
         return early_response
     if request.method == "POST" and MESSAGES_SUBPATH in path:
+        # Before any queue, limiter or upstream work: a refused summary costs nothing.
+        early_response = _summary_breaker.gate(request, body, model)
+        if early_response is not None:
+            return early_response
         _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
     max_wait, wait_deadline = _queue_wait_budget(request, handler_start, body)

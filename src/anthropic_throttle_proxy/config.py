@@ -516,6 +516,24 @@ _FIVE_HOUR_RAW = os.environ.get("THROTTLE_5H_SOURCE", "off").strip().lower()
 FIVE_HOUR_SOURCE = _FIVE_HOUR_RAW if _FIVE_HOUR_RAW in ("off", "observe", "enforce") else "off"
 # Per-request quota ledger (usage_ledger.py): off|observe. Measurement only; read per call.
 USAGE_LEDGER_MODE = os.environ.get("THROTTLE_USAGE_LEDGER", "off")
+# pi summary stop-loss (summary_breaker.py): off|observe|enforce; unknown values mean off.
+# A session whose compaction summary the client cut (499) after MIN_S of upstream time
+# gets a local 400 for its summaries until TTL_S passes. Bounds clamp nan/inf too.
+_SUMMARY_BREAKER_RAW = os.environ.get("THROTTLE_SUMMARY_BREAKER", "enforce").strip().lower()
+SUMMARY_BREAKER_MODE = (
+    _SUMMARY_BREAKER_RAW if _SUMMARY_BREAKER_RAW in ("off", "observe", "enforce") else "off"
+)
+SUMMARY_BREAKER_MIN_S = max(
+    1.0, min(3600.0, float(os.environ.get("THROTTLE_SUMMARY_BREAKER_MIN_S", "280")))
+)
+SUMMARY_BREAKER_TTL_S = max(
+    60.0, min(21600.0, float(os.environ.get("THROTTLE_SUMMARY_BREAKER_TTL_S", "1800")))
+)
+SUMMARY_BREAKER_MAX_SESSIONS = max(
+    1, int(os.environ.get("THROTTLE_SUMMARY_BREAKER_MAX_SESSIONS", "4096"))
+)
+# Stamped (with MARKER_HEADER) on the 400 the summary breaker generates.
+SUMMARY_BREAKER_HEADER = "x-anthropic-throttle-summary-breaker"
 # Session->account affinity (session_affinity.py): on|off kill switch. A session stays on
 # the account it started on; the pool/pacing policy only places NEW sessions.
 SESSION_AFFINITY = (
