@@ -6,7 +6,7 @@
 > tracked in [UI-QA-FINAL-2026-10-07.md](UI-QA-FINAL-2026-10-07.md), not inferred
 > from the old pending #321 footnote. #321 is already MERGED `de88b981`.
 
-Seat: `thr-ui-browser-qa`, w1P:pW. Generator: OpenAI GPT-6.1 Sol.
+Seat: `thr-ui-browser-qa`, w1P:pW.
 Coordinator: w1P:pG. Isolated branch: `319-ui-browser-qa`.
 
 ## Scope and status

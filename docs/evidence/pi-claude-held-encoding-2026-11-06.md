@@ -46,7 +46,7 @@ nested subprocess imported that checkout and failed on a missing newer limiter
 function. A dedicated `uv sync --locked --offline` environment fixes the import
 provenance; no test was skipped or assertion weakened.
 
-Generator: OpenAI. A bounded public GLM advisory review could not start because
+A bounded public GLM advisory review could not start because
 `pi-zai-token` failed credential resolution. No approval is claimed.
 
 ## Reproduction

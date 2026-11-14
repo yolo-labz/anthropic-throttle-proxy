@@ -1,6 +1,6 @@
 # Throttler static analysis — 07/10/2026
 
-Generator family: **openai**. Assigned branch: `314-static-analysis`.
+Assigned branch: `314-static-analysis`.
 Source-only integration slice; **no merge or runtime activation claimed**.
 Coordination contract: Throttler plan of 07/10/2026; canonical Sonar runbook and
 `MS-RESEARCH-metrics-oracle-2026-10-06`. Raw receipts: [`static-analysis-314/`](static-analysis-314/).
