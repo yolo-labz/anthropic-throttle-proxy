@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
+import uuid
 
 import pytest
 import test_seat_capacity_acceptance as _seats
@@ -103,17 +105,15 @@ async def test_the_move_follows_the_pin_and_logs_why(pool, lines) -> None:
 
 
 async def test_nothing_moves_when_the_sibling_is_closed_too(pool, lines) -> None:
+    """No sibling can take it: it is ended (terminal below), never moved or sent."""
     lim_a, lim_b, busy, parked = await _park_on_a(pool)
     await _close_a(pool, lim_b, b_reopens=False)
-    await asyncio.sleep(2.5)  # two leave polls
-    assert not parked.done()
-    assert lim_a.queued_total == 1
+    status, body = await asyncio.wait_for(parked, 5)
+    assert status == 429 and b"closed for" in body
     assert not any(line.startswith("parked-reroute ") for line in lines)
-    parked.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await parked
     await _drain(pool, busy, lim_a, lim_b)
     assert pool.upstream.count.get("B", 0) == 0
+    assert [tag for _seat, tag in pool.upstream.order].count("x") == 0
 
 
 async def test_a_request_already_upstream_is_never_sent_twice(pool) -> None:
@@ -126,7 +126,9 @@ async def test_a_request_already_upstream_is_never_sent_twice(pool) -> None:
     assert ("A", "busy") in pool.upstream.order
 
 
-async def test_a_single_account_setup_waits_as_before(pool, monkeypatch, lines) -> None:
+async def test_a_single_account_setup_is_ended_like_a_new_arrival(pool, monkeypatch, lines) -> None:
+    """No sibling exists, so there is nothing to move to: the parked request is
+    ended with the answer a new arrival gets (it was held forever before)."""
     lim_a = await _open_seat(pool, "A", live=1)
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{pool.key_files['A']}")
     accounts._cache.clear()
@@ -136,13 +138,11 @@ async def test_a_single_account_setup_waits_as_before(pool, monkeypatch, lines) 
     await _wait_for_limiter_queued(lim_a, 1)
     lim_a.note_retry_after(10 * 3600)
     assert proxy._parked_closed_for(pool.bids["A"], "", model="", max_tokens=None) is None
-    await asyncio.sleep(1.5)
-    assert not parked.done() and lim_a.queued_total == 1
-    parked.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await parked
+    status, _body = await asyncio.wait_for(parked, 5)
+    assert status == 429
     await _drain(pool, busy, lim_a)
     assert not any(line.startswith("parked-reroute ") for line in lines)
+    assert any(line.startswith("parked-terminal ") for line in lines)
 
 
 def test_api_key_and_off_routing_never_match(pool, monkeypatch) -> None:
@@ -261,3 +261,96 @@ async def test_leaving_with_the_probe_frees_it_for_the_next_cycle(pool) -> None:
     assert limiter.try_begin_retry_probe(a) is True  # no wait for a stale lease
     limiter.finish_retry_probe(a, success=True)
     await _drain(pool, busy, lim_a, lim_b)
+
+
+# --- parked-no-sibling-terminal (13/11/2026): ended when no sibling can take it ---
+
+_INCIDENT_RETRY_AFTER_S = 171837  # 11/11 18:15:56: the 429 that parked a Pi turn 38.6 h
+
+
+async def _post_raw(pool, tag: str, **body_extra):
+    """One request with the real headers; returns (status, headers, payload)."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer client-{tag}-{uuid.uuid4().hex}",
+        "X-Test-Tag": tag,
+    }
+    headers.update(body_extra.pop("headers", {}))
+    body = {**_seats._BODY, "metadata": {"user_id": f"session-{tag}"}, **body_extra}
+    response = await asyncio.wait_for(
+        pool.client.post("/v1/messages", headers=headers, json=body), 8
+    )
+    payload = await asyncio.wait_for(response.read(), 8)
+    return response.status, response.headers, payload
+
+
+async def _park_no_sibling(pool, **extra):
+    """A busy, B closed for good, X parks on A; then A gets the incident window."""
+    lim_a = await _open_seat(pool, "A", live=1)
+    lim_b = await _open_seat(pool, "B", live=1)
+    lim_b.note_retry_after(_INCIDENT_RETRY_AFTER_S + 60)
+    busy = asyncio.create_task(_post(pool.client, tag="busy", hold=True))
+    await pool.upstream.wait_arrived("busy")
+    parked = asyncio.create_task(_post_raw(pool, "x", **extra))
+    await _wait_for_limiter_queued(lim_a, 1)
+    lim_a.note_retry_after(_INCIDENT_RETRY_AFTER_S)
+    return lim_a, lim_b, busy, parked
+
+
+async def test_parked_with_no_sibling_gets_the_terminal_within_one_poll(pool, lines) -> None:
+    lim_a, lim_b, busy, parked = await _park_no_sibling(pool)
+    started = time.monotonic()
+    status, headers, body = await asyncio.wait_for(parked, 6)
+    assert time.monotonic() - started < 2.5  # one 1 s poll, not 38.6 h
+    assert status == 429
+    assert int(headers["retry-after"]) >= _INCIDENT_RETRY_AFTER_S - 5  # honest window
+    assert f"{int(headers['retry-after'])} s".encode() in body
+    assert any(
+        line.startswith("parked-terminal ")
+        and "reason=no_sibling_account_closed_past_hold_bound" in line
+        for line in lines
+    )
+    assert not any(line.startswith("parked-reroute ") for line in lines)
+    assert pool.upstream.count.get("B", 0) == 0  # never sent anywhere
+    await _drain(pool, busy, lim_a, lim_b)  # in-flight / queued back to zero
+
+
+async def test_a_streaming_hold_ends_with_the_terminal_sse_error(pool) -> None:
+    """The incident shape: a committed SSE hold (pings) must end with an error event."""
+    lim_a, lim_b, busy, parked = await _park_no_sibling(
+        pool, stream=True, headers={"X-Anthropic-Throttle-Client-Patience-Ms": "600000"}
+    )
+    status, _headers, body = await asyncio.wait_for(parked, 6)
+    assert status == 200  # already committed; the status can no longer change
+    assert b"event: error" in body and b"closed for" in body and b"will not help" in body
+    await _drain(pool, busy, lim_a, lim_b)
+
+
+async def test_priority_lane_is_exempt_from_the_terminal(pool) -> None:
+    lim_a, lim_b, busy, parked = await _park_no_sibling(pool, max_tokens=16)
+    await asyncio.sleep(2.5)  # two polls
+    assert not parked.done() and lim_a.queued_total == 1
+    parked.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await parked
+    await _drain(pool, busy, lim_a, lim_b)
+
+
+async def test_a_sibling_still_moves_it_instead_of_ending_it(pool, lines) -> None:
+    lim_a, lim_b, busy, parked = await _park_no_sibling(pool)
+    lim_b._retry_after_until = 0.0  # B reopens inside the poll
+    status, headers, body = await asyncio.wait_for(parked, 6)
+    assert status == 200 and json.loads(body)["seat"] == "B"
+    assert not any(line.startswith("parked-terminal ") for line in lines)
+    await _drain(pool, busy, lim_a, lim_b)
+
+
+async def test_a_short_window_is_not_ended_even_with_no_sibling(pool) -> None:
+    lim_a = await _open_seat(pool, "A", live=1)
+    limiter_b = await _open_seat(pool, "B", live=1)
+    limiter_b.note_retry_after(30)
+    assert proxy._parked_terminal_for(lim_a, pool.bids["A"], "v1/messages", "m") is None
+    lim_a.note_retry_after(config.MAX_HOLD_RETRY_AFTER_S / 2)
+    assert proxy._parked_terminal_for(lim_a, pool.bids["A"], "v1/messages", "m") is None
+    lim_a.note_retry_after(config.MAX_HOLD_RETRY_AFTER_S * 4)
+    assert proxy._parked_terminal_for(lim_a, pool.bids["A"], "v1/messages", "m") is not None

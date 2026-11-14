@@ -2520,6 +2520,46 @@ def _parked_sibling_open(
     return False
 
 
+def _parked_terminal_for(
+    limiter: FairBearerLimiter, bid: str, path: str, model: str
+) -> float | None:
+    """Seconds ``bid`` stays closed when a parked request must be ended, else None.
+
+    The test a NEW arrival already meets (``_retry_after_fast_fail_response``):
+    the window outlasts MAX_HOLD_RETRY_AFTER_S. Parked entries never met it, so
+    one queued just before a 171,837 s Retry-After sat 38.6 h behind SSE pings
+    (13/11/2026). Callers ask only after ``_parked_closed_for`` found no sibling.
+    An OAuth entitlement refusal never arms a window (``_aimd_skip_entitlement_
+    refusal``), so that shape is exempt by construction.
+    """
+    closed = max(
+        _retry_after_remaining_for_path(limiter, path), _model_retry.scoped_remaining(bid, model)
+    )
+    return closed if closed > config.MAX_HOLD_RETRY_AFTER_S else None
+
+
+def _parked_terminal_response(bid: str, cid: str, path: str, closed: float) -> web.Response:
+    """The 429 a parked request is ended with; a committed SSE hold carries its text.
+
+    Names the account window honestly (seconds, from now) and says retrying THIS
+    account earlier cannot help, since the SSE error has no header to say so.
+    """
+    retry_after_s = max(1, math.ceil(closed))
+    log(
+        f"parked-terminal bid={bid} cid={cid} path=/{path} remaining={retry_after_s} "
+        f"max_hold={config.MAX_HOLD_RETRY_AFTER_S} reason=no_sibling_account_closed_past_hold_bound"
+    )
+    return web.Response(
+        status=429,
+        headers={"retry-after": str(retry_after_s)},
+        text=(
+            f"throttle-proxy: this account is closed for {retry_after_s} s (upstream Retry-After) "
+            "and no other account can take the request; ending it instead of holding it. "
+            f"Retrying this account before {retry_after_s} s will not help\n"
+        ),
+    )
+
+
 def _bearer_would_queue(bid: str) -> bool:
     """A new normal-lane request on ``bid`` would park instead of dispatching now."""
     lim = config.bearer_limiters.get(bid)
@@ -6930,13 +6970,23 @@ async def _run_slot(
         )
     wait_mark = _QueueWaitMark(patient=_patience_bound(request.headers) is not None)
     leave_when = None
-    if parked_left is not None and bid not in parked_left:
+    verdict: dict[str, float | str] = {}
+    if parked_left is not None:
 
         def leave_when() -> bool:
-            return (
-                _parked_closed_for(bid, incoming_bid, model=model, max_tokens=req_max_tokens)
-                is not None
-            )
+            if bid not in parked_left:
+                moved = _parked_closed_for(
+                    bid, incoming_bid, model=model, max_tokens=req_max_tokens
+                )
+                if moved is not None:
+                    verdict.update(kind="move")
+                    return True
+            # No sibling would take it: end it as a new arrival would be (priority exempt).
+            ended = None if is_priority else _parked_terminal_for(limiter, bid, path, model)
+            if ended is None:
+                return False
+            verdict.update(kind="terminal", closed=ended)
+            return True
 
     try:
         async with limiter.slot(
@@ -7063,6 +7113,13 @@ async def _run_slot(
         counters.dequeue()
         _finish_retry_probe(probe_lease, success=False)
         assert parked_left is not None
+        if verdict.get("kind") == "terminal":
+            return (
+                bid,
+                headers,
+                _parked_terminal_response(bid, cid, path, float(verdict["closed"])),
+                False,
+            )
         parked_left.add(bid)
         closed = _parked_closed_for(bid, incoming_bid, model=model, max_tokens=req_max_tokens)
         log(
