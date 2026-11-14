@@ -31,12 +31,10 @@ def main():
         raise RuntimeError(f"notebook still requires an application login: {notebook.status_code}")
     tracking = os.environ["MLFLOW_TRACKING_URI"]
     experiments = requests.post(
-        tracking + "/api/2.0/mlflow/experiments/search", json={}, timeout=15
+        tracking + "/api/2.0/mlflow/experiments/search", json={"max_results": 1}, timeout=15
     )
     if experiments.status_code != 200 or "experiments" not in experiments.json():
-        raise RuntimeError(
-            f"tracking still requires an application login: {experiments.status_code}"
-        )
+        raise RuntimeError(f"tracking access check failed: {experiments.status_code}")
     with desktop_client() as client:
         result = client.submit(cpu_interval, list(range(100)), pure=False).result(timeout=45)
     if result["worker_host"] != "desktop" or not result["lower"] < result["mean"] < result["upper"]:
