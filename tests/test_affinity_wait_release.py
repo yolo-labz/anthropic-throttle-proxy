@@ -115,3 +115,74 @@ def test_strict_gate_and_retry_after_still_release_on_a_short_wait(
         }
     assert _route(pool, body) == other
     assert sa.stats()["migrated"] == 1
+
+
+def test_pin_is_not_kept_for_a_request_admission_will_refuse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1 (p2S adversarial read of PR #56): judge the wait against THIS request's budget.
+
+    The configured bound admits a 20 s wait, but a request that reaches this tier
+    with 5 s of inherited budget is refused pre-queue on the pinned account, and a
+    refused request is answered 503 with no re-route: the pin must not be kept.
+    """
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    lim = _limiter.FairBearerLimiter(1, "fair")
+    lim.max_concurrent = 1
+    lim.inflight = 1  # the pinned account is full, so a new request queues
+    lim._samples.extend([20.0, 20.0, 20.0])  # evidenced: about 20 s per request
+    monkeypatch.setitem(config.bearer_limiters, "pinnedbid", lim)
+    configured = lim.drain_estimate()
+    assert configured.evidenced and not configured.rejects and configured.wait_s <= 60.0
+    assert lim.drain_estimate(5.0).rejects
+    assert not proxy._pinned_wait_worth_a_hop("pinnedbid")  # the configured bound: keep
+    assert proxy._pinned_wait_worth_a_hop("pinnedbid", max_wait=5.0)  # a 5 s budget: hop
+    assert not proxy._pinned_wait_worth_a_hop("pinnedbid", max_wait=30.0)
+
+
+def test_the_routing_seam_hops_on_a_tight_request_budget(
+    pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The budget reaches the pin verdict through ``_route_account_if_enabled``."""
+    body, first, other, _lims = _full_pinned(pool, monkeypatch, samples=[20.0] * 3)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+    assert _route(pool, body) == first  # no budget: today's PR #56 behaviour
+    sa.begin_request(body)
+    _bid, label = proxy._route_account_if_enabled(
+        {"authorization": "Bearer sk-ant-oat01-SIM-A"},
+        pool["A"],
+        method="POST",
+        path="v1/messages",
+        max_tokens=64,
+        wait_budget_s=5.0,
+    )
+    assert label == other
+    assert sa.stats()["migrated"] == 1
+
+
+def test_claim_route_reads_the_inherited_wait_budget_header(
+    pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_claim_route`` derives the budget from the request's own wait-budget header."""
+    from aiohttp.test_utils import make_mocked_request
+
+    body, first, other, _lims = _full_pinned(pool, monkeypatch, samples=[20.0] * 3)
+    monkeypatch.setattr(config, "QUEUE_MAX_WAIT_S", 30.0)
+
+    def claim(budget_ms: str | None) -> str:
+        headers = {} if budget_ms is None else {config.WAIT_BUDGET_HEADER: budget_ms}
+        request = make_mocked_request("POST", "/v1/messages", headers=headers)
+        sa.begin_request(body)
+        _bid, _base, _lease = proxy._claim_route(
+            request,
+            "v1/messages",
+            {"authorization": "Bearer sk-ant-oat01-SIM-A"},
+            pool["A"],
+            "",
+            64,
+            "direct",
+        )
+        return next(label for label, bid in pool.items() if bid == _bid)
+
+    assert claim(None) == first
+    assert claim("5000") == other

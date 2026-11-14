@@ -2358,6 +2358,7 @@ def _pinned_account(
     max_tokens: int | None,
     now: float,
     allow_retry_probe: bool,
+    wait_budget_s: float | None = None,
 ) -> dict[str, object] | None:
     """The account this session already runs on, while it is still routable (pure)."""
     return _pin_verdict(
@@ -2368,6 +2369,7 @@ def _pinned_account(
         max_tokens=max_tokens,
         now=now,
         allow_retry_probe=allow_retry_probe,
+        wait_budget_s=wait_budget_s,
     )[0]
 
 
@@ -2376,6 +2378,7 @@ def _pin_verdict(
     session_key: str | None,
     incoming_bid: str,
     *,
+    wait_budget_s: float | None = None,
     model: str,
     max_tokens: int | None,
     now: float,
@@ -2443,7 +2446,7 @@ def _pin_verdict(
     # And only on a LONG wait: at 20/20 on both accounts the pinned one frees a
     # slot within seconds, and 392 hops in 89 min re-wrote 19.9 M cache tokens
     # (33 % of all writes) to dodge a median 3.3 s wait (Throttler 11/11/2026).
-    if _pinned_wait_worth_a_hop(pinned_bid) and any(
+    if _pinned_wait_worth_a_hop(pinned_bid, max_wait=wait_budget_s) and any(
         acct is not pinned
         and isinstance(acct.get("token"), str)
         and strict_ok(acct)
@@ -2463,8 +2466,15 @@ def _bearer_would_queue(bid: str) -> bool:
     return lim.queued_total > 0 or busy >= lim.max_concurrent
 
 
-def _pinned_wait_worth_a_hop(bid: str, min_wait_s: float = 60.0) -> bool:
+def _pinned_wait_worth_a_hop(
+    bid: str, min_wait_s: float = 60.0, *, max_wait: float | None = None
+) -> bool:
     """``bid`` would queue a new request, and long enough to justify a cache rewrite.
+
+    ``max_wait`` is THIS request's own queue budget (``_effective_queue_max_wait``:
+    min of the knob and any inherited wait budget): admission refuses the arrival
+    against that, not against the configured bound, and a refused request is
+    answered 503 without a re-route. ``None`` keeps the configured bound.
 
     Only an EVIDENCED drain estimate at or under ``min_wait_s`` (about how long a
     client tolerates a silent request) keeps the session where it is, and only
@@ -2478,7 +2488,7 @@ def _pinned_wait_worth_a_hop(bid: str, min_wait_s: float = 60.0) -> bool:
     lim = config.bearer_limiters.get(bid)
     if lim is None:
         return True
-    estimate = lim.drain_estimate()
+    estimate = lim.drain_estimate(max_wait)
     return not estimate.evidenced or estimate.rejects or estimate.wait_s > min_wait_s
 
 
@@ -2494,6 +2504,7 @@ def _account_route_decision(
     allow_retry_probe: bool,
     session_key: str | None = None,
     pin_snapshot: list[dict[str, object]] | None = None,
+    wait_budget_s: float | None = None,
 ) -> tuple[dict[str, object] | None, bool]:
     """Return ``(credential rewrite, used_dead_fallback)`` for one message.
 
@@ -2520,6 +2531,7 @@ def _account_route_decision(
         max_tokens=max_tokens,
         now=now,
         allow_retry_probe=allow_retry_probe,
+        wait_budget_s=wait_budget_s,
     )
     if pinned is not None:
         return pinned, False
@@ -2636,6 +2648,7 @@ def _route_account_if_enabled(
     model: str = "",
     max_tokens: int | None = None,
     allow_retry_probe: bool = False,
+    wait_budget_s: float | None = None,
 ) -> tuple[str, str | None]:
     """Optionally rewrite upstream Authorization to a configured account.
 
@@ -2700,6 +2713,7 @@ def _route_account_if_enabled(
         allow_retry_probe=allow_retry_probe,
         session_key=session_key,
         pin_snapshot=routable,
+        wait_budget_s=wait_budget_s,
     )
     if selected is None:
         return incoming_bid, None
@@ -2714,6 +2728,7 @@ def _route_account_if_enabled(
             routable,
             session_key,
             incoming_bid,
+            wait_budget_s=wait_budget_s,
             model=model,
             max_tokens=max_tokens,
             now=now,
@@ -2747,6 +2762,7 @@ def _route_account_and_claim_retry_probe(
     path: str,
     model: str = "",
     max_tokens: int | None = None,
+    wait_budget_s: float | None = None,
 ) -> tuple[str, str | None, bool]:
     """Select an account and atomically claim its half-open message probe.
 
@@ -2761,6 +2777,7 @@ def _route_account_and_claim_retry_probe(
         model=model,
         max_tokens=max_tokens,
         allow_retry_probe=True,
+        wait_budget_s=wait_budget_s,
     )
     if method != "POST" or not _retry_after_blocks_path(path) or not bid:
         return bid, label, False
@@ -2782,6 +2799,7 @@ def _retry_after_reroute_headers(
     model: str,
     max_tokens: int | None,
     current_remaining: float,
+    wait_budget_s: float | None = None,
 ) -> tuple[str, str | None, dict[str, str]] | None:
     """Re-run account routing after a selected bearer has Retry-After state."""
     headers = dict(base_headers)
@@ -2792,6 +2810,7 @@ def _retry_after_reroute_headers(
         path=path,
         model=model,
         max_tokens=max_tokens,
+        wait_budget_s=wait_budget_s,
         # Cold-start probation must not disqualify the ESCAPE target. Every
         # FairBearerLimiter.__init__ arms require_retry_probe, so for a few
         # seconds after a restart no bearer has been probed yet; scoring with
@@ -2873,6 +2892,7 @@ def _try_retry_after_reroute(
         model,
         max_tokens,
         retry_after_remaining,
+        wait_budget_s=_effective_queue_max_wait(request.headers),
     )
     if rerouted is None:
         return None
@@ -5769,6 +5789,7 @@ def _reroute_from_base(
     bid, account_label, claimed = _route_account_and_claim_retry_probe(
         headers,
         incoming_bid,
+        wait_budget_s=_effective_queue_max_wait(request.headers),
         method=request.method,
         path=path,
         model=model,
@@ -6147,6 +6168,7 @@ def _claim_route(
         path=path,
         model=model,
         max_tokens=req_max_tokens,
+        wait_budget_s=_effective_queue_max_wait(request.headers),
     )
     # T003 route identity: record the SELECTED operator account label and this
     # attempt's exact configured target. Missing label is None (unknown) —
