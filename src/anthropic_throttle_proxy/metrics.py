@@ -26,6 +26,9 @@ __all__ = [
     "M_WEEKLY_BURN",
     "M_WEEKLY_BURN_ALERTS",
     "M_WEEKLY_PACING_DEFERS",
+    "M_POINTS_SETTLED",
+    "M_POINTS_CREDIT",
+    "M_POINTS_WOULD_DEFER",
     "M_COST",
     "M_DURATION",
     "M_INFLIGHT",
@@ -145,6 +148,24 @@ M_WEEKLY_BURN_ALERTS = Counter(
 M_WEEKLY_PACING_DEFERS = Counter(
     "anthropic_weekly_pacing_defers_total",
     "Non-priority requests refused by weekly pacing, by verdict.",
+    ["reason"],
+    registry=REGISTRY,
+)
+M_POINTS_SETTLED = Counter(
+    "anthropic_points_settled_total",
+    "Settled weekly-limit points debited in observe mode (100 = one account-week).",
+    ["model", "project"],
+    registry=REGISTRY,
+)
+M_POINTS_CREDIT = Gauge(
+    "anthropic_points_credit",
+    "Points bucket credit per account (negative = debt); observe mode only.",
+    ["account"],
+    registry=REGISTRY,
+)
+M_POINTS_WOULD_DEFER = Counter(
+    "anthropic_points_would_defer_total",
+    "Would-defer transitions of the points bucket in observe mode; nothing was refused.",
     ["reason"],
     registry=REGISTRY,
 )
