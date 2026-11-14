@@ -46,6 +46,7 @@ from .. import project_share as _project_share
 from .. import proxy as _proxy
 from ..limiter import FairBearerLimiter
 from . import auth as _auth
+from . import closure as _closure
 from . import runway as _runway
 from . import signals as _signals
 from .presentation import apply_display, apply_workload, attach_provider_capacity, capacity_summary
@@ -1028,6 +1029,8 @@ def _mark_binding_row(bound: dict, subscriptions: list[dict]) -> None:
     for row in subscriptions:
         if row.get("bearer_id") and row["bearer_id"] == bound["bearer_id"]:
             row["is_binding"] = True
+            bound["closed"] = row.get("closed")
+            bound["parked"] = row.get("parked")
             bound["subscription"] = row["id"]
             bound["sub"] = row.get("sub") or ""
             for meter in row.get("meters") or []:
@@ -1190,6 +1193,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
         bstate = cast(_BearerView, raw_state)
         lim = cast(FairBearerLimiter | None, _proxy.bearer_limiters.get(bid))
         unified = bstate.get("unified")
+        lim_snap = lim.snapshot() if lim is not None else None
         bearers.append(
             {
                 "bearer_id": bid,
@@ -1201,6 +1205,9 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
                 # `148806` in a column headed "retry-after" is a number the
                 # operator has to divide by 3600 mid-incident. It is 41h 20m.
                 "retry_after_in": _retry_after_text(bstate.get("last_ratelimit")),
+                # The limiter's Retry-After window outlives the header that set it:
+                # a 37 h-closed account read as "resets in 10h 56m" (13/11/2026).
+                "closed": _closure.closed_until(lim_snap, unified, now),
                 "unified": unified,
                 "unified_at": bstate.get("unified_at"),
                 # 5h reading frozen from before its own reset — render as
@@ -1219,7 +1226,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
                 # measured live 05/08/2026, the page offered the org-dead
                 # account as "takes traffic next" right after a restart.
                 "credential": _proxy._bearer_credential(bid) or None,
-                "limiter": lim.snapshot() if lim is not None else None,
+                "limiter": lim_snap,
             }
         )
     # Telemetry is collected regardless of display hiding (see above).
@@ -1270,6 +1277,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
     subscriptions = _fleet_ui_config.decorate(
         subscriptions, ui_cfg, native_meters=_fleet_ui_config.native_codex_meters()
     )["rows"]
+    _closure.annotate_rows(subscriptions, bearers)
     _attach_binding(status, subscriptions)
     knobs = _config.knob_snapshot()
     view = {
