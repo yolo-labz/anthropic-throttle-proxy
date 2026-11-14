@@ -1,0 +1,26 @@
+# Dependabot VERSION updates are off for this repo (open-pull-requests-limit: 0 on every ecosystem).
+# Why: GitHub is a pruning push mirror of Forgejo (pedro/anthropic-throttle-proxy, the merge of record); every PR
+# Dependabot opens here is closed unmerged and its branch deleted at the next mirror sync
+# (#394-#401), so no update ever landed. Vulnerability ALERTS and the dependency graph are
+# unaffected, and this file stays because the org gate (yolo-labz/.github
+# check-repo-settings.py) only asks that an updater config exists.
+# Updates, if any, come from the central Renovate runner on Forgejo (FORGEJO-DEPS, 13/11/2026).
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    open-pull-requests-limit: 0
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    open-pull-requests-limit: 0
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]

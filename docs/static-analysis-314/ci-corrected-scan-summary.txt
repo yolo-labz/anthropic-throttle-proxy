@@ -1,0 +1,6 @@
+scan	Pre Harden runner	2026-10-07T19:35:10.3426283Z ✅ Checksum verification passed. checksum=e38de61e1afd98dd339bb9acce4996183875d482be1638fb198ab02b3e25bbef
+scan	Run tests with coverage and validate source/report receipt	2026-10-07T19:35:20.8143953Z All checks passed!
+scan	Run tests with coverage and validate source/report receipt	2026-10-07T19:36:56.3889809Z TOTAL                                                      9091   1007    89%
+scan	Run tests with coverage and validate source/report receipt	2026-10-07T19:36:56.6301243Z Required test coverage of 80% reached. Total coverage: 88.92%
+scan	Run tests with coverage and validate source/report receipt	2026-10-07T19:36:56.6302072Z ================ 2074 passed, 154 warnings in 94.07s (0:01:34) =================
+scan	Run tests with coverage and validate source/report receipt	2026-10-07T19:36:56.9888650Z Sonar report preflight OK: 259bd498485b3b4eeb85758dc25c956d84803943 {'python_files': 42, 'lines_valid': 9091, 'lines_covered': 8084}

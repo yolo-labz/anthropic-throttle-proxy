@@ -1,7 +1,7 @@
 # Provider routing and health — 08/10/2026
 
 Scope: fresh `2715-provider-routing-audit`, based on merged #331
-`9b2db9529b514620ba15a1cb84d67164884663a0`. Generator family: OpenAI.
+`9b2db9529b514620ba15a1cb84d67164884663a0`.
 2714 owns UI/catalogue projection; root owns Nix consumption and activation.
 
 Hypothesis: invalid upstream configuration can retain a healthy egress verdict,

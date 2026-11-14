@@ -16,7 +16,8 @@ from anthropic_throttle_proxy import config, proxy
 
 
 @pytest.fixture
-def owns_key(monkeypatch, tmp_path):
+def owns_key(monkeypatch, tmp_path, funded_api_metadata):
+    funded_api_metadata("kimi-k2.6")
     monkeypatch.setattr(config, "AUTH_PROBE_MODEL", "kimi-k2.6")
     key = tmp_path / "key"
     key.write_text("sk-test-abc\n")

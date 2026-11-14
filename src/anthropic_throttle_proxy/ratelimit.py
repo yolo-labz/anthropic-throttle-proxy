@@ -9,11 +9,13 @@ test-suite can patch it on the ``proxy`` namespace.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json as _json
 import math
 import re
 import time
+import zlib
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -111,6 +113,9 @@ _RATELIMIT_HEADER_KEYS = (
     "anthropic-ratelimit-unified-7d-status",
     "anthropic-ratelimit-unified-7d-utilization",
     "anthropic-ratelimit-unified-7d-reset",
+    "anthropic-ratelimit-unified-7d_oi-status",
+    "anthropic-ratelimit-unified-7d_oi-utilization",
+    "anthropic-ratelimit-unified-7d_oi-reset",
 )
 
 _ZAI_QUOTA_CODES = {"1308", "1316", "1317"}
@@ -332,10 +337,9 @@ def _publish_ratelimit_gauges(bid: str, meta: Mapping[str, str]) -> None:
         raw = meta.get(key)
         if raw is None:
             continue
-        try:
+        # A malformed header keeps the gauge's last good reading.
+        with contextlib.suppress(TypeError, ValueError):
             gauge.labels(bearer=bid).set(float(raw))
-        except (TypeError, ValueError):
-            pass
 
 
 def _parse_unified(meta: Mapping[str, str] | None) -> dict[str, object]:
@@ -373,6 +377,9 @@ def _parse_unified(meta: Mapping[str, str] | None) -> dict[str, object]:
         "util_7d": _f("anthropic-ratelimit-unified-7d-utilization"),
         "status_7d": meta.get("anthropic-ratelimit-unified-7d-status"),
         "reset_7d": _i("anthropic-ratelimit-unified-7d-reset"),
+        "status_7d_oi": meta.get("anthropic-ratelimit-unified-7d_oi-status"),
+        "util_7d_oi": _f("anthropic-ratelimit-unified-7d_oi-utilization"),
+        "reset_7d_oi": _i("anthropic-ratelimit-unified-7d_oi-reset"),
     }
 
 
@@ -479,15 +486,46 @@ def _safe_load_usage(raw: bytes) -> dict | None:
     return obj if isinstance(obj, dict) else None
 
 
+# ponytail: bound the inflated capture; usage beyond 16 MiB of decoded SSE is
+# lost exactly like a stream that overflows the 1 MiB raw capture today.
+_INFLATE_MAX_BYTES = 16 * 1024 * 1024
+
+
+def inflate_capture(buf: bytes) -> bytes:
+    """Decode a gzip/deflate captured body, tolerating a truncated stream.
+
+    The forwarders pass the upstream body through byte-for-byte
+    (``auto_decompress=False``) so the client gets Anthropic's own encoding,
+    and Anthropic answers ``Content-Encoding: gzip`` to any client that
+    accepts it. The capture is therefore compressed, and a regex over it finds
+    no ``usage`` block: every gzip-encoded 200 counted zero tokens with no
+    error (measured 02/11/2026: ~4,330 served 200s, token counter frozen).
+    ``decompressobj`` rather than ``gzip.decompress`` because the capture is a
+    1 MiB HEAD of the stream and may end mid-member. Plain input is returned
+    unchanged; an undecodable one too, so a caller can always parse it.
+    """
+    if buf[:2] == b"\x1f\x8b":
+        wbits = 31  # gzip
+    elif buf[:1] == b"\x78":
+        wbits = 15  # zlib/deflate
+    else:
+        return buf
+    try:
+        return zlib.decompressobj(wbits).decompress(buf, _INFLATE_MAX_BYTES)
+    except zlib.error:
+        return buf
+
+
 def _parse_sse_usage(buf: bytes) -> dict[str, int]:
     """Extract aggregated usage counts from a buffered SSE response.
 
     Returns a dict with input/output/cache_read/cache_creation token counts,
     summed across message_start + message_delta usage blocks (Anthropic emits
-    both). Malformed usage fragments are skipped.
+    both). Malformed usage fragments are skipped. A gzip/deflate capture is
+    decoded first (see ``inflate_capture``).
     """
     totals = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
-    for match in _USAGE_RE.finditer(buf):
+    for match in _USAGE_RE.finditer(inflate_capture(buf)):
         usage_obj = _safe_load_usage(match.group(0))
         if usage_obj is None:
             continue

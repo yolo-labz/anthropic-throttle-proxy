@@ -26,7 +26,7 @@ import json
 import pytest
 from aiohttp.test_utils import make_mocked_request
 
-from anthropic_throttle_proxy import config, proxy
+from anthropic_throttle_proxy import config, forwarding, proxy, routing
 
 SENTINEL = "local-lane-via-8765"
 
@@ -243,3 +243,68 @@ def test_fleet_reserve_ignores_the_weekly_window(monkeypatch):
         {"unified": {"util_5h": 0.20, "reset_5h": 4_000_000_000, "util_7d": 0.99}},
     )
     assert proxy._fleet_budget_response(_req({"x-api-key": SENTINEL})) is None
+
+
+# --- 09/11/2026: the identity block is OAuth-only -------------------------
+# The marker is an entitlement requirement for subscription bearers, and a
+# BILLING reclassification for metered ones: measured on the proton Ultra
+# account, the byte-identical request returns 200 without the marker and
+# `400 invalid_request_error: Your credit balance is too low` with it, while
+# the org holds $200 of API credits. So a sentinel-lane request keeps its
+# unmarked body and each upstream attempt picks the shape its credential needs.
+
+
+def test_api_key_attempt_sends_unmarked_body(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    request = _req({"x-api-key": SENTINEL})
+    marked = proxy._inject_lane_system_prompt(request, _pi_body())
+    assert marked != _pi_body()  # OAuth shape (marker + fold)
+    sent = routing.lane_body_for_attempt(request, marked, {"x-api-key": "sk-ant-api03-x"})
+    assert sent == _pi_body()  # metered shape: pi's own system prompt intact
+
+
+def test_oauth_attempt_keeps_marked_body(monkeypatch):
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    request = _req({"x-api-key": SENTINEL})
+    marked = proxy._inject_lane_system_prompt(request, _pi_body())
+    sent = routing.lane_body_for_attempt(request, marked, {"Authorization": "Bearer oauth"})
+    assert sent == marked
+
+
+def test_reroute_back_to_api_key_restores_unmarked_body(monkeypatch):
+    """The router can switch credentials between attempts; the swap must be
+    re-evaluated per attempt, not pinned with the first decision."""
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    request = _req({"x-api-key": SENTINEL})
+    marked = proxy._inject_lane_system_prompt(request, _pi_body())
+    assert routing.lane_body_for_attempt(request, marked, {"Authorization": "Bearer o"}) == marked
+    assert routing.lane_body_for_attempt(request, marked, {"X-API-Key": "sk-ant-us"}) == _pi_body()
+
+
+def test_non_lane_request_has_no_unmarked_body():
+    request = _req({"Authorization": "Bearer oauth-token"})
+    body = _cc_body()
+    assert proxy._inject_lane_system_prompt(request, body) is body
+    assert routing.lane_body_for_attempt(request, body, {"x-api-key": "sk-ant-us"}) is body
+
+
+def test_both_transports_share_attempt_body_reconciliation(monkeypatch):
+    """The SSE keepalive-hold builds its own request, so a streaming pane needs
+    the same per-attempt shape swap as the direct transport.
+
+    Measured 09/11/2026: the identical opus body answered 200 with
+    ``stream:false`` and 400 "credit balance is too low" with ``stream:true``,
+    because only the direct transport reconciled the body for the metered key.
+    """
+    monkeypatch.setattr(config, "LOCAL_API_KEY_SENTINEL", SENTINEL)
+    request = _req({"x-api-key": SENTINEL})
+    marked = proxy._inject_lane_system_prompt(request, _pi_body())
+    headers = {"x-api-key": "sk-ant-api03-x", "Content-Length": str(len(marked))}
+    body, sent = forwarding.reconcile_attempt_body(request, marked, headers)
+    assert body == _pi_body()
+    assert sent["Content-Length"] == str(len(_pi_body()))
+    oauth_body, oauth_headers = forwarding.reconcile_attempt_body(
+        request, marked, {"Authorization": "Bearer oauth"}
+    )
+    assert oauth_body == marked
+    assert oauth_headers == {"Authorization": "Bearer oauth"}

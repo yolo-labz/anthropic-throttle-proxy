@@ -741,8 +741,9 @@ def test_account_routing_selects_least_loaded_and_rewrites_authorization(
 
 
 def test_api_key_routing_prefer_rewrites_to_metered_key(
-    isolated_account_routing, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    isolated_account_routing, funded_api_metadata, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
+    funded_api_metadata("claude-sonnet-4-6")
     key_file = tmp_path / "api-key"
     key_file.write_text("sk-ant-api03-SIM-KEY\n")
     monkeypatch.setattr(config, "API_KEY_FILE", str(key_file))
@@ -753,7 +754,7 @@ def test_api_key_routing_prefer_rewrites_to_metered_key(
     headers = {"Authorization": "Bearer sk-ant-oat01-SIM-A", "X-Test": "1"}
 
     selected, label = proxy._route_account_if_enabled(
-        headers, "oauth-a", method="POST", path="v1/messages"
+        headers, "oauth-a", method="POST", path="v1/messages", model="claude-sonnet-4-6"
     )
 
     assert selected == proxy._api_key_bid("sk-ant-api03-SIM-KEY")
@@ -2217,6 +2218,8 @@ async def test_retry_after_state_restored_for_new_limiter(tmp_path, monkeypatch)
 
     lim = await proxy._get_bearer_limiter("bid1", "fair", 3)
     lim.note_retry_after(60)
+    # Simulated restart: exit joins the background writer before the new process.
+    limiter.flush_retry_after_writes()
     config.bearer_limiters.clear()
     config.bearer_state.clear()
     monkeypatch.setattr(limiter, "_retry_after_state", None)
@@ -2287,6 +2290,8 @@ async def test_clear_retry_after_drops_live_and_persisted_window(tmp_path, monke
 
     assert cleared > 49_000
     assert lim.retry_after_remaining() == 0.0
+    # Disk is written by the background writer; drain it, as process exit does.
+    limiter.flush_retry_after_writes()
     assert "bid1" not in json.loads(state_file.read_text())
     assert limiter.clear_retry_after("bid1") == 0.0  # idempotent
 

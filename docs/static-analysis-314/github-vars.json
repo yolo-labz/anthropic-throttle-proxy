@@ -1,0 +1,6 @@
+[
+  {
+    "name": "SONAR_HOST_URL",
+    "value": "https://sonarqube.home301server.com.br"
+  }
+]

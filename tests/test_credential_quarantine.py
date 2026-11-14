@@ -326,6 +326,7 @@ async def test_successful_recheck_clears_restored_quarantine_without_live_row(
 
     class Response:
         status = 200
+        headers = {}
 
         async def read(self):
             return b'{"type":"message"}'

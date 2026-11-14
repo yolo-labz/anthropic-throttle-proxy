@@ -1,8 +1,17 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yolo-labz/.github/main/profile/assets/brand/logo-mark-dark.svg">
+  <img src="https://raw.githubusercontent.com/yolo-labz/.github/main/profile/assets/brand/logo-mark-light.svg" alt="yolo-labz" width="48">
+</picture>
+
 <p align="center">
   <img src="assets/brand/lockup.svg" alt="Throttler — fleet-wide pacing and admission" width="460">
 </p>
 
 # Throttler
+
+> Pace Anthropic API traffic across clients with per-bearer queues and a live dashboard.
+>
+> Configure queue mode: the documented default is **off**. Concurrency and quota feedback are not a universal monetary budget cap, extra subscription capacity, or a promise of no 429s; provider-specific routes need their own configuration.
 
 Self-hosted gateway and ingress for fleet-wide pacing, request admission and subscription capacity. Configurable upstream lanes support the existing Anthropic Messages, OpenAI-compatible Chat Completions and Responses adapters; provider-specific protocols and account metadata remain explicit.
 
@@ -235,3 +244,9 @@ MIT — see [LICENSE](LICENSE).
 ## Author
 
 Pedro H S Balbino (`@phsb5321`). Migrated out of the NixOS monorepo at [`phsb5321/NixOS`](https://github.com/phsb5321/NixOS) PRs #543/#549/#552/#553/#557/#562/#573/#575/#577/#580/#581 (20/05/2026 — this repo is the standalone successor with Dockerfile/Dokku and HTMX dashboard).
+
+
+---
+
+Part of **[yolo-labz](https://github.com/yolo-labz)** — small tools, deliberate automation.
+[Org profile](https://github.com/yolo-labz) · [All repositories](https://github.com/orgs/yolo-labz/repositories) · [Engineering notes](https://blog.home301server.com.br)

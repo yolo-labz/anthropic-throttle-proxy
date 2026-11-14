@@ -249,9 +249,10 @@ async function main() {
     try {
       const detail = await run();
       results.push({ name, ok: true, detail: detail ?? "" });
-      console.log(`PASS ${name}${detail ? ` — ${detail}` : ""}`);
+      const suffix = detail ? ` — ${detail}` : "";
+      console.log(`PASS ${name}${suffix}`);
     } catch (error) {
-      results.push({ name, ok: false, detail: String(error && error.message ? error.message : error) });
+      results.push({ name, ok: false, detail: String(error?.message ?? error) });
       console.log(`FAIL ${name} — ${error}`);
     }
   };
@@ -284,7 +285,7 @@ async function main() {
     const events = await consuming;
     const done = events.find((e) => e.type === "done");
     expect(done, `no terminal done event: ${JSON.stringify(events.map((e) => e.type))}`);
-    expect(events[events.length - 1].type === "done", "done must be the terminal event");
+    expect(events.at(-1).type === "done", "done must be the terminal event");
     expect(done.reason === "toolUse", `terminal reason should be toolUse, got ${done.reason}`);
     expect(done.text === "mimo-stream-ok", `text bytes altered: ${JSON.stringify(done.text)}`);
     expect(
@@ -339,8 +340,8 @@ async function main() {
     await cancelled;
     gate.resume();
     expect(!events.some((e) => e.type === "done"), "cancellation invented a completion");
-    const terminal = events[events.length - 1];
-    expect(terminal && terminal.type === "error" && terminal.reason === "aborted", `expected aborted error terminal, got ${JSON.stringify(terminal)}`);
+    const terminal = events.at(-1);
+    expect(terminal?.type === "error" && terminal.reason === "aborted", `expected aborted error terminal, got ${JSON.stringify(terminal)}`);
     return "aborted under hold -> error terminal (aborted), no done";
   });
 
@@ -377,8 +378,8 @@ async function main() {
     const events = await runStream({ maxRetries: 0 });
     expect(hits.chat === chatBefore + 1, `exactly one server-accepted request expected, saw ${hits.chat - chatBefore}`);
     expect(!events.some((e) => e.type === "done"), "pre-header uncertainty invented a completion");
-    const terminal = events[events.length - 1];
-    expect(terminal && terminal.type === "error", `expected error terminal, got ${JSON.stringify(terminal)}`);
+    const terminal = events.at(-1);
+    expect(terminal?.type === "error", `expected error terminal, got ${JSON.stringify(terminal)}`);
     return "one accepted request, no retry, honest error (no-uncertain-retry holds)";
   });
 
@@ -403,8 +404,8 @@ async function main() {
     expect(deltaSeen, "client never saw a delta before the disconnect");
     expect(hits.chat === chatBefore + 1, `no retry allowed post-header, saw ${hits.chat - chatBefore} sends`);
     expect(!events.some((e) => e.type === "done"), "post-header disconnect invented a completion");
-    const terminal = events[events.length - 1];
-    expect(terminal && terminal.type === "error", `expected error terminal, got ${JSON.stringify(terminal)}`);
+    const terminal = events.at(-1);
+    expect(terminal?.type === "error", `expected error terminal, got ${JSON.stringify(terminal)}`);
     return "delta observed, then disconnect: no retry, no done, honest error";
   });
 

@@ -59,6 +59,30 @@ def test_absent_header_is_direct() -> None:
     assert project_share.project_of({"x-anthropic-throttle-project": "nixos"}) == "nixos"
 
 
+def test_seat_header_is_never_forwarded_upstream() -> None:
+    request = make_mocked_request(
+        "POST",
+        "/v1/messages",
+        headers={
+            "x-anthropic-throttle-seat": "side-projects/w2p/wk-demand",
+            "anthropic-version": "2023-06-01",
+        },
+    )
+    forwarded = {k.lower() for k in proxy._forward_headers(request)}
+    assert "x-anthropic-throttle-seat" not in forwarded
+    assert "anthropic-version" in forwarded
+
+
+def test_seat_of_keeps_slashes_and_defaults_to_dash() -> None:
+    assert project_share.seat_of({}) == "-"
+    assert (
+        project_share.seat_of({"x-anthropic-throttle-seat": "Side-Projects/W2P/wk demand!"})
+        == "side-projects/w2p/wk-demand"
+    )
+    assert project_share.seat_of({"x-anthropic-throttle-seat": "/ _ /"}) == "-"
+    assert len(project_share.seat_of({"x-anthropic-throttle-seat": "a" * 200})) == 64
+
+
 def test_project_header_is_never_forwarded_upstream() -> None:
     request = make_mocked_request(
         "POST",

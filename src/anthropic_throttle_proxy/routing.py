@@ -36,10 +36,12 @@ import json
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
 from urllib.parse import urlsplit
+
+from aiohttp import web
 
 __all__ = [
     "ROLES",
@@ -1247,3 +1249,25 @@ def session_key_from_body(raw: bytes) -> str | None:
         if isinstance(uid, str) and uid:
             return uid
     return None
+
+
+LANE_UNMARKED_BODY: Final = web.RequestKey("lane_unmarked_body", bytes)
+
+
+def lane_body_for_attempt(request, body: bytes | None, headers: Mapping[str, str]) -> bytes | None:
+    """Body for one upstream attempt, resolved against that attempt's credential.
+
+    An attempt holding a metered ``x-api-key`` must NOT carry the Claude Code
+    identity block: Anthropic bills identity-bearing requests to the (empty)
+    Claude Code pool and refuses them with a credit-balance 400, which is what
+    made the funded API-key overflow lane look dead. OAuth attempts keep the
+    marked body. ``_shrink_forward_body`` records the unmarked body before it
+    rewrites, so this swap is lossless.
+    """
+    if body is None:
+        return body
+    unmarked = request.get(LANE_UNMARKED_BODY)
+    if not isinstance(unmarked, bytes) or unmarked == body:
+        return body
+    uses_api_key = any(name.lower() == "x-api-key" for name in headers)
+    return unmarked if uses_api_key else body

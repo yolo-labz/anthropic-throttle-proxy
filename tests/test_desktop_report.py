@@ -83,7 +83,9 @@ async def test_external_backend_origin_and_existing_usage_function(
         ),
     }
     monkeypatch.setattr(desktop_report.importlib, "import_module", lambda name: modules[name])
-    monkeypatch.setattr("sys.path", list(sys.path))
+    # Object form: the string form resolves "sys" through the importlib.import_module
+    # stub above, which pytest 9.2 now does and which raises KeyError.
+    monkeypatch.setattr(sys, "path", list(sys.path))
     result = await desktop_report.collect(tmp_path)
     if wrong_origin:
         assert result == {"error": "backend-origin"} and calls == []

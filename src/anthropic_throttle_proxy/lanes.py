@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import accounts as _accounts
+from .api_credits import normalize as normalize_api_credits
 
 # Re-read no more than this often. The writer's timer is 900 s by default, so
 # even 5 s is wildly over-eager; it exists only so a 2 s dashboard poll does
@@ -461,6 +462,7 @@ def _age_s(generated: Any, now: float) -> float | None:
 EMPTY: dict[str, Any] = {
     "lanes": [],
     "registry": [],
+    "api_credits": {"schema": 1, "accounts": []},
     "age_s": None,
     "stale": False,
     "interval_s": None,
@@ -565,6 +567,9 @@ def _read(now: float, path: str | None = None) -> dict[str, Any]:
     return {
         "lanes": lanes,
         "registry": _registry_rows(raw),
+        "api_credits": normalize_api_credits(
+            raw.get("apiCredits"), now, report_stale=stale or bool(error)
+        ),
         "age_s": age,
         "stale": stale,
         "interval_s": interval,

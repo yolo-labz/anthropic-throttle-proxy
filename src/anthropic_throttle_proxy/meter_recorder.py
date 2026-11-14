@@ -45,7 +45,8 @@ log = logging.getLogger(__name__)
 ROUND = 0.005
 TOLERANCE = 2 * ROUND
 
-WINDOWS = ("5h", "7d")
+# 7d_oi is the second Fable meter (ratelimit.py parses it); it is recorded like 5h and 7d.
+WINDOWS = ("5h", "7d", "7d_oi")
 
 # ponytail: one size cap and one `.1` generation instead of real rotation. At one
 # ~300-byte line per bearer per minute the cap is weeks of history; the upgrade
@@ -55,7 +56,50 @@ MAX_BYTES = 32 * 1024 * 1024
 # How far back to look for the last row per bearer when re-seeding.
 _SEED_TAIL_BYTES = 256 * 1024
 
+# Burn history restore reads at most this much of the log's tail. Two bearers at
+# one row a minute fill the 25 h burn horizon with ~0.8 MiB, so 8 MiB covers ten
+# bearers without letting an unrotated log stall startup.
+_RESTORE_TAIL_BYTES = 8 * 1024 * 1024
+
 BearerSource = Callable[[], Mapping[str, Mapping[str, object]]]
+
+
+def recent_rows(path: Path | None, since: float) -> list[dict]:
+    """Logged rows sampled at or after ``since``, read from a bounded tail.
+
+    Feeds the weekly burn history at startup (``WeekSamples.seed``). A missing or
+    disabled log is an honest empty history, not an error.
+    """
+    if path is None:
+        return []
+    remaining = _RESTORE_TAIL_BYTES
+    tails = []
+    # Current readings win the shared byte allowance; fill the older horizon
+    # from the recorder's one rotation, then replay in chronological order.
+    for source in (path, path.with_name(path.name + ".1")):
+        if remaining <= 0:
+            break
+        try:
+            with source.open("rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                take = min(size, remaining)
+                fh.seek(size - take)
+                tails.append(fh.read(take).decode("utf-8", "replace").splitlines())
+                remaining -= take
+        except FileNotFoundError:
+            continue
+    out = []
+    tail = (line for lines in reversed(tails) for line in lines)
+    for line in tail:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue  # a torn first line from the seek, or a crash mid-write
+        t = row.get("sampled_at") if isinstance(row, dict) else None
+        if isinstance(t, (int, float)) and t >= since:
+            out.append(row)
+    return out
 
 
 def default_path() -> Path | None:
@@ -107,8 +151,20 @@ def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None
         "bearer": bid,
         "sampled_at": sampled_at,
         "sample_age_s": age,
-        **{k: unified.get(k) for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")},
+        **{
+            k: unified.get(k)
+            for k in (
+                "util_5h",
+                "reset_5h",
+                "status_5h",
+                "util_7d",
+                "reset_7d",
+                "util_7d_oi",
+                "reset_7d_oi",
+            )
+        },
         "status_7d": unified.get("status_7d"),
+        "status_7d_oi": unified.get("status_7d_oi"),
         "status": unified.get("status"),
     }
 

@@ -18,8 +18,10 @@ Tests the full acceptance matrix from spec.md:
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import time
+import zlib
 
 import aiohttp
 import pytest
@@ -82,6 +84,7 @@ def _make_upstream_app(
     fail_headers: dict | None = None,
     retry_after_s: int | None = None,
     success_delay_s: float = 0.0,
+    success_encoding: str = "identity",
 ) -> web.Application:
     """Stub upstream: first ``fail_count`` requests return ``fail_status``,
     then subsequent requests return 200 SSE.
@@ -111,11 +114,14 @@ def _make_upstream_app(
             )
         if success_delay_s > 0:
             await asyncio.sleep(success_delay_s)
-        resp = web.StreamResponse(
-            status=200, headers={"content-type": "text/event-stream", **_PROXY_MARKER}
-        )
+        body = _SSE_BODY
+        headers = {"content-type": "text/event-stream", **_PROXY_MARKER}
+        if success_encoding != "identity":
+            headers["content-encoding"] = success_encoding
+            body = gzip.compress(body) if success_encoding == "gzip" else zlib.compress(body)
+        resp = web.StreamResponse(status=200, headers=headers)
         await resp.prepare(request)
-        await resp.write(_SSE_BODY)
+        await resp.write(body)
         await resp.write_eof()
         return resp
 
@@ -358,6 +364,29 @@ async def test_529_then_200_client_gets_200_sse(monkeypatch) -> None:
         await upstream_server.close()
 
 
+@pytest.mark.parametrize("encoding", ["gzip", "deflate", "identity"])
+async def test_hold_decodes_upstream_into_prepared_sse(monkeypatch, encoding) -> None:
+    """A prepared plaintext hold must never receive compressed upstream bytes."""
+    upstream_app = _make_upstream_app(success_encoding=encoding)
+    client, upstream = await _make_client_with_upstream(monkeypatch, upstream_app)
+    try:
+        response = await client.post(
+            "/v1/messages",
+            json={"model": "claude-opus-5-5", "stream": True},
+            headers={"Authorization": "Bearer test-encoding", "Accept-Encoding": encoding},
+        )
+        assert response.status == 200
+        assert response.headers["Content-Type"] == "text/event-stream"
+        assert "Content-Encoding" not in response.headers
+        raw = await response.read()
+        # No replacement decoding: a gzip leak must fail, not look like an empty stream.
+        events = [line for line in raw.decode("utf-8").splitlines() if line.startswith("event:")]
+        assert events == ["event: message_start", "event: message_stop"]
+    finally:
+        await client.close()
+        await upstream.close()
+
+
 async def test_keepalive_not_interleaved_into_slow_stream(monkeypatch) -> None:
     """Regression: the keepalive emitter MUST stop before the real body is piped.
 
@@ -500,6 +529,7 @@ async def test_queue_timeout_503_then_capacity(monkeypatch) -> None:
         fail_count=1, fail_status=503, fail_headers=queue_timeout_headers
     )
     test_client, upstream_server = await _make_client_with_upstream(monkeypatch, upstream_app)
+    monkeypatch.setattr(config, "CENTRAL_URL", str(upstream_server.make_url("")).rstrip("/"))
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
         resp = await test_client.post(
@@ -785,6 +815,7 @@ async def test_marked_queue_timeout_hold_no_shrink(monkeypatch) -> None:
     test_client, upstream_server = await _make_client_with_upstream(
         monkeypatch, upstream_app, queue_max_wait_s=0.8
     )
+    monkeypatch.setattr(config, "CENTRAL_URL", str(upstream_server.make_url("")).rstrip("/"))
     before = _aimd_shrink_total()
     try:
         body = json.dumps({"model": "claude-opus-4-8", "stream": True}).encode()
@@ -808,7 +839,8 @@ async def test_marked_queue_timeout_hold_no_shrink(monkeypatch) -> None:
         await upstream_server.close()
 
 
-async def test_forward_once_into_sse_strips_unmarked_queue_timeout(monkeypatch) -> None:
+@pytest.mark.parametrize("compressed", [False, True])
+async def test_forward_once_into_sse_strips_unmarked_queue_timeout(monkeypatch, compressed) -> None:
     """Anti-spoof negative test (round-2 Codex): a queue-timeout header arriving
     WITHOUT the sibling-proxy MARKER_HEADER must NOT be surfaced in meta — else a
     hostile upstream could assert the no-AIMD-shrink exemption.
@@ -817,11 +849,12 @@ async def test_forward_once_into_sse_strips_unmarked_queue_timeout(monkeypatch) 
     async def messages(request: web.Request) -> web.Response:
         await request.read()
         # Spoof attempt: queue-timeout header but NO MARKER_HEADER.
-        return web.Response(
-            status=503,
-            headers={config.QUEUE_TIMEOUT_HEADER: "1", "content-type": "application/json"},
-            text=json.dumps({"type": "error", "error": {"type": "x", "message": "y"}}),
-        )
+        body = json.dumps({"type": "error", "error": {"type": "x", "message": "y"}}).encode()
+        headers = {config.QUEUE_TIMEOUT_HEADER: "1", "content-type": "application/json"}
+        if compressed:
+            headers["content-encoding"] = "gzip"
+            body = gzip.compress(body)
+        return web.Response(status=503, headers=headers, body=body)
 
     app = web.Application()
     app.router.add_route("*", "/{path:.*}", messages)
@@ -832,11 +865,12 @@ async def test_forward_once_into_sse_strips_unmarked_queue_timeout(monkeypatch) 
         monkeypatch.setattr(config, "UPSTREAM", url)
         req = make_mocked_request("POST", "/v1/messages", app=web.Application())
         sse_resp = web.StreamResponse(status=200, headers={"content-type": "text/event-stream"})
-        status, meta, _captured, exc = await proxy._forward_once_into_sse(
+        status, meta, captured, exc = await proxy._forward_once_into_sse(
             req, {}, None, url, aiohttp.ClientTimeout(total=5), sse_resp
         )
         assert exc is None
         assert status == 503
+        assert json.loads(captured)["error"]["message"] == "y"
         assert config.QUEUE_TIMEOUT_HEADER not in (meta or {}), (
             "unmarked (spoofed) queue-timeout header was surfaced in meta"
         )

@@ -1,6 +1,6 @@
 # Bounded synthetic audit checks — 07/10/2026
 
-Research evidence, not implementation or live-provider acceptance. Generator family: `openai`.
+Research evidence, not implementation or live-provider acceptance.
 Run from the audit feature worktree. No credentials, real model requests, startup hooks,
 probe loops or live service changes. The proxy check uses cached Nix Python dependencies;
 the Desktop check imports only its installed session library. Network for the proxy

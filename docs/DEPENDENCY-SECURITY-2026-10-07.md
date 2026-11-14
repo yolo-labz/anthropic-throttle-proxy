@@ -1,6 +1,6 @@
 # Dependency/security shipping repair — 07/10/2026
 
-Generator family: **openai**. Isolated branch `332-dependency-security` from
+Isolated branch `332-dependency-security` from
 `859ba6c62d3846d0ee3751b5368351f27c58c84d`. Branch314 and gated Actions PR315
 are preserved; no Actions/CODEOWNERS/threshold/exclusion/suppression changes.
 Receipts: [`security-332/`](security-332/); acceptance plan: `specs/332-dependency-security/plan.md`.

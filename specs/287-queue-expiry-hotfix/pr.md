@@ -16,4 +16,4 @@ A proven local queue rejection still killed an unstarted Pi turn after its defau
 ## Rollout / reversal
 Client source only. The separate Nix client pin and idle-boundary reload are required; this PR alone does not fix already-running tabs. No Python proxy service restart is needed. Revert this squash commit through a normal PR to restore the previous defaults.
 
-Generator family: OpenAI. Automated review is not claimed; executable acceptance and required repository checks remain mandatory.
+Automated review is not claimed; executable acceptance and required repository checks remain mandatory.

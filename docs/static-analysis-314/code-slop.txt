@@ -1,0 +1,6 @@
+── code-slop gate ─────────────────────────────
+aislop : score 100 · 0 error(s) · 0 warning(s)
+jscpd  : 0.22781070354352428% duplication · 17 clone(s) · 128 line(s)
+ratchet: 0 relevant · 0 inherited · 0 regression(s)
+───────────────────────────────────────────────
+✓ PASS — no code-slop over threshold.

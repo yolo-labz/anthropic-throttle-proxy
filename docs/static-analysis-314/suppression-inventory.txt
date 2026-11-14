@@ -1,0 +1,24 @@
+src/anthropic_throttle_proxy/ui/routes.py:465:    elif int(identity["known"]) >= 2:  # type: ignore[call-overload]
+src/anthropic_throttle_proxy/ui/routes.py:1326:        except Exception as exc:  # noqa: BLE001 — a UI nicety must never crash the app
+src/anthropic_throttle_proxy/config.py:640:import json as _json  # noqa: E402 — kept inline for visibility of new surface
+src/anthropic_throttle_proxy/config.py:641:from pathlib import Path as _Path  # noqa: E402
+src/anthropic_throttle_proxy/config.py:642:from typing import Any as _Any  # noqa: E402
+tests/test_pacing.py:320:    await limiter_mod._retune_limiter_hard_max("bid", lim, 8)  # noqa: SLF001
+tests/test_pacing.py:332:    await limiter_mod._retune_limiter_hard_max("bid", lim, 12, live_floor=6)  # noqa: SLF001
+tests/test_accounts.py:151:    token = "sk-ant-oat01-fake-token-for-tests"  # noqa: S105 — test fixture, not a real credential
+tests/test_accounts.py:348:    token = "tok-a"  # noqa: S105 — test fixture, not a real credential
+tests/test_accounts.py:434:    token = "tok-render"  # noqa: S105 — test fixture, not a real credential
+tests/test_accounts.py:518:    token = "tok-live"  # noqa: S105
+tests/test_accounts.py:553:    token = "tok-stale"  # noqa: S105
+tests/test_accounts.py:574:    token = "tok-dead"  # noqa: S105
+tests/test_accounts.py:586:    token = "tok-cap"  # noqa: S105
+tests/test_forwarding_paths.py:182:        async def json(self, *, content_type=None):  # noqa: ARG002 - matches aiohttp API
+tests/test_forwarding_paths.py:201:    await forwarding._poll_central_once(FakeSession())  # type: ignore[arg-type]
+tests/test_forwarding_paths.py:204:    await forwarding._poll_central_once(FakeSession())  # type: ignore[arg-type]
+tests/test_forwarding_paths.py:205:    await forwarding._poll_central_once(FakeSession())  # type: ignore[arg-type]
+tests/test_proxy_app.py:539:        "anthropic_proxy_start_time_seconds" in metrics.REGISTRY._names_to_collectors  # noqa: SLF001 — registry introspection in test
+tests/test_proxy_app.py:541:    assert "anthropic_proxy_start_time_seconds" not in _DEFAULT_GLOBAL._names_to_collectors  # noqa: SLF001
+tests/test_proxy_app.py:824:    fake_token = "Bearer super-secret-token-value-12345"  # noqa: S105 — test fixture, not a real credential
+tests/test_proxy_app.py:849:    assert lim._retry_after_until > time.time() + 4  # noqa: SLF001
+tests/test_proxy_app.py:2386:        async def fail_forward(*_args, **_kwargs):  # pragma: no cover - should not run
+tests/test_credential_quarantine.py:223:    def boom(*_a, **_k):  # pragma: no cover - must never run

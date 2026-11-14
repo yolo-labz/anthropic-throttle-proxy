@@ -1,0 +1,11 @@
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1203799Z aislop : score 100 · 0 error(s) · 0 warning(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1205436Z jscpd  : 0.2276931834353209% duplication · 17 clone(s) · 128 line(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1206076Z ratchet: 0 relevant · 0 inherited · 0 regression(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1207182Z ✓ PASS — no code-slop over threshold.
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1390401Z   ALIGN_FAIL_ON_TODO: 1
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1390706Z   ALIGN_FAIL_ON_SKIP: 1
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1391053Z   ALIGN_FAIL_ON_LINT_DISABLE: 1
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:30.1391372Z   ALIGN_FAIL_ON_DEBUG: 0
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:33.3687337Z scanned: 2 changed code file(s) · 0 error(s) · 0 warning(s)
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:33.3688511Z ✓ PASS — no completion-theater or scope violations over threshold.
+code-slop + alignment	Quality gates on the PR diff	2026-10-07T19:35:33.9973625Z   GHERKIN_FAIL_ON: error

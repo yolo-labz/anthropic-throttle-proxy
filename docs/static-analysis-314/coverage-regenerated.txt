@@ -1,0 +1,5 @@
+   Building anthropic-throttle-proxy @ file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-314-static-analysis
+      Built anthropic-throttle-proxy @ file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy-314-static-analysis
+Uninstalled 1 package in 0.92ms
+Installed 1 package in 1ms
+Wrote XML report to coverage.xml

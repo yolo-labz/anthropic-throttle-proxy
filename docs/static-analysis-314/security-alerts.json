@@ -1,0 +1,247 @@
+[
+  {
+    "number": 53,
+    "state": "open",
+    "tool": "CodeQL",
+    "rule": "py/weak-sensitive-data-hashing",
+    "severity": "warning",
+    "description": "Use of a broken or weak cryptographic hashing algorithm on sensitive data",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/codeql.yml:analyze",
+      "environment": "{\"language\":\"python\"}",
+      "category": "/language:python",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "Sensitive data (password) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function.\nSensitive data (password) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function."
+      },
+      "location": {
+        "path": "tests/test_accounts.py",
+        "start_line": 27,
+        "end_line": 27,
+        "start_column": 27,
+        "end_column": 53
+      },
+      "classifications": [
+        "test"
+      ]
+    }
+  },
+  {
+    "number": 46,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "SecurityPolicyID",
+    "severity": "error",
+    "description": "Security-Policy",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/online-scm",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 0: security policy file not detected:\nWarn: no security policy file detected\nWarn: no security file to analyze\nWarn: no security file to analyze\nWarn: no security file to analyze\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 45,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "FuzzingID",
+    "severity": "error",
+    "description": "Fuzzing",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/online-scm",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 0: project is not fuzzed:\nWarn: no fuzzer integrations found\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 44,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "CIIBestPracticesID",
+    "severity": "error",
+    "description": "CII-Best-Practices",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/online-scm",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 0: no effort to earn an OpenSSF best practices badge detected\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 42,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "CodeReviewID",
+    "severity": "error",
+    "description": "Code-Review",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/online-scm",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 0: Found 0/30 approved changesets -- score normalized to 0\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 40,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "PinnedDependenciesID",
+    "severity": "error",
+    "description": "Pinned-Dependencies",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/local",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 8: containerImage not pinned by hash\nRemediation tip: pin your Docker image by updating python:3.13-slim to python:3.13-slim@sha256:3dd7cc108ec1493442514f5c2a871af6af0ec31d768ff6e378a93340c3b3db5f\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": "Dockerfile",
+        "start_line": 33,
+        "end_line": 33,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 39,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "PinnedDependenciesID",
+    "severity": "error",
+    "description": "Pinned-Dependencies",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/local",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 8: containerImage not pinned by hash\nRemediation tip: pin your Docker image by updating python:3.13-slim to python:3.13-slim@sha256:3dd7cc108ec1493442514f5c2a871af6af0ec31d768ff6e378a93340c3b3db5f\nClick Remediation section below for further remediation help"
+      },
+      "location": {
+        "path": "Dockerfile",
+        "start_line": 6,
+        "end_line": 6,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 38,
+    "state": "open",
+    "tool": "Scorecard",
+    "rule": "BranchProtectionID",
+    "severity": "error",
+    "description": "Branch-Protection",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/scorecard.yml:analysis",
+      "environment": "{}",
+      "category": "supply-chain/branch-protection",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "score is 3: branch protection is not maximal on development and all release branches:\nWarn: 'branch protection settings apply to administrators' is disabled on branch 'main'\nWarn: branch 'main' does not require approvers\nWarn: codeowners review is not required on branch 'main'\nWarn: 'last push approval' is disabled on branch 'main'\nWarn: 'up-to-date branches' is disabled on branch 'main'\nClick Remediation section below to solve this issue"
+      },
+      "location": {
+        "path": "no file associated with this alert",
+        "start_line": 1,
+        "end_line": 1,
+        "start_column": 1,
+        "end_column": 0
+      },
+      "classifications": []
+    }
+  },
+  {
+    "number": 13,
+    "state": "open",
+    "tool": "CodeQL",
+    "rule": "py/weak-sensitive-data-hashing",
+    "severity": "warning",
+    "description": "Use of a broken or weak cryptographic hashing algorithm on sensitive data",
+    "instance": {
+      "ref": "refs/heads/main",
+      "analysis_key": ".github/workflows/codeql.yml:analyze",
+      "environment": "{\"language\":\"python\"}",
+      "category": "/language:python",
+      "state": "open",
+      "commit_sha": "3c64a535ea6902f00245173696d1005d5114eb0a",
+      "message": {
+        "text": "Sensitive data (password) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function.\nSensitive data (password) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function.\nSensitive data (password) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function."
+      },
+      "location": {
+        "path": "src/anthropic_throttle_proxy/ratelimit.py",
+        "start_line": 55,
+        "end_line": 55,
+        "start_column": 27,
+        "end_column": 58
+      },
+      "classifications": []
+    }
+  }
+]
