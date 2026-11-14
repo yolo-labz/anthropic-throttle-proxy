@@ -67,6 +67,7 @@ from . import lanes as _lanes
 from . import limiter as _limiter
 from . import model_retry as _model_retry
 from . import pacing as _pacing
+from . import points as _points
 from . import session_affinity as _session_affinity
 from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
@@ -150,6 +151,9 @@ from .metrics import (
     M_INFLIGHT_BEARER,
     M_KEEPALIVE_HOLDS,
     M_OAUTH_ENTITLEMENT_REFUSALS,
+    M_POINTS_CREDIT,
+    M_POINTS_SETTLED,
+    M_POINTS_WOULD_DEFER,
     M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
@@ -1096,6 +1100,9 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
 # Spec 377 phase 2: process-local, bounded. Tokens are measured upstream usage only.
 _WEEKLY_TOKENS = _usage_allocator.WeeklyTokens()
 _WEEK_SAMPLES = _usage_allocator.WeekSamples()
+# Points bucket (observe only, pace-option-draft §4.1): process-local, never persisted.
+_points_book = _points.Book()
+_POINTS_KEY = "throttle_points_reservation"
 
 
 def _seed_week_samples(path: object = None, now: float | None = None) -> int:
@@ -1369,6 +1376,12 @@ def _weekly_pacing_view() -> dict:
         for key in _WEEK_SAMPLES.keys()
     }
     return view
+
+
+def _points_view(now: float) -> dict:
+    """Read-only publication of the observe-mode points bucket (never changes a decision)."""
+    rates = {bid: _points_rate(bid, now)[0] for bid in list(_points_book.buckets)}
+    return {"mode": config.POINTS_MODE, **_points_book.view(rates, now)}
 
 
 def _account_routing_enabled() -> bool:
@@ -5267,6 +5280,90 @@ def _spend_lane_label() -> str:
     return os.environ.get("THROTTLE_LANE_NAME", "").strip() or "local"
 
 
+def _points_rate(bid: str, now: float) -> tuple[float | None, float | None]:
+    """(refill rate in points/h, 7d reset) for one account; rate None = no verdict."""
+    unified = (config.bearer_state.get(bid) or {}).get("unified") or {}
+    reset, util = unified.get("reset_7d"), unified.get("util_7d")
+    if util is not None:
+        util = max(float(util), _points_book.settled_since_reset(bid, reset) / _points.WEEK_POINTS)
+    return _points.regime_rate(util, reset, now), reset
+
+
+def _points_observe_debit(
+    model: str,
+    model_label: str,
+    usage: dict[str, int],
+    seat: str,
+    project: str | None,
+    status: int | None,
+) -> None:
+    """Observe mode: debit one settled request. Reads usage, writes only the points book."""
+    if config.POINTS_MODE != "observe":
+        return
+    if sum(usage.values()) <= 0:
+        _points_book.unsettled_total += 1  # unknown is not free: counted, debit 0, never defers
+        return
+    points = _points.settled_points(model, usage, status)
+    if points is None:
+        if _points_book.note_unpriced(model_label):
+            log(f"points-unpriced model={model_label} (no weight; debit 0)")
+        return
+    now = time.time()
+    rate, reset = _points_rate(seat, now)
+    project_label = project or ""
+    credit = _points_book.debit(
+        seat, points, now, rate=rate, reset=reset, model=model_label, project=project_label
+    )
+    M_POINTS_SETTLED.labels(model=model_label, project=project_label).inc(points)
+    M_POINTS_CREDIT.labels(account=seat).set(credit)
+
+
+def _points_observe_admit(
+    request: web.Request, is_priority: bool, *, model: str, max_tokens: int | None
+) -> None:
+    """Observe mode at the weekly-pacing call: compute would-defer, log on transition.
+
+    Never alters the request, a response, a header, a slot or a Retry-After. The
+    reservation it takes is released in ``handler``'s ``finally``.
+    """
+    if config.POINTS_MODE != "observe" or not _account_routing_enabled():
+        return
+    try:
+        from . import accounts
+
+        now = time.time()
+        eligible = _weekly_pacing_eligible(
+            accounts.routing_snapshot(now), now, model=model, max_tokens=max_tokens
+        )
+        rates = {
+            str(a.get("bearer_id", "")): _points_rate(str(a.get("bearer_id", "")), now)[0]
+            for a in eligible
+        }
+        fam = _points.family(model)
+        reserve = None if fam is None else _points.P90[fam]
+        would_defer, bid, reserved = _points_book.admit(rates, now, reserve)
+        if reserved and bid is not None:
+            request[_POINTS_KEY] = (bid, reserved)
+        if is_priority and would_defer:
+            would_defer = False  # the priority lane always passes (§2.5)
+        if _points_book.note_verdict(would_defer):
+            if would_defer:
+                M_POINTS_WOULD_DEFER.labels(reason="all_in_debt").inc()
+            log(
+                f"points-would-defer state={'on' if would_defer else 'off'} accounts={len(rates)} "
+                f"model={model or 'unknown'} (observe: nothing refused)"
+            )
+    except Exception as exc:
+        log(f"points-observe-error: {exc!r}")
+
+
+def _points_release(request: web.Request) -> None:
+    held = request.get(_POINTS_KEY)
+    if held is not None:
+        request[_POINTS_KEY] = None
+        _points_book.release(*held)
+
+
 def _record_usage(
     model: str,
     model_label: str,
@@ -5278,6 +5375,7 @@ def _record_usage(
     project: str | None = None,
     weekly_project: str | None = None,
     seat_headers: object = None,
+    status: int | None = None,
 ) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
@@ -5308,6 +5406,7 @@ def _record_usage(
             M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
                 spend_usd
             )
+        _points_observe_debit(model, model_label, usage, seat, project, status)
         if weekly_project is not None and config.WEEKLY_PACING_MODE != "off":
             # Spec 377 phase 2: measured usage only; zero/absent is never recorded.
             _WEEKLY_TOKENS.add(weekly_project, sum(usage.values()), time.time())
@@ -5597,6 +5696,7 @@ async def _finalize(
             project=_project_of(request.headers),
             weekly_project=_weekly_project_of(request.headers),
             seat_headers=request.headers,
+            status=final_status,
         )
     if request.method == "POST" and MESSAGES_SUBPATH in path:
         observed = request.get(usage_ledger.CAPTURE_KEY, {})
@@ -6999,7 +7099,15 @@ async def _run_slot(
 
 
 async def handler(request: web.Request) -> web.StreamResponse:
-    """Entry point: runs the request core, then keeps any committed hold valid.
+    """Entry point; releases an observe-mode points reservation however the request ends."""
+    try:
+        return await _handler_held(request)
+    finally:
+        _points_release(request)
+
+
+async def _handler_held(request: web.Request) -> web.StreamResponse:
+    """Run the request core, then keep any committed hold valid.
 
     Once a deferral hold has committed its 200 SSE, no other status can be sent.
     A non-SSE answer from the core is therefore delivered as the hold's terminal
@@ -7120,6 +7228,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
         _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
     max_wait, wait_deadline = _queue_wait_budget(request, handler_start, body)
+    _points_observe_admit(request, is_priority, model=model, max_tokens=req_max_tokens)
     paced_retry_after = _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens)
     if paced_retry_after is not None:
         if not _stream_hold_wanted(request, body):
@@ -8212,6 +8321,7 @@ async def admission(_request: web.Request) -> web.Response:
             "lane": {"open": lane_open, "detail": lane_detail},
             "saturation": saturation,
             "weekly_pacing": _weekly_pacing_view(),
+            "points": _points_view(now),
             "weekly_pace_aggregate": weekly_aggregate,
             "bearers": {
                 bid: {
