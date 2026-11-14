@@ -1280,3 +1280,9 @@ rect.u-output      { fill: var(--ctp-green); }  span.u-output      { background:
 rect.u-reasoning   { fill: var(--ctp-mauve); }  span.u-reasoning   { background: var(--ctp-mauve); }
 #cache { margin-top: 1rem; }
 .cache-affinity { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--ctp-surface0); }
+
+/* 13/11/2026: an old reading must LOOK old — the bar is a memory, not a meter. */
+.sub-meters.is-stale .meter { opacity: 0.55; }
+.sub-meters.is-stale .track i { background: var(--ctp-overlay0); }
+.acct-closed, .acct-open, .acct-parked { font-size: var(--fs-meta); }
+.acct-open { color: var(--ctp-green); }
