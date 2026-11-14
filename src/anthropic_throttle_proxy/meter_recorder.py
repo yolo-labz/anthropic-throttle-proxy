@@ -45,7 +45,8 @@ log = logging.getLogger(__name__)
 ROUND = 0.005
 TOLERANCE = 2 * ROUND
 
-WINDOWS = ("5h", "7d")
+# 7d_oi is the Fable bucket: half a week, reported only on Fable responses (11/11/2026).
+WINDOWS = ("5h", "7d", "7d_oi")
 
 # ponytail: one size cap and one `.1` generation instead of real rotation. At one
 # ~300-byte line per bearer per minute the cap is weeks of history; the upgrade
@@ -138,6 +139,18 @@ def classify(prev: Mapping[str, object] | None, cur: Mapping[str, object], win: 
     return {"event": "steady"}
 
 
+def _fable_fields(bstate: Mapping[str, object], unified: Mapping[str, object]) -> dict:
+    """Fable-bucket (``7d_oi``) columns: this response's own reading, else the kept one.
+
+    Opus/Sonnet responses omit the ``7d_oi`` headers, so ``unified`` alone would blank the
+    bucket on every non-Fable response; ``bstate["fable_bucket"]`` is the last Fable reading.
+    """
+    src = unified if unified.get("util_7d_oi") is not None else bstate.get("fable_bucket")
+    if not isinstance(src, Mapping):
+        return {}
+    return {k: src.get(k) for k in ("util_7d_oi", "reset_7d_oi", "status_7d_oi")}
+
+
 def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None:
     """The row for one bearer's cached unified sample, or None if it has never had one."""
     unified = bstate.get("unified")
@@ -153,6 +166,7 @@ def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None
         **{k: unified.get(k) for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")},
         "status_7d": unified.get("status_7d"),
         "status": unified.get("status"),
+        **_fable_fields(bstate, unified),
     }
 
 

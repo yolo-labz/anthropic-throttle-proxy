@@ -51,6 +51,7 @@ __all__ = [
     "M_RATELIMIT_TOKENS_REMAINING",
     "M_UTIL_5H",
     "M_UTIL_7D",
+    "M_UTIL_7D_OI",
     "M_KEEPALIVE_HOLDS",
     "generate_latest",
 ]
@@ -400,6 +401,13 @@ M_UTIL_5H = Gauge(
 M_UTIL_7D = Gauge(
     "anthropic_ratelimit_unified_7d_utilization",
     "OAuth 7-day weekly window utilization (0..1).",
+    ["bearer"],
+    registry=REGISTRY,
+)
+M_UTIL_7D_OI = Gauge(
+    "anthropic_ratelimit_unified_7d_oi_utilization",
+    "OAuth Fable bucket (7d_oi) utilization (0..1). The bucket is half the weekly limit; "
+    "only Fable responses report it, so the gauge holds the last Fable reading.",
     ["bearer"],
     registry=REGISTRY,
 )

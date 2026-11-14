@@ -174,3 +174,39 @@ def test_startup_seed_restores_burn_history_from_the_persisted_log(tmp_path, mon
     burn = ua.burn_per_h(proxy._WEEK_SAMPLES.samples("b144f62f"), now, 1800.0)
     state = ua.account_state("proton", 0.01, reset, now, law="remaining", burn=burn)
     assert state["state"] == "on_schedule", state
+
+
+FABLE_RESET = 1794564000
+
+
+def _fable(util, *, reset=FABLE_RESET, status="allowed"):
+    return {"util_7d_oi": util, "reset_7d_oi": reset, "status_7d_oi": status}
+
+
+def test_fable_bucket_survives_non_fable_responses_and_falls_are_recalibrations(tmp_path):
+    # 11/11/2026: Fable 1.03 -> 0.0 with the same reset epoch was a give-back, invisible
+    # to the log because only Fable responses carry 7d_oi and every other response
+    # replaced the cached unified snapshot.
+    state = {"b": {**_bearer(None, 0.63, at=1.0), "fable_bucket": _fable(1.03)}}
+    state["b"]["unified"].update(_fable(1.03))
+    rec = _rec(tmp_path, state)
+    first = rec.rows(10)[0]
+    assert first["util_7d_oi"] == 1.03 and first["event_7d_oi"] == "first"
+    # An Opus response: unified has no 7d_oi, the kept Fable reading still fills the row.
+    state["b"] = {**_bearer(None, 0.64, at=2.0), "fable_bucket": _fable(1.03)}
+    row = rec.rows(20)[0]
+    assert row["util_7d_oi"] == 1.03
+    assert row["event_7d_oi"] == "steady"
+    # The give-back: bucket back to 0.0 on the same reset epoch.
+    state["b"] = {**_bearer(None, 0.14, at=3.0), "fable_bucket": _fable(0.0)}
+    row = rec.rows(30)[0]
+    assert row["event_7d_oi"] == "recalibration"
+    assert row["delta_7d_oi"] == -1.03
+    assert row["event_7d"] == "recalibration"
+    assert rec.recalibrations == 2
+
+
+def test_bearer_that_never_served_fable_has_no_bucket_columns(tmp_path):
+    row = _rec(tmp_path, {"b": _bearer(0.2, 0.3, at=1.0)}).rows(10)[0]
+    assert "util_7d_oi" not in row
+    assert row["event_7d_oi"] == "absent"

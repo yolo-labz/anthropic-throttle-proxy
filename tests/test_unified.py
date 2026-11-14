@@ -310,3 +310,17 @@ async def test_rejected_sample_flags_disabled_brake(monkeypatch):
 
     assert _brake_disabled_count(bid, "5h") == before + 1
     assert any("BRAKE DISABLED" in line for line in lines)
+
+
+def test_fable_bucket_is_kept_across_a_non_fable_response_and_published_as_a_gauge():
+    from anthropic_throttle_proxy import proxy
+
+    bstate: dict = {}
+    proxy._keep_fable_bucket(
+        bstate, {"util_7d_oi": 0.44, "status_7d_oi": "allowed", "reset_7d_oi": 9}
+    )
+    assert bstate["fable_bucket"]["util_7d_oi"] == 0.44
+    proxy._keep_fable_bucket(bstate, {"util_7d": 0.7})  # an Opus response: no 7d_oi
+    assert bstate["fable_bucket"]["util_7d_oi"] == 0.44
+    proxy._publish_unified_gauges("t-fable", {"util_7d_oi": 0.44})
+    assert proxy.M_UTIL_7D_OI.labels(bearer="t-fable")._value.get() == 0.44
