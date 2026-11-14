@@ -45,7 +45,8 @@ log = logging.getLogger(__name__)
 ROUND = 0.005
 TOLERANCE = 2 * ROUND
 
-WINDOWS = ("5h", "7d")
+# 7d_oi is the second Fable meter (ratelimit.py parses it); it is recorded like 5h and 7d.
+WINDOWS = ("5h", "7d", "7d_oi")
 
 # ponytail: one size cap and one `.1` generation instead of real rotation. At one
 # ~300-byte line per bearer per minute the cap is weeks of history; the upgrade
@@ -150,8 +151,20 @@ def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None
         "bearer": bid,
         "sampled_at": sampled_at,
         "sample_age_s": age,
-        **{k: unified.get(k) for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")},
+        **{
+            k: unified.get(k)
+            for k in (
+                "util_5h",
+                "reset_5h",
+                "status_5h",
+                "util_7d",
+                "reset_7d",
+                "util_7d_oi",
+                "reset_7d_oi",
+            )
+        },
         "status_7d": unified.get("status_7d"),
+        "status_7d_oi": unified.get("status_7d_oi"),
         "status": unified.get("status"),
     }
 

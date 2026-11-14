@@ -73,6 +73,83 @@ class Changes:
         os.close(self.fd)
 
 
+HOLD_FILE = Path.home() / ".local/state/pi/IDLE_PULL_HOLD"
+HOLD_LAST = core.ROOT / "idle-pull-hold.last.json"
+HERDR = "/etc/profiles/per-user/notroot/bin/herdr"
+
+
+def read_holds(hold_file=None, last_file=None):
+    """Workspace holds as ``session:workspace`` strings (id or exact label).
+
+    ``#`` lines and blank lines are ignored. A missing or unreadable file never
+    clears holds: it logs loudly and keeps the last list read, persisted beside
+    the recovery state, so a deleted file cannot wake a paused workspace.
+    """
+    hold_file = HOLD_FILE if hold_file is None else hold_file
+    last_file = HOLD_LAST if last_file is None else last_file
+    try:
+        text = hold_file.read_text()
+    except OSError as error:
+        print(
+            f"hold-file unreadable ({type(error).__name__}); keeping last persisted hold list",
+            file=sys.stderr,
+        )
+        try:
+            return set(json.loads(last_file.read_text()))
+        except (OSError, ValueError, TypeError):
+            return set()
+    holds = {
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    last_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary = last_file.with_suffix(".tmp")
+    temporary.write_text(json.dumps(sorted(holds)))
+    os.replace(temporary, last_file)
+    return holds
+
+
+def pane_workspace(snapshot, pane):
+    """``(workspace_id, workspace_label)`` of ``pane`` in a herdr ``api snapshot``."""
+    snapshot = snapshot.get("result", {}).get("snapshot", snapshot)
+    match = [p for p in snapshot.get("panes", []) if p.get("pane_id") == pane]
+    if len(match) != 1 or not match[0].get("workspace_id"):
+        raise LookupError(f"pane {pane} not in snapshot exactly once")
+    workspace_id = match[0]["workspace_id"]
+    labels = [
+        w.get("label") or ""
+        for w in snapshot.get("workspaces", [])
+        if w.get("workspace_id") == workspace_id
+    ]
+    return workspace_id, (labels[0] if labels else "")
+
+
+def is_held(holds, session, workspace_id, workspace_label):
+    keys = {f"{session}:{workspace_id}"}
+    if workspace_label:
+        keys.add(f"{session}:{workspace_label}")
+    return bool(keys & holds)
+
+
+def hold_gate(session, pane):
+    """True when ``pane``'s workspace is held. Runs before the lock and the inotify watch.
+
+    An unresolvable pane fails closed (exit 2): a hold we cannot check is not a free pass.
+    """
+    try:
+        snapshot = json.loads(
+            run([HERDR, "--session", session, "api", "snapshot"], time.monotonic() + 60, cap=30)
+        )
+        workspace_id, workspace_label = pane_workspace(snapshot, pane)
+    except (OSError, subprocess.SubprocessError, ValueError, LookupError) as error:
+        print(
+            f"hold check unresolved for {pane}: {type(error).__name__}; no action", file=sys.stderr
+        )
+        raise SystemExit(2) from error
+    return is_held(read_holds(), session, workspace_id, workspace_label)
+
+
 def empty_editor(text):
     lines = text.splitlines()
     borders = [i for i, line in enumerate(lines) if re.fullmatch(r"[─━-]{20,}", line.strip())]
@@ -187,6 +264,9 @@ def main():
         parser.add_argument("--" + key, required=True)
     parser.add_argument("--timeout", type=int, default=870, choices=range(1, 871))
     args = parser.parse_args()
+    if hold_gate(args.session, args.pane):
+        print(f"held: {args.pane}")
+        return
     deadline = time.monotonic() + args.timeout
     core.ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = acquire_lock(
