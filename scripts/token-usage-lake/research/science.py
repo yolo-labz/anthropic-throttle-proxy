@@ -5,9 +5,15 @@ import os
 from pathlib import Path
 
 
-def latest_snapshot(root=None):
+def latest_snapshot(root=None, run_id=None):
     root = Path(root or os.environ.get("SCIENCE_SNAPSHOTS", "/workspace/data/snapshots"))
-    manifest = json.loads((root / "latest.json").read_text())
+    run_id = run_id or os.environ.get("SCIENCE_SNAPSHOT_RUN_ID")
+    if run_id and any(c not in "0123456789abcdef-" for c in run_id):
+        raise ValueError("invalid snapshot identity")
+    path = root / run_id / "manifest.json" if run_id else root / "latest.json"
+    manifest = json.loads(path.read_text())
+    if run_id and manifest["run_id"] != run_id:
+        raise ValueError("snapshot identity mismatch")
     return root / manifest["run_id"], manifest
 
 

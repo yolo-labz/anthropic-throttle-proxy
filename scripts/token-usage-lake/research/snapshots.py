@@ -143,10 +143,11 @@ def _publish(lake_root, output_root):
                 counts[table] = relation.count("*").fetchall()[0][0]
                 columns = relation.columns
                 if "at_brt" in columns:
-                    relation.project("*, cast(at_brt + interval 3 hour AS DATE) AS day_utc").order(
-                        "ALL"
-                    ).write_parquet(
-                        str(stage / table), compression="zstd", partition_by=["day_utc"]
+                    relation.project(
+                        "*, cast(at_brt + interval 3 hour AS DATE) AS day_utc, "
+                        "hour(at_brt + interval 3 hour) AS hour_utc"
+                    ).order("ALL").write_parquet(
+                        str(stage / table), compression="zstd", partition_by=["day_utc", "hour_utc"]
                     )
                 else:
                     relation.order("ALL").write_parquet(
@@ -188,6 +189,10 @@ def _publish(lake_root, output_root):
             "completed_epoch": receipt["completed_epoch"],
             "source_fingerprint": receipt["input_fingerprint"],
             "source_sha256": source_hash,
+            "exporter_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "requirements_sha256": hashlib.sha256(
+                Path(__file__).with_name("requirements.lock").read_bytes()
+            ).hexdigest(),
             "counts": counts,
             "data_quality": receipt.get("data_quality", {"source_freshness_1200": "not_recorded"}),
             "files": files,

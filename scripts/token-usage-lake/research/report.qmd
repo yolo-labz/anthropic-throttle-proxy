@@ -3,8 +3,8 @@ title: "Token Diet: dataset readiness"
 format:
   html:
     theme:
-      light: cosmo
-      dark: darkly
+      light: [cosmo, report.scss]
+      dark: [darkly, report.scss]
     embed-resources: true
     toc: true
 jupyter: python3

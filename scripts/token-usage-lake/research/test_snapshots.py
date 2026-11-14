@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import duckdb
+import science
 import snapshots
 
 
@@ -119,6 +120,19 @@ class SnapshotTests(unittest.TestCase):
         (self.out / "latest.json").unlink()
         snapshots.publish(self.lake, self.out)
         self.assertEqual(json.loads((self.out / "latest.json").read_text())["run_id"], "a1")
+
+    def test_pinned_snapshot_survives_latest_pointer_advancing(self):
+        first = snapshots.publish(self.lake, self.out)
+        with duckdb.connect(str(self.db)) as con:
+            con.execute("UPDATE calls SET output=99")
+        self.receipt("b2")
+        snapshots.publish(self.lake, self.out)
+        with patch.dict("os.environ", {"SCIENCE_SNAPSHOT_RUN_ID": "a1"}):
+            path, pinned = science.latest_snapshot(self.out)
+        self.assertEqual(pinned, first)
+        with duckdb.connect() as con:
+            output = con.read_parquet(str(path / "calls/**/*.parquet")).project("output").fetchall()
+        self.assertEqual(output, [(4,)])
 
 
 if __name__ == "__main__":

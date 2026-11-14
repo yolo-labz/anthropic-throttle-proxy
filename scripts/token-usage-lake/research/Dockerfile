@@ -9,7 +9,7 @@ COPY quarto.deb /tmp/quarto.deb
 RUN echo '43678c160c3066b139ce30a741670bc5dc8d732fc6d320579f75bcace59397ae  /tmp/quarto.deb' | sha256sum -c -
 RUN dpkg -i /tmp/quarto.deb && rm /tmp/quarto.deb
 RUN groupadd --gid 10001 science && useradd --uid 10001 --gid science --home-dir /workspace science
-COPY snapshots.py science.py desktop.py notebook.py report.qmd smoke.py entrypoint.sh Procfile ./
+COPY snapshots.py science.py desktop.py notebook.py report.qmd report.scss smoke.py entrypoint.sh Procfile ./
 RUN chmod 755 /app/entrypoint.sh
 USER science
 EXPOSE 5000

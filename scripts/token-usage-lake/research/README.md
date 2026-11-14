@@ -29,7 +29,7 @@ events must be measured separately; a running service does not establish complet
 
 Dagster remains the sole writer of the live lake. The publisher copies the file before opening
 DuckDB, rejects active/uncheckpointed writes and validates counts against its completed-run
-receipt. New generations have immutable Parquet files, UTC day partitions, checksums and a
+receipt. New generations have immutable Parquet files, UTC day/hour partitions, checksums and a
 manifest. Identical files share storage through hard links. A latest pointer changes atomically;
 experiments can retain a specific run ID. No historical dataset is automatically deleted.
 
@@ -46,11 +46,13 @@ and a 600-output descriptor test cover the installed version.
 ## Use
 
 In a notebook, `latest_snapshot()` returns the current path and manifest. Pin the returned run ID
-for an experiment. `desktop_client()` opens an explicit remote CPU connection; pass data or
+for an experiment with `SCIENCE_SNAPSHOT_RUN_ID`; this keeps every cell and report on the same
+generation while ingestion advances. `desktop_client()` opens an explicit remote CPU connection; pass data or
 aggregate arrays as task arguments. `configure_tracking()` sets the authenticated MLflow client
 without printing credentials. Keep full prompts and raw payloads out of the server workspace.
 
-Copy `report.qmd` into a writable report directory and run `quarto render report.qmd --to html`.
+Copy `report.qmd` and `report.scss` into a writable report directory and run
+`quarto render report.qmd --to html`. The light/dark report uses system fonts without remote imports.
 Attach the HTML to an MLflow run with `mlflow.log_artifact(...)`. The report template records
 dataset provenance and readiness, not realized savings or accepted-task success.
 
