@@ -13,7 +13,7 @@ from anthropic_throttle_proxy import forwarding, proxy
 from anthropic_throttle_proxy import prospective_calibration as calibration
 from anthropic_throttle_proxy.ledger import Budgets
 from anthropic_throttle_proxy.prospective import TokenAccounting, account_request
-from anthropic_throttle_proxy.prospective_admission import Scope
+from anthropic_throttle_proxy.prospective_admission import PersistenceOwner, Scope
 from anthropic_throttle_proxy.prospective_runtime import (
     RUNTIME_KEY,
     ProspectiveRuntime,
@@ -311,6 +311,13 @@ async def test_real_observe_permit_pairs_each_attempt_without_scope_leaks(
 ):
     from anthropic_throttle_proxy import pacing
 
+    async def settled(_owner, future):
+        # Wait for the owner's own completion, not a wall-clock bound: with
+        # wait_timeout=2 one >2 s ledger fsync on a loaded runner turned an
+        # "exhausted" shadow verdict into "unknown" (CI run 427, assert 1 == 2).
+        return await asyncio.shield(future)
+
+    monkeypatch.setattr(PersistenceOwner, "_wait", settled)
     wires = []
     transports = [Transport(), Transport(error=TimeoutError()), Transport()]
     monkeypatch.setattr(aiohttp, "TCPConnector", lambda **kw: object())
