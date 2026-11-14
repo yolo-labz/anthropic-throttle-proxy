@@ -1,0 +1,12 @@
+marimo[sql]
+jupyterlab
+duckdb==2.0.0
+polars
+pyarrow
+numpy
+scipy
+statsmodels
+plotly
+altair
+mlflow[auth]
+dask[distributed]

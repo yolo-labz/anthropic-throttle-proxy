@@ -1,0 +1,43 @@
+---
+title: "Token Diet: dataset readiness"
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    embed-resources: true
+    toc: true
+jupyter: python3
+execute:
+  echo: true
+---
+
+This report records dataset readiness. It does not estimate realized savings or task success.
+
+```{python}
+from science import latest_snapshot
+import pandas as pd
+snapshot, manifest = latest_snapshot()
+pd.DataFrame([{"dataset": key, "observations": value}
+              for key, value in manifest["counts"].items()])
+```
+
+## Provenance
+
+```{python}
+import json
+print(json.dumps({key: manifest[key] for key in
+                 ("run_id", "source_sha256", "source_fingerprint", "observed_through_epoch", "data_quality")}, indent=2))
+```
+
+Native calls, gateway requests and tool invocations have different grains and overlap.
+Missing intervals remain unobserved. Each minute, hour and day aggregate carries a flag
+indicating whether its end precedes the source watermark. Late data appears in a later
+immutable dataset generation. Pinned experiments continue to use their original generation.
+
+## Research hypothesis
+
+Shorter section-aware compaction summaries reduce total tokens per accepted task while
+preserving executable task success. Testing requires paired held-out tasks, failures and
+rework, a fixed environment, and an uncertainty interval. Current dataset counts do not
+establish this hypothesis.

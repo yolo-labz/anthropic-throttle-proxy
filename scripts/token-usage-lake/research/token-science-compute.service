@@ -1,0 +1,24 @@
+[Unit]
+Description=Token Diet desktop CPU research cluster with mutual TLS
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=SCIENCE_TLS=%h/.local/share/token-science/tls
+Environment=SCIENCE_BIND=100.84.167.121
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+Environment=POLARS_MAX_THREADS=2
+ExecStart=%h/.local/share/token-science/venv/bin/python %h/.local/share/token-science/desktop.py
+Restart=on-failure
+RestartSec=10
+CPUQuota=200%
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=256M
+TasksMax=128
+Nice=10
+UMask=0077
+
+[Install]
+WantedBy=default.target

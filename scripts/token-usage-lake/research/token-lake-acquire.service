@@ -1,0 +1,21 @@
+[Unit]
+Description=Continuous Token Diet history capture; private raw and sanitized facts
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/etc/profiles/per-user/notroot/bin:/run/current-system/sw/bin
+ExecStart=/run/current-system/sw/bin/python3 %h/.local/share/token-science/acquire.py follow --interval 10 --ship-every 60 --max-seconds 40 --dest ProxMox.Dokku:/var/lib/dokku/data/storage/dagster/acquisition
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+CPUQuota=100%
+MemoryHigh=768M
+MemoryMax=1G
+MemorySwapMax=256M
+Nice=15
+IOSchedulingClass=idle
+UMask=0077
+
+[Install]
+WantedBy=default.target

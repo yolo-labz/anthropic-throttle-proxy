@@ -1,0 +1,17 @@
+--- acquire.py
++++ acquire.py
+@@ -284,6 +284,14 @@
+             return
+         f = self.fh.get(rel)
+         if f is None:
++            # Bound descriptors across large history passes; cursor publication stays atomic.
++            if len(self.fh) >= 128:
++                old_rel, old_file = next(iter(self.fh.items()))
++                old_file.flush()
++                os.fsync(old_file.fileno())
++                self.st["out"][old_rel] = old_file.tell()
++                old_file.close()
++                del self.fh[old_rel]
+             p = self.root / rel
+             p.parent.mkdir(parents=True, exist_ok=True)
+             if rel.startswith("raw-restricted"):
