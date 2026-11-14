@@ -4954,11 +4954,33 @@ def _pushback_pause(meta: Mapping[str, str] | None, bid: str = "") -> tuple[floa
     """
     retry_after = _parse_retry_after(meta)
     if retry_after > 0:
-        return retry_after, False
+        return _clamp_rejected_7d_pause(retry_after, meta, bid), False
     cap = config.MAX_HOLD_RETRY_AFTER_S
     if _budget_under_pressure(meta, bid):
         return min(max(0.0, config.AIMD_BACKOFF_S), cap), True
     return min(max(0.0, config.CONCURRENCY_COOLDOWN_S), cap), True
+
+
+def _clamp_rejected_7d_pause(retry_after: float, meta: Mapping[str, str] | None, bid: str) -> float:
+    """Cap a real Retry-After at the reject cap when the same response is 7d-rejected.
+
+    ``_maybe_pause_rejected`` already caps its pause at ``RETRY_AFTER_REJECT_CAP_S``
+    for this response, but ``note_retry_after`` only extends, so the uncapped value
+    from this path won: at 18:00:00 on 13/11/2026 a boundary 429 (status computed
+    for the old week, reset for the new) carried ``Retry-After: 604799`` and latched
+    gmail for 2 h 40 min, while the account was at 0 %. A 7d wall is re-tested by
+    the half-open probe every cap seconds instead; a genuine wall answers rejected
+    again and re-latches, one probe per window. Only an explicit 7d ``rejected``
+    narrows it: 5h windows, Fable-scoped rejections (7d allowed) and responses
+    without unified headers keep the upstream value.
+    """
+    cap = config.RETRY_AFTER_REJECT_CAP_S
+    if cap <= 0 or retry_after <= cap or not meta:
+        return retry_after
+    if meta.get("anthropic-ratelimit-unified-7d-status") != "rejected":
+        return retry_after
+    log(f"retry-after-7d-capped bid={bid} orig={int(retry_after)}s cap={int(cap)}s")
+    return cap
 
 
 def _note_retry_after_if_set(
