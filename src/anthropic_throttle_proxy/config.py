@@ -18,6 +18,7 @@ import math
 import os
 import sys
 
+from . import points as _points
 from . import usage_allocator as _usage_allocator
 
 UPSTREAM = os.environ.get("THROTTLE_UPSTREAM", "https://api.anthropic.com")
@@ -507,6 +508,9 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 # Spec 377 phase 1. Off by default; observe computes and publishes only.
 # THROTTLE_WEEKLY_PACING=off|observe|enforce; burst is a finite fraction of the week.
 WEEKLY_PACING_MODE = _usage_allocator.parse_mode(os.environ.get("THROTTLE_WEEKLY_PACING"))
+# Points bucket (pace-option-draft §4.1): off|observe only. observe debits settled usage and
+# publishes a would-defer verdict; it never changes a response, header, slot or Retry-After.
+POINTS_MODE = _points.parse_mode(os.environ.get("THROTTLE_POINTS_MODE"))
 # 5h-window guard fed by the account usage endpoint (off|observe|enforce).
 # Anthropic stopped sending anthropic-ratelimit-unified-5h-* on 31/10/2026, so the
 # header-driven guard in proxy._apply_unified no longer sees that window; this knob
@@ -934,6 +938,10 @@ def _set_weekly_pacing_mode(v: str) -> None:
     _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_MODE", v)
 
 
+def _set_points_mode(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "POINTS_MODE", v)
+
+
 def _set_weekly_pacing_law(v: str) -> None:
     _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_LAW", v)
 
@@ -1265,6 +1273,19 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
         "help": (
             "off: no weekly pacing. observe: sample and report only, never defers. "
             "enforce: defer accounts that are ahead of their weekly pace."
+        ),
+    },
+    "points_mode": {
+        "label": "Points budget mode",
+        "type": "choice",
+        "choices": list(_points.MODES),
+        "getter": lambda: POINTS_MODE,
+        "setter": _set_points_mode,
+        "units": "",
+        "help": (
+            "off: no points accounting. observe: debit each settled request in weekly "
+            "points and publish a would-defer verdict under /__throttle/admission "
+            ".points; never changes a response, header, slot or Retry-After."
         ),
     },
     "weekly_pacing_law": {
