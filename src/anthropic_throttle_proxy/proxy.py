@@ -160,6 +160,7 @@ from .metrics import (
     M_UPSTREAM_RETRIES,
     M_UTIL_5H,
     M_UTIL_7D,
+    M_UTIL_7D_OI,
     M_UTIL_WARNINGS,
     M_WEEKLY_BURN,
     M_WEEKLY_BURN_ALERTS,
@@ -287,6 +288,7 @@ __all__ = [
     "M_UPSTREAM_RETRIES",
     "M_UTIL_5H",
     "M_UTIL_7D",
+    "M_UTIL_7D_OI",
     "M_UTIL_WARNINGS",
     "M_KEEPALIVE_HOLDS",
     # defined in this module
@@ -580,11 +582,31 @@ def _maybe_guard_five_hour(bid: str, usage: Mapping[str, object], now: float) ->
 
 
 def _publish_unified_gauges(bid: str, unified: Mapping[str, object]) -> None:
-    """Mirror the 5h/7d utilization fractions onto their Prometheus gauges."""
+    """Mirror the 5h/7d/Fable utilization fractions onto their Prometheus gauges."""
     if unified.get("util_5h") is not None:
         M_UTIL_5H.labels(bearer=bid).set(unified["util_5h"])
     if unified.get("util_7d") is not None:
         M_UTIL_7D.labels(bearer=bid).set(unified["util_7d"])
+    if unified.get("util_7d_oi") is not None:
+        M_UTIL_7D_OI.labels(bearer=bid).set(unified["util_7d_oi"])
+
+
+def _keep_fable_bucket(bstate: dict[str, object], unified: Mapping[str, object]) -> None:
+    """Remember the last Fable-bucket (``7d_oi``) reading for this bearer.
+
+    Only Fable responses carry the ``7d_oi`` headers (measured 11/11/2026: Opus and
+    Sonnet 200s on the same account omit them), and ``bstate["unified"]`` is replaced
+    by every response. Without this copy the next non-Fable response erases the
+    Fable meter from the recorder, the health view and the dashboard.
+    """
+    if unified.get("util_7d_oi") is None:
+        return
+    bstate["fable_bucket"] = {
+        "util_7d_oi": unified.get("util_7d_oi"),
+        "status_7d_oi": unified.get("status_7d_oi"),
+        "reset_7d_oi": unified.get("reset_7d_oi"),
+        "at": time.time(),
+    }
 
 
 def _budget_pacing_target() -> float:
@@ -689,6 +711,7 @@ async def _apply_unified(
         unified["status"] = unified.get("status_7d")
         unified["reset"] = unified.get("reset_7d")
     bstate["unified"] = unified
+    _keep_fable_bucket(bstate, unified)
     # Per-project 5 h share (advisory): the pace projector's only meter input.
     _PROJECT_SHARE.observe_meter(unified)
     if config.WEEKLY_PACING_MODE != "off":

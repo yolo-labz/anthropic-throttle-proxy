@@ -139,6 +139,21 @@ def classify(prev: Mapping[str, object] | None, cur: Mapping[str, object], win: 
     return {"event": "steady"}
 
 
+def _fable_fields(bstate: Mapping[str, object], unified: Mapping[str, object]) -> dict:
+    """Fable-bucket (``7d_oi``) columns: this response's own reading, else the kept one.
+
+    Only Fable responses carry the ``7d_oi`` headers (measured 11/11/2026), so the cached
+    ``unified`` sample alone leaves the column blank after any other response;
+    ``bstate["fable_bucket"]`` (``proxy._keep_fable_bucket``) is the last Fable reading.
+    A bearer that never served Fable still yields the keys, as ``None`` (``absent``).
+    """
+    kept = bstate.get("fable_bucket")
+    src = (
+        unified if unified.get("util_7d_oi") is not None or not isinstance(kept, Mapping) else kept
+    )
+    return {k: src.get(k) for k in ("util_7d_oi", "reset_7d_oi", "status_7d_oi")}
+
+
 def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None:
     """The row for one bearer's cached unified sample, or None if it has never had one."""
     unified = bstate.get("unified")
@@ -151,20 +166,9 @@ def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None
         "bearer": bid,
         "sampled_at": sampled_at,
         "sample_age_s": age,
-        **{
-            k: unified.get(k)
-            for k in (
-                "util_5h",
-                "reset_5h",
-                "status_5h",
-                "util_7d",
-                "reset_7d",
-                "util_7d_oi",
-                "reset_7d_oi",
-            )
-        },
+        **{k: unified.get(k) for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")},
         "status_7d": unified.get("status_7d"),
-        "status_7d_oi": unified.get("status_7d_oi"),
+        **_fable_fields(bstate, unified),
         "status": unified.get("status"),
     }
 
