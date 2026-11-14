@@ -10,15 +10,15 @@ is not part of this deployment. No running model or provider selection changes.
 
 ## Access
 
-- Editor: <https://dokku.tailf59220.ts.net:8845/>, token in rbw `api/token-research`.
-- Experiments: <https://dokku.tailf59220.ts.net:8846/>, user `pedro`, password in `api/token-experiments`.
+- Editor: <https://dokku.tailf59220.ts.net:8845/>, no application login.
+- Experiments: <https://dokku.tailf59220.ts.net:8846/>, no application login.
 - Existing Dagster: <https://dokku.tailf59220.ts.net:8444/>.
 
-Ingress is private to the tailnet. Nginx binds only host loopback. The editor uses native token
-authentication; MLflow uses native basic authentication and its host/origin checks. Secrets and
-TLS private keys stay outside this repository. Marimo starts quietly to avoid logging its token.
-The two containers communicate over a private Docker network with authenticated HTTP; browser
-traffic uses Tailscale HTTPS and desktop computation uses mutual TLS.
+Tailscale controls browser access. Nginx binds only host loopback, Docker publishes no application
+ports, and Tailscale Funnel stays disabled. The editor and MLflow require no separate login.
+MLflow retains its host/origin checks. The containers communicate over a private Docker network;
+browser traffic uses Tailscale HTTPS and desktop computation uses mutual TLS. Old application
+passwords remain in rbw as inactive recovery material and are not mounted into either app.
 
 ## Data and time series
 
@@ -48,8 +48,8 @@ and a 600-output descriptor test cover the installed version.
 In a notebook, `latest_snapshot()` returns the current path and manifest. Pin the returned run ID
 for an experiment with `SCIENCE_SNAPSHOT_RUN_ID`; this keeps every cell and report on the same
 generation while ingestion advances. `desktop_client()` opens an explicit remote CPU connection; pass data or
-aggregate arrays as task arguments. `configure_tracking()` sets the authenticated MLflow client
-without printing credentials. Keep full prompts and raw payloads out of the server workspace.
+aggregate arrays as task arguments. `configure_tracking()` selects the private MLflow endpoint
+without loading application credentials. Keep full prompts and raw payloads out of the server workspace.
 
 Copy `report.qmd` and `report.scss` into a writable report directory and run
 `quarto render report.qmd --to html`. The light/dark report uses system fonts without remote imports.
@@ -60,12 +60,12 @@ dataset provenance and readiness, not realized savings or accepted-task success.
 
 Create a Python 3.12 virtual environment and use `uv pip sync --require-hashes requirements.lock`.
 Run `python -m unittest discover -s . -p 'test_*.py' -v`, `ruff check .` and
-`marimo check notebook.py`. `smoke.py` checks authenticated APIs, a real Dokku-to-desktop numerical
+`marimo check notebook.py`. `smoke.py` checks APIs without application credentials, a real Dokku-to-desktop numerical
 task, and a synthetic MLflow run. It deliberately labels the result as infrastructure validation.
 
 `deploy.sh` expects the source context at `/tmp/token-science-build` on `ProxMox.Dokku`, with
 Quarto's `quarto-1.8.27-linux-amd64.deb` named `quarto.deb`. The Dockerfile checks its SHA256.
-Provision the private auth and TLS mounts first. Image builds use CPU/memory limits; image IDs
+Provision the private compute TLS mount first. Image builds use CPU/memory limits; image IDs
 produce immutable release tags. The acquisition and compute unit files are enabled user services.
 
 ## Reversal

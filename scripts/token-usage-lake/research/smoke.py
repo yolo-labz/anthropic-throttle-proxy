@@ -2,7 +2,6 @@
 
 import json
 import os
-from pathlib import Path
 
 import requests
 from science import configure_tracking, desktop_client
@@ -25,20 +24,19 @@ def cpu_interval(values):
 
 
 def main():
-    root = Path(os.environ.get("SCIENCE_AUTH", "/run/science-auth"))
     base = os.environ.get("SCIENCE_NOTEBOOK_URL", "http://localhost:5000")
     endpoint = base + "/auth/token"
-    rejected = requests.get(endpoint, timeout=15)
-    if rejected.status_code not in (401, 403):
-        raise RuntimeError(f"notebook API did not reject anonymous access: {rejected.status_code}")
-    token = (root / "notebook-token").read_text().strip()
-    accepted = requests.get(endpoint, headers={"Authorization": "Bearer " + token}, timeout=15)
-    if accepted.status_code != 200 or accepted.json().get("token") != token:
-        raise RuntimeError(f"notebook authentication failed: {accepted.status_code}")
+    notebook = requests.get(endpoint, timeout=15)
+    if notebook.status_code != 200 or notebook.json() != {"token": None}:
+        raise RuntimeError(f"notebook still requires an application login: {notebook.status_code}")
     tracking = os.environ["MLFLOW_TRACKING_URI"]
-    rejected = requests.post(tracking + "/api/2.0/mlflow/experiments/search", json={}, timeout=15)
-    if rejected.status_code != 401:
-        raise RuntimeError(f"tracking API did not reject anonymous access: {rejected.status_code}")
+    experiments = requests.post(
+        tracking + "/api/2.0/mlflow/experiments/search", json={}, timeout=15
+    )
+    if experiments.status_code != 200 or "experiments" not in experiments.json():
+        raise RuntimeError(
+            f"tracking still requires an application login: {experiments.status_code}"
+        )
     with desktop_client() as client:
         result = client.submit(cpu_interval, list(range(100)), pure=False).result(timeout=45)
     if result["worker_host"] != "desktop" or not result["lower"] < result["mean"] < result["upper"]:
@@ -59,7 +57,7 @@ def main():
         result["mlflow_run_id"] = run.info.run_id
     print(
         json.dumps(
-            {"anonymous_access": "rejected", "notebook_auth": "passed", "desktop_cpu": result},
+            {"application_login": "disabled; Tailscale ingress only", "desktop_cpu": result},
             sort_keys=True,
         )
     )

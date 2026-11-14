@@ -31,14 +31,7 @@ def desktop_client():
 
 
 def configure_tracking():
-    import configparser
-
     import mlflow
 
-    config = configparser.ConfigParser()
-    root = Path(os.environ.get("SCIENCE_AUTH", "/run/science-auth"))
-    config.read(root / "mlflow-auth.ini")
-    os.environ["MLFLOW_TRACKING_USERNAME"] = config["mlflow"]["admin_username"]
-    os.environ["MLFLOW_TRACKING_PASSWORD"] = config["mlflow"]["admin_password"]
     mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
     return mlflow
