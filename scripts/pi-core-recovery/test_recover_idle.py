@@ -3,6 +3,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -121,6 +122,8 @@ def recovery_seat(tmp_path, monkeypatch):
     }.items():
         args.extend(["--" + key, value])
     monkeypatch.setattr(sys, "argv", ["recover_idle", *args])
+    # These lifecycle tests predate the hold gate; it has its own tests below.
+    monkeypatch.setattr(idle, "hold_gate", lambda _session, _pane: False)
     return transcript
 
 
@@ -411,3 +414,136 @@ def test_operational_timeout_reaps_actual_child(tmp_path):
 def test_operational_executable_is_allowlisted():
     with pytest.raises(ValueError, match="unsupported operational executable"):
         idle.run(["/unapproved/executable"], time.monotonic() + 2)
+
+
+# --- workspace hold (~/.local/state/pi/IDLE_PULL_HOLD) ----------------------
+# A held pane gets no action at all. These run main() against a fake herdr
+# snapshot and stop at the first action gate, so nothing live is touched.
+
+
+class _Reached(Exception):
+    """Raised by the stubbed lock: the pane got past the hold gate."""
+
+
+def _snapshot(panes, workspaces):
+    return {
+        "result": {
+            "snapshot": {
+                "panes": [{"pane_id": p, "workspace_id": w} for p, w in panes],
+                "workspaces": [{"workspace_id": w, "label": label} for w, label in workspaces],
+            }
+        }
+    }
+
+
+_CENSUS = {
+    # session "products": COC Bot held by id (wD) and by exact label (w9Z), free workspace wK.
+    "products": _snapshot(
+        panes=[("wD:p2", "wD"), ("w9Z:p1", "w9Z"), ("wK:p1", "wK")],
+        workspaces=[("wD", "⚔️ COC Bot"), ("w9Z", "⚔️ COC Bot"), ("wK", "Docs")],
+    ),
+    # another session with the same label: a hold is session:workspace, so this is free.
+    "other": _snapshot(
+        panes=[("wD:p1", "wD")],
+        workspaces=[("wD", "⚔️ COC Bot")],
+    ),
+}
+
+
+def _argv(session, pane):
+    keys = {
+        "name": "n",
+        "transcript": "/t.jsonl",
+        "cwd": "/c",
+        "provider": "x",
+        "model": "m",
+        "effort": "e",
+        "accepted-install": "/i",
+        "accepted-source": "/s",
+    }
+    args = ["recover_idle", "--session", session, "--pane", pane]
+    for key, value in keys.items():
+        args += ["--" + key, value]
+    return args
+
+
+@pytest.fixture
+def hold_env(tmp_path, monkeypatch):
+    hold = tmp_path / "IDLE_PULL_HOLD"
+    hold.write_text("# coc-wD-pause: Pedro paused COC Bot\nproducts:wD\n\nproducts:⚔️ COC Bot\n")
+    monkeypatch.setattr(idle, "HOLD_FILE", hold)
+    monkeypatch.setattr(idle, "HOLD_LAST", tmp_path / "last.json")
+    calls, reached = [], []
+
+    def fake_run(arguments, deadline, cap=40):
+        calls.append(arguments)
+        session = arguments[arguments.index("--session") + 1]
+        return json.dumps(_CENSUS[session])
+
+    def stop_at_gate(path):
+        reached.append(path)
+        raise _Reached
+
+    monkeypatch.setattr(idle, "run", fake_run)
+    monkeypatch.setattr(idle, "acquire_lock", stop_at_gate)
+    return SimpleNamespace(hold=hold, calls=calls, reached=reached)
+
+
+def test_census_refuses_held_panes_and_acts_on_the_free_one(hold_env, monkeypatch, capsys):
+    results = {}
+    for session, pane in [
+        ("products", "wD:p2"),  # held by id
+        ("products", "w9Z:p1"),  # held by exact label
+        ("products", "wK:p1"),  # free
+        ("other", "wD:p1"),  # same label, other session: free
+    ]:
+        monkeypatch.setattr(sys, "argv", _argv(session, pane))
+        before = len(hold_env.reached)
+        try:
+            idle.main()
+            results[(session, pane)] = "held-or-returned"
+        except _Reached:
+            results[(session, pane)] = "reached-action"
+        assert len(hold_env.reached) - before in (0, 1)
+    out = capsys.readouterr().out
+    assert "held: wD:p2" in out
+    assert "held: w9Z:p1" in out
+    assert "held: wK:p1" not in out
+    assert results == {
+        ("products", "wD:p2"): "held-or-returned",
+        ("products", "w9Z:p1"): "held-or-returned",
+        ("products", "wK:p1"): "reached-action",
+        ("other", "wD:p1"): "reached-action",
+    }
+    # Only the herdr snapshot read happened for held panes: no lock, no send.
+    assert all(call[-2:] == ["api", "snapshot"] for call in hold_env.calls)
+
+
+def test_missing_hold_file_keeps_the_last_list_read(hold_env, capsys):
+    assert idle.read_holds() == {"products:wD", "products:⚔️ COC Bot"}
+    hold_env.hold.unlink()
+    assert idle.read_holds() == {"products:wD", "products:⚔️ COC Bot"}
+    assert "keeping last persisted hold list" in capsys.readouterr().err
+
+
+def test_missing_hold_file_with_no_prior_list_holds_nothing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(idle, "HOLD_FILE", tmp_path / "absent")
+    monkeypatch.setattr(idle, "HOLD_LAST", tmp_path / "never.json")
+    assert idle.read_holds() == set()
+    assert "keeping last persisted hold list" in capsys.readouterr().err
+
+
+def test_comment_and_blank_lines_are_not_holds(hold_env):
+    hold_env.hold.write_text("# products:wK\n\n   \n#products:wD\nproducts:wQ\n")
+    assert idle.read_holds() == {"products:wQ"}
+    assert not idle.is_held(idle.read_holds(), "products", "wK", "Docs")
+    assert not idle.is_held(idle.read_holds(), "products", "wD", "⚔️ COC Bot")
+    assert idle.is_held(idle.read_holds(), "products", "wQ", "")
+
+
+def test_unresolvable_pane_fails_closed_before_any_action(hold_env, monkeypatch):
+    monkeypatch.setattr(sys, "argv", _argv("products", "wZ:p9"))
+    with pytest.raises(SystemExit) as exit_info:
+        idle.main()
+    assert exit_info.value.code == 2
+    assert hold_env.reached == []
