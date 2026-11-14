@@ -56,7 +56,8 @@
       <dt>{{ status.binding.window }} window</dt>
       <dd>
         <span class="fact-v{% if refused %} is-crit-text{% endif %}">{{ status.binding.pct }}%</span>
-        {% if status.binding.resets_in | default('') %}<span class="fact-sub">{{ "reopens in" if refused else "resets in" }} {{ status.binding.resets_in | default('') }}</span>
+        {% if status.binding.closed | default(none) %}<span class="fact-sub is-crit-text">closed until {{ status.binding.closed.at }} (in {{ status.binding.closed.in }})</span>{% if status.binding.parked | default(none) and status.binding.parked.queued %}<span class="fact-sub is-warn-text">{{ status.binding.parked.queued }} parked on it</span>{% endif %}
+        {% elif status.binding.resets_in | default('') %}<span class="fact-sub">{{ "reopens in" if refused else "resets in" }} {{ status.binding.resets_in | default('') }}</span>
         {% elif status.binding.retry_after | default(none) %}<span class="fact-sub">retry-after {{ status.binding.retry_after | default(none) }}s</span>{% endif %}
       </dd>
     </div>
@@ -328,8 +329,16 @@
           </div>
           {% if s.enrollment | default('') %}<div class="im-caption">Native enrollment: {{ s.enrollment }}</div>{% endif %}
           {% if s.catalogue_reason | default('') %}<div class="im-caption">{{ s.catalogue_reason }}</div>{% endif %}
+          {% set closed = s.closed | default(none) %}
+          {% set parked = s.parked | default(none) %}
+          {% if closed %}<div class="acct-closed is-crit-text">🔒 closed until {{ closed.at }} <span class="muted">(in {{ closed.in }})</span></div>
+          {% elif parked %}<div class="acct-open">open</div>{% endif %}
+          {% if parked and (parked.queued or parked.inflight) %}
+          <div class="acct-parked{% if closed %} is-warn-text{% endif %}">{{ parked.queued }} parked · {{ parked.inflight }} in flight{% if closed %} on a closed account{% endif %}</div>
+          {% endif %}
           {% if s.sample_age_s | default(none) is not none %}
           <div class="im-caption">Source sample {{ s.sample_age_s | int }}s old{% if s.sample_observed_at %} · {{ s.sample_observed_at }}{% endif %}{% if s.sample_interval_s %} · every {{ s.sample_interval_s | int }}s{% endif %}</div>
+          {% if s.status == 'stale' and s.sample_age_text | default(none) %}<div class="im-caption is-warn-text">⚠️ not current · reading {{ s.sample_age_text }} old</div>{% endif %}
           {% endif %}
           <div class="ident-meta">
             <span class="im-family">{{ s.family or "unknown family" }}</span>
@@ -349,7 +358,7 @@
           </div>
           {% endif %}
         </td>
-        <td class="sub-meters">
+        <td class="sub-meters{% if s.status == 'stale' %} is-stale{% endif %}">
           <div class="meter-list">
           {% if s.meters %}
             {% for m in s.meters %}
@@ -547,7 +556,7 @@
           {% endif %}
         </td>
         <td class="num{% if b.queued > 0 %} is-warn-text{% endif %}" data-label="queued">{{ b.queued }}</td>
-        <td class="num" data-label="retry">{% if b.retry_after_in %}<span class="retry-after">{{ b.retry_after_in }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num" data-label="retry">{% if b.retry_after_in %}<span class="retry-after">{{ b.retry_after_in }}</span>{% elif b.closed | default(none) %}<span class="retry-after">closed until {{ b.closed.at }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="num" data-label="served">{{ "{:,}".format(b.served) }}{% if reqleft is not none %}<span class="req-left" title="anthropic-ratelimit-requests-remaining">{{ reqleft }} left</span>{% endif %}</td>
         <td class="num" data-label="clients">{% if b.limiter %}{{ (b.limiter.queued_per_client or {}) | length }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td data-label="5h">
