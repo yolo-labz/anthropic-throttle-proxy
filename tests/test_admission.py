@@ -19,7 +19,7 @@ from anthropic_throttle_proxy import accounts, config, lanes, proxy
 
 
 @pytest.fixture(autouse=True)
-def _clean_bearers():
+def _clean_bearers(monkeypatch):
     """Each case owns the bearer table outright."""
     saved_state = dict(config.bearer_state)
     saved_limiters = dict(config.bearer_limiters)
@@ -27,8 +27,10 @@ def _clean_bearers():
     config.bearer_state.clear()
     config.bearer_limiters.clear()
     proxy._restored_credentials.clear()
-    config.state["upstream_egress_ok"] = True
-    config.state.pop("upstream_auth_ok", None)
+    # monkeypatch restores both: a bare pop left later tests without the key
+    # (#62's health test failed only in the full suite, CI run 351).
+    monkeypatch.setitem(config.state, "upstream_egress_ok", True)
+    monkeypatch.delitem(config.state, "upstream_auth_ok", raising=False)
     yield
     config.bearer_state.clear()
     config.bearer_state.update(saved_state)
