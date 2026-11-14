@@ -68,7 +68,7 @@ the six reproductions alone.
 ## Constitution and review
 
 Principles I–V unchanged: no SDK, secret exposure, AIMD modification, live probe
-or hard-coded production upstream. Generator: OpenAI. Pedro explicitly forbids
+or hard-coded production upstream. Pedro explicitly forbids
 new subagents/Z.AI calls for this track; no automated review is requested and no
 independent model approval is claimed. Executable acceptance is the evidence.
 No deployment; one revert PR undoes this test/spec slice.

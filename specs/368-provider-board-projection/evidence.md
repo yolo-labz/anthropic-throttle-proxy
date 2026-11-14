@@ -1,6 +1,6 @@
 # Executable acceptance
 
-30/10/2026. Generator: GPT-6.1 Sol (OpenAI); no worker/reviewer jobs. Effort setting not independently exposed by environment.
+30/10/2026. no worker/reviewer jobs. Effort setting not independently exposed by environment.
 
 ## Artifact isolation
 

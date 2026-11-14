@@ -1,6 +1,6 @@
 # 314 — truthful static-analysis integration (07/10/2026)
 
-Generator family: **openai**. Operator dispatch/contract: Throttler plan of
+Operator dispatch/contract: Throttler plan of
 07/10/2026; existing canonical Sonar runbook and 06/10 metrics oracle.
 No additional model delegation, runtime activation or shared-note edits.
 

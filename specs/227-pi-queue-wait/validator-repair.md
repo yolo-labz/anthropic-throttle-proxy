@@ -2,7 +2,7 @@
 
 ## Provenance and status
 
-OpenAI GPT-5.6 Sol authored this validator-only repair after the bounded GLM attempt produced no edits. This is generator evidence, not independent approval or a release verdict. The transport remains unchanged; the parent owns the subsequent transport repair and independent gate.
+This validator-only repair followed a bounded GLM attempt that produced no edits. It is not independent approval or a release verdict. The transport remains unchanged; the parent owns the subsequent transport repair and independent gate.
 
 ## Controller rerun (supersedes sandbox-only results below)
 

@@ -1,6 +1,6 @@
 # Plan: queue-depth admission + honest queue-timeout Retry-After
 
-Generator family: **anthropic** (Opus 5). Adversarial/done gate: **Codex Sol**
+Adversarial/done gate: **Codex Sol**
 (different family), per the repo's mandatory review rule.
 
 ## Hypothesis
