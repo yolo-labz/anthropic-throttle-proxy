@@ -227,6 +227,13 @@ alias), so no new service was installed. Bucket `token-lake`, prefix `marts/`. C
 from `S3_ENDPOINT`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, else from the `mc` alias; no key is
 written into this repo or into a project file.
 
+Transfers go through `s3client.py` (stdlib `http.client` + SigV4, path-style, `UNSIGNED-PAYLOAD`),
+not the `mc` binary. An earlier version shelled out to `mc` and it produced a false positive: `mc
+cp file s3://bucket/key` treats the leading `s3:` as a **local directory name**, copies the bytes
+to disk, exits 0 and reports an empty ETag — so the publisher "verified" a generation that never
+left the machine. The client is also why the tests can prove the bytes reached the store: they run
+a fake S3 endpoint on a loopback port instead of faking a binary.
+
 ```sh
 # 1. export the marts from a warehouse copy (source opened read-only)
 .venv/bin/python -m marts --warehouse <warehouse.duckdb> --out ~/.local/state/token-usage-lake/marts/<stamp>
@@ -247,12 +254,13 @@ connection.execute("SELECT model, sum(points) FROM fact_calls GROUP BY 1 ORDER B
 ```
 
 Trust chain, in order: the marts manifest records each file's bytes, SHA-256 and MD5; publish
-uploads under `<base>/<run_id>/`, re-reads size and ETag per object and refuses an empty ETag (an
-`s3://` path handed to `mc` is a *local* directory, so a silent copy would otherwise certify
-itself); the manifest is uploaded last as the commit marker and `latest.json` follows; a second
-publish of the same run id must match byte-for-byte or it is refused. Deep verification downloads
-each object and compares SHA-256. A truncated or swapped download during `download` fails against
-the manifest instead of feeding a dashboard.
+uploads under `<base>/<run_id>/`, re-reads size and ETag per object and refuses an empty ETag; the
+manifest is uploaded last as the commit marker and `latest.json` follows; a second publish of the
+same run id must match byte-for-byte or it is refused. Deep verification downloads each object and
+compares SHA-256. A truncated or swapped download during `download` fails against the manifest
+instead of feeding a dashboard. `marts.py` also records a `provenance` block when it is given the
+lake's own completed-run receipt, so a generation states which run it came from and whether that
+run's quality status was accepted.
 
 Text-bearing columns never leave: `marts.py` drops `cwd`, `brief`, `prelude`, `path`, `prompt`,
 `text`, `content`, `body`, `raw` and `message` by name, records what it dropped in the manifest,
@@ -267,6 +275,14 @@ produced by `materialize`. `materialize` still serves notebooks and other tools 
 file, and it records `_generation` (run id, S3 URI, manifest SHA-256) inside the file so a stale
 dashboard is provable.
 
-What this does not do: it does not publish from the live lake. Exporting the marts is a desktop
-step against a warehouse copy, and making the live lake publish on a schedule stays with the lake's
-single writer (Steward).
+What this does not do: it does not write to the live lake. Exporting the marts reads a copy taken
+with `sudo cp` from the Dokku host and verifies it read-only; making that copy-and-publish step run
+on a schedule from Dagster stays with the lake's single writer (Steward).
+
+## Live lake, refreshed by hand
+
+A generation built from tonight's lake (`lake-live-20261117`) proved the read-mostly path end to
+end: copy the 148 MB lake off `ProxMox.Dokku`, verify it opens read-only, build nine marts (13.6 MB)
+in a few seconds, publish, and point Rill at the mirror. Two guards are worth keeping: compare the
+copy's row counts with `runtime/latest-complete.json` before trusting it, and expect the copy to lag
+the newest run — the file is live, so a copy is a point-in-time snapshot, never "the latest".

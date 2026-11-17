@@ -74,22 +74,26 @@ class FakeS3:
                 self._reply(200, self._etag(bucket, key, payload))
 
             def do_GET(self):
-                bucket, key = self._key()
-                payload = store.objects.get((bucket, key))
-                if payload is None:
-                    self._reply(404, {})
+                found = self._found()
+                if found is None:
                     return
-                headers = {"Content-Length": str(len(payload)), **self._etag(bucket, key, payload)}
+                headers, payload = found
                 self._reply(200, headers, payload)
 
             def do_HEAD(self):
+                found = self._found()
+                if found is not None:
+                    self._reply(200, found[0])
+
+            def _found(self):
+                """Answer 404 and return None, else (headers, payload) for an existing object."""
                 bucket, key = self._key()
                 payload = store.objects.get((bucket, key))
                 if payload is None:
                     self._reply(404, {})
-                    return
+                    return None
                 headers = {"Content-Length": str(len(payload)), **self._etag(bucket, key, payload)}
-                self._reply(200, headers)
+                return headers, payload
 
             def do_DELETE(self):
                 store.objects.pop(self._key(), None)
