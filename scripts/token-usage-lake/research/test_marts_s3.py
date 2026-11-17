@@ -1,81 +1,111 @@
-# ruff: noqa: S608, S324 - test SQL and md5 fixtures mirror the production checksums.
-
 """Offline tests for the marts builder and the object-store publisher.
 
-The publisher talks to a real store through `mc`, so these tests put a fake `mc` on PATH that keeps
-objects in a temporary directory. That covers the ordering, the immutability rule and every
-verification branch without network access. `open_s3` needs a live endpoint and is proven by the
-receipt in the vault instead.
+The publisher speaks S3 over HTTP, so these tests run a fake store on a loopback port and keep
+objects in memory. That covers the ordering, the immutability rule and every verification branch
+without network access — and unlike a fake `mc` binary, it proves the bytes actually left the
+process instead of landing in a local directory named `s3:`.
 """
 
 import hashlib
 import json
 import os
-import stat
-import sys
 import tempfile
+import threading
 import unittest
+import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import duckdb
-
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
-
-import marts  # noqa: E402
-import objectstore  # noqa: E402
-
-FAKE_MC = """#!/usr/bin/env python3
-import hashlib, json, os, shutil, sys
-from pathlib import Path
-
-root = Path(os.environ["FAKE_S3_ROOT"])
-argv = sys.argv[1:]
-command = argv[0]
-etag_override = os.environ.get("FAKE_MC_EMPTY_ETAG")
+import marts
+import objectstore
 
 
-def local(uri):
-    return root.joinpath(uri.replace("/", "__"))
+def _md5(payload):
+    return hashlib.new("md5", payload, usedforsecurity=False).hexdigest()
 
 
-if command == "cp":
-    args = [a for a in argv[1:] if not a.startswith("--")]
-    source = Path(args[0])
-    if source.exists():  # upload: local source, remote target
-        target = local(args[1])
-    else:  # download: remote source, local target
-        source, target = local(args[0]), Path(args[1])
-    if source.is_dir():
-        shutil.copytree(source, target, dirs_exist_ok=True)
-    else:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-    sys.exit(0)
+class FakeS3:
+    """A tiny S3 endpoint: PUT, GET, HEAD and DELETE over a dict, no signing checks."""
 
-if command == "stat":
-    path = local(argv[-1])
-    if not path.is_file():
-        print(json.dumps({"status": "error"}))
-        sys.exit(1)
-    payload = {"status": "success", "type": "file", "size": path.stat().st_size,
-               "etag": hashlib.md5(path.read_bytes()).hexdigest()}
-    if etag_override and etag_override in path.name:
-        payload["etag"] = ""
-    print(json.dumps(payload))
-    sys.exit(0)
+    def __init__(self):
+        self.objects = {}
+        self.suppress_etag = set()
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
-if command == "cat":
-    sys.stdout.buffer.write(local(argv[-1]).read_bytes())
-    sys.exit(0)
+    @property
+    def endpoint(self):
+        host, port = self._server.server_address[:2]
+        return f"{host}:{port}"
 
-if command == "rm":
-    local(argv[-1]).unlink(missing_ok=True)
-    sys.exit(0)
+    def __enter__(self):
+        self._thread.start()
+        return self
 
-print(f"fake mc: unsupported {argv}", file=sys.stderr)
-sys.exit(2)
-"""
+    def __exit__(self, *_):
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+    def _handler(self):
+        store = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_args):
+                pass
+
+            def _key(self):
+                parts = self.path.lstrip("/").split("/", 1)
+                return (parts[0], parts[1] if len(parts) > 1 else "")
+
+            def _etag(self, bucket, key, payload):
+                if f"{bucket}/{key}" in store.suppress_etag:
+                    return {}
+                return {"ETag": '"' + _md5(payload) + '"'}
+
+            def do_PUT(self):
+                length = int(self.headers.get("Content-Length", 0))
+                payload = self.rfile.read(length) if length else b""
+                bucket, key = self._key()
+                store.objects[(bucket, key)] = payload
+                self._reply(200, self._etag(bucket, key, payload))
+
+            def do_GET(self):
+                bucket, key = self._key()
+                payload = store.objects.get((bucket, key))
+                if payload is None:
+                    self._reply(404, {})
+                    return
+                headers = {"Content-Length": str(len(payload)), **self._etag(bucket, key, payload)}
+                self._reply(200, headers, payload)
+
+            def do_HEAD(self):
+                bucket, key = self._key()
+                payload = store.objects.get((bucket, key))
+                if payload is None:
+                    self._reply(404, {})
+                    return
+                headers = {"Content-Length": str(len(payload)), **self._etag(bucket, key, payload)}
+                self._reply(200, headers)
+
+            def do_DELETE(self):
+                store.objects.pop(self._key(), None)
+                self._reply(204, {})
+
+            def _reply(self, status, headers, payload=b""):
+                self.send_response(status)
+                if "Content-Length" not in headers:
+                    headers = {**headers, "Content-Length": str(len(payload))}
+                for name, value in headers.items():
+                    self.send_header(name, value)
+                self.end_headers()
+                if payload:
+                    self.wfile.write(payload)
+
+        return Handler
 
 
 def make_warehouse(path, *, rows=3):
@@ -83,12 +113,12 @@ def make_warehouse(path, *, rows=3):
     connection.execute(
         "CREATE TABLE calls(cwd VARCHAR, model VARCHAR, points DOUBLE, brief VARCHAR, note VARCHAR)"
     )
-    connection.execute(
-        "INSERT INTO calls VALUES "
-        + ", ".join(
-            f"('/home/secret/project', 'model-{index}', {index}.5, 'do the thing', 'keep')"
+    connection.executemany(
+        "INSERT INTO calls VALUES (?, ?, ?, ?, ?)",
+        [
+            ("/home/secret/project", f"model-{index}", index + 0.5, "do the thing", "keep")
             for index in range(rows)
-        )
+        ],
     )
     connection.execute("CREATE TABLE meter_hourly(account VARCHAR, points DOUBLE)")
     connection.execute("INSERT INTO meter_hourly VALUES ('a', 1.0), ('a', 2.0)")
@@ -119,7 +149,7 @@ class MartsTests(unittest.TestCase):
         self.assertEqual(entry["rows"], 3)
         payload = (self.tmp / "out" / "fact_calls.parquet").read_bytes()
         self.assertEqual(entry["sha256"], hashlib.sha256(payload).hexdigest())
-        self.assertEqual(entry["md5"], hashlib.md5(payload).hexdigest())
+        self.assertEqual(entry["md5"], _md5(payload))
         self.assertEqual(entry["bytes"], len(payload))
         expected = hashlib.sha256(self.warehouse.read_bytes()).hexdigest()
         self.assertEqual(manifest["source"]["sha256"], expected)
@@ -133,6 +163,26 @@ class MartsTests(unittest.TestCase):
             marts.build(self.warehouse, self.tmp / "busy")
         with self.assertRaises(ValueError):
             marts.build(self.warehouse, self.tmp / "out", sources=(("fact", "main", "nope"),))
+
+    def test_dims_are_derived_when_the_wh_schema_is_absent(self):
+        connection = duckdb.connect(str(self.tmp / "lake.duckdb"))
+        connection.execute("CREATE TABLE requests(account VARCHAR, model VARCHAR)")
+        connection.execute("INSERT INTO requests VALUES ('a', 'm'), ('b', 'm'), ('a', 'm')")
+        connection.execute("CREATE TABLE tasks(effort VARCHAR)")
+        connection.execute("INSERT INTO tasks VALUES ('high'), ('off')")
+        connection.close()
+        source = (("dim_account", "wh", "dim_account"), ("dim_effort", "wh", "dim_effort"))
+        manifest = marts.build(
+            self.tmp / "lake.duckdb",
+            self.tmp / "out",
+            sources=source,
+            provenance={"run_id": "r1", "quality_status": "failed"},
+        )
+        self.assertEqual(manifest["tables"]["dim_account"]["source"], "derived")
+        self.assertEqual(manifest["tables"]["dim_account"]["rows"], 2)
+        self.assertEqual(manifest["tables"]["dim_effort"]["rows"], 2)
+        self.assertEqual(manifest["tables"]["dim_effort"]["columns"], ["effort_key"])
+        self.assertEqual(manifest["provenance"]["quality_status"], "failed")
 
     def test_denied_everything_is_refused(self):
         connection = duckdb.connect(str(self.tmp / "narrow.duckdb"))
@@ -149,21 +199,15 @@ class ObjectStoreTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
-        self.store = self.tmp / "store"
-        self.store.mkdir()
-        self.bin = self.tmp / "bin"
-        self.bin.mkdir()
-        mc = self.bin / "mc"
-        mc.write_text(FAKE_MC)
-        mc.chmod(mc.stat().st_mode | stat.S_IXUSR)
+        self.fake = FakeS3().__enter__()
         self._env = dict(os.environ)
-        os.environ["PATH"] = f"{self.bin}:{os.environ['PATH']}"
-        os.environ["FAKE_S3_ROOT"] = str(self.store)
-        os.environ.pop("FAKE_MC_EMPTY_ETAG", None)
+        os.environ["S3_ENDPOINT"] = f"http://{self.fake.endpoint}"
+        os.environ["S3_ACCESS_KEY_ID"] = "test-key"
+        os.environ["S3_SECRET_ACCESS_KEY"] = uuid.uuid4().hex
         self.marts_dir = self.tmp / "marts"
-        (self.marts_dir).mkdir()
-        (self.marts_dir / "fact_calls.parquet").write_bytes(b"parquet-bytes")
-        digest = hashlib.sha256(b"parquet-bytes").hexdigest()
+        self.marts_dir.mkdir()
+        payload = b"parquet-bytes"
+        (self.marts_dir / "fact_calls.parquet").write_bytes(payload)
         (self.marts_dir / "manifest.json").write_text(
             json.dumps(
                 {
@@ -174,9 +218,9 @@ class ObjectStoreTests(unittest.TestCase):
                     "tables": {
                         "fact_calls": {
                             "source": "main.calls",
-                            "bytes": len(b"parquet-bytes"),
-                            "sha256": digest,
-                            "md5": hashlib.md5(b"parquet-bytes").hexdigest(),
+                            "bytes": len(payload),
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                            "md5": _md5(payload),
                             "rows": 1,
                             "columns": ["model"],
                         }
@@ -188,6 +232,7 @@ class ObjectStoreTests(unittest.TestCase):
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self._env)
+        self.fake.__exit__(None, None, None)
         self._tmp.cleanup()
 
     def _publish(self):
@@ -208,11 +253,14 @@ class ObjectStoreTests(unittest.TestCase):
         self.assertTrue(first["verified"])
         self.assertEqual(first["objects"][0]["checksum"], "size+md5")
         self.assertEqual(first["run_id"], "1000-5")
+        self.assertIn(("bucket", "marts/1000-5/fact_calls.parquet"), self.fake.objects)
+        self.assertIn(("bucket", "marts/1000-5/manifest.json"), self.fake.objects)
+        self.assertIn(("bucket", "marts/latest.json"), self.fake.objects)
         second = objectstore.publish(self.marts_dir, "fake/bucket/marts")
         self.assertTrue(second["reused"])
 
     def test_publish_refuses_a_missing_etag(self):
-        os.environ["FAKE_MC_EMPTY_ETAG"] = "fact_calls.parquet"
+        self.fake.suppress_etag.add("bucket/marts/1000-5/fact_calls.parquet")
         with self.assertRaises(ValueError) as caught:
             objectstore.publish(self.marts_dir, "fake/bucket/marts")
         self.assertIn("no ETag", str(caught.exception))
@@ -234,8 +282,7 @@ class ObjectStoreTests(unittest.TestCase):
 
     def test_verify_refuses_a_tampered_object(self):
         manifest = self._publish()
-        stored = self.store / "fake__bucket__marts__1000-5__fact_calls.parquet"
-        stored.write_bytes(b"parquet-bytez")
+        self.fake.objects[("bucket", "marts/1000-5/fact_calls.parquet")] = b"parquet-bytez"
         with self.assertRaises(ValueError) as caught:
             objectstore.verify(manifest, "fake/bucket/marts", "1000-5")
         self.assertIn("etag mismatch", str(caught.exception))
@@ -250,8 +297,7 @@ class ObjectStoreTests(unittest.TestCase):
 
     def test_download_refuses_bytes_that_do_not_match(self):
         manifest = self._publish()
-        stored = self.store / "fake__bucket__marts__1000-5__fact_calls.parquet"
-        stored.write_bytes(b"parquet-bytez")
+        self.fake.objects[("bucket", "marts/1000-5/fact_calls.parquet")] = b"parquet-bytez"
         with self.assertRaises(ValueError) as caught:
             objectstore.download(self.tmp / "mirror2", "fake/bucket/marts", manifest=manifest)
         self.assertIn("do not match the manifest", str(caught.exception))

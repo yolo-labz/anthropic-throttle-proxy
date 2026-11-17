@@ -40,6 +40,18 @@ SOURCES = (
     ("dim_effort", "wh", "dim_effort"),
 )
 
+# The modeled warehouse carries a `wh` schema of dimensions; the live lake does not. Derive the
+# same key-only contract from the facts rather than failing on a table the mart never needed.
+DERIVED = {
+    "dim_account": (
+        "SELECT DISTINCT account AS account_key FROM main.requests "
+        "WHERE account IS NOT NULL ORDER BY 1"
+    ),
+    "dim_effort": (
+        "SELECT DISTINCT effort AS effort_key FROM main.tasks WHERE effort IS NOT NULL ORDER BY 1"
+    ),
+}
+
 
 def _quote(value):
     return '"' + str(value).replace('"', '""') + '"'
@@ -50,7 +62,7 @@ def _literal(value):
 
 
 def _digests(path):
-    sha, md5 = hashlib.sha256(), hashlib.md5()  # noqa: S324 - MD5 mirrors the S3 ETag, never a KDF
+    sha, md5 = hashlib.sha256(), hashlib.new("md5", usedforsecurity=False)
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1 << 20), b""):
             sha.update(chunk)
@@ -69,7 +81,32 @@ def _columns(connection, schema, table):
     return [row[0] for row in rows]
 
 
-def build(warehouse, out_dir, *, sources=None, created_epoch=None):
+def _select_sql(connection, mart, schema, table):
+    """Return (sql, columns, source label, dropped columns) for a mart.
+
+    A dimension that the warehouse does not carry is derived from the facts, so the live lake and
+    a modeled warehouse produce the same mart contract.
+    """
+    try:
+        columns = _columns(connection, schema, table)
+    except ValueError:
+        if mart not in DERIVED:
+            raise
+        return DERIVED[mart], None, "derived", []
+    kept = [name for name in columns if name.lower() not in DENY_COLUMNS]
+    removed = [name for name in columns if name not in kept]
+    if not kept:
+        raise ValueError(f"every column of {schema}.{table} is denied")
+    select = ", ".join(_quote(name) for name in kept)
+    return (
+        f"SELECT {select} FROM {_quote(schema)}.{_quote(table)}",
+        kept,
+        f"{schema}.{table}",
+        removed,
+    )
+
+
+def build(warehouse, out_dir, *, sources=None, created_epoch=None, provenance=None):
     """Write `<out>/<mart>.parquet` for each source plus a manifest. Returns the manifest."""
     warehouse = Path(warehouse)
     out = Path(out_dir)
@@ -84,28 +121,22 @@ def build(warehouse, out_dir, *, sources=None, created_epoch=None):
     tables, dropped = {}, {}
     try:
         for mart, schema, table in sources or SOURCES:
-            columns = _columns(connection, schema, table)
-            kept = [name for name in columns if name.lower() not in DENY_COLUMNS]
-            removed = [name for name in columns if name not in kept]
-            if not kept:
-                raise ValueError(f"every column of {schema}.{table} is denied")
+            select, kept, source, removed = _select_sql(connection, mart, schema, table)
             target = out / f"{mart}.parquet"
-            select = ", ".join(_quote(name) for name in kept)
             connection.execute(
-                f"COPY (SELECT {select} FROM {_quote(schema)}.{_quote(table)}) "
-                f"TO {_literal(target)} (FORMAT parquet, COMPRESSION zstd)"
+                f"COPY ({select}) TO {_literal(target)} (FORMAT parquet, COMPRESSION zstd)"
             )
-            rows = connection.execute(
-                f"SELECT count(*) FROM {_quote(schema)}.{_quote(table)}"
-            ).fetchone()[0]
+            rows = connection.execute(f"SELECT count(*) FROM ({select}) AS q").fetchone()[0]
+            exported = connection.execute(f"SELECT * FROM ({select}) AS q LIMIT 0").description
+            exported_columns = kept if kept is not None else [desc[0] for desc in exported]
             sha256, md5 = _digests(target)
             tables[mart] = {
-                "source": f"{schema}.{table}",
+                "source": source,
                 "bytes": target.stat().st_size,
                 "sha256": sha256,
                 "md5": md5,
                 "rows": rows,
-                "columns": kept,
+                "columns": exported_columns,
             }
             if removed:
                 dropped[mart] = removed
@@ -124,6 +155,8 @@ def build(warehouse, out_dir, *, sources=None, created_epoch=None):
         "dropped_columns": dropped,
         "tables": tables,
     }
+    if provenance is not None:
+        manifest["provenance"] = provenance
     atomic_json(out / "manifest.json", manifest)
     return manifest
 
@@ -134,8 +167,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--warehouse", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--provenance",
+        help="JSON file whose contents are recorded in the manifest (e.g. the lake run receipt)",
+    )
     args = parser.parse_args(argv)
-    manifest = build(args.warehouse, args.out)
+    provenance = None
+    if args.provenance:
+        provenance = json.loads(Path(args.provenance).read_text())
+    manifest = build(args.warehouse, args.out, provenance=provenance)
     print(json.dumps({"tables": len(manifest["tables"]), "out": args.out}, indent=2))
 
 

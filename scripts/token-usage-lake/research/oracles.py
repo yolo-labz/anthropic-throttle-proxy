@@ -5,7 +5,7 @@ Four cheap layers, in increasing strength:
 1. invariants  - declared row-level and relational rules over a verified generation.
 2. replay      - a query re-run against the verified generation reproduces the same digest.
 3. backtest    - a pre-registered selection rule and ONE holdout evaluation.
-4. solver      - not implemented here: no constraint problem has been declared yet.
+4. solver      - deferred until a constraint problem is declared; nothing here guesses one.
 
 `verdict` refuses to call anything verified when a layer did not run. Missing evidence is
 reported as "not_applicable", never as a pass, and an unmapped analysis stays unknown.

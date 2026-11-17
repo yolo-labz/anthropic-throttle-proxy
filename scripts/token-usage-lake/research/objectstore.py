@@ -11,13 +11,15 @@ a half-published generation:
 
 An existing `<run_id>` is immutable: publishing different bytes under the same id is refused.
 
-Locations use the `mc` form `alias/bucket/prefix` because that is what the client resolves; the
-`s3://bucket/prefix` URI DuckDB needs is derived from it. Passing an `s3://` path to `mc` is a
-silent failure: mc treats the leading `s3:` as a *local directory name*, copies bytes to disk and
-reports success with an empty ETag, so verification here refuses a missing ETag outright.
+Uploads and verification go through `s3client` (stdlib SigV4), not the `mc` binary. That is not
+style: `mc cp file s3://bucket/key` treats the leading `s3:` as a **local directory name**, copies
+the bytes to disk, exits 0 and reports an empty ETag, so a publisher built on it can "verify" a
+generation that never left the machine. This module refuses a missing ETag as well, so the same
+mistake cannot come back through a different client.
 
-Credentials come from `S3_ENDPOINT`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`, else from the `mc`
-alias named by `S3_MC_ALIAS` (default `dokku-minio`). Nothing here ever logs a secret.
+Locations are written `alias/bucket/prefix`. The alias only selects credentials (from the `mc`
+config, or from `S3_ENDPOINT`/`S3_ACCESS_KEY_ID`/`S3_SECRET_ACCESS_KEY`); the `s3://` URI DuckDB
+needs is derived from the bucket and prefix. Nothing here ever logs a secret.
 """
 
 # ruff: noqa: S608 - SET statements are built from validated settings; URIs are quote-escaped.
@@ -25,11 +27,10 @@ alias named by `S3_MC_ALIAS` (default `dokku-minio`). Nothing here ever logs a s
 import hashlib
 import json
 import os
-import shutil
-import subprocess
 from pathlib import Path
 
 import duckdb
+import s3client
 
 DEFAULT_BASE = "dokku-minio/token-lake/marts"
 MANIFEST = "manifest.json"
@@ -45,47 +46,31 @@ def _quote(value):
 
 
 def split_base(base):
-    """Return (mc path, s3 uri) for a location. mc needs the alias form; DuckDB needs s3://."""
+    """Return (alias/bucket/prefix, s3 uri) for a location."""
     parts = str(base).strip("/").split("/")
     if str(base).startswith("s3://") or len(parts) < 2 or not all(parts):
-        raise ValueError(f"base must be <mc-alias>/<bucket>[/prefix], got {base!r}")
+        raise ValueError(f"base must be <alias>/<bucket>[/prefix], got {base!r}")
     return "/".join(parts), "s3://" + "/".join(parts[1:])
 
 
-def _mc_binary():
-    found = shutil.which("mc")
-    if not found:
-        raise RuntimeError(
-            "the `mc` client is required to publish (nix shell nixpkgs#minio-client)"
-        )
-    return found
+def _parse(location):
+    """Split `alias/bucket/key...` into (bucket, key)."""
+    parts = str(location).strip("/").split("/", 2)
+    if len(parts) < 3 or not all(parts):
+        raise ValueError(f"location must be <alias>/<bucket>/<key>, got {location!r}")
+    return parts[1], parts[2]
 
 
-def _mc(*args, check=True):
-    result = subprocess.run(  # noqa: S603 - fixed binary, list argv, no shell
-        [_mc_binary(), *[str(arg) for arg in args]],
-        capture_output=True,
-        text=True,
-    )
-    if check and result.returncode != 0:
-        raise RuntimeError(f"mc {' '.join(str(a) for a in args)} failed: {result.stderr.strip()}")
-    return result
+def store(alias=None):
+    """Build a client for the configured endpoint."""
+    settings = credentials(alias)
+    return s3client.Store(settings["endpoint"], settings["access_key"], settings["secret_key"])
 
 
 def stat(uri):
     """Return {'size': int, 'etag': str} for one remote object, or None when it does not exist."""
-    result = _mc("stat", "--json", uri, check=False)
-    if result.returncode != 0:
-        return None
-    for line in result.stdout.splitlines():
-        if not line.strip():
-            continue
-        payload = json.loads(line)
-        if payload.get("status") == "success":
-            if payload.get("type") != "file":
-                return None
-            return {"size": payload["size"], "etag": payload.get("etag", "")}
-    return None
+    bucket, key = _parse(uri)
+    return store().head(bucket, key)
 
 
 def credentials(alias=None):
@@ -136,12 +121,8 @@ def _sha256_file(path):
 
 
 def _remote_sha256(uri):
-    result = subprocess.run(  # noqa: S603 - fixed binary, list argv
-        [_mc_binary(), "cat", uri], capture_output=True
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"mc cat {uri} failed")
-    return hashlib.sha256(result.stdout).hexdigest()
+    bucket, key = _parse(uri)
+    return hashlib.sha256(store().get(bucket, key)).hexdigest()
 
 
 def _object_mode(entry, observed, *, uri, deep):
@@ -165,10 +146,10 @@ def _object_mode(entry, observed, *, uri, deep):
 
 def verify(manifest, base, run_id, *, deep=False):
     """Compare every published object with the manifest. Returns a receipt."""
-    mc_base, _ = split_base(base)
+    location, _ = split_base(base)
     checked = []
     for name, entry in sorted(manifest["tables"].items()):
-        uri = f"{mc_base}/{run_id}/{name}.parquet"
+        uri = f"{location}/{run_id}/{name}.parquet"
         observed = stat(uri)
         if observed is None:
             raise ValueError(f"missing object: {uri}")
@@ -185,9 +166,24 @@ def verify(manifest, base, run_id, *, deep=False):
     }
 
 
+def _upload(source, uri):
+    bucket, key = _parse(uri)
+    return store().put(bucket, key, Path(source).read_bytes())
+
+
+def _fetch(uri):
+    bucket, key = _parse(uri)
+    return store().get(bucket, key)
+
+
+def _remove(uri):
+    bucket, key = _parse(uri)
+    store().delete(bucket, key)
+
+
 def publish(marts_dir, base=DEFAULT_BASE, run_id=None, *, deep=False, dry_run=False):
     """Upload `<marts_dir>` as an immutable generation. Returns a verification receipt."""
-    mc_base, _ = split_base(base)
+    location, _ = split_base(base)
     marts_dir = Path(marts_dir)
     manifest_path = marts_dir / MANIFEST
     if not manifest_path.is_file():
@@ -196,11 +192,11 @@ def publish(marts_dir, base=DEFAULT_BASE, run_id=None, *, deep=False, dry_run=Fa
     if manifest.get("version") != 1:
         raise ValueError("unsupported marts manifest version")
     run_id = run_id or str(manifest["created_epoch"]).replace(".", "-")
-    destination = f"{mc_base}/{run_id}"
+    destination = f"{location}/{run_id}"
 
     existing = stat(f"{destination}/{MANIFEST}")
     if existing is not None:
-        remote = json.loads(_mc("cat", f"{destination}/{MANIFEST}").stdout)
+        remote = json.loads(_fetch(f"{destination}/{MANIFEST}"))
         if json.dumps(remote, sort_keys=True) != json.dumps(manifest, sort_keys=True):
             raise ValueError(f"generation {run_id} already exists with different content")
         return dict(verify(manifest, base, run_id, deep=deep), reused=True)
@@ -214,15 +210,15 @@ def publish(marts_dir, base=DEFAULT_BASE, run_id=None, *, deep=False, dry_run=Fa
         }
 
     for name in sorted(manifest["tables"]):
-        _mc("cp", "--quiet", marts_dir / f"{name}.parquet", f"{destination}/{name}.parquet")
-    _mc("cp", "--quiet", manifest_path, f"{destination}/{MANIFEST}")
+        _upload(marts_dir / f"{name}.parquet", f"{destination}/{name}.parquet")
+    _upload(manifest_path, f"{destination}/{MANIFEST}")
     receipt = verify(manifest, base, run_id, deep=deep)
     pointer = {"run_id": run_id, "manifest_sha256": receipt["manifest_sha256"]}
     pointer_path = marts_dir / POINTER
     pointer_path.write_text(json.dumps(pointer, sort_keys=True, indent=2) + "\n")
-    if stat(f"{mc_base}/{POINTER}") is not None:
-        _mc("rm", f"{mc_base}/{POINTER}")
-    _mc("cp", "--quiet", pointer_path, f"{mc_base}/{POINTER}")
+    if stat(f"{location}/{POINTER}") is not None:
+        _remove(f"{location}/{POINTER}")
+    _upload(pointer_path, f"{location}/{POINTER}")
     return dict(receipt, reused=False)
 
 
@@ -232,7 +228,7 @@ def download(destination, base=DEFAULT_BASE, run_id=None, manifest=None):
     Every file's SHA-256 is re-checked against the manifest after the copy, so a truncated or
     swapped download fails here instead of quietly feeding a dashboard.
     """
-    mc_base, _ = split_base(base)
+    location, _ = split_base(base)
     if manifest is None:
         run_id, manifest = read_manifest(base, run_id)
     run_id = run_id or str(manifest["created_epoch"]).replace(".", "-")
@@ -240,7 +236,7 @@ def download(destination, base=DEFAULT_BASE, run_id=None, manifest=None):
     destination.mkdir(parents=True, exist_ok=True)
     for name, entry in sorted(manifest["tables"].items()):
         target = destination / f"{name}.parquet"
-        _mc("cp", "--quiet", f"{mc_base}/{run_id}/{name}.parquet", target)
+        target.write_bytes(_fetch(f"{location}/{run_id}/{name}.parquet"))
         if _sha256_file(target) != entry["sha256"]:
             raise ValueError(f"downloaded bytes for {name} do not match the manifest")
     (destination / MANIFEST).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
@@ -253,7 +249,7 @@ def download(destination, base=DEFAULT_BASE, run_id=None, manifest=None):
 
 
 def read_manifest(base=DEFAULT_BASE, run_id=None, settings=None):
-    """Read a published manifest straight from the store with DuckDB, no `mc` needed."""
+    """Read a published manifest straight from the store with DuckDB."""
     _, s3_base = split_base(base)
     connection = duckdb.connect(":memory:")
     configure(connection, settings)
@@ -333,7 +329,7 @@ def main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", default=DEFAULT_BASE, help="mc alias/bucket/prefix")
+    parser.add_argument("--base", default=DEFAULT_BASE, help="alias/bucket/prefix")
     sub = parser.add_subparsers(dest="command", required=True)
     publish_cmd = sub.add_parser(
         "publish", help="upload a marts directory as an immutable generation"

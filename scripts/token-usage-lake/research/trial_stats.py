@@ -1,8 +1,8 @@
 # Promoted from the Token Diet Notes prototype; canonical executable source is here.
 """Small reproducible statistical checks. No call-level independence fiction."""
 
+import hashlib
 import math
-import random
 from statistics import NormalDist
 
 
@@ -63,6 +63,27 @@ def quantile(xs, p):
     return x[i] + (x[min(i + 1, len(x) - 1)] - x[i]) * (q - i)
 
 
+def _positions(seed, total, size):
+    """Draw `total` indices in [0, size) from a SHA-256 stream.
+
+    Deterministic across runs and Python versions, which `random.Random(seed)` does not promise:
+    a resampling interval that moves when the interpreter changes is not reproducible evidence.
+    """
+    if size <= 0:
+        raise ValueError("empty draw space")
+    stream = hashlib.sha256(str(seed).encode()).digest()
+    counter = 0
+    buffer = bytearray()
+    positions = []
+    while len(positions) < total:
+        buffer += hashlib.sha256(stream + counter.to_bytes(8, "big")).digest()
+        counter += 1
+        while len(buffer) >= 4 and len(positions) < total:
+            positions.append(int.from_bytes(buffer[:4], "big") % size)
+            del buffer[:4]
+    return positions
+
+
 def paired_cluster_bootstrap(clusters, metric="tokens", draws=2000, seed=0):
     if len(clusters) < 2 or draws < 100:
         raise ValueError("insufficient clusters/draws")
@@ -77,10 +98,12 @@ def paired_cluster_bootstrap(clusters, metric="tokens", draws=2000, seed=0):
             - sum(r["control_" + metric] for r in rows) / b
         )
 
-    rng = random.Random(seed)  # noqa: S311 - Reproducible resampling, not security material.
+    positions = _positions(seed, draws * len(clusters), len(clusters))
+    width = len(clusters)
     sample = []
-    for _ in range(draws):
-        value = effect([rng.choice(clusters) for _ in clusters])
+    for start in range(0, len(positions), width):
+        rows = [clusters[index] for index in positions[start : start + width]]
+        value = effect(rows)
         if value is not None:
             sample.append(value)
     return dict(
