@@ -193,9 +193,10 @@ async function main() {
     try {
       const detail = await run();
       results.push({ name, ok: true, detail: detail ?? "" });
-      console.log(`PASS ${name}${detail ? ` — ${detail}` : ""}`);
+      const suffix = detail ? ` — ${detail}` : "";
+      console.log(`PASS ${name}${suffix}`);
     } catch (error) {
-      results.push({ name, ok: false, detail: String(error && error.message ? error.message : error) });
+      results.push({ name, ok: false, detail: String(error?.message ?? error) });
       console.log(`FAIL ${name} — ${error}`);
     }
   };
@@ -377,7 +378,7 @@ async function main() {
     const before = hits.total;
     gate.resume(); // the ONLY opener
     const response = await retryPromise;
-    expect(response && response.status === 200, "native retry should complete after resume");
+    expect(response?.status === 200, "native retry should complete after resume");
     expect(hits.total === before + 1, `resume must release exactly one wire send: ${before} -> ${hits.total}`);
     expect(hits.messages === 2, `exactly one physical retry dispatch expected, saw ${hits.messages}`);
     gate.resume(); // double resume: harmless no-op

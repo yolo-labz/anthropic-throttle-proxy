@@ -18,6 +18,9 @@ import math
 import os
 import sys
 
+from . import points as _points
+from . import usage_allocator as _usage_allocator
+
 UPSTREAM = os.environ.get("THROTTLE_UPSTREAM", "https://api.anthropic.com")
 LISTEN_HOST = os.environ.get("THROTTLE_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("THROTTLE_PORT", "8765"))
@@ -323,6 +326,10 @@ def _finite_env_float(name: str, default: str, fallback: float) -> float:
 
 
 QUEUE_MAX_WAIT_S = _finite_env_float("THROTTLE_QUEUE_MAX_WAIT_S", "30", 30.0)
+# Ceiling for a client that asks to wait longer than QUEUE_MAX_WAIT_S via
+# PATIENCE_HEADER (below). Raise-only: the header can lift a request's bound up
+# to this value, never above it, and never below the default knob.
+QUEUE_MAX_PATIENT_WAIT_S = _finite_env_float("THROTTLE_QUEUE_MAX_PATIENT_WAIT_S", "900", 900.0)
 # Weekly MiMo opt-in: one normal waiter on a one-slot lane may outlive a
 # pessimistic prediction, but never its finite actual wait budget. Env-only.
 QUEUE_ALLOW_FIRST_WAITER = (
@@ -354,12 +361,37 @@ QUEUE_RETRY_AFTER_MAX_S = max(
     QUEUE_TIMEOUT_RETRY_AFTER_S, int(os.environ.get("THROTTLE_QUEUE_RETRY_AFTER_MAX_S", "300"))
 )
 
-# Optional JSON file for per-bearer Retry-After windows. Live hotfix deploys
-# restart the user service while account windows are still cooling down; without
-# a persisted floor, the new process forgets the window and rediscovers it with
-# one fresh 429. Empty default keeps tests and stateless containers side-effect
-# free. Nix/host units should set this to an XDG state path.
-RETRY_AFTER_STATE_FILE = os.environ.get("THROTTLE_RETRY_AFTER_STATE_FILE", "").strip()
+
+# JSON file for per-bearer Retry-After windows. Live hotfix deploys restart
+# the user service while account windows are still cooling down; without a
+# persisted floor, the new process forgets the window and rediscovers it with
+# one fresh 429 (19/10 go-gate: the 18:48:57 restart forgot every noted
+# window and re-descended the AIMD ladder with real 429s — 18:49:02 cap=8 → 5
+# → 3 → 2 → 1, each rung a live hit against the shared upstream).
+#
+# Resolution (audit 19/10/2026, tests/test_state_persistence_hardening.py):
+#   * explicit THROTTLE_RETRY_AFTER_STATE_FILE=path → that path;
+#   * explicit "off"/"none"/"disabled"/"" (set-but-empty) → disabled,
+#     preserving the legacy side-effect-free meaning for stateless
+#     containers and test suites that opt out;
+#   * unset → $XDG_STATE_HOME/anthropic-throttle-proxy/retry-after-state.json
+#     (falling back to ~/.local/state/...), mirroring ENDPOINT_CACHE_FILE's
+#     zero-config default. The opencode go/zen units never set the knob —
+#     that is exactly why they persisted nothing (runbook §8.3 open item).
+#     Each gate already scopes its own XDG_STATE_HOME, so every instance
+#     gets its own file with no unit change.
+def _resolve_retry_after_state_file() -> str:
+    # ``key in os.environ`` (not ``get``): set-but-empty must keep the legacy
+    # "disabled" meaning for deployments that export the knob blank, while
+    # fully UNSET gets the zero-config default.
+    if "THROTTLE_RETRY_AFTER_STATE_FILE" in os.environ:
+        raw = os.environ["THROTTLE_RETRY_AFTER_STATE_FILE"].strip()
+        return "" if (not raw or raw.lower() in {"off", "none", "disabled"}) else raw
+    base = os.environ.get("XDG_STATE_HOME", "").strip() or os.path.expanduser("~/.local/state")
+    return os.path.join(base, "anthropic-throttle-proxy", "retry-after-state.json")
+
+
+RETRY_AFTER_STATE_FILE = _resolve_retry_after_state_file()
 
 # Ceiling on a Retry-After window RESTORED from the state file (seconds; 0 =
 # uncapped legacy). A live-noted window is evidence; a restored one is hearsay
@@ -473,10 +505,42 @@ ACTIVE_CRED_PATH = os.environ.get("THROTTLE_ACTIVE_CRED_PATH", "").strip()
 # scoped window is treated as a resource budget scored by how fast it burns
 # relative to its reset, so windows near a reset with slack are cheaper and a
 # hot early-cycle window is expensive. Same hard safety gates in both modes.
+# Spec 377 phase 1. Off by default; observe computes and publishes only.
+# THROTTLE_WEEKLY_PACING=off|observe|enforce; burst is a finite fraction of the week.
+WEEKLY_PACING_MODE = _usage_allocator.parse_mode(os.environ.get("THROTTLE_WEEKLY_PACING"))
+# Points bucket (pace-option-draft §4.1): off|observe only. observe debits settled usage and
+# publishes a would-defer verdict; it never changes a response, header, slot or Retry-After.
+POINTS_MODE = _points.parse_mode(os.environ.get("THROTTLE_POINTS_MODE"))
+# 5h-window guard fed by the account usage endpoint (off|observe|enforce).
+# Anthropic stopped sending anthropic-ratelimit-unified-5h-* on 31/10/2026, so the
+# header-driven guard in proxy._apply_unified no longer sees that window; this knob
+# lets /api/oauth/usage five_hour.utilization feed the same warn/pause helpers.
+# Default off: nothing changes until an operator opts in.
+_FIVE_HOUR_RAW = os.environ.get("THROTTLE_5H_SOURCE", "off").strip().lower()
+FIVE_HOUR_SOURCE = _FIVE_HOUR_RAW if _FIVE_HOUR_RAW in ("off", "observe", "enforce") else "off"
+# Per-request quota ledger (usage_ledger.py): off|observe. Measurement only; read per call.
+USAGE_LEDGER_MODE = os.environ.get("THROTTLE_USAGE_LEDGER", "off")
+# Session->account affinity (session_affinity.py): on|off kill switch. A session stays on
+# the account it started on; the pool/pacing policy only places NEW sessions.
+SESSION_AFFINITY = (
+    "off" if os.environ.get("THROTTLE_SESSION_AFFINITY", "on").strip().lower() == "off" else "on"
+)
+WEEKLY_BURST = _usage_allocator.parse_burst(os.environ.get("THROTTLE_WEEKLY_BURST"))
+# THROTTLE_WEEKLY_PACING_LAW=line|remaining (default line). remaining spends the
+# REMAINING 7d budget evenly; its burn is measured over THROTTLE_WEEKLY_RATE_WINDOW_S
+# with THROTTLE_WEEKLY_RATE_MARGIN tolerance above the cap.
+WEEKLY_PACING_LAW = _usage_allocator.parse_law(os.environ.get("THROTTLE_WEEKLY_PACING_LAW"))
+WEEKLY_RATE_WINDOW_S = _usage_allocator.parse_rate_window(
+    os.environ.get("THROTTLE_WEEKLY_RATE_WINDOW_S")
+)
+WEEKLY_RATE_MARGIN = _usage_allocator.parse_rate_margin(
+    os.environ.get("THROTTLE_WEEKLY_RATE_MARGIN")
+)
+CLIENT_SHARES = _usage_allocator.parse_shares(os.environ.get("THROTTLE_CLIENT_SHARES"))
 _ACCOUNT_ROUTING_MODE = os.environ.get("THROTTLE_ACCOUNT_ROUTING", "off").strip().lower()
 ACCOUNT_ROUTING_MODE = (
     _ACCOUNT_ROUTING_MODE
-    if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded", "budget_paced"}
+    if _ACCOUNT_ROUTING_MODE in {"off", "least_loaded", "budget_paced", "round_robin"}
     else "off"
 )
 
@@ -491,6 +555,15 @@ API_KEY_ROUTING_MODE = (
     _API_KEY_ROUTING_MODE if _API_KEY_ROUTING_MODE in {"off", "overflow", "prefer"} else "off"
 )
 API_KEY_LABEL = os.environ.get("THROTTLE_API_KEY_LABEL", "API").strip() or "API"
+# Automatic paid routing needs a collector receipt bound to this key's account
+# and workspace. Empty binding or stale/unknown funding disables the candidate.
+API_KEY_ACCOUNT_ID = os.environ.get("THROTTLE_API_KEY_ACCOUNT_ID", "").strip()
+API_KEY_WORKSPACE_ID = os.environ.get("THROTTLE_API_KEY_WORKSPACE_ID", "").strip()
+API_KEY_SCOPE = os.environ.get("THROTTLE_API_KEY_SCOPE", "").strip()
+API_CREDITS_FILE = os.environ.get(
+    "THROTTLE_API_CREDITS_FILE",
+    os.path.expanduser("~/.local/state/throttle-lanes/api-credits.json"),
+).strip()
 # 22/10/2026 — local sentinel lane key. When set, a request whose x-api-key
 # equals this sentinel is NOT treated as an explicit API-key request: the
 # header is stripped and account routing rewrites Authorization to a
@@ -560,6 +633,12 @@ MARKER_HEADER = "x-anthropic-throttle-proxy"
 # bearer's upstream behavior.
 QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 
+# Stamped on that same 503 when WEEKLY PACING, not the queue, refused the call.
+# The queue-timeout stamp alone makes a wall reachable only by matching the
+# response text — which is exactly how the 31/10 wall stayed invisible to the
+# resume hook, to Prometheus, and to the incident journal for five days.
+PACING_HEADER = "x-anthropic-throttle-pacing"
+
 # Request header carrying the REMAINING queue-wait budget (milliseconds) down
 # the local→central chain. Without it the two tiers' QUEUE_MAX_WAIT_S bounds
 # STACK — local waits 30 s, then central waits another 30 s, and the client
@@ -569,6 +648,22 @@ QUEUE_TIMEOUT_HEADER = "x-anthropic-throttle-queue-timeout"
 # left. Client-supplied values only shorten that client's own wait (min()
 # can never exceed the local knob), so the header needs no trust filtering.
 WAIT_BUDGET_HEADER = "x-anthropic-throttle-wait-budget-ms"
+
+# Optional request header: how long THIS client is willing to wait for a slot,
+# in milliseconds. Patient callers (no 60 s socket patience, e.g. pi) use it to
+# lift their queue-wait bound from QUEUE_MAX_WAIT_S up to QUEUE_MAX_PATIENT_WAIT_S.
+# Absent / unparseable / non-positive = unchanged bound. Never forwarded upstream.
+PATIENCE_HEADER = "x-anthropic-throttle-client-patience-ms"
+# Streaming requests (stream=true) that wait on a queue slot or a weekly-pacing
+# deferral commit a 200 text/event-stream response FIRST and ping it while they
+# wait, so no client idle timer fires. Opt-in per request via PATIENCE_HEADER, or
+# for every streaming request when this knob is on. Off = byte-identical behaviour.
+STREAM_HOLD_ON_DEFER = os.environ.get("THROTTLE_STREAM_HOLD_ON_DEFER", "off").strip().lower() in {
+    "on",
+    "true",
+    "1",
+    "yes",
+}
 
 # Stamped on a relayed 429 that this proxy classified as Anthropic's OAuth
 # ENTITLEMENT gate rather than rate pushback: the request's first `system` block
@@ -596,6 +691,8 @@ state: dict[str, object] = {
     # holds_total counter only moves when a hold ENDS, so an operator watching a
     # saturation window has no way to see the holds that are still open.
     "keepalive_holds_active": 0,
+    # Requests parked in the fair queue with a patience-raised bound right now.
+    "queue_patient_waiting": 0,
     # Requests that PASSED the admission gate but are not yet counted
     # queued/inflight (e.g. still uploading their body). Incremented
     # synchronously at handler entry, decremented in the handler's guaranteed
@@ -831,6 +928,26 @@ def _set_max_hold_retry_after_s(v: float) -> None:
 
 def _set_queue_max_wait_s(v: float) -> None:
     _set_module_attr(_MOD_CONFIG, "QUEUE_MAX_WAIT_S", v)
+
+
+def _set_queue_max_patient_wait_s(v: float) -> None:
+    _set_module_attr(_MOD_CONFIG, "QUEUE_MAX_PATIENT_WAIT_S", v)
+
+
+def _set_weekly_pacing_mode(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_MODE", v)
+
+
+def _set_points_mode(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "POINTS_MODE", v)
+
+
+def _set_weekly_pacing_law(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "WEEKLY_PACING_LAW", v)
+
+
+def _set_client_shares(v: str) -> None:
+    _set_module_attr(_MOD_CONFIG, "CLIENT_SHARES", _usage_allocator.parse_shares(v))
 
 
 def _set_body_shrink_cap_bytes(v: int) -> None:
@@ -1146,6 +1263,71 @@ EDITABLE_KNOBS: dict[str, dict[str, _Any]] = {
             "the SDK retries transparently instead. 0 disables the bound."
         ),
     },
+    "weekly_pacing_mode": {
+        "label": "Weekly pacing mode",
+        "type": "choice",
+        "choices": list(_usage_allocator.MODES),
+        "getter": lambda: WEEKLY_PACING_MODE,
+        "setter": _set_weekly_pacing_mode,
+        "units": "",
+        "help": (
+            "off: no weekly pacing. observe: sample and report only, never defers. "
+            "enforce: defer accounts that are ahead of their weekly pace."
+        ),
+    },
+    "points_mode": {
+        "label": "Points budget mode",
+        "type": "choice",
+        "choices": list(_points.MODES),
+        "getter": lambda: POINTS_MODE,
+        "setter": _set_points_mode,
+        "units": "",
+        "help": (
+            "off: no points accounting. observe: debit each settled request in weekly "
+            "points and publish a would-defer verdict under /__throttle/admission "
+            ".points; never changes a response, header, slot or Retry-After."
+        ),
+    },
+    "weekly_pacing_law": {
+        "label": "Weekly pacing law",
+        "type": "choice",
+        "choices": list(_usage_allocator.LAWS),
+        "getter": lambda: WEEKLY_PACING_LAW,
+        "setter": _set_weekly_pacing_law,
+        "units": "",
+        "help": (
+            "line: pace against the elapsed-week line. remaining: pace against the "
+            "budget still unspent. Takes effect when mode is observe or enforce."
+        ),
+    },
+    "client_shares": {
+        "label": "Client shares",
+        "type": "shares",
+        "getter": lambda: _usage_allocator.format_shares(CLIENT_SHARES),
+        "setter": _set_client_shares,
+        "units": "",
+        "help": (
+            "Per-workspace share of the weekly budget as name:share,... "
+            "(e.g. side-projects:0.4,home:0.3). Deferral needs weekly pacing "
+            "mode=enforce AND the fleet ahead; an unlisted workspace is never "
+            "share-deferred, an idle sibling's share is lent, and priority "
+            "calls are exempt. Empty = no shares configured."
+        ),
+    },
+    "queue_max_patient_wait_s": {
+        "label": "Max patient queue wait",
+        "type": "float",
+        "min": 0.0,
+        "max": 3600.0,
+        "getter": lambda: QUEUE_MAX_PATIENT_WAIT_S,
+        "setter": _set_queue_max_patient_wait_s,
+        "units": "s",
+        "help": (
+            "Ceiling for requests that send x-anthropic-throttle-client-patience-ms "
+            "to wait longer than queue_max_wait_s in the fair queue. Only callers "
+            "that send that header are affected."
+        ),
+    },
     "body_shrink_cap_bytes": {
         "label": "Body-shrink cap",
         "type": "int",
@@ -1268,6 +1450,19 @@ def _coerce(spec: dict[str, _Any], raw: _Any) -> _Any:
         if isinstance(raw, bool):
             return raw
         return str(raw).strip().lower() in {"true", "1", "on", "yes"}
+    if t == "choice":
+        # Finite enum: anything outside ``choices`` is refused, never coerced.
+        v = str(raw).strip().lower()
+        if v not in spec["choices"]:
+            raise ValueError(f"{spec['label']}: {raw!r} is not one of {list(spec['choices'])}")
+        return v
+    if t == "shares":
+        # Strict parse: the canonical string is stored in the override file and
+        # read back by ``parse_shares`` on the next start, so both paths agree.
+        try:
+            return _usage_allocator.validate_shares(str(raw))
+        except ValueError as exc:
+            raise ValueError(f"{spec['label']}: {exc}") from None
     if t == "int":
         v = int(raw)
     elif t == "float":
@@ -1421,6 +1616,7 @@ def knob_snapshot() -> list[dict[str, _Any]]:
                 "key": key,
                 "label": spec["label"],
                 "type": spec["type"],
+                "choices": spec.get("choices"),
                 "value": current,
                 "default": ENV_DEFAULTS.get(key),
                 "override": key in RUNTIME_OVERRIDES,

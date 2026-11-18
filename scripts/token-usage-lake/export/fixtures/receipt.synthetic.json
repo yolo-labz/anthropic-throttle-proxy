@@ -1,0 +1,25 @@
+{
+  "scope": "Synthetic desktop Pi session metadata, 08/11/2026 BRT through scan",
+  "dedup": "synthetic fixture for the usage-summary.v1 producer tests",
+  "counts": {"files_scanned": 4, "bytes_scanned": 4096, "window_rows": 31,
+             "raw_assistant_rows": 28, "raw_compaction_rows": 3},
+  "totals": {
+    "assistant/claude-lane/claude-opus-5-5": {"calls": 10, "input": 100, "output": 1000, "cacheRead": 50000, "cacheWrite": 5000},
+    "compaction/claude-lane/claude-opus-5-5": {"calls": 3, "input": 3000, "output": 800, "cacheRead": 0, "cacheWrite": 0},
+    "assistant/claude-lane/claude-haiku-5-5": {"calls": 8, "input": 80, "output": 400, "cacheRead": 20000, "cacheWrite": 900, "unknown_cacheRead": 1},
+    "assistant/openai-codex/gpt-6.1-sol": {"calls": 10, "input": 4000, "output": 300, "cacheRead": 2000, "cacheWrite": 0}
+  },
+  "top_files_by_cache_write": [
+    {"source": "SESSIONS/a.jsonl", "known_panes_before_migration": [{"session": "products", "pane": "wD:pA", "name": null}],
+     "assistant_calls": 6, "assistant_input": 60, "assistant_output": 600, "assistant_cacheRead": 30000, "assistant_cacheWrite": 3000,
+     "compaction_calls": 1, "compaction_input": 1000, "compaction_output": 300, "compaction_cacheRead": 0, "compaction_cacheWrite": 0},
+    {"source": "SESSIONS/b.jsonl", "known_panes_before_migration": [{"session": "products", "pane": "wD:pB", "name": "two-models"}],
+     "assistant_calls": 4, "assistant_input": 40, "assistant_output": 400, "assistant_cacheRead": 20000, "assistant_cacheWrite": 2000,
+     "compaction_calls": 0},
+    {"source": "SESSIONS/a.jsonl", "known_panes_before_migration": [{"session": "products", "pane": "wD:pC", "name": null}, {"session": "side", "pane": "w1:p1", "name": null}],
+     "assistant_calls": 1, "assistant_input": 1, "assistant_output": 1, "assistant_cacheRead": 1, "assistant_cacheWrite": 1, "compaction_calls": 0},
+    {"source": "SESSIONS/missing.jsonl", "known_panes_before_migration": [{"session": "products", "pane": "wD:pD", "name": null}],
+     "assistant_calls": 1, "assistant_input": 1, "assistant_output": 1, "assistant_cacheRead": 1, "assistant_cacheWrite": 1, "compaction_calls": 0}
+  ],
+  "limitations": ["synthetic"]
+}

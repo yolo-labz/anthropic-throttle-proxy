@@ -1,0 +1,60 @@
+{# Usage panel (spec 380) — read-only view of a usage-summary.v1 file.
+   Token counts only: every class is its own column and its own bar segment
+   (cache is never folded into fresh input), and an unknown count reads
+   "unknown", never 0. Rendered by GET /ui/usage (polled). #}
+{% macro mixbar(b, label) %}
+  {% if b.empty %}<span class="muted">no known tokens</span>{% else %}
+  <svg class="usage-bar" viewBox="0 0 100 6" preserveAspectRatio="none" role="img"
+       aria-label="{{ label }} token mix{% for s in b.segments %}, {{ s.key | replace('_', ' ') }} {{ s.n }}{% endfor %}{% if b.unknown %}; unknown: {{ b.unknown | join(', ') | replace('_', ' ') }}{% endif %}">
+    {% for s in b.segments %}<rect class="u-{{ s.key }}" x="{{ s.x }}" y="0" width="{{ s.w }}" height="6"><title>{{ s.key | replace('_', ' ') }} {{ s.n }}</title></rect>{% endfor %}
+  </svg>
+  {% if b.unknown %}<span class="muted usage-partial" title="classes the producer could not measure">+ {{ b.unknown | length }} unknown</span>{% endif %}
+  {% endif %}
+{% endmacro %}
+{% macro cell(c) %}<td class="num" title="{% if c.value is not none %}{{ c.value }}{% endif %}{% if c.unknown %} · {{ c.unknown }} row(s) unknown{% endif %}">{% if c.value is none %}<span class="muted">unknown</span>{% else %}{% if c.unknown %}≥ {% endif %}{{ c.text }}{% endif %}</td>{% endmacro %}
+{% macro section(title, sec, cols) %}
+  <h3 class="usage-title">{{ title }}</h3>
+  <table class="usage-table">
+    <thead>
+      <tr><th scope="col">provider</th><th scope="col">model</th><th scope="col">pane</th>
+        {% for key, label in cols %}<th scope="col" class="num">{% if key not in ("requests", "reasoning") %}<span class="u-key u-{{ key }}" aria-hidden="true"></span>{% endif %}{{ label }}</th>{% endfor %}
+        <th scope="col">mix</th></tr>
+    </thead>
+    <tbody>
+      {% for r in sec.rows %}
+      <tr>
+        <td><code>{{ r.provider }}</code></td>
+        <td><code>{{ r.model }}</code></td>
+        <td>{% if r.pane %}<code>{{ r.pane }}</code>{% else %}<span class="muted">unattributed</span>{% endif %}</td>
+        {% for c in r.cells %}{{ cell(c) }}{% endfor %}
+        <td class="usage-mix">{{ mixbar(r.bar, r.model) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ cols | length + 4 }}" class="muted">no rows in this summary</td></tr>
+      {% endfor %}
+    </tbody>
+    {% if sec.rows %}
+    <tfoot>
+      <tr><th scope="row" colspan="3">total</th>
+        {% for c in sec.totals %}{{ cell(c) }}{% endfor %}
+        <td class="usage-mix">{{ mixbar(sec.bar, title) }}</td></tr>
+    </tfoot>
+    {% endif %}
+  </table>
+{% endmacro %}
+<div class="usage-card">
+  {% if usage.state == "error" %}
+  <p class="warn" role="status">usage summary unavailable · {{ usage.error }}</p>
+  {% else %}
+  <div class="usage-head">
+    <span class="usage-stale {{ 'crit' if usage.stale_level == 'invalid-source-time' else usage.stale_level }}" title="{{ usage.as_of_iso }}">data as of <b>{{ usage.as_of }}</b> BRT · {% if usage.stale_level == "invalid-source-time" %}invalid source time — stale{% else %}{{ usage.age }} ago{% if usage.stale_level == "crit" %} · stale{% elif usage.stale_level == "warn" %} · ageing{% endif %}{% endif %}</span>
+    <span class="muted">written {{ usage.generated_at }} BRT</span>
+    <span>window <b>{{ usage.window_start }} → {{ usage.window_end }}</b> BRT ({{ usage.window_span }})</span>
+    <span>files scanned <b>{{ usage.files_scanned }}</b>{% if usage.files_skipped %} · <span class="warn">{{ usage.files_skipped }} skipped</span>{% endif %}</span>
+    {% if usage.rejected_rows %}<span class="warn">{{ usage.rejected_rows }} row(s) rejected by the v1 contract</span>{% endif %}
+    <span class="muted">token counts, not spend · unknown ≠ 0 · reasoning is part of output</span>
+  </div>
+  {{ section("model turns", usage.turn, usage.columns) }}
+  {{ section("compaction summariser", usage.compaction, usage.columns) }}
+  {% endif %}
+</div>

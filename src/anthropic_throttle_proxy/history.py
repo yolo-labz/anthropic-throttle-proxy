@@ -191,11 +191,12 @@ def level_since(level: str, now: float | None = None, *, track: str = "fleet") -
 
 def reset() -> None:
     """Drop all history — tests only."""
-    global _served, _errors, _tok_out, _tok_in
+    global _served, _errors, _tok_out, _tok_in, _tok_in_fresh
     _ring.clear()
     _served = 0
     _errors = 0
     _tok_out = 0
     _tok_in = 0
+    _tok_in_fresh = 0
     _durations.clear()
     _level_at.clear()

@@ -184,7 +184,10 @@ async def _post(
         headers["X-Test-Hold"] = "1"
     if cid:
         headers["X-Throttle-Client-Id"] = cid
-    response = await asyncio.wait_for(client.post(path, headers=headers, json=_BODY), 5)
+    # One tag = one session (TD-B0a affinity keys on the body); identical bodies would
+    # be a single session pinned to one seat, which is not what these tests model.
+    body = {**_BODY, "metadata": {"user_id": f"session-{tag}"}}
+    response = await asyncio.wait_for(client.post(path, headers=headers, json=body), 5)
     payload = await asyncio.wait_for(response.read(), 5)
     return response.status, payload
 

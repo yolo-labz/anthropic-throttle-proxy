@@ -45,6 +45,12 @@ _ENDPOINT_KEY = web.AppKey("endpoint", str)
 _UPSTREAM_URL_KEY = web.AppKey("upstream_url", str)
 
 
+@pytest.fixture
+def tmp_path(tmpfs_state_path):
+    """Ledger state on tmpfs: these tests bound worker hand-offs, not host fsync."""
+    return tmpfs_state_path
+
+
 def _selected(endpoint: str) -> SelectedDispatch:
     return SelectedDispatch(_SOURCE, endpoint, "direct", False)
 

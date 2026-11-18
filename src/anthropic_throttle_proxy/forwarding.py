@@ -16,14 +16,22 @@ from typing import TYPE_CHECKING
 import aiohttp
 from aiohttp import web
 
-from . import config, prospective_runtime
+from . import account_pool, config, prospective_runtime, usage_ledger
+from .capability import record_loaded_module
 from .config import log
 from .metrics import M_CHAT_BODY_FITTED, M_CHAT_BODY_UNFITTABLE
 from .pacing import _pace_dispatch
 from .prospective_calibration import calibration_attempt
 from .prospective_refusal import strip_incoming_provenance
-from .ratelimit import _extract_ratelimit, _extract_zai_ratelimit_from_body
-from .routing import fit_chat_completions_body, normalize_text_content_blocks
+from .ratelimit import (
+    _bearer_id,
+    _extract_ratelimit,
+    _extract_zai_ratelimit_from_body,
+    _parse_sse_usage,
+)
+from .routing import fit_chat_completions_body, lane_body_for_attempt, normalize_text_content_blocks
+
+record_loaded_module(__file__)
 
 
 def _prospective_reservation(request: web.Request, body: bytes | None):
@@ -101,6 +109,15 @@ class StreamCommittedError(RuntimeError):
     def __init__(self, cause: BaseException) -> None:
         super().__init__(f"upstream error after response committed: {cause!r}")
         self.__cause__ = cause
+
+
+def is_central_response(upstream: aiohttp.ClientResponse) -> bool:
+    """Only the configured central transport may endorse reserved refusal stamps."""
+    return bool(
+        config.CENTRAL_URL
+        and str(getattr(upstream, "url", "")).startswith(config.CENTRAL_URL.rstrip("/") + "/")
+        and upstream.headers.get(config.MARKER_HEADER) == "1"
+    )
 
 
 async def stamp_proxy_marker(_request: web.Request, response: web.StreamResponse) -> None:
@@ -296,6 +313,9 @@ def note_upstream_auth(status: int, body: bytes | None = None) -> None:
         config.state["upstream_auth_last_check"] = time.time()
 
 
+_LEDGER_TAIL_BYTES = 64 * 1024
+
+
 async def _stream_response(request: web.Request, upstream: aiohttp.ClientResponse) -> ForwardResult:
     """Stream an open upstream response back to the client, capturing usage.
 
@@ -304,24 +324,13 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     in the final few KB of any claude response, even for long generations.
     """
     drop_headers = config.HOP_HEADERS
-    if config.MARKER_HEADER not in upstream.headers:
-        # Only a sibling proxy tier (marker-stamped) may assert the
-        # queue-timeout contract. A raw upstream 429/503 carrying the header
-        # verbatim would exempt REAL pushback from pushback-retry and AIMD
-        # shrink (Codex MAJOR on PR #83). A double-spoof (marker + stamp) is
-        # the same accepted trust boundary as the PR #81 marker itself.
-        #
-        # The entitlement stamp rides the SAME boundary, and for a sharper
-        # reason (Codex second pass, blocking finding 2): with local→central
-        # account routing, CENTRAL chose the account that actually reached
-        # Anthropic, so central's bearer, cache, and unified windows are the
-        # authoritative evidence. The local tier's `bearer_state` may be keyed
-        # to a different account entirely, so re-deriving locally could label a
-        # genuine budget 429 as an entitlement refusal (skipping a shrink the
-        # walled account needs) or the reverse. Relay a sibling tier's verdict;
-        # strip and re-derive only for a RAW upstream, which cannot have one.
+    if not is_central_response(upstream):
+        # on_prepare marks every relay, so an upstream marker/body is not
+        # provenance. Strip reserved verdicts before our own marker is added.
         drop_headers = config.HOP_HEADERS | {
+            "x-throttle-admission-closed",
             config.QUEUE_TIMEOUT_HEADER,
+            config.PACING_HEADER,
             config.ENTITLEMENT_REFUSAL_HEADER,
         }
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in drop_headers}
@@ -355,13 +364,25 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
     await response.prepare(request)
     captured = bytearray()
     cap_limit = 1024 * 1024
+    # Usage ledger only (off by default): keep the LAST bytes too, because the
+    # terminal message_delta carries the final output count and a long stream
+    # overflows the head capture above. Bounded; no I/O here.
+    ledger_on = config.USAGE_LEDGER_MODE != "off"
+    tail = bytearray()
+    total = 0
+    stream_error = True
     try:
         async for chunk in upstream.content.iter_any():
             if not chunk:
                 break
-            await response.write(chunk)
             if len(captured) < cap_limit:
                 captured.extend(chunk[: cap_limit - len(captured)])
+            if ledger_on:
+                total += len(chunk)
+                tail.extend(chunk[-_LEDGER_TAIL_BYTES:])
+                del tail[: max(0, len(tail) - _LEDGER_TAIL_BYTES)]
+            await response.write(chunk)
+        stream_error = False
     except Exception as mid_exc:
         # Upstream stalled/errored AFTER 200 + headers + partial body are on the
         # wire. End the stream cleanly (write_eof → the client sees a valid
@@ -372,6 +393,12 @@ async def _stream_response(request: web.Request, upstream: aiohttp.ClientRespons
         with contextlib.suppress(Exception):
             await response.write_eof()
         return response, upstream.status, captured, StreamCommittedError(mid_exc), meta
+    finally:
+        if ledger_on:
+            usage_ledger.save_capture(request, upstream, captured, tail, stream_error)
+    if ledger_on:
+        meta["usage_tail"] = tail.decode("utf-8", "replace")
+        meta["usage_stream_bytes"] = str(total)
     await response.write_eof()
     return response, upstream.status, captured, None, meta
 
@@ -390,6 +417,31 @@ def _rebind_headers(headers: Mapping[str, str], body_length: int) -> dict[str, s
     out = {k: v for k, v in headers.items() if k.lower() != "content-length"}
     out["Content-Length"] = str(body_length)
     return out
+
+
+def reconcile_attempt_body(
+    request: web.Request, body: bytes | None, headers: Mapping[str, str]
+) -> tuple[bytes | None, dict[str, str]]:
+    """Resolve the per-attempt body shape against the credential actually sent.
+
+    The Claude Code identity block is an OAuth entitlement requirement and a
+    BILLING reclassification for a metered ``x-api-key`` attempt: measured
+    09/11/2026 on the proton Ultra account, the byte-identical request returns
+    200 without the marker and ``400 "Your credit balance is too low"`` with it
+    while the org holds $200 of API credits. The router can switch credentials
+    between attempts, so BOTH transports — this direct one and the SSE
+    keepalive-hold, which builds its own request — resolve it here instead of
+    once per request. Streaming is the common case for a pane, so a hold that
+    skipped this reconciliation failed where the same non-streaming body
+    succeeded.
+    """
+    plain = headers if isinstance(headers, dict) else dict(headers)
+    if request.method != "POST" or body is None:
+        return body, plain
+    reconciled = lane_body_for_attempt(request, body, plain)
+    if reconciled is None or reconciled == body:
+        return body, plain
+    return reconciled, _rebind_headers(plain, len(reconciled))
 
 
 async def _forward_once(
@@ -411,6 +463,7 @@ async def _forward_once(
     """
     if request.method == "POST" and prospective_runtime.get_runtime(request).mode != "off":
         headers = strip_incoming_provenance(headers)
+    body, headers = reconcile_attempt_body(request, body, headers)
     # Per-attempt target identity: central receives the original body, while a
     # direct Z.AI retry gets the same shaping as an initial direct request. Both
     # transforms are no-ops off the Z.AI coding endpoint, which is why they can
@@ -457,6 +510,15 @@ async def _forward_once(
             with calibration_attempt(permit) as calibration:
                 if permit is not None:
                     permit.handoff()
+                pool_ticket = None
+                if (
+                    config.ACCOUNT_ROUTING_MODE == "round_robin"
+                    and request.method == "POST"
+                    and request.path.rstrip("/") in {"/v1/messages", "/v1/chat/completions"}
+                    and url.startswith(config.UPSTREAM.rstrip("/") + "/")
+                ):
+                    pool_ticket = account_pool.BALANCER.begin(_bearer_id(headers))
+                pool_usage = None
                 try:
                     async with session.request(
                         request.method,
@@ -467,6 +529,7 @@ async def _forward_once(
                     ) as upstream:
                         if retryable_statuses and upstream.status in retryable_statuses:
                             payload = await upstream.read()
+                            pool_usage = _parse_sse_usage(payload)
                             calibration.response(
                                 payload[: 1024 * 1024],
                                 upstream.status,
@@ -479,11 +542,12 @@ async def _forward_once(
                                 bytearray(payload[: 1024 * 1024]),
                                 RetryableStatusError(
                                     f"retryable upstream status {upstream.status}",
-                                    proxy_served=config.MARKER_HEADER in upstream.headers,
+                                    proxy_served=is_central_response(upstream),
                                 ),
                                 _extract_ratelimit(upstream.headers),
                             )
                         result = await _stream_response(request, upstream)
+                        pool_usage = _parse_sse_usage(bytes(result[2])) if result[2] else None
                         calibration.response(
                             result[2], upstream.status, upstream.headers, request.path, result[3]
                         )
@@ -494,3 +558,5 @@ async def _forward_once(
                 except (TimeoutError, aiohttp.ClientError) as exc:
                     calibration.transport_error()
                     return None, None, None, exc, None
+                finally:
+                    account_pool.BALANCER.finish(pool_ticket, pool_usage)

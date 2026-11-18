@@ -20,7 +20,9 @@ from anthropic_throttle_proxy import config, forwarding, pacing, proxy
 
 PATHS = ("/v1/messages", "/v1/chat/completions", "/v1/responses")
 # The fixture, not client-supplied account metadata, owns this identity mapping.
-KEYS = {"Bearer fixture-key-a": "account-one", "Bearer fixture-key-b": "account-one"}
+_FIXTURE_A = "Bearer fixture-key-a"
+_FIXTURE_B = "Bearer fixture-key-b"
+KEYS = {_FIXTURE_A: "account-one", _FIXTURE_B: "account-one"}
 
 
 class BudgetExceeded(AssertionError):
@@ -164,7 +166,7 @@ async def burst(monkeypatch, proxy_admission_state):
 
 @pytest.mark.parametrize("path", PATHS)
 async def test_small_fixture_request_stays_within_all_budgets(burst, path):
-    receipt = await burst(path, ["Bearer fixture-key-a"])
+    receipt = await burst(path, [_FIXTURE_A])
     within_budget(sum(x["output_bound"] for x in receipt["attempts"]), 100, "output reservation")
     within_budget(receipt["peak"], 2, "account concurrency")
     within_budget(len(receipt["attempts"]), 2, "window requests")
@@ -172,7 +174,7 @@ async def test_small_fixture_request_stays_within_all_budgets(burst, path):
 
 @pytest.mark.parametrize("path", PATHS)
 async def test_two_slots_do_not_oversubscribe_fixture_token_window(burst, path):
-    receipt = await burst(path, ["Bearer fixture-key-a"] * 2)
+    receipt = await burst(path, [_FIXTURE_A] * 2)
     assert receipt["peak"] == 2, "reproducer did not overlap streams"
     assert receipt["dispatch_times"] == [0, 8]
     print(json.dumps(receipt, sort_keys=True))
@@ -188,7 +190,7 @@ async def test_two_keys_share_fixture_account_capacity(burst):
 
 
 async def test_completed_requests_still_count_in_fixture_request_window(burst):
-    receipt = await burst(PATHS[1], ["Bearer fixture-key-a"] * 2, waves=2)
+    receipt = await burst(PATHS[1], [_FIXTURE_A] * 2, waves=2)
     assert receipt["peak"] == 2
     assert receipt["dispatch_times"] == [0, 8, 16, 24]
     print(json.dumps(receipt, sort_keys=True))
@@ -196,7 +198,7 @@ async def test_completed_requests_still_count_in_fixture_request_window(burst):
 
 
 async def test_retry_consumes_another_fixture_request_allocation(burst):
-    receipt = await burst(PATHS[1], ["Bearer fixture-key-a"], first_429=True)
+    receipt = await burst(PATHS[1], [_FIXTURE_A], first_429=True)
     assert receipt["dispatch_times"] == [0, 8]
     print(json.dumps(receipt, sort_keys=True))
     within_budget(len(receipt["attempts"]), 1, "attempts including retry")

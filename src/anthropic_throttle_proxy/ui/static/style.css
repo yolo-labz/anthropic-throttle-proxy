@@ -1255,3 +1255,34 @@ table.tokens .util { flex-wrap: wrap; justify-content: flex-start; }
 .projects-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
 .projects-table th, .projects-table td { text-align: left; padding: 0.2rem 0.5rem; border-bottom: 1px solid var(--ctp-surface0); }
 .projects-table tr.over td { background: var(--ctp-surface0); }
+
+/* --- token usage panel (spec 380) — one token per class, tokens only -------- */
+#usage { margin-top: 1rem; }
+.usage-card { border: 1px solid var(--ctp-surface1); border-radius: 6px; padding: 0.75rem 1rem; }
+.usage-head { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; align-items: baseline; }
+.usage-card .warn, .usage-stale.warn { color: var(--warn); }
+.usage-stale.crit { color: var(--crit); }
+.usage-stale.ok { color: var(--ok); }
+.usage-title { font-size: var(--fs-title); margin: 0.75rem 0 0.25rem; color: var(--ctp-subtext1); }
+.usage-table { width: 100%; border-collapse: collapse; }
+.usage-table th, .usage-table td { text-align: left; padding: 0.2rem 0.5rem; border-bottom: 1px solid var(--ctp-surface0); }
+.usage-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.usage-table tfoot th, .usage-table tfoot td { border-top: 1px solid var(--ctp-surface1); }
+.usage-mix { min-width: 10rem; white-space: nowrap; }
+.usage-bar { width: 8rem; height: 0.6rem; vertical-align: middle; background: var(--ctp-surface0); }
+.usage-partial { margin-left: 0.4rem; font-size: var(--fs-meta); }
+.u-key { display: inline-block; width: 0.6rem; height: 0.6rem; margin-right: 0.3rem; border-radius: 2px; }
+.u-requests { display: none; }
+rect.u-fresh_input { fill: var(--ctp-blue); }   span.u-fresh_input { background: var(--ctp-blue); }
+rect.u-cache_write { fill: var(--ctp-peach); }  span.u-cache_write { background: var(--ctp-peach); }
+rect.u-cache_read  { fill: var(--ctp-teal); }   span.u-cache_read  { background: var(--ctp-teal); }
+rect.u-output      { fill: var(--ctp-green); }  span.u-output      { background: var(--ctp-green); }
+rect.u-reasoning   { fill: var(--ctp-mauve); }  span.u-reasoning   { background: var(--ctp-mauve); }
+#cache { margin-top: 1rem; }
+.cache-affinity { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--ctp-surface0); }
+
+/* 13/11/2026: an old reading must LOOK old — the bar is a memory, not a meter. */
+.sub-meters.is-stale .meter { opacity: 0.55; }
+.sub-meters.is-stale .track i { background: var(--ctp-overlay0); }
+.acct-closed, .acct-open, .acct-parked { font-size: var(--fs-meta); }
+.acct-open { color: var(--ctp-green); }

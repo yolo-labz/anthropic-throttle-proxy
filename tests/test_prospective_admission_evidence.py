@@ -25,7 +25,11 @@ async def test_prospective_spec_fails_only_at_the_six_measured_budget_contracts(
         "--color=no",
         "specs/244-prospective-admission/check_admission.py",
         cwd=root,
-        env=os.environ | {"PYTHONPATH": str(root / "tests"), "PYTHONDONTWRITEBYTECODE": "1"},
+        env=os.environ
+        | {
+            "PYTHONPATH": os.pathsep.join(str(root / directory) for directory in ("tests", "src")),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )

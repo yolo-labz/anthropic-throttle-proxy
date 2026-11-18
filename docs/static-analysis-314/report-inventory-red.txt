@@ -1,0 +1,1 @@
+REJECTED real initial coverage report: Python files missing from coverage: ['specs/226-fleet-ui/verify-live.py', 'specs/227-dashboard-audit/browser-receipt.py', 'specs/227-dashboard-audit/verify-live.py', 'specs/288-capacity-delivery/render_check.py']

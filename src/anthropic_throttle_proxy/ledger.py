@@ -27,9 +27,15 @@ Contract:
   proof that prior debt never existed; retention of that file is caller-owned.
 * Restore validates the entire versioned snapshot before replacing live state.
   Unversioned prototype files are rejected, never treated as empty budgets.
-* ponytail: persisted wall-clock windows assume a trustworthy clock; backward
-  jumps can hold debt longer than 60 s and forward jumps can expire it early.
-  A future calibrated clock/restart policy must precede strict activation.
+* Clock skew (audit 19/10): restore clamps entries whose ``at`` lands in the
+  future to the restore-time now. A backward clock jump — or a corrupt,
+  far-future ``at`` — previously held debt until the wall clock caught up
+  (forever for a corrupt value: one snapshot could pin a ``max_requests=1``
+  lane permanently); it now holds debt at most one window from restore.
+  FORWARD jumps remain: a snapshot alone cannot tell "old entry" from
+  "clock moved", so debt can expire up to one jump early. That residual is
+  why the ledger stays default-off until a calibrated clock/restart policy
+  lands (spec 245 T002 contract).
 """
 
 from __future__ import annotations
@@ -373,5 +379,26 @@ class LedgerPool:
                 raise ValueError("corrupt ledger state: duplicate lane")
             lanes[lane.key] = lane
             identities.add(lane._id)
+        # Clock-skew guard at the restore trust boundary (audit 19/10):
+        # pruning keeps an entry while ``now - at < WINDOW_S`` — true for ANY
+        # future ``at``, so a backward jump between save and restore (or a
+        # hand-edited far-future value) held the debt until the clock caught
+        # up, i.e. forever for a corrupt one. Clamping to ``now`` bounds the
+        # hold to exactly one window from restore and is never LESS
+        # conservative than the snapshot's intent.
+        now = self.clock()
+        if _valid_time(now):
+            for lane in lanes.values():
+                for entry in lane.entries:
+                    if entry.at > now:
+                        _LOG.warning(
+                            "Ledger entry with future timestamp at=%s now=%s "
+                            "lane=%s; clamped to now (backward clock jump or "
+                            "corrupt snapshot)",
+                            entry.at,
+                            now,
+                            lane.key,
+                        )
+                        entry.at = now
         # Nothing is published until every lane and entry has passed validation.
         self.lanes = lanes

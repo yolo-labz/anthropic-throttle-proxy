@@ -1,0 +1,30 @@
+{
+  "schema": "usage-summary.v1",
+  "generated_at": "2026-11-08T23:40:00Z",
+  "coverage": {
+    "window_start": "2026-11-08T03:00:00Z",
+    "window_end": "2026-11-08T23:30:00Z",
+    "files_scanned": 42,
+    "files_skipped": 1
+  },
+  "rows": [
+    {"provider": "anthropic", "model": "claude-opus-5-5", "pane": "p2V", "role": "turn",
+     "requests": 120, "fresh_input": 48000, "cache_write": 310000, "cache_read": 9400000,
+     "output": 61000, "reasoning": null},
+    {"provider": "anthropic", "model": "claude-opus-5-5", "pane": "p39", "role": "turn",
+     "requests": 64, "fresh_input": 21000, "cache_write": 150000, "cache_read": 3900000,
+     "output": 30500, "reasoning": null},
+    {"provider": "zai", "model": "glm-5.3", "pane": null, "role": "turn",
+     "requests": 210, "fresh_input": 820000, "cache_write": null, "cache_read": 2100000,
+     "output": 95000, "reasoning": 41000},
+    {"provider": "openai-codex", "model": "gpt-6.1-sol", "pane": "p3W", "role": "turn",
+     "requests": 18, "fresh_input": 39000, "cache_write": 0, "cache_read": 410000,
+     "output": 12000, "reasoning": 9000},
+    {"provider": "anthropic", "model": "claude-opus-5-5", "pane": "p2V", "role": "compaction",
+     "requests": 3, "fresh_input": 2100, "cache_write": 0, "cache_read": 380000,
+     "output": 9000, "reasoning": null},
+    {"provider": "zai", "model": "glm-5.3", "pane": null, "role": "compaction",
+     "requests": null, "fresh_input": null, "cache_write": null, "cache_read": null,
+     "output": null, "reasoning": null}
+  ]
+}

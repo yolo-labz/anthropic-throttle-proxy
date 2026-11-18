@@ -1,0 +1,56 @@
+{# Prompt-cache health (spec 381) — live counters of THIS process only.
+   OTel semantics: input total = input (uncached) + cache read + cache write.
+   A kind never observed for a model is "unknown", never 0. Token counts
+   only — no spend. Rendered by GET /ui/cache (polled). #}
+{% macro n(v) %}{% if v is none %}<span class="muted">unknown</span>{% else %}{{ "{:,}".format(v) }}{% endif %}{% endmacro %}
+<div class="usage-card cache-card">
+  <div class="usage-head">
+    <b>Prompt-cache health</b>
+    <span class="muted">since gateway start {{ cache.since }} BRT, this process only</span>
+    <span class="muted">token counts, not spend</span>
+  </div>
+  {% if not cache.rows %}
+  <p class="muted">no traffic yet</p>
+  {% else %}
+  <table class="usage-table">
+    <thead>
+      <tr><th scope="col">model</th>
+        <th scope="col" class="num" title="input + cache read + cache write (OpenTelemetry gen_ai.usage.input_tokens)">input total</th>
+        <th scope="col" class="num"><span class="u-key u-cache_read" aria-hidden="true"></span>cache read · share</th>
+        <th scope="col" class="num"><span class="u-key u-cache_write" aria-hidden="true"></span>cache write · share</th>
+        <th scope="col" class="num"><span class="u-key u-fresh_input" aria-hidden="true"></span>uncached input</th>
+        <th scope="col" class="num">output</th>
+        <th scope="col">input mix</th></tr>
+    </thead>
+    <tbody>
+      {% for r in cache.rows %}
+      <tr>
+        <td><code>{{ r.model }}</code></td>
+        <td class="num">{% if r.input_total is none %}<span class="muted">unknown</span>{% else %}{% if not r.input_total_exact %}≥ {% endif %}{{ "{:,}".format(r.input_total) }}{% endif %}</td>
+        <td class="num">{{ n(r.counts.cache_read) }} · {% if r.read_share is none %}<span class="muted">unknown</span>{% else %}{{ r.read_share_bound }}{{ r.read_share }}%{% endif %}</td>
+        <td class="num">{{ n(r.counts.cache_creation) }} · {% if r.write_share is none %}<span class="muted">unknown</span>{% else %}{{ r.write_share }}%{% endif %}</td>
+        <td class="num">{{ n(r.counts.input) }}</td>
+        <td class="num">{{ n(r.counts.output) }}</td>
+        <td class="usage-mix">
+          {% if r.bar %}
+          <svg class="usage-bar" viewBox="0 0 100 6" preserveAspectRatio="none" role="img"
+               aria-label="{{ r.model }} input mix{% for s in r.bar %}, {{ s.key | replace('_', ' ') }} {{ s.n }}{% endfor %}">
+            {% for s in r.bar %}<rect class="u-{{ s.key }}" x="{{ s.x }}" y="0" width="{{ s.w }}" height="6"><title>{{ s.key | replace('_', ' ') }} {{ s.n }}</title></rect>{% endfor %}
+          </svg>
+          {% elif r.missing %}<span class="muted">not observed: {{ r.missing | join(', ') | replace('_', ' ') }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Cache writes include the cold miss after any account, provider or model switch (cache scope is per workspace) — attributed overhead, not a fault. A share marked ≤ is an upper bound: cache writes were never observed for that model.</p>
+  {% endif %}
+  <div class="usage-head cache-affinity">
+    <span>session affinity {% if cache.affinity_enabled %}<b>on</b>{% else %}<b>off</b>{% endif %}</span>
+    <span>new <b>{{ cache.affinity.new }}</b></span>
+    <span>kept <b>{{ cache.affinity.kept }}</b></span>
+    <span>migrated <b>{{ cache.affinity.migrated }}</b></span>
+    <span>evicted <b>{{ cache.affinity.evicted }}</b></span>
+    <span>pins <b>{{ cache.affinity.pins }}</b></span>
+  </div>
+</div>

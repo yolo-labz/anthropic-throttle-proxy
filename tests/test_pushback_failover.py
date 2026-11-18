@@ -28,6 +28,7 @@ class _StubLimiter:
     """Records the two window calls `_pushback_retry_step` may make."""
 
     def __init__(self) -> None:
+        self.bearer_id = "stub-account"
         self.noted: list[float] = []
         self.waited = 0
 

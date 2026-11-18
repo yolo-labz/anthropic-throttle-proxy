@@ -55,6 +55,12 @@ _UNIFIED_WARNING = {
 }
 
 
+@pytest.fixture
+def tmp_path(tmpfs_state_path):
+    """Ledger state on tmpfs: these tests bound worker hand-offs, not host fsync."""
+    return tmpfs_state_path
+
+
 class _CountingUpstream:
     """Minimal local upstream that counts transport hits (no vendor call)."""
 

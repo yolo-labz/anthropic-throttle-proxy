@@ -57,13 +57,21 @@ from aiohttp import web
 
 from . import __build__ as _build_identity
 from . import __version__ as _version
-from . import config
+from . import account_pool as _account_pool
+from . import api_credits as _api_credits
+from . import config, usage_ledger
+from . import consumers as _consumers
 from . import free_budget as _free_budget
 from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
+from . import model_retry as _model_retry
 from . import pacing as _pacing
+from . import points as _points
+from . import session_affinity as _session_affinity
+from . import usage_allocator as _usage_allocator
 from .body_shrink import shrink_body
+from .capability import attach_capability, record_loaded_module
 
 # Re-exported config (env scalars + shared mutable state + log + HOP_HEADERS).
 # These are the proxy module's stable public surface; ``ui.routes`` does
@@ -106,9 +114,11 @@ from .forwarding import (
     _forward_once,
     central_health_loop,
     direct_target,
+    is_central_response,
     note_upstream_auth,
     notify_success_headers,
     pick_target,
+    reconcile_attempt_body,
     set_success_headers_callback,
     stamp_proxy_marker,
 )
@@ -141,6 +151,9 @@ from .metrics import (
     M_INFLIGHT_BEARER,
     M_KEEPALIVE_HOLDS,
     M_OAUTH_ENTITLEMENT_REFUSALS,
+    M_POINTS_CREDIT,
+    M_POINTS_SETTLED,
+    M_POINTS_WOULD_DEFER,
     M_QUEUE_WAIT_TIMEOUTS,
     M_QUEUED,
     M_QUEUED_BEARER,
@@ -152,13 +165,18 @@ from .metrics import (
     M_UTIL_5H,
     M_UTIL_7D,
     M_UTIL_WARNINGS,
+    M_WEEKLY_BURN,
+    M_WEEKLY_BURN_ALERTS,
+    M_WEEKLY_PACING_DEFERS,
     REGISTRY,
     generate_latest,
 )
 from .pricing import _pricing_for, rates_for_usage
 from .project_share import PROJECT_HEADER as _PROJECT_HEADER
+from .project_share import SEAT_HEADER as _SEAT_HEADER
 from .project_share import SHARE as _PROJECT_SHARE
 from .project_share import project_of as _project_of
+from .project_share import seat_of as _seat_of
 from .ratelimit import (
     API_KEY_BEARER_ID,
     _api_key_id,
@@ -177,6 +195,7 @@ from .ratelimit import (
     _publish_ratelimit_gauges,
     _short_request_hint,
 )
+from .routing import LANE_UNMARKED_BODY as _LANE_UNMARKED_BODY
 from .routing import bearer_usable as _bearer_usable
 from .routing import lane_usable as _lane_usable
 from .routing import unified_live_view as _unified_live_view
@@ -193,6 +212,8 @@ if TYPE_CHECKING:
     _Reroute = Callable[[], tuple[str, dict[str, str]]]
     _WaitAlternate = Callable[[], Awaitable[bool]]
     _WaitReval = Callable[[Callable[[], Awaitable[None]]], Awaitable[bool]]
+
+record_loaded_module(__file__)
 
 # Public surface re-exported from the focused sibling modules + defined here.
 # Declared so static analysis treats the re-exports above as intentional.
@@ -337,6 +358,16 @@ _TYPICAL_MAX_TOKENS = 4096.0
 # it is strong enough that the selector does not keep spending a near-empty
 # window just because its current queue is short.
 _OVERPACE_SURCHARGE = 60.0
+# budget_paced weekly share: an account whose 7d pace exceeds 1x has its share
+# scaled by max(0, 1 - k*(pace-1)); at k=2 it reaches zero share at 1.5x.
+_WEEKLY_PACE_K = 2.0
+# Weekly share term: S*(1-exp(-k/K)), monotone in k=(requests+1)/w, bounded by S.
+# S must stay below the warning step (80) and the queue-vs-warning margin (100-80=20),
+# so queue dominance and the warning surcharge still decide the old backpressure tests.
+# It may exceed one inflight step (10): that is the deliberate relaxation that lets the
+# weekly share steer the split under load. Queue depth (100) still outranks it.
+_WEEKLY_SHARE_SPAN = 19.0
+_WEEKLY_SHARE_K = 1000.0
 _QUEUE_SPILLOVER_LOAD_THRESHOLD = 100.0
 _TARGET_SPILLOVER_SURCHARGE = 100.0
 # Keep below one queued-request weight (100.0): a warning account stays protected
@@ -501,6 +532,57 @@ def _note_brake_disabled_hot(
     )
 
 
+# A five_hour reset is at most 5 h away; anything longer is a bad reading, not a
+# window we should hold a bearer for. Slack covers clock skew on the reset epoch.
+_FIVE_HOUR_MAX_PAUSE_S = 5 * 3600 + 300
+
+
+def _maybe_guard_five_hour(bid: str, usage: Mapping[str, object], now: float) -> None:
+    """Opt-in 5h guard fed by the account usage endpoint (THROTTLE_5H_SOURCE).
+
+    Exists because upstream stopped sending ``anthropic-ratelimit-unified-5h-*``
+    (last observed 2026-10-31T20:45Z): ``_apply_unified`` then has no 5h window to
+    bind on and ``_binding_utilization`` silently falls back to 7d, so a five-hour
+    wall can only be met reactively by a 429. This feeds the same helpers the
+    header path uses instead of inventing a second policy:
+
+    * ``observe`` — ``_maybe_warn_unified`` on a synthetic five_hour window: one
+      log line + ``anthropic_ratelimit_unified_warnings_total{window="5h"}``,
+      debounced once per reset.
+    * ``enforce`` — additionally hold the bearer until the 5h reset the way a
+      rejected window does (``note_retry_after``), so dispatch waits instead of
+      spending the wall.
+
+    ``off`` is a pure no-op, and absent five_hour data always falls through to
+    today's behaviour: this must never harden UNKNOWN into a block.
+    """
+    mode = config.FIVE_HOUR_SOURCE
+    if mode == "off":
+        return
+    util_5h = usage.get("util_5h")
+    reset_5h = usage.get("reset_5h")
+    if not isinstance(util_5h, (int, float)) or not isinstance(reset_5h, (int, float)):
+        return
+    unified: dict[str, object] = {
+        "util_5h": float(util_5h),
+        "reset_5h": int(reset_5h),
+        "representative_claim": "five_hour",
+    }
+    bstate = config.bearer_state.setdefault(bid, {})
+    _maybe_warn_unified(bid, bstate, unified)
+    if mode != "enforce" or float(util_5h) < 1.0:
+        return
+    pause = min(max(0.0, float(reset_5h) - now), _FIVE_HOUR_MAX_PAUSE_S)
+    if pause <= 0:
+        return
+    limiter = config.bearer_limiters.get(bid)
+    note = getattr(limiter, "note_retry_after", None)
+    if note is None:
+        return
+    note(pause)
+    log(f"five-hour-enforce bid={bid} util={float(util_5h):.2f} pause={int(pause)}s until 5h reset")
+
+
 def _publish_unified_gauges(bid: str, unified: Mapping[str, object]) -> None:
     """Mirror the 5h/7d utilization fractions onto their Prometheus gauges."""
     if unified.get("util_5h") is not None:
@@ -520,6 +602,9 @@ def _maybe_pause_rejected(
     bid: str,
     limiter: FairBearerLimiter,
     unified: Mapping[str, object],
+    *,
+    model: str = "",
+    meta: Mapping[str, str] | None = None,
 ) -> bool:
     """Pause the bearer until reset when a window is already "rejected".
 
@@ -541,7 +626,7 @@ def _maybe_pause_rejected(
         log(f"unified-rejected-capped bid={bid} orig={int(pause)}s cap={int(cap)}s")
         pause = cap
     if pause > 0:
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, meta, model)
         log(f"unified-rejected bid={bid} pause={int(pause)}s until reset (proactive 429-avoid)")
     return True
 
@@ -583,6 +668,8 @@ async def _apply_unified(
     bstate: dict[str, object],
     limiter: FairBearerLimiter,
     meta: Mapping[str, str],
+    *,
+    model: str = "",
 ) -> None:
     """React to OAuth unified-window headers (WS-B2).
 
@@ -601,16 +688,28 @@ async def _apply_unified(
     unified = _parse_unified(meta)
     if not unified:
         return
+    if _model_retry.fable_window(meta, model):
+        # Generic rejected describes the representative Fable bucket, not the week.
+        unified["status"] = unified.get("status_7d")
+        unified["reset"] = unified.get("reset_7d")
     bstate["unified"] = unified
     # Per-project 5 h share (advisory): the pace projector's only meter input.
     _PROJECT_SHARE.observe_meter(unified)
+    if config.WEEKLY_PACING_MODE != "off":
+        _WEEK_SAMPLES.observe(bid, time.time(), unified.get("util_7d"), unified.get("reset_7d"))
+        _refresh_burn(time.time())
     # Stamp when this sample landed so a headerless-429 classification can tell a
     # fresh cache (concurrency storm, still receiving header-bearing successes)
     # from a stale one (budget wall, every response 429ing) — see
     # _budget_under_pressure / UNIFIED_CACHE_FRESH_S.
     bstate["unified_at"] = time.time()
     _publish_unified_gauges(bid, unified)
-    if _maybe_pause_rejected(bid, limiter, unified):
+    if _model_retry.fable_window(meta, model):
+        pause = _parse_retry_after(meta) or max(
+            0, float(unified.get("reset_7d_oi") or 0) - time.time()
+        )
+        _model_retry.note_pause(limiter, pause, meta, model)
+    if _maybe_pause_rejected(bid, limiter, unified, model=model, meta=meta):
         # Rejected = already hard-locked. If the brake is off, this IS the
         # "hard-lock while unbraked" event the visibility metric must catch —
         # the warn path below is never reached (Codex MAJOR).
@@ -825,6 +924,73 @@ def _window_wall_retry_after(bid: str) -> int | None:
     return remaining if remaining > 0 else None
 
 
+def _patience_bound(headers: Mapping[str, str]) -> float | None:
+    """Seconds this client will wait for a slot, from PATIENCE_HEADER (ms).
+
+    ``None`` = header absent, unparseable, non-finite or non-positive, so the
+    default bound applies. A valid value is clamped to QUEUE_MAX_PATIENT_WAIT_S.
+    """
+    raw = headers.get(config.PATIENCE_HEADER)
+    if raw is None:
+        return None
+    try:
+        asked = float(raw) / 1000.0
+    except ValueError:
+        return None
+    if not math.isfinite(asked) or asked <= 0:
+        return None
+    return min(asked, config.QUEUE_MAX_PATIENT_WAIT_S)
+
+
+# Waits (seconds) of requests that were served from the fair queue, newest last.
+_QUEUE_WAIT_SAMPLES: list[float] = []
+_QUEUE_WAIT_SAMPLE_CAP = 256
+
+
+class _QueueWaitMark:
+    """One request's time in the fair queue: patient count plus served-wait samples.
+
+    ``end`` is idempotent, so the slot-acquired point and the outer ``finally``
+    can both call it without double-decrementing the patient counter.
+    """
+
+    __slots__ = ("patient", "started", "open")
+
+    def __init__(self, patient: bool) -> None:
+        self.patient = patient
+        self.started = time.monotonic()
+        self.open = True
+        if patient:
+            state["queue_patient_waiting"] = int(state["queue_patient_waiting"]) + 1
+
+    def end(self, *, served: bool) -> None:
+        if not self.open:
+            return
+        self.open = False
+        if self.patient:
+            state["queue_patient_waiting"] = max(0, int(state["queue_patient_waiting"]) - 1)
+        if served:
+            _QUEUE_WAIT_SAMPLES.append(time.monotonic() - self.started)
+            del _QUEUE_WAIT_SAMPLES[:-_QUEUE_WAIT_SAMPLE_CAP]
+
+
+def _queue_health() -> dict:
+    """Health view of the fair queue: patient waiters and served-wait p50/p95."""
+    waits = sorted(_QUEUE_WAIT_SAMPLES)
+
+    def pct(q: float) -> float | None:
+        if not waits:
+            return None
+        return round(waits[min(len(waits) - 1, max(0, math.ceil(q * len(waits)) - 1))], 3)
+
+    return {
+        "patient_waiting": int(state["queue_patient_waiting"]),
+        "wait_p50_s": pct(0.5),
+        "wait_p95_s": pct(0.95),
+        "wait_samples": len(waits),
+    }
+
+
 def _queue_wait_timeout_response(
     bid: str,
     cid: str,
@@ -901,6 +1067,11 @@ def _effective_queue_max_wait(headers: Mapping[str, str]) -> float | None:
     never exceeds the local knob — so the header needs no trust filtering.
     """
     knob = config.QUEUE_MAX_WAIT_S or None
+    patient = _patience_bound(headers)
+    if patient is not None and knob is not None:
+        # Raise-only: a patient caller lifts the local bound, never lowers it.
+        # A disabled knob (None) stays unbounded — the header adds no bound.
+        knob = max(knob, patient)
     raw = headers.get(config.WAIT_BUDGET_HEADER)
     if raw is None:
         return knob
@@ -926,8 +1097,295 @@ def _is_priority_request(max_tokens: int | None, has_tools: bool, body_len: int)
     )
 
 
+# Spec 377 phase 2: process-local, bounded. Tokens are measured upstream usage only.
+_WEEKLY_TOKENS = _usage_allocator.WeeklyTokens()
+_WEEK_SAMPLES = _usage_allocator.WeekSamples()
+# Points bucket (observe only, pace-option-draft §4.1): process-local, never persisted.
+_points_book = _points.Book()
+_POINTS_KEY = "throttle_points_reservation"
+
+
+def _seed_week_samples(path: object = None, now: float | None = None) -> int:
+    """Restore the burn history from the persisted meter log (startup only).
+
+    Without it, every restart re-derives burn from a few minutes of samples and
+    can misread one 1 pt meter step as a fleet-wide overpace (06/11/2026).
+    Failure is logged and leaves today's behaviour: an empty history.
+    """
+    from . import meter_recorder
+
+    now = time.time() if now is None else now
+    path = meter_recorder.default_path() if path is None else path
+    try:
+        rows = meter_recorder.recent_rows(path, now - _usage_allocator.SAMPLE_KEEP_S)
+    except OSError as exc:
+        log(f"week-samples-seed-error path={path}: {exc!r}")
+        return 0
+    kept = _WEEK_SAMPLES.seed(rows, now)
+    log(f"week-samples-seeded readings={kept} bearers={len(_WEEK_SAMPLES.keys())}")
+    return kept
+
+
+_BURN_EVAL_S = 60.0
+_burn_last_eval = float("-inf")
+_burn_firing: set[str] = set()
+
+
+def _weekly_project_of(headers: object) -> str:
+    """Attribution for the 7d share: project header, else workspace label, else ``_direct``."""
+    get = getattr(headers, "get", None)
+    if get is None:
+        return _usage_allocator.DIRECT_PROJECT
+    return _usage_allocator.weekly_project(get(_PROJECT_HEADER), get("X-Throttle-Client-Id"))
+
+
+def _refresh_burn(now: float, *, force: bool = False) -> None:
+    """Publish burn gauges and fire one alert per transition (never refuses)."""
+    global _burn_last_eval
+    if not force and now - _burn_last_eval < _BURN_EVAL_S:
+        return
+    _burn_last_eval = now
+    for key in _WEEK_SAMPLES.keys():
+        alert = _usage_allocator.burn_alert(_WEEK_SAMPLES.samples(key), now)
+        for window, value in (("24h", alert["long_24h"]), ("6h", alert["short_6h"])):
+            if value is not None:
+                M_WEEKLY_BURN.labels(bearer=key, window=window).set(value)
+        if alert["firing"] and key not in _burn_firing:
+            _burn_firing.add(key)
+            M_WEEKLY_BURN_ALERTS.labels(bearer=key).inc()
+            log(
+                f"weekly-burn-alert bid={key} projected_24h={alert['long_24h']} "
+                f"projected_6h={alert['short_6h']} (both > 1.0)"
+            )
+        elif not alert["firing"]:
+            _burn_firing.discard(key)
+
+
+def _weekly_share_defer(project: str, priority: bool) -> int | None:
+    """Spec 377 phase 2: defer a client over its 7d share ONLY while the fleet is ahead.
+
+    Enforce-only. Priority is exempt. Borrowing when the fleet is on schedule is
+    the Kueue-cohort rule: an idle share is lent, not hoarded.
+    """
+    if config.WEEKLY_PACING_MODE != "enforce" or priority or not config.CLIENT_SHARES:
+        return None
+    if not _account_routing_enabled():
+        return None
+    from . import accounts
+
+    now = time.time()
+    states = _weekly_pacing_states(accounts.routing_snapshot(now), now)
+    fleet = _usage_allocator.publish(
+        states, mode="enforce", burst=config.WEEKLY_BURST, shares=config.CLIENT_SHARES
+    )
+    fleet_pace = fleet["fleet_pace"]
+    fleet_ahead = fleet_pace is not None and fleet_pace > 1.0
+    others = _WEEKLY_TOKENS.active(now) - {project}
+    contended = any(name in config.CLIENT_SHARES for name in others)
+    verdict = _usage_allocator.decide_client_share(
+        project,
+        _WEEKLY_TOKENS.totals(now),
+        config.CLIENT_SHARES,
+        fleet_ahead=fleet_ahead,
+        contended=contended,
+    )
+    if verdict != "defer":
+        return None
+    ahead = [s for s in states if s.get("state") == "ahead"]
+    return _usage_allocator.catchup_retry(
+        ahead, now=now, cap_s=config.QUEUE_RETRY_AFTER_MAX_S, burst=config.WEEKLY_BURST
+    )
+
+
+def _weekly_pacing_states(snapshot: list[dict[str, object]], now: float) -> list[dict]:
+    """Per-account 7d pace from the unified readings the proxy already holds (spec 377)."""
+    states = []
+    for acct in snapshot:
+        bid = str(acct.get("bearer_id", ""))
+        unified = (config.bearer_state.get(bid) or {}).get("unified") or {}
+        burn = None
+        if config.WEEKLY_PACING_LAW == "remaining":
+            # Window-fraction per hour, the same unit as remaining_cap_per_h.
+            burn = _usage_allocator.burn_per_h(
+                _WEEK_SAMPLES.samples(bid), now, config.WEEKLY_RATE_WINDOW_S
+            )
+        states.append(
+            _usage_allocator.account_state(
+                str(acct.get("label", bid)),
+                unified.get("util_7d"),
+                unified.get("reset_7d"),
+                now,
+                config.WEEKLY_BURST,
+                law=config.WEEKLY_PACING_LAW,
+                burn=burn,
+                rate_window_s=config.WEEKLY_RATE_WINDOW_S,
+                margin=config.WEEKLY_RATE_MARGIN,
+            )
+        )
+    return states
+
+
+def _weekly_pacing_eligible(
+    snapshot: list[dict[str, object]], now: float, *, model: str = "", max_tokens: int | None = None
+) -> list[dict[str, object]]:
+    """Only hard-routable accounts can offer a pacing spill target or suppress deferral."""
+    return [
+        acct
+        for acct in snapshot
+        if math.isfinite(
+            _account_routing_candidate_score(
+                acct,
+                "",
+                allow_pressure=True,
+                allow_target_spillover=True,
+                allow_retry_probe=True,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            )
+        )
+    ]
+
+
+def _weekly_pacing_filter(
+    snapshot: list[dict[str, object]], now: float, *, model: str = "", max_tokens: int | None = None
+) -> list[dict[str, object]]:
+    """Spill-only: drop ahead accounts only when a hard-eligible sibling has room."""
+    if config.WEEKLY_PACING_MODE != "enforce" or not snapshot:
+        return snapshot
+    eligible = _weekly_pacing_eligible(snapshot, now, model=model, max_tokens=max_tokens)
+    verdict, labels = _usage_allocator.decide_pacing(
+        _weekly_pacing_states(eligible, now),
+        mode="enforce",
+        priority=False,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    if verdict != "route" or labels is None:
+        return snapshot
+    return [acct for acct in snapshot if str(acct.get("label")) in labels]
+
+
+def _weekly_pacing_defer(
+    priority: bool, *, model: str = "", max_tokens: int | None = None
+) -> int | None:
+    """Honest Retry-After when every hard-eligible account is ahead, except priority."""
+    if config.WEEKLY_PACING_MODE != "enforce" or not _account_routing_enabled():
+        return None
+    from . import accounts
+
+    now = time.time()
+    eligible = _weekly_pacing_eligible(
+        accounts.routing_snapshot(now), now, model=model, max_tokens=max_tokens
+    )
+    states = _weekly_pacing_states(eligible, now)
+    verdict, retry_after = _usage_allocator.decide_pacing(
+        states,
+        mode="enforce",
+        priority=priority,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    return retry_after if verdict == "defer" else None
+
+
+def _weekly_pacing_response(
+    retry_after_s: int,
+    reason: str = "every account is ahead of schedule",
+    verdict: str = "all_ahead",
+) -> web.Response:
+    """A weekly-pacing refusal, shaped as a rate limit rather than an outage.
+
+    The queue-timeout stamp is kept so a client re-enters through Retry-After and
+    the local tier relays it verbatim; the stamp — not the status — is what keeps
+    this response out of pushback-retry and AIMD shrink. 429, because the fleet's
+    only wall-recovery helper (`herdr-429-resume`) resumes a pane whose last line
+    reads as a rate limit, and a bare 503 there means "the lane is broken" — how the
+    31/10 panes were lost. The pacing stamp + counter + log line are what a wall
+    previously lacked (22 panes, days, nothing in Prometheus or the journal);
+    ``verdict`` separates the two ways in (every account ahead vs over its share).
+    """
+    M_WEEKLY_PACING_DEFERS.labels(reason=verdict).inc()
+    log(f"weekly-pacing-defer verdict={verdict} retry_after_s={retry_after_s}")
+    return web.Response(
+        status=429,
+        headers={
+            "retry-after": str(retry_after_s),
+            config.QUEUE_TIMEOUT_HEADER: "1",
+            config.PACING_HEADER: "1",
+        },
+        text=f"weekly pacing: {reason}; retry after catch-up\n",
+    )
+
+
+def _stamp_observation(rows: list[dict], snapshot: list[dict[str, object]], now: float) -> None:
+    """Additive: when each published account's unified reading was observed.
+
+    ``rows`` are built from ``snapshot`` in order (``_weekly_pacing_states`` →
+    ``publish``). Same age rule and bound as the UI accounts path (#38).
+    """
+    from . import accounts
+
+    for row, acct in zip(rows, snapshot, strict=True):
+        bid = str(acct.get("bearer_id", ""))
+        observed = (config.bearer_state.get(bid) or {}).get("unified_at")
+        age = accounts.observation_age(observed, now)
+        # time.gmtime, not datetime.UTC: capability.config_sha256 hashes every uppercase
+        # module-level name here and fails closed on a value that is not configuration.
+        row["observed_at"] = (
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(observed)) if age is not None else None
+        )
+        row["stale"] = accounts.observation_stale(age)
+
+
+def _weekly_pacing_view() -> dict:
+    """Read-only publication for /__throttle/admission (never changes a decision)."""
+    from . import accounts
+
+    now = time.time()
+    snapshot = accounts.routing_snapshot(now) if _account_routing_enabled() else []
+    states = _weekly_pacing_states(snapshot, now)
+    view = _usage_allocator.publish(
+        states,
+        mode=config.WEEKLY_PACING_MODE,
+        burst=config.WEEKLY_BURST,
+        shares=config.CLIENT_SHARES,
+    )
+    _stamp_observation(view["accounts"], snapshot, now)
+    # The number a non-priority call would be told right now. Publishing it makes
+    # the wall readable from the endpoint clients already poll, instead of
+    # re-deriving the verdict from the per-account block.
+    verdict, detail = _usage_allocator.decide_pacing(
+        _weekly_pacing_states(_weekly_pacing_eligible(snapshot, now), now),
+        mode=config.WEEKLY_PACING_MODE,
+        priority=False,
+        now=now,
+        cap_s=config.QUEUE_RETRY_AFTER_MAX_S,
+        burst=config.WEEKLY_BURST,
+    )
+    view["retry_after_s"] = detail if verdict == "defer" else None
+    view["client_shares"]["enforced"] = config.WEEKLY_PACING_MODE == "enforce"
+    view["client_shares"]["phase"] = (
+        "enforced-when-fleet-ahead" if view["client_shares"]["enforced"] else "observe-only"
+    )
+    view["weekly_tokens"] = _WEEKLY_TOKENS.totals(now)
+    view["burn"] = {
+        key: _usage_allocator.burn_alert(_WEEK_SAMPLES.samples(key), now)
+        for key in _WEEK_SAMPLES.keys()
+    }
+    return view
+
+
+def _points_view(now: float) -> dict:
+    """Read-only publication of the observe-mode points bucket (never changes a decision)."""
+    rates = {bid: _points_rate(bid, now)[0] for bid in list(_points_book.buckets)}
+    return {"mode": config.POINTS_MODE, **_points_book.view(rates, now)}
+
+
 def _account_routing_enabled() -> bool:
-    return config.ACCOUNT_ROUTING_MODE in {"least_loaded", "budget_paced"} and bool(
+    return config.ACCOUNT_ROUTING_MODE in {"least_loaded", "budget_paced", "round_robin"} and bool(
         config.ACCOUNT_CRED_PATHS
     )
 
@@ -943,15 +1401,51 @@ def _bearer_retry_after_remaining(bid: str) -> float:
     return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
 
 
-def _api_key_candidate() -> dict[str, object] | None:
+def _api_key_candidate(
+    model: str = "", *, allow_model_less: bool = False
+) -> dict[str, object] | None:
     """Return the configured API-key candidate, or None when disabled/unusable.
 
+    Anthropic automatic routing also requires fresh funding for the bound
+    account and workspace. ``model`` scopes the rate evidence to that model's
+    measured window when the collector sampled one; ``allow_model_less`` exists
+    for reads that carry no model at all (``GET /v1/models``), which only the
+    metered key can serve. Other configured providers retain their existing key
+    routing. Explicit caller API keys bypass this owned candidate.
     The key stays in a 0600 runtime file. The hot path caches by (mtime, size)
     so a request normally pays one stat(), while key rotation is picked up
     without a restart. The raw key is returned only to the header-rewrite helper.
     """
     if not _api_key_routing_enabled():
         return None
+    upstream = urlsplit(config.UPSTREAM)
+    if upstream.scheme == "https" and upstream.hostname == "api.anthropic.com":
+        if not all((config.API_KEY_ACCOUNT_ID, config.API_KEY_WORKSPACE_ID, config.API_KEY_SCOPE)):
+            return None
+        if not model and not allow_model_less:
+            return None
+        try:
+            with open(config.API_CREDITS_FILE, "rb") as receipt:
+                encoded = receipt.read(256 * 1024 + 1)
+            if len(encoded) > 256 * 1024:
+                return None
+            raw = json.loads(encoded)
+        except (OSError, ValueError):
+            return None
+        credits = _api_credits.normalize(
+            raw.get("apiCredits", raw) if isinstance(raw, dict) else raw, time.time()
+        )
+        matching = [
+            account
+            for account in credits["accounts"]
+            if account["provider"] == "anthropic"
+            and account["accountId"] == config.API_KEY_ACCOUNT_ID
+            and account["workspaceId"] == config.API_KEY_WORKSPACE_ID
+        ]
+        if len(matching) != 1 or not _api_credits.capacity_for(
+            matching[0], model, config.API_KEY_SCOPE
+        ):
+            return None
     try:
         st = os.stat(config.API_KEY_FILE)
     except OSError:
@@ -1289,6 +1783,18 @@ def _note_bearer_credential(
         )
 
 
+def _weekly_share_inputs(
+    bid: str, unified: object
+) -> tuple[tuple[float, float | None] | None, float]:
+    """(7d utilisation, reset) for the weekly share, and the bearer's live request count."""
+    weekly = None
+    if isinstance(unified, dict) and isinstance(unified.get("util_7d"), (int, float)):
+        weekly = (float(unified["util_7d"]), unified.get("reset_7d"))
+    lim = config.bearer_limiters.get(bid)
+    request_count = (lim.queued_total + lim.priority_queued + lim.inflight) if lim else 0.0
+    return weekly, float(request_count)
+
+
 def _account_routing_candidate_score(
     acct: dict[str, object],
     incoming_bid: str,
@@ -1323,6 +1829,8 @@ def _account_routing_candidate_score(
     bid = acct.get("bearer_id")
     if not isinstance(bid, str) or not bid:
         return math.inf
+    if _model_retry.scoped_remaining(bid, model) > 0:
+        return math.inf
     retry_after_remaining = _bearer_routing_retry_after(bid, allow_retry_probe=allow_retry_probe)
     if retry_after_remaining is None:
         return math.inf
@@ -1354,6 +1862,7 @@ def _account_routing_candidate_score(
     # window: otherwise the -0.01 bonus lets a windowed incoming (even a
     # sub-millisecond one) undercut a genuinely clean sibling (Codex MAJOR).
     stickiness = -0.01 if (bid == incoming_bid and retry_after_remaining <= 0) else 0.0
+    weekly, request_count = _weekly_share_inputs(bid, unified)
     return _routing_pressure_score(
         load=load,
         util=util,
@@ -1365,6 +1874,8 @@ def _account_routing_candidate_score(
         max_tokens=max_tokens,
         now=now,
         allow_target_spillover=allow_target_spillover,
+        weekly=weekly,
+        request_count=request_count,
     )
 
 
@@ -1516,6 +2027,70 @@ def _scoped_window_pressure(
     return util, under_pressure
 
 
+def _weekly_pace(util_7d: float, reset_7d: float | None, now: float) -> float:
+    """7d pace = utilization ÷ elapsed fraction of the 7d window (1.0 = on pace).
+
+    An unknown or already-passed reset reads as a fresh window (elapsed floor),
+    which is the same convention ``_window_elapsed_fraction`` uses for pacing.
+    """
+    return util_7d / _window_elapsed_fraction(reset_7d, _WINDOW_7D_S, now)
+
+
+def _bearer_weekly_pace(bstate: dict, now: float) -> float | None:
+    """Health-facing 7d pace for one bearer, or None when 7d data is absent."""
+    unified = bstate.get("unified") or {}
+    util = unified.get("util_7d")
+    if not isinstance(util, (int, float)):
+        return None
+    return round(_weekly_pace(float(util), unified.get("reset_7d"), now), 3)
+
+
+def _weekly_share_health(
+    bearers: dict[str, dict], usable: dict[str, bool], now: float
+) -> tuple[dict[str, float | None], float | None]:
+    """Per-bearer share target w_i/Σw over usable bearers, and fleet pace.
+
+    ``weekly_pace_aggregate`` = Σutil_7d / Σelapsed_fraction over bearers with
+    7d data (1.0 = fleet on pace). Both are None when no bearer has 7d data.
+    """
+    weights: dict[str, float] = {}
+    util_sum = 0.0
+    elapsed_sum = 0.0
+    for bid, bstate in bearers.items():
+        unified = bstate.get("unified") or {}
+        util = unified.get("util_7d")
+        if not isinstance(util, (int, float)):
+            continue
+        reset = unified.get("reset_7d")
+        util_sum += float(util)
+        elapsed_sum += _window_elapsed_fraction(reset, _WINDOW_7D_S, now)
+        if usable.get(bid):
+            weights[bid] = _weekly_share_weight(float(util), reset, now)
+    total = sum(weights.values())
+    targets: dict[str, float | None] = {
+        bid: (round(w / total, 4) if total > 0 else None) for bid, w in weights.items()
+    }
+    aggregate = round(util_sum / elapsed_sum, 3) if elapsed_sum > 0 else None
+    return targets, aggregate
+
+
+def _weekly_share_weight(util_7d: float, reset_7d: float | None, now: float) -> float:
+    """Remaining weekly allowance RATE, pace-penalised (0 = no share).
+
+    ``headroom ÷ hours-to-reset`` (1 h floor), scaled by
+    ``max(0, 1 - k·(pace-1))`` once pace exceeds 1x. Under-pace accounts keep
+    their full share; an account past 1.5x gets none while over pace.
+    """
+    headroom = max(0.0, 1.0 - util_7d)
+    if reset_7d is None or reset_7d <= now:
+        hours = _WINDOW_7D_S / 3600.0
+    else:
+        hours = min(reset_7d - now, _WINDOW_7D_S) / 3600.0
+    pace = _weekly_pace(util_7d, reset_7d, now)
+    penalty = max(0.0, 1.0 - _WEEKLY_PACE_K * (pace - 1.0)) if pace > 1.0 else 1.0
+    return headroom * penalty / max(hours, 1.0)
+
+
 def _routing_pressure_score(
     *,
     load: float,
@@ -1528,6 +2103,8 @@ def _routing_pressure_score(
     max_tokens: int | None,
     now: float,
     allow_target_spillover: bool,
+    weekly: tuple[float, float | None] | None = None,
+    request_count: float = 0.0,
 ) -> float:
     """Combine the surviving gate readings into the ranking score.
 
@@ -1545,13 +2122,23 @@ def _routing_pressure_score(
         pressure = _budget_pacing_pressure(windows, expected_cost, now)
         overpace = _budget_pacing_overpace(windows, expected_cost, now)
         target_surcharge = _TARGET_SPILLOVER_SURCHARGE if target_crossed else 0.0
+        if weekly is not None:
+            # Weekly share replaces only the pacing tail. Bounded below the
+            # inflight/queue/warning weights, so queue dominance is untouched.
+            weight = _weekly_share_weight(weekly[0], weekly[1], now)
+            if weight > 0:
+                k = (request_count + 1.0) / weight
+                pacing_tail = _WEEKLY_SHARE_SPAN * (1.0 - math.exp(-k / _WEEKLY_SHARE_K))
+            else:
+                pacing_tail = _WEEKLY_SHARE_SPAN
+        else:
+            pacing_tail = pressure + overpace * _OVERPACE_SURCHARGE
         return (
             load
             + warning_surcharge
             + target_surcharge
             + retry_after_surcharge
-            + overpace * _OVERPACE_SURCHARGE
-            + pressure
+            + pacing_tail
             + stickiness
         )
     return load + warning_surcharge + retry_after_surcharge + util * 5.0 + stickiness
@@ -1582,6 +2169,36 @@ def _bearer_local_load_score(bid: str) -> float:
     reference = config.MAX_CONCURRENT + config.PRIORITY_RESERVE_SLOTS
     capacity = max(1, lim.max_concurrent + config.PRIORITY_RESERVE_SLOTS)
     return pressure * reference / capacity
+
+
+def _round_robin_candidates(
+    snapshot: list[dict[str, object]],
+    *,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> list[dict[str, object]]:
+    by_bearer: dict[str, dict[str, object]] = {}
+    for acct in snapshot:
+        bid = acct.get("bearer_id")
+        if not isinstance(bid, str) or not isinstance(acct.get("token"), str):
+            continue
+        if _bearer_retry_after_remaining(bid) > 0:
+            continue
+        score = _account_routing_candidate_score(
+            acct,
+            "",
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+            allow_pressure=True,
+            allow_target_spillover=True,
+            allow_retry_probe=allow_retry_probe,
+        )
+        if math.isfinite(score):
+            by_bearer.setdefault(bid, acct)
+    return list(by_bearer.values())
 
 
 def _account_selection(
@@ -1629,6 +2246,25 @@ def _account_selection(
         for acct in snapshot
         if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
     ]
+    if config.ACCOUNT_ROUTING_MODE == "round_robin":
+        candidates = _round_robin_candidates(
+            routable,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+            allow_retry_probe=allow_retry_probe,
+        )
+        floor = min(
+            (_bearer_local_load_score(str(acct["bearer_id"])) for acct in candidates),
+            default=math.inf,
+        )
+
+        def work_key(acct: dict[str, object]) -> tuple[int, int]:
+            lim = config.bearer_limiters.get(str(acct["bearer_id"]))
+            queued = lim.queued_total + lim.priority_queued if lim is not None else 0
+            return _account_pool.BALANCER.key(str(acct["label"]), queued)
+
+        return (min(candidates, key=work_key) if candidates else None), floor
     strict_candidates = [acct for acct in routable if score(acct) < math.inf]
     best_configured_load = min(
         (_bearer_local_load_score(str(acct["bearer_id"])) for acct in strict_candidates),
@@ -1726,6 +2362,117 @@ def _healthy_known_unconfigured_bearer(
     return _bearer_local_load_score(incoming_bid) <= best_configured_load
 
 
+def _pinned_account(
+    snapshot: list[dict[str, object]],
+    session_key: str | None,
+    incoming_bid: str,
+    *,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> dict[str, object] | None:
+    """The account this session already runs on, while it is still routable (pure)."""
+    return _pin_verdict(
+        snapshot,
+        session_key,
+        incoming_bid,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_retry_probe=allow_retry_probe,
+    )[0]
+
+
+def _pin_verdict(
+    snapshot: list[dict[str, object]],
+    session_key: str | None,
+    incoming_bid: str,
+    *,
+    model: str,
+    max_tokens: int | None,
+    now: float,
+    allow_retry_probe: bool,
+) -> tuple[dict[str, object] | None, str | None]:
+    """``(pinned account, None)`` while the pin holds, else ``(None, release reason)``.
+
+    The reason is ``retry_after``, ``not_routable``, ``strict_gate`` or
+    ``would_queue``; no pin (or affinity off) is ``(None, None)``.
+
+    Prompt caches are per account, so a hop re-writes the whole conversation
+    (TD-B0a). Pure: it reads the pin and the STRICT gate (``allow_pressure`` off),
+    which is ``inf`` for Retry-After/429, brake, dead credential, rejected,
+    util >= 1 and util >= warn. An open Retry-After window, or a request that
+    would queue on the pinned account while a sibling dispatches at once, also
+    release the pin. Any release,
+    or no pin, returns ``None`` and the normal pool/pacing choice runs (that
+    choice is then re-pinned by the caller).
+    """
+    if not session_key or not _session_affinity.enabled():
+        return None, None
+    pinned_bid = _session_affinity.pinned(session_key, now)
+    if pinned_bid is None:
+        return None, None
+    # Any open Retry-After window (a 429 or the brake) releases the pin, even
+    # one short enough that the score only surcharges it instead of gating it.
+    # A model-scoped window (#46) would also release it via the strict score;
+    # naming it here only keeps the logged reason honest.
+    if (
+        _bearer_retry_after_remaining(pinned_bid) > 0
+        or _model_retry.scoped_remaining(pinned_bid, model) > 0
+    ):
+        return None, "retry_after"
+
+    def strict_ok(acct: dict[str, object]) -> bool:
+        return (
+            _account_routing_candidate_score(
+                acct,
+                incoming_bid,
+                allow_retry_probe=allow_retry_probe,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+            )
+            < math.inf
+        )
+
+    pinned = next(
+        (
+            acct
+            for acct in snapshot
+            if acct.get("bearer_id") == pinned_bid and isinstance(acct.get("token"), str)
+        ),
+        None,
+    )
+    if pinned is None:
+        return None, "not_routable"
+    if not strict_ok(pinned):
+        return None, "strict_gate"
+    # A cache hop costs one rewrite; waiting behind a full account costs up to the
+    # queue budget on every turn, and sessions sharing a key (identical prompts)
+    # would otherwise all pile onto one account. Release only on an actual wait:
+    # the load score crosses its threshold at 10 inflight of 20 free slots, when
+    # the pinned account would still dispatch at once (Token Diet 08/11/2026).
+    if _bearer_would_queue(pinned_bid) and any(
+        acct is not pinned
+        and isinstance(acct.get("token"), str)
+        and strict_ok(acct)
+        and not _bearer_would_queue(str(acct["bearer_id"]))
+        for acct in snapshot
+    ):
+        return None, "would_queue"
+    return pinned, None
+
+
+def _bearer_would_queue(bid: str) -> bool:
+    """A new normal-lane request on ``bid`` would park instead of dispatching now."""
+    lim = config.bearer_limiters.get(bid)
+    if lim is None or not lim.queue_enabled:
+        return False
+    busy = _limiter.normal_busy(lim.inflight, lim.priority_inflight)
+    return lim.queued_total > 0 or busy >= lim.max_concurrent
+
+
 def _account_route_decision(
     snapshot: list[dict[str, object]],
     incoming_bid: str,
@@ -1736,8 +2483,13 @@ def _account_route_decision(
     max_tokens: int | None,
     now: float,
     allow_retry_probe: bool,
+    session_key: str | None = None,
+    pin_snapshot: list[dict[str, object]] | None = None,
 ) -> tuple[dict[str, object] | None, bool]:
     """Return ``(credential rewrite, used_dead_fallback)`` for one message.
+
+    ``pin_snapshot`` is the routable pool BEFORE soft weekly-pacing spill: a warm
+    pin is checked against it, so pacing places new sessions and never hops one.
 
     This is the side-effect-free top-level routing decision shared by the hot
     path and ``/__throttle/statusline``. ``None`` means preserve the caller's
@@ -1751,6 +2503,17 @@ def _account_route_decision(
         return api_key, False
     if not _account_routing_enabled():
         return api_key, False
+    pinned = _pinned_account(
+        snapshot if pin_snapshot is None else pin_snapshot,
+        session_key,
+        incoming_bid,
+        model=model,
+        max_tokens=max_tokens,
+        now=now,
+        allow_retry_probe=allow_retry_probe,
+    )
+    if pinned is not None:
+        return pinned, False
 
     configured_bids = {
         str(acct["bearer_id"])
@@ -1831,6 +2594,30 @@ def _strip_sentinel_api_key(headers: dict[str, str]) -> bool:
     return False
 
 
+def _remember_session_account(
+    snapshot: list[dict[str, object]],
+    session_key: str | None,
+    selected: dict[str, object],
+    now: float,
+    release_reason: Callable[[], str | None] = lambda: None,
+) -> None:
+    """Pin the session to the OAuth account just chosen (never the metered API-key lane).
+
+    ``release_reason`` is evaluated only for a migration, before the re-pin, so
+    the logged reason reads the same pin and gate state the route decision did.
+    """
+    bid = selected.get("bearer_id")
+    if not session_key or not isinstance(bid, str) or selected.get("auth_type") == "api_key":
+        return
+    if not any(acct.get("bearer_id") == bid for acct in snapshot):
+        return
+    previous = _session_affinity.pinned(session_key, now)
+    reason = (release_reason() or "unknown") if previous not in (None, bid) else None
+    _session_affinity.pin(session_key, bid, now)
+    if reason is not None:
+        log(f"affinity-migrate session={session_key} from={previous} to={bid} reason={reason}")
+
+
 def _route_account_if_enabled(
     headers: dict[str, str],
     incoming_bid: str,
@@ -1849,6 +2636,16 @@ def _route_account_if_enabled(
     scoped weekly meter.
     """
     if method != "POST" or (MESSAGES_SUBPATH not in path and CHAT_COMPLETIONS_SUBPATH not in path):
+        # The sentinel asks for routing on EVERY path, but a read like
+        # GET /v1/models carries no model and only the metered key can serve it:
+        # left in place the sentinel reaches Anthropic verbatim and comes back
+        # 401 "invalid x-api-key" (measured 09/11/2026 once the metered lane
+        # started carrying traffic). Leave the header untouched when there is no
+        # candidate, so the upstream verdict never describes a credential we did
+        # not send.
+        api_key = _api_key_candidate(allow_model_less=True)
+        if api_key is not None and _strip_sentinel_api_key(headers):
+            return _route_to_selected_auth(headers, incoming_bid, api_key)
         return incoming_bid, None
     lower_header_keys = {key.lower() for key in headers}
     explicit_api_key = "x-api-key" in lower_header_keys and "authorization" not in lower_header_keys
@@ -1857,9 +2654,11 @@ def _route_account_if_enabled(
     # member — strip it so the account router rewrites Authorization.
     if explicit_api_key and _strip_sentinel_api_key(headers):
         explicit_api_key = False
-    api_key = None if explicit_api_key else _api_key_candidate()
+    api_key = None if explicit_api_key else _api_key_candidate(model)
     now = time.time()
+    session_key = _session_affinity.current_key()
     snapshot: list[dict[str, object]] = []
+    routable: list[dict[str, object]] = []
     if (
         not explicit_api_key
         and not (api_key is not None and config.API_KEY_ROUTING_MODE == "prefer")
@@ -1869,7 +2668,14 @@ def _route_account_if_enabled(
 
         # One clock for the snapshot and every pacing score: budget_paced divides
         # by time-to-reset, so a split clock can change the winner at the edge.
-        snapshot = accounts.routing_snapshot(now)
+        routable = accounts.routing_snapshot(now)
+        # Spill-only pacing chooses where NEW sessions start; a pinned session keeps
+        # its warm account (a hop re-writes its whole conversation, TD-B0a) until
+        # the strict gate or the queue spill in ``_pinned_account`` releases it.
+        # ponytail: an active session stays home for life; pacing balances through new
+        # sessions while the strict gate (util >= target, warn, 429, brake) still caps
+        # each account. Upgrade path: one dwell-limited pacing hop per session per hour.
+        snapshot = _weekly_pacing_filter(routable, now, model=model, max_tokens=max_tokens)
         if allow_retry_probe:
             # Routing runs before limiter allocation. Seed probation for
             # configured cold-start accounts synchronously (no first-await race).
@@ -1883,11 +2689,44 @@ def _route_account_if_enabled(
         max_tokens=max_tokens,
         now=now,
         allow_retry_probe=allow_retry_probe,
+        session_key=session_key,
+        pin_snapshot=routable,
     )
     if selected is None:
         return incoming_bid, None
+    _remember_session_account(
+        routable,
+        session_key,
+        selected,
+        now,
+        # Log-only: the same pure verdict ``_account_route_decision`` used, re-read
+        # for its reason; it never changes ``selected`` or the pin.
+        lambda: _pin_verdict(
+            routable,
+            session_key,
+            incoming_bid,
+            model=model,
+            max_tokens=max_tokens,
+            now=now,
+            allow_retry_probe=allow_retry_probe,
+        )[1],
+    )
     if dead_fallback:
         log(f"dead-credential-fallback from={incoming_bid} to={selected['bearer_id']}")
+    if config.ACCOUNT_ROUTING_MODE == "round_robin":
+        members = {
+            str(acct["label"]): str(acct["bearer_id"])
+            for acct in _round_robin_candidates(
+                snapshot,
+                model=model,
+                max_tokens=max_tokens,
+                now=now,
+                allow_retry_probe=allow_retry_probe,
+            )
+        }
+        label = str(selected.get("label", ""))
+        if label in members:
+            _account_pool.BALANCER.selected(label, members)
     return _route_to_selected_auth(headers, incoming_bid, selected)
 
 
@@ -1972,7 +2811,7 @@ def _retry_after_reroute_headers(
             for acct in accounts.routing_snapshot(time.time())
             if isinstance(acct.get("token"), str) and isinstance(acct.get("bearer_id"), str)
         }
-        api_key = _api_key_candidate()
+        api_key = _api_key_candidate(model)
         if api_key is not None and isinstance(api_key.get("bearer_id"), str):
             allowed_bids.add(str(api_key["bearer_id"]))
         if rerouted_bid not in allowed_bids:
@@ -2447,7 +3286,7 @@ async def _oauth_telemetry_serve(request: web.Request) -> web.StreamResponse:
                 retry_after = up.headers.get("Retry-After")
                 ctype = up.headers.get("Content-Type", ctype)
         except (aiohttp.ClientError, TimeoutError):
-            pass  # status 0: transport failure, handled as a 5xx below
+            status = 0  # Transport/read failure: use the unavailable/backoff path below.
         now = time.time()
         if status == 200:
             _oauth_telemetry_cache[key] = (now, 200, body, ctype)
@@ -2833,10 +3672,17 @@ def _is_transient_throttle(
     return not _budget_under_pressure(meta, bid)
 
 
-async def _emit_keepalive_frames(response: web.StreamResponse, interval_ms: int) -> None:
+async def _emit_keepalive_frames(
+    response: web.StreamResponse,
+    interval_ms: int,
+    *,
+    on_disconnect: Callable[[], object] | None = None,
+    queue_status: dict[str, str | int] | None = None,
+) -> None:
     """Emit SSE comment keepalive frames until cancelled.
 
-    Writes ``: keepalive\n\n`` every ``interval_ms`` milliseconds. The
+    Writes ``: keepalive\n\n`` every ``interval_ms`` milliseconds, plus an
+    advisory Anthropic-compatible ping when queue status is supplied. The
     Anthropic SDK parser silently drops SSE comment lines (spec 092 invariant 3)
     so the client receives heartbeats that reset its idle timer without seeing
     any message content. Must be cancelled from the outside (via Task.cancel).
@@ -2846,14 +3692,26 @@ async def _emit_keepalive_frames(response: web.StreamResponse, interval_ms: int)
     in config). This coroutine trusts the caller-validated value.
     """
     interval_s = max(0.5, interval_ms / 1000.0)
+    started = time.monotonic()
     while True:
         await asyncio.sleep(interval_s)
+        frame = b": keepalive\n\n"
+        if queue_status is not None:
+            payload = {
+                "type": "ping",
+                "throttler_queue": {
+                    **queue_status,
+                    "elapsed_ms": max(0, int((time.monotonic() - started) * 1000)),
+                },
+            }
+            frame += f"event: ping\ndata: {json.dumps(payload)}\n\n".encode()
         try:
-            await response.write(b": keepalive\n\n")
+            await response.write(frame)
         except OSError:
-            # Client disconnected while we were holding; stop silently.
-            # ConnectionResetError and aiohttp's ClientConnectionResetError are
-            # both OSError subclasses — naming them again adds nothing.
+            # Production does not automatically cancel disconnected handlers.
+            # An unbounded deferral must also cancel its parked queue acquire.
+            if on_disconnect is not None:
+                on_disconnect()
             return
 
 
@@ -2879,7 +3737,7 @@ async def _emit_sse_error_terminal(
         # Client already gone; write_eof on a dead socket is expected.
         # ConnectionResetError and aiohttp's ClientConnectionResetError are both
         # OSError subclasses — naming them again adds nothing.
-        pass
+        return
 
 
 async def _capture_throttle_upstream(
@@ -2890,9 +3748,8 @@ async def _capture_throttle_upstream(
     Surfaces the proxy-private queue-timeout marker to the caller so the hold
     can classify a relayed central queue-timeout 503 (no AIMD shrink —
     invariant 7). ``_extract_ratelimit`` does NOT capture this header, so add
-    it explicitly — and ONLY from a sibling proxy tier (MARKER_HEADER present),
-    never a spoofing upstream (anti-spoof, matching ``_stream_response``;
-    Codex BLOCKER).
+    it explicitly — ONLY from the configured central transport plus marker,
+    never a raw upstream asserting its own provenance (same as ``_stream_response``).
     """
     from .ratelimit import _extract_zai_ratelimit_from_body
 
@@ -2904,7 +3761,7 @@ async def _capture_throttle_upstream(
             quota_jitter_s=config.ZAI_QUOTA_RESET_JITTER_S,
         )
     )
-    if config.MARKER_HEADER in upstream.headers:
+    if is_central_response(upstream):
         # A sibling tier answered. Record THAT — an entitlement verdict is
         # authoritative in both directions (present = gate, absent = central
         # already ruled it out), so the hold must be able to tell "no sibling
@@ -2936,13 +3793,24 @@ async def _pipe_sse_upstream(
         await cancel_keepalive()
     captured = bytearray()
     cap_limit = 1024 * 1024
-    async for chunk in upstream.content.iter_any():
-        if not chunk:
-            break
-        await sse_resp.write(chunk)
-        if len(captured) < cap_limit:
-            captured.extend(chunk[: cap_limit - len(captured)])
-    await sse_resp.write_eof()
+    tail = bytearray()
+    ledger_on = config.USAGE_LEDGER_MODE != "off"
+    stream_error = True
+    try:
+        async for chunk in upstream.content.iter_any():
+            if not chunk:
+                break
+            if len(captured) < cap_limit:
+                captured.extend(chunk[: cap_limit - len(captured)])
+            if ledger_on:
+                tail.extend(chunk[-65536:])
+                del tail[: max(0, len(tail) - 65536)]
+            await sse_resp.write(chunk)
+        await sse_resp.write_eof()
+        stream_error = False
+    finally:
+        if ledger_on:
+            usage_ledger.save_capture(request, upstream, captured, tail, stream_error)
     return captured
 
 
@@ -2986,10 +3854,17 @@ async def _forward_once_into_sse(
     runtime = get_runtime(request)
     if runtime.mode != "off":
         headers = strip_incoming_provenance(headers)
+    # The hold builds its OWN request, so it needs the same per-attempt body
+    # reconciliation as the direct transport. Streaming is a pane's common case:
+    # without this a metered attempt carried the OAuth identity block and
+    # answered 400 credit-balance (measured 09/11/2026, stream=true).
+    body, headers = reconcile_attempt_body(request, body, headers)
     selected = get_selected_dispatch(request)
     connector = aiohttp.TCPConnector(ssl=True)
+    # The hold already committed plaintext SSE headers (and possibly pings).
+    # Decode here: compressed bytes cannot be spliced into that open stream.
     async with aiohttp.ClientSession(
-        timeout=client_timeout, connector=connector, auto_decompress=False
+        timeout=client_timeout, connector=connector, auto_decompress=True
     ) as session:
         await _pace_dispatch()
         # Post-pacer reservation over the exact final bytes; the synchronous
@@ -3424,6 +4299,20 @@ async def _keepalive_reclassified_terminal(
         attempt.final_status = status
         attempt.response = sse_resp
         return sse_resp
+    if status not in config.THROTTLE_STATUSES:
+        # A committed hold cannot relay HTTP401, but must preserve the fatal
+        # provider envelope rather than invent a retryable quota timeout.
+        error_type, message = "api_error", f"upstream returned HTTP {status}"
+        if attempt.captured:
+            try:
+                error_type, message = _error_envelope_fields(attempt.captured)
+            except (ValueError, TypeError) as exc:
+                log(f"hold-error-invalid status={status} error={type(exc).__name__}")
+        log(f"keepalive-hold-upstream-fatal bid={bid} status={status}")
+        await _emit_sse_error_terminal(sse_resp, message, error_type)
+        attempt.final_status = status
+        attempt.response = sse_resp
+        return sse_resp
     # The hold OWNS AIMD (`aimd_owned`), so `_finalize` will skip its
     # own call — and this terminal branch never made one, letting a
     # genuine budget 429 that arrived mid-hold escape the shrink
@@ -3792,7 +4681,7 @@ async def _pushback_retry_step(
         # see remaining<=0 and re-probe this same bearer forever. Recording
         # it also arms `require_retry_probe(block_while_retry=True)`, which
         # is what makes the pre-dispatch reroute branch fire on re-entry.
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, attempt.meta, str(attempt.context.get("model", "")))
         raise _RetryAfterArmed(pause)
     if _account_routing_enabled():
         # ACTIVE ROUTING (S1, docs/ACTIVE-ROUTING-DESIGN-2026-10-09.md): a
@@ -3810,7 +4699,7 @@ async def _pushback_retry_step(
         # metrics run exactly once via the handler's finalize on the raise
         # path — the same contract as the armed-Retry-After branch above — so
         # this raise happens BEFORE `_aimd_feedback`, never after.
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, attempt.meta, str(attempt.context.get("model", "")))
         raise _RetryAfterArmed(pause)
     await _aimd_feedback(bid, limiter, attempt)
     await limiter.wait_retry_after()
@@ -4091,7 +4980,7 @@ def _note_retry_after_if_set(
     """Apply pushback pause to limiter when one is set; return (pause, synthetic_pause)."""
     pause, synthetic_pause = _pushback_pause(meta, bid)
     if pause > 0:
-        limiter.note_retry_after(pause)
+        _model_retry.note_pause(limiter, pause, meta)
     return pause, synthetic_pause
 
 
@@ -4207,6 +5096,12 @@ async def _aimd_feedback(bid: str, limiter: FairBearerLimiter, attempt: _Attempt
     are evidence about this bearer's ceiling.
     """
     final_status = attempt.final_status
+    if final_status in AIMD_STATUSES and _model_retry.fable_window(
+        attempt.meta, str(attempt.context.get("model", ""))
+    ):
+        pause, _ = _pushback_pause(attempt.meta, bid)
+        _model_retry.note_pause(limiter, pause, attempt.meta, str(attempt.context.get("model", "")))
+        return  # A model quota says nothing about the shared concurrency ceiling.
     retry_after = _parse_retry_after(attempt.meta)
     if _aimd_skip_queue_timeout(bid, attempt, final_status):
         return
@@ -4385,6 +5280,90 @@ def _spend_lane_label() -> str:
     return os.environ.get("THROTTLE_LANE_NAME", "").strip() or "local"
 
 
+def _points_rate(bid: str, now: float) -> tuple[float | None, float | None]:
+    """(refill rate in points/h, 7d reset) for one account; rate None = no verdict."""
+    unified = (config.bearer_state.get(bid) or {}).get("unified") or {}
+    reset, util = unified.get("reset_7d"), unified.get("util_7d")
+    if util is not None:
+        util = max(float(util), _points_book.settled_since_reset(bid, reset) / _points.WEEK_POINTS)
+    return _points.regime_rate(util, reset, now), reset
+
+
+def _points_observe_debit(
+    model: str,
+    model_label: str,
+    usage: dict[str, int],
+    seat: str,
+    project: str | None,
+    status: int | None,
+) -> None:
+    """Observe mode: debit one settled request. Reads usage, writes only the points book."""
+    if config.POINTS_MODE != "observe":
+        return
+    if sum(usage.values()) <= 0:
+        _points_book.unsettled_total += 1  # unknown is not free: counted, debit 0, never defers
+        return
+    points = _points.settled_points(model, usage, status)
+    if points is None:
+        if _points_book.note_unpriced(model_label):
+            log(f"points-unpriced model={model_label} (no weight; debit 0)")
+        return
+    now = time.time()
+    rate, reset = _points_rate(seat, now)
+    project_label = project or ""
+    credit = _points_book.debit(
+        seat, points, now, rate=rate, reset=reset, model=model_label, project=project_label
+    )
+    M_POINTS_SETTLED.labels(model=model_label, project=project_label).inc(points)
+    M_POINTS_CREDIT.labels(account=seat).set(credit)
+
+
+def _points_observe_admit(
+    request: web.Request, is_priority: bool, *, model: str, max_tokens: int | None
+) -> None:
+    """Observe mode at the weekly-pacing call: compute would-defer, log on transition.
+
+    Never alters the request, a response, a header, a slot or a Retry-After. The
+    reservation it takes is released in ``handler``'s ``finally``.
+    """
+    if config.POINTS_MODE != "observe" or not _account_routing_enabled():
+        return
+    try:
+        from . import accounts
+
+        now = time.time()
+        eligible = _weekly_pacing_eligible(
+            accounts.routing_snapshot(now), now, model=model, max_tokens=max_tokens
+        )
+        rates = {
+            str(a.get("bearer_id", "")): _points_rate(str(a.get("bearer_id", "")), now)[0]
+            for a in eligible
+        }
+        fam = _points.family(model)
+        reserve = None if fam is None else _points.P90[fam]
+        would_defer, bid, reserved = _points_book.admit(rates, now, reserve)
+        if reserved and bid is not None:
+            request[_POINTS_KEY] = (bid, reserved)
+        if is_priority and would_defer:
+            would_defer = False  # the priority lane always passes (§2.5)
+        if _points_book.note_verdict(would_defer):
+            if would_defer:
+                M_POINTS_WOULD_DEFER.labels(reason="all_in_debt").inc()
+            log(
+                f"points-would-defer state={'on' if would_defer else 'off'} accounts={len(rates)} "
+                f"model={model or 'unknown'} (observe: nothing refused)"
+            )
+    except Exception as exc:
+        log(f"points-observe-error: {exc!r}")
+
+
+def _points_release(request: web.Request) -> None:
+    held = request.get(_POINTS_KEY)
+    if held is not None:
+        request[_POINTS_KEY] = None
+        _points_book.release(*held)
+
+
 def _record_usage(
     model: str,
     model_label: str,
@@ -4394,6 +5373,9 @@ def _record_usage(
     seat: str = "",
     lane: str = "",
     project: str | None = None,
+    weekly_project: str | None = None,
+    seat_headers: object = None,
+    status: int | None = None,
 ) -> None:
     """Parse the SSE/JSON usage block, bump token/cost metrics + the TPS ring.
 
@@ -4424,9 +5406,16 @@ def _record_usage(
             M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
                 spend_usd
             )
+        _points_observe_debit(model, model_label, usage, seat, project, status)
+        if weekly_project is not None and config.WEEKLY_PACING_MODE != "off":
+            # Spec 377 phase 2: measured usage only; zero/absent is never recorded.
+            _WEEKLY_TOKENS.add(weekly_project, sum(usage.values()), time.time())
         if project is not None:
             # Unknown-cost models still mark the project active (0 USD).
             _PROJECT_SHARE.record_spend(project, spend_usd)
+        if seat_headers is not None:
+            # Spec 378: who spent it — observation only, env-gated, never routed on.
+            _consumers.record_seat(seat_headers, project, spend_usd)
         _history.observe_tokens(
             out=usage["output"],
             in_=usage["input"] + usage["cache_read"] + usage["cache_creation"],
@@ -4585,7 +5574,9 @@ async def _finalize_ratelimit_feedback(
     bstate["last_ratelimit"] = meta
     _publish_ratelimit_gauges(bid, meta)
     try:
-        await _apply_unified(bid, bstate, limiter, meta)
+        await _apply_unified(
+            bid, bstate, limiter, meta, model=str(attempt.context.get("model", ""))
+        )
     except Exception as ue:
         log(f"unified-error bid={bid}: {ue!r}")
 
@@ -4703,6 +5694,23 @@ async def _finalize(
             seat=bid,
             lane=_spend_lane_label(),
             project=_project_of(request.headers),
+            weekly_project=_weekly_project_of(request.headers),
+            seat_headers=request.headers,
+            status=final_status,
+        )
+    if request.method == "POST" and MESSAGES_SUBPATH in path:
+        observed = request.get(usage_ledger.CAPTURE_KEY, {})
+        usage_ledger.record(
+            bearer=observed.get("bearer", bid),
+            model=model_label,
+            project=_project_of(request.headers),
+            session=_session_affinity.current_key(),
+            status=final_status,
+            captured=observed.get("captured", attempt.captured),
+            tail=observed.get("tail", (attempt.meta or {}).get("usage_tail")),
+            eof=observed.get("eof"),
+            stream_error=observed.get("error"),
+            via=observed.get("via", attempt.context.get("via", "unknown")),
         )
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -4713,6 +5721,7 @@ async def _finalize(
     log(
         f"done   method={request.method} path=/{safe_path} status={final_status} bid={bid} "
         f"cid={safe_cid} via={safe_via} model={safe_model} elapsed_ms={elapsed_ms} "
+        f"project={_project_of(request.headers)} seat={_seat_of(request.headers)} "
         f"inflight={counters.s['inflight']} "
         f"queued={counters.s['queued']} served={counters.s['served']} "
         f"disc={counters.s['client_disconnects']} retries={counters.s['upstream_retries']}"
@@ -4928,8 +5937,9 @@ def _forward_headers(request: web.Request) -> dict[str, str]:
         for k, v in request.headers.items()
         if k.lower() not in HOP_HEADERS
         and k.lower() != config.WAIT_BUDGET_HEADER
+        and k.lower() != config.PATIENCE_HEADER
         # attribution is this tier's business, never Anthropic's
-        and k.lower() != _PROJECT_HEADER
+        and k.lower() not in (_PROJECT_HEADER, _SEAT_HEADER)
     }
 
 
@@ -5151,6 +6161,14 @@ def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> byte
     traffic is forwarded byte-identical, and a body whose first system block
     already IS the marker is left untouched. Best-effort: unparsable bodies
     pass through unchanged.
+
+    The rewrite is OAuth-specific, so the unmarked body is stashed for the
+    transport (``_forward_once``) to send on any attempt that ends up holding a
+    metered ``x-api-key`` credential instead. Measured 09/11/2026: the marker on
+    an API-key request bills it to the Claude Code credit pool, which is empty,
+    and Anthropic answers ``400 invalid_request_error: Your credit balance is
+    too low`` even while the org holds $200 of API credits — the same request
+    without the marker returns 200.
     """
     if body is None or not _is_sentinel_lane_request(request):
         return body
@@ -5162,6 +6180,7 @@ def _inject_lane_system_prompt(request: web.Request, body: bytes | None) -> byte
         return body
     _fold_pi_system_into_first_message(obj)
     obj["system"] = [{"type": "text", "text": marker}]
+    request[_LANE_UNMARKED_BODY] = body
     return json.dumps(obj).encode("utf-8", "replace")
 
 
@@ -5174,8 +6193,12 @@ def _shrink_forward_body(
     breadcrumb stubs, hard floor on single-attachment overruns).
     """
     if body is not None and request.method == "POST":
-        body = _inject_lane_system_prompt(request, body)
-        return _apply_body_shrink(request, body, path, model_label, headers)
+        # Shrink the client's real body first, then apply the OAuth-only
+        # identity rewrite: the unmarked body it stashes must already be the
+        # final payload an api-key attempt would send. See
+        # ``lane_body_for_attempt``.
+        body = _apply_body_shrink(request, body, path, model_label, headers)
+        return _inject_lane_system_prompt(request, body)
     return body
 
 
@@ -5215,9 +6238,25 @@ def _claim_route(
 
 
 def _queue_wait_budget(
-    request: web.Request, handler_start: float
+    request: web.Request, handler_start: float, body: bytes | None
 ) -> tuple[float | None, float | None]:
-    """(max_wait, wait_deadline) — the queue-wait budget this request may spend."""
+    """(max_wait, wait_deadline) — the queue-wait budget this request may spend.
+
+    A held request (200 SSE committed, keepalive pings flowing) has no client
+    idle timer to beat, which is the only reason the bound exists. It therefore
+    waits until it is served or its client disconnects: every message is queued
+    and answered as capacity frees (Pedro, 07/11/2026 — 126 held Pi turns/hour
+    were being dropped at the 240 s bound while weekly pacing deferred them).
+    An explicit bound still applies — a patience header (the client asked for a
+    limit) or an inherited wait budget (a sibling tier is spending its own).
+    """
+    asked = _patience_bound(request.headers) is not None
+    if (
+        _stream_hold_wanted(request, body)
+        and not asked
+        and (config.WAIT_BUDGET_HEADER not in request.headers)
+    ):
+        return None, None
     max_wait = _effective_queue_max_wait(request.headers)
     return max_wait, None if max_wait is None else handler_start + max_wait
 
@@ -5417,6 +6456,77 @@ async def _park_on_pre_dispatch_retry_after(
     return limiter, bid, headers, None, "reroute"
 
 
+def _model_pause_response(seconds: float) -> web.Response:
+    return web.Response(
+        status=429,
+        headers={"retry-after": str(max(1, math.ceil(seconds)))},
+        text="Selected model subscription allowance is temporarily held; retry the same model.\n",
+    )
+
+
+async def _recheck_subscription_pause(limiter, model, headers, prospective) -> None:
+    authorization = next(
+        (value for name, value in headers.items() if name.lower() == "authorization"), ""
+    )
+    if (
+        not _account_routing_enabled()
+        or not authorization.startswith("Bearer ")
+        or not model
+        or not _meter_binding_allows(limiter.bearer_id)
+    ):
+        return
+    if "x-api-key" in {name.lower() for name in headers}:
+        return
+    from . import accounts
+
+    if not any(
+        acct.get("bearer_id") == limiter.bearer_id
+        and authorization == "Bearer " + str(acct.get("token", ""))
+        for acct in accounts.routing_snapshot()
+    ):
+        return  # Caller-supplied Bearer API keys must never fund synthetic probes.
+
+    async def send():
+        payload = {
+            "model": model,
+            "max_tokens": 8,
+            "system": [{"type": "text", "text": CLAUDE_CODE_SYSTEM_PROMPT}],
+            "messages": [{"role": "user", "content": "Reply OK."}],
+        }
+        if model.startswith("claude-fable-"):
+            payload.update(max_tokens=64, thinking={"type": "adaptive"})
+            payload["output_config"] = {"effort": "low"}
+        probe_headers = {
+            "authorization": authorization,
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "content-type": CONTENT_TYPE_JSON,
+        }
+        return await _post_internal_probe_headers(
+            prospective,
+            config.UPSTREAM.rstrip("/") + MESSAGES_PATH,
+            probe_headers,
+            payload,
+            aiohttp.ClientTimeout(total=config.UPSTREAM_HEALTH_TIMEOUT),
+        )
+
+    try:
+        meta = await _model_retry.recheck(limiter, model, send)
+        if meta:
+            await _apply_unified(
+                limiter.bearer_id,
+                bearer_state.setdefault(limiter.bearer_id, {}),
+                limiter,
+                meta,
+                model=model,
+            )
+    except Exception as exc:
+        log(
+            f"subscription-recheck bid={limiter.bearer_id} "
+            f"result=inconclusive type={type(exc).__name__}"
+        )
+
+
 async def _pre_dispatch_gate(
     *,
     path: str,
@@ -5431,6 +6541,7 @@ async def _pre_dispatch_gate(
     reroute: _Reroute,
     wait_reval: _WaitReval,
     meter_wait_bounded: bool,
+    prospective: ProbeProspective | None = None,
 ) -> tuple[FairBearerLimiter | None, str, dict[str, str], web.Response | None, str]:
     """The pre-dispatch admission gate: Retry-After, then half-open probe ownership.
 
@@ -5455,6 +6566,25 @@ async def _pre_dispatch_gate(
             new_bid, new_headers = reroute()
             return limiter, new_bid, new_headers, None, "reroute"
         return limiter, bid, headers, _meter_refusal_response(bid, path), "answer"
+    if _retry_after_blocks_path(path):
+        if not await wait_reval(
+            lambda: _recheck_subscription_pause(limiter, model, headers, prospective)
+        ):
+            finish_probe(success=False)
+            return (
+                limiter,
+                bid,
+                headers,
+                _queue_wait_timeout_response(bid, cid, path, limiter, 0.0),
+                "answer",
+            )
+        scoped_wait = _model_retry.scoped_remaining(bid, model)
+        if scoped_wait > 0:
+            alternate = try_reroute(bid, scoped_wait, "model-pre-dispatch")
+            if alternate is not None:
+                finish_probe(success=False)
+                return limiter, alternate[0], alternate[1], None, "reroute"
+            return limiter, bid, headers, _model_pause_response(scoped_wait), "answer"
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if (
         _retry_after_blocks_path(path)
@@ -5537,6 +6667,15 @@ async def _post_slot_recheck(
     # A bearer can cross its 5h/7d target while this request is parked in its
     # local fair queue. Re-run account routing from the original auth headers
     # before surfacing a stale 429.
+    scoped_wait = _model_retry.scoped_remaining(bid, model_label)
+    if _retry_after_blocks_path(path) and scoped_wait > 0:
+        rerouted = try_reroute(bid, scoped_wait, "model-post-slot")
+        if rerouted is not None:
+            counters.exit_inflight(0)
+            return rerouted[0], rerouted[1], None, True
+        attempt.final_status = 429
+        attempt.aimd_owned = True  # Local quota refusal is not upstream congestion.
+        return bid, headers, _model_pause_response(scoped_wait), False
     retry_after_remaining = _retry_after_remaining_for_path(limiter, path)
     if retry_after_remaining > 0:
         rerouted = try_reroute(bid, retry_after_remaining, "post-slot")
@@ -5573,6 +6712,189 @@ async def _post_slot_recheck(
     if _request_disconnected(request):
         return bid, headers, _record_closed_before_dispatch(path, "pre-dispatch", attempt), False
     return bid, headers, None, False
+
+
+_QUEUE_WAIT_EXCEEDED_TEXT = (
+    "proxy queue wait exceeded; slots saturated — retrying will re-enter the fair queue\n"
+)
+_DEFER_HOLD_KEY = "throttle_deferral_hold"
+_DEFER_PING_CAP_MS = 15_000
+
+
+class _DeferralHold:
+    """A 200 text/event-stream response committed BEFORE a queue or pacing wait.
+
+    The keepalive emitter pings it while the request waits. ``stop`` is
+    idempotent: it ends the emitter (awaited, so no ping can interleave with
+    the terminal event) and drops the active-hold gauge exactly once.
+    """
+
+    __slots__ = ("sse", "task", "bid", "open", "status")
+
+    def __init__(
+        self, sse: web.StreamResponse, task: asyncio.Task, bid: str, status: dict[str, str | int]
+    ) -> None:
+        self.sse = sse
+        self.task = task
+        self.bid = bid
+        self.open = True
+        self.status = status
+
+    async def stop(self) -> None:
+        if self.open:
+            self.open = False
+            state["keepalive_holds_active"] = max(0, int(state["keepalive_holds_active"]) - 1)
+        await _keepalive_cancel_emitter(self.task, self.bid)
+
+
+def _stream_hold_wanted(request: web.Request, body: bytes | None) -> bool:
+    """Stream the wait only for streaming requests that opted in (or knob on)."""
+    if not _is_streaming_body(body):
+        return False
+    return config.STREAM_HOLD_ON_DEFER or config.PATIENCE_HEADER in request.headers
+
+
+async def _open_deferral_hold(
+    request: web.Request, bid: str, *, reason: str = "queue"
+) -> _DeferralHold:
+    """Commit the 200 SSE and start pings, then park the hold on the request."""
+    sse = web.StreamResponse(
+        status=200, headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
+    )
+    await sse.prepare(request)
+    interval_ms = min(config.KEEPALIVE_INTERVAL_MS, _DEFER_PING_CAP_MS)
+    owner = asyncio.current_task()
+    status: dict[str, str | int] = {
+        "version": 1,
+        "source": "throttler-gateway",
+        "state": "waiting",
+        "reason": reason,
+        "next_check_ms": interval_ms,
+    }
+    task = asyncio.create_task(
+        _emit_keepalive_frames(
+            sse, interval_ms, on_disconnect=owner.cancel if owner else None, queue_status=status
+        )
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    state["keepalive_holds_active"] = int(state["keepalive_holds_active"]) + 1
+    hold = _DeferralHold(sse, task, bid, status)
+    request[_DEFER_HOLD_KEY] = hold
+    log(f"deferral-hold-open bid={bid} path={request.path} interval_ms={interval_ms}")
+    return hold
+
+
+async def _hold_deferral(
+    request: web.Request,
+    bid: str,
+    poll: Callable[[], int | None],
+    max_wait: float | None,
+) -> web.StreamResponse | None:
+    """Hold a streaming request while ``poll`` reports a deferral.
+
+    Returns ``None`` once the deferral clears (the hold stays on the request
+    for the queue dispatch). Expiry remains fail-closed: waiting must never
+    bypass pacing or hard account eligibility. Sequential pacing/share waits
+    reuse the same committed SSE response and spend one end-to-end budget.
+    """
+    hold = request.get(_DEFER_HOLD_KEY)
+    if hold is None:
+        hold = await _open_deferral_hold(request, bid, reason="weekly_pacing")
+    hold.status["reason"] = "weekly_pacing"
+    # None = a held request without a client-asked bound: wait for capacity.
+    deadline = None if max_wait is None else time.monotonic() + max_wait
+    while True:
+        retry_after = poll()
+        if retry_after is None:
+            return None
+        if _request_disconnected(request):
+            await hold.stop()
+            log(f"deferral-hold-client-gone bid={bid} path={request.path}")
+            return hold.sse
+        remaining = math.inf if deadline is None else deadline - time.monotonic()
+        if remaining <= 0:
+            budget = max_wait
+            await hold.stop()
+            await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
+            log(f"deferral-hold-expired bid={bid} path={request.path} budget_s={budget:g}")
+            return hold.sse
+        delay = min(remaining, max(0.5, min(float(retry_after), 15.0)))
+        hold.status["next_check_ms"] = max(0, int(delay * 1000))
+        await asyncio.sleep(delay)
+
+
+async def _dispatch_into_hold(
+    *,
+    request: web.Request,
+    hold: _DeferralHold,
+    headers: dict[str, str],
+    body: bytes | None,
+    target: tuple[str, aiohttp.ClientTimeout, str],
+    bid: str,
+    cid: str,
+    model: str,
+    model_label: str,
+    limiter: FairBearerLimiter,
+    counters: _Counters,
+    wait_deadline: float | None,
+) -> web.StreamResponse:
+    """Dispatch an admitted request inside its committed hold (existing retry path)."""
+    path = request.match_info.get("path", "")
+    url, client_timeout, via = target
+    t0 = time.time()
+    attempt = _attempt_for_request(request, bid, cid, via, model_label)
+    attempt.started_at = t0
+    try:
+        while True:
+            if _request_disconnected(request):
+                # The wait is unbounded for a held request, so the client may be
+                # long gone by the time a slot frees: never spend quota on it.
+                await hold.stop()
+                attempt.final_status = 499
+                attempt.response = hold.sse
+                return hold.sse
+            if wait_deadline is not None and time.time() >= wait_deadline:
+                await hold.stop()
+                await _emit_sse_error_terminal(hold.sse, _QUEUE_WAIT_EXCEEDED_TEXT)
+                attempt.final_status = 503
+                attempt.response = hold.sse
+                return hold.sse
+            hold.status["reason"] = (
+                "retry_after" if limiter.retry_after_remaining() > 0 else "queue"
+            )
+            await _keepalive_wait_out_retry_after(limiter, wait_deadline)
+            terminal = await _keepalive_one_attempt(
+                request=request,
+                headers=dict(headers),
+                body=body,
+                url=url,
+                client_timeout=client_timeout,
+                via=via,
+                wait_deadline=wait_deadline,
+                sse_resp=hold.sse,
+                attempt=attempt,
+                bid=bid,
+                path=path,
+                limiter=limiter,
+                cancel_keepalive=hold.stop,
+            )
+            if terminal is not None:
+                return terminal
+    finally:
+        await hold.stop()
+        await _finalize(
+            counters,
+            bid,
+            limiter,
+            bearer_state[bid],
+            attempt,
+            t0,
+            model,
+            model_label,
+            request,
+            path,
+        )
 
 
 async def _run_slot(
@@ -5623,6 +6945,14 @@ async def _run_slot(
         )
 
     rerouted = False
+    if request.get(_DEFER_HOLD_KEY) is None and _stream_hold_wanted(request, body):
+        await _open_deferral_hold(request, bid)
+    hold = request.get(_DEFER_HOLD_KEY)
+    if hold is not None:
+        hold.status.update(
+            reason="queue", next_check_ms=min(config.KEEPALIVE_INTERVAL_MS, _DEFER_PING_CAP_MS)
+        )
+    wait_mark = _QueueWaitMark(patient=_patience_bound(request.headers) is not None)
     try:
         async with limiter.slot(
             cid,
@@ -5630,8 +6960,30 @@ async def _run_slot(
             max_wait=slot_max_wait,
             project=_project_of(request.headers),
         ) as held:
+            wait_mark.end(served=True)
             counters.dequeue()
             counters.enter_inflight()
+            hold = request.get(_DEFER_HOLD_KEY)
+            if hold is not None:
+                if probe_lease["bid"] == bid:
+                    set_success_headers_callback(
+                        request, lambda: _finish_retry_probe(probe_lease, success=True)
+                    )
+                held_response = await _dispatch_into_hold(
+                    request=request,
+                    hold=hold,
+                    headers=headers,
+                    body=body,
+                    target=target,
+                    bid=bid,
+                    cid=cid,
+                    model=model,
+                    model_label=model_label,
+                    limiter=limiter,
+                    counters=counters,
+                    wait_deadline=wait_deadline,
+                )
+                return bid, headers, held_response, False
             t0 = time.time()
             attempt = _attempt_for_request(request, bid, cid, via, model_label)
             attempt.started_at = t0
@@ -5734,6 +7086,7 @@ async def _run_slot(
             False,
         )
     finally:
+        wait_mark.end(served=False)
         # PR #575 B1 fix: if we got cancelled between incrementing `queued`
         # and the inner `async with limiter.slot()` body decrementing it,
         # roll back the queue counter so it doesn't leak forever and starve
@@ -5746,7 +7099,68 @@ async def _run_slot(
 
 
 async def handler(request: web.Request) -> web.StreamResponse:
-    """Entry wrapper: quiesce gate + liveness claim BEFORE any await.
+    """Entry point; releases an observe-mode points reservation however the request ends."""
+    try:
+        return await _handler_held(request)
+    finally:
+        _points_release(request)
+
+
+async def _handler_held(request: web.Request) -> web.StreamResponse:
+    """Run the request core, then keep any committed hold valid.
+
+    Once a deferral hold has committed its 200 SSE, no other status can be sent.
+    A non-SSE answer from the core is therefore delivered as the hold's terminal
+    SSE error event, carrying the same text, and the hold closes exactly once.
+    """
+    try:
+        response = await _handler_core(request)
+    except BaseException:
+        hold = request.get(_DEFER_HOLD_KEY)
+        if hold is not None:
+            await hold.stop()
+        raise
+    hold = request.get(_DEFER_HOLD_KEY)
+    if hold is None or response is hold.sse:
+        return response
+    await hold.stop()
+    text = getattr(response, "text", None) or "proxy request ended before dispatch\n"
+    await _emit_sse_error_terminal(hold.sse, text.strip())
+    return hold.sse
+
+
+# Read-only inspection surfaces: everything under /__throttle/* plus /metrics.
+# They are registered ABOVE the catch-all in main(), so a registered one never
+# reaches this handler. One that is not registered — an env-gated view with its
+# flag off — used to fall through into the forwarding path and be refused by the
+# weekly-pacing brake: measured 04/11/2026, `GET /__throttle/consumers` answered
+# "weekly pacing: every account is ahead of schedule", i.e. the instrument that
+# reports who is consuming the lane was itself throttled. Route CLASS, not a
+# path allowlist, so a future read-only endpoint cannot inherit the bug.
+_INSPECTION_PREFIX = "__throttle"
+_INSPECTION_PATHS = frozenset({"metrics"})
+
+
+def _is_read_only_inspection(request: web.Request, path: str) -> bool:
+    """True for GET/HEAD on the inspection route class, registered or not."""
+    if request.method not in ("GET", "HEAD"):
+        return False
+    if path in _INSPECTION_PATHS:
+        return True
+    return path == _INSPECTION_PREFIX or path.startswith(f"{_INSPECTION_PREFIX}/")
+
+
+def _unmatched_inspection_response(path: str) -> web.Response:
+    """Answer an unclaimed inspection path locally: never paced, never forwarded."""
+    return web.Response(
+        status=404,
+        text=f"unknown inspection endpoint: /{path}\n",
+        content_type="text/plain",
+    )
+
+
+async def _handler_core(request: web.Request) -> web.StreamResponse:
+    """Request core behind ``handler``: quiesce gate + liveness claim BEFORE any await.
 
     The claim is synchronous, so a request that passed the gate is counted from
     the first instant it exists server-side — even while its body is still
@@ -5786,9 +7200,15 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     """
     handler_start = time.time()
     path = request.match_info.get("path", "")
+    if _is_read_only_inspection(request, path):
+        # An inspection route that no resource claimed (feature flag off) must
+        # answer locally: pacing it makes the observability surface the outage,
+        # and forwarding it would send an internal path upstream.
+        return _unmatched_inspection_response(path)
     headers = _forward_headers(request)
     bid = _bearer_id(request.headers)
     cid = _client_id(request)
+    wproject = _weekly_project_of(request.headers)
     url, client_timeout, via = pick_target(path, request.query_string)
     body, early_response = await _read_forward_body(request, path, bid, cid, via)
     if early_response is not None:
@@ -5804,7 +7224,39 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     early_response = _fleet_budget_response(request)
     if early_response is not None:
         return early_response
+    if request.method == "POST" and MESSAGES_SUBPATH in path:
+        _session_affinity.begin_request(body, model)
     body = _shrink_forward_body(request, body, path, model_label, headers)
+    max_wait, wait_deadline = _queue_wait_budget(request, handler_start, body)
+    _points_observe_admit(request, is_priority, model=model, max_tokens=req_max_tokens)
+    paced_retry_after = _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens)
+    if paced_retry_after is not None:
+        if not _stream_hold_wanted(request, body):
+            return _weekly_pacing_response(paced_retry_after)
+        terminal = await _hold_deferral(
+            request,
+            bid,
+            lambda: _weekly_pacing_defer(is_priority, model=model, max_tokens=req_max_tokens),
+            _slot_remaining_wait(wait_deadline),
+        )
+        if terminal is not None:
+            return terminal
+    share_retry_after = _weekly_share_defer(wproject, is_priority)
+    if share_retry_after is not None:
+        if not _stream_hold_wanted(request, body):
+            return _weekly_pacing_response(
+                share_retry_after,
+                "client over its weekly share while the fleet is ahead",
+                verdict="client_share",
+            )
+        terminal = await _hold_deferral(
+            request,
+            bid,
+            lambda: _weekly_share_defer(wproject, is_priority),
+            _slot_remaining_wait(wait_deadline),
+        )
+        if terminal is not None:
+            return terminal
     incoming_bid = bid
     bid, route_base_headers, probe_lease = _claim_route(
         request, path, headers, bid, model, req_max_tokens, via
@@ -5819,7 +7271,6 @@ async def _serve(request: web.Request) -> web.StreamResponse:
     if handler_task is not None:
         handler_task.add_done_callback(lambda _task: finish_probe(success=False))
 
-    max_wait, wait_deadline = _queue_wait_budget(request, handler_start)
     if max_wait is not None and max_wait <= 0.0:
         # The upstream tier already spent the whole wait budget; don't park.
         return await _expired_wait_budget_response(bid, cid, path, max_wait, finish_probe)
@@ -5842,6 +7293,10 @@ async def _serve(request: web.Request) -> web.StreamResponse:
         return bid, headers
 
     async def wait_for_revalidation(waiter: Callable[[], Awaitable[None]]) -> bool:
+        # A probe gate precedes slot admission; it must not be a silent wait.
+        # Only real upstream success settles the lease, never this SSE 200.
+        if request.get(_DEFER_HOLD_KEY) is None and _stream_hold_wanted(request, body):
+            await _open_deferral_hold(request, bid, reason="retry_after")
         return await _wait_for_revalidation(waiter, wait_deadline)
 
     def try_retry_after_reroute(
@@ -5889,6 +7344,7 @@ async def _serve(request: web.Request) -> web.StreamResponse:
             reroute=reroute_after_revalidation,
             wait_reval=wait_for_revalidation,
             meter_wait_bounded=wait_deadline is not None,
+            prospective=_app_probe(request.app),
         )
         if action == "answer":
             assert response is not None
@@ -6012,6 +7468,13 @@ def _app_probe(app: web.Application) -> ProbeProspective:
 
 
 async def _post_internal_probe(prospective, url, headers, payload, client_timeout):
+    status, body, _ = await _post_internal_probe_headers(
+        prospective, url, headers, payload, client_timeout
+    )
+    return status, body
+
+
+async def _post_internal_probe_headers(prospective, url, headers, payload, client_timeout):
     """Reserve the serialized body once, then retain sent debt through the reply."""
     final_bytes = json.dumps(payload).encode()
     probe = prospective or ProbeProspective(None, _unconfigured_probe_dispatch())
@@ -6020,8 +7483,10 @@ async def _post_internal_probe(prospective, url, headers, payload, client_timeou
         probe.reserve(final_bytes) as permit,
     ):
         permit.handoff()
-        async with session.post(url, headers=headers, data=final_bytes) as response:
-            return response.status, await response.read()
+        async with session.post(
+            url, headers=headers, data=final_bytes, allow_redirects=False
+        ) as response:
+            return response.status, await response.read(), _extract_ratelimit(response.headers)
 
 
 async def _probe_upstream_auth_once(*, prospective: ProbeProspective | None = None) -> None:
@@ -6037,7 +7502,7 @@ async def _probe_upstream_auth_once(*, prospective: ProbeProspective | None = No
     answers **200** with a ``url.not_found`` body, so a status-only probe would
     have reopened a lane whose key is dead.
     """
-    candidate = _api_key_candidate()
+    candidate = _api_key_candidate(config.AUTH_PROBE_MODEL)
     if candidate is None or not config.AUTH_PROBE_MODEL:
         return
     url = config.UPSTREAM.rstrip("/") + MESSAGES_PATH
@@ -6842,6 +8307,7 @@ async def admission(_request: web.Request) -> web.Response:
     # which is the difference between a pause and an outage.
     retry_after_s = 0.0 if allow else _soonest_bearer_due(bearers, now)
     saturation = _lane_saturation(bearers, usable)
+    share_targets, weekly_aggregate = _weekly_share_health(bearers, usable, now)
 
     return web.json_response(
         {
@@ -6854,6 +8320,9 @@ async def admission(_request: web.Request) -> web.Response:
             "retry_after_s": retry_after_s,
             "lane": {"open": lane_open, "detail": lane_detail},
             "saturation": saturation,
+            "weekly_pacing": _weekly_pacing_view(),
+            "points": _points_view(now),
+            "weekly_pace_aggregate": weekly_aggregate,
             "bearers": {
                 bid: {
                     "usable": ok,
@@ -6861,6 +8330,8 @@ async def admission(_request: web.Request) -> web.Response:
                     "status_7d": (bearers[bid].get("unified") or {}).get("status_7d"),
                     "util_5h": (bearers[bid].get("unified") or {}).get("util_5h"),
                     "util_7d": (bearers[bid].get("unified") or {}).get("util_7d"),
+                    "weekly_pace": _bearer_weekly_pace(bearers[bid], now),
+                    "weekly_share_target": share_targets.get(bid),
                 }
                 for bid, ok in usable.items()
             },
@@ -6917,6 +8388,7 @@ async def health(_request: web.Request) -> web.Response:
         "version": _version,
         "inflight": state["inflight"],
         "queued": state["queued"],
+        "queue": _queue_health(),
         "served": state["served"],
         # Streams currently parked in a keepalive-hold. Distinct from inflight:
         # a held request has already been answered 200 and is being kept alive
@@ -6954,6 +8426,7 @@ async def health(_request: web.Request) -> web.Response:
         # verification (a stale .claude.json label after a promote credential
         # swap looks identical until probed — the 10/07 false alarm).
         "account_identity": account_identity,
+        "session_affinity": {"enabled": _session_affinity.enabled(), **_session_affinity.stats()},
         # Pane-19 gap: surface whether the 7d/5h utilization brake is armed.
         # enabled=false means accounts can march to a hard 1.0 lockout unbraked.
         "brake": {
@@ -7097,7 +8570,7 @@ def _statusline_elect(
         snapshot,
         incoming_bid,
         explicit_api_key=incoming_bid == "api-key",
-        api_key=None if incoming_bid == "api-key" else _api_key_candidate(),
+        api_key=None if incoming_bid == "api-key" else _api_key_candidate(model),
         model=model,
         max_tokens=max_tokens,
         now=now,
@@ -7373,6 +8846,8 @@ def main() -> None:
     # Restore credential quarantines BEFORE the listener accepts anything, so a
     # restart cannot re-derive a known-dead account at the cost of client turns.
     load_credential_state()
+    # Same restore-before-serve rule for the weekly burn history.
+    _seed_week_samples()
     if config.CENTRAL_URL:
         loop.create_task(central_health_loop())
     app = web.Application(client_max_size=128 * 1024 * 1024)
@@ -7392,6 +8867,7 @@ def main() -> None:
     # dokku nginx answering for a dead container (mark central down).
     app.on_response_prepare.append(stamp_proxy_marker)
     app.router.add_get("/", root_probe)
+    attach_capability(app)
     app.router.add_get("/__throttle/health", health)
     app.router.add_get("/__throttle/admission", admission)
     app.router.add_post("/__throttle/quiesce", quiesce)
@@ -7400,10 +8876,25 @@ def main() -> None:
     # it never consumes a bearer slot and never reaches upstream (FR-002).
     app.router.add_get("/__throttle/statusline", statusline)
     app.router.add_get("/metrics", metrics)
+    from .consumers import attach_consumers
+
+    attach_consumers(app)  # spec 378 phase 1: read-only, env-gated
+    from .api_capacity import attach_api_capacity  # api-capacity.v1, read-only
+
+    attach_api_capacity(app)
     # UI + control plane (standalone-repo addition; mounted at /ui/*).
     from .ui.routes import attach_ui
 
     attach_ui(app)
+    from .ui.usage import attach_usage
+
+    attach_usage(app)  # spec 380: read-only, env-gated
+    from .ui.cache_health import attach_cache_health
+
+    attach_cache_health(app)  # spec 381: live, in-process counters only
+    from .api_capacity import attach_api_capacity_globals
+
+    attach_api_capacity_globals(app)  # api-capacity card flag, needs the jinja env
     app.router.add_route("*", "/{path:.*}", handler)
     if config.log_mode:
         log(f"invalid THROTTLE_QUEUE_MODE={config.log_mode!r}; falling back to off")

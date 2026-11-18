@@ -23,6 +23,12 @@ __all__ = [
     "M_START_TIME",
     "M_REQUESTS",
     "M_TOKENS",
+    "M_WEEKLY_BURN",
+    "M_WEEKLY_BURN_ALERTS",
+    "M_WEEKLY_PACING_DEFERS",
+    "M_POINTS_SETTLED",
+    "M_POINTS_CREDIT",
+    "M_POINTS_WOULD_DEFER",
     "M_COST",
     "M_DURATION",
     "M_INFLIGHT",
@@ -125,6 +131,42 @@ M_SPEND = Counter(
     "anthropic_spend_usd_total",
     "Estimated USD spend parsed from upstream usage blocks, by lane and seat.",
     ["lane", "seat", "model"],
+    registry=REGISTRY,
+)
+M_WEEKLY_BURN = Gauge(
+    "anthropic_weekly_burn_projection",
+    "Projected 7d utilisation at reset (slope over the window), by bearer and window.",
+    ["bearer", "window"],
+    registry=REGISTRY,
+)
+M_WEEKLY_BURN_ALERTS = Counter(
+    "anthropic_weekly_burn_alerts_total",
+    "Multi-window burn alert transitions (24h and 6h projections both above 1.0).",
+    ["bearer"],
+    registry=REGISTRY,
+)
+M_WEEKLY_PACING_DEFERS = Counter(
+    "anthropic_weekly_pacing_defers_total",
+    "Non-priority requests refused by weekly pacing, by verdict.",
+    ["reason"],
+    registry=REGISTRY,
+)
+M_POINTS_SETTLED = Counter(
+    "anthropic_points_settled_total",
+    "Settled weekly-limit points debited in observe mode (100 = one account-week).",
+    ["model", "project"],
+    registry=REGISTRY,
+)
+M_POINTS_CREDIT = Gauge(
+    "anthropic_points_credit",
+    "Points bucket credit per account (negative = debt); observe mode only.",
+    ["account"],
+    registry=REGISTRY,
+)
+M_POINTS_WOULD_DEFER = Counter(
+    "anthropic_points_would_defer_total",
+    "Would-defer transitions of the points bucket in observe mode; nothing was refused.",
+    ["reason"],
     registry=REGISTRY,
 )
 M_INFLIGHT = Gauge("anthropic_inflight", "Current in-flight requests.", registry=REGISTRY)

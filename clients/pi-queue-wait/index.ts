@@ -21,7 +21,7 @@ import { normalizeContextForProvider } from "./normalize-families.mjs";
 
 type StatusUi = { setStatus(key: string, text: string | undefined): void };
 
-export default function (pi: ExtensionAPI) {
+export default function piQueueWaitExtension(pi: ExtensionAPI) {
   let ui: StatusUi | undefined;
 
   const native = openAICompletionsApi();

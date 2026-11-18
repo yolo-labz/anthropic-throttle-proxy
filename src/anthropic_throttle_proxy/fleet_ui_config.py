@@ -37,7 +37,7 @@ _DEFAULT_EMOJI = {
 }
 
 _lock = threading.Lock()
-_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}  # path -> (stat, result)
+_cache: dict[str, tuple[tuple[int, ...], dict[str, Any]]] = {}  # path -> (stat, result)
 
 
 def config_path() -> Path:
@@ -112,13 +112,20 @@ def _validate(raw: Any) -> dict[str, Any]:
     return raw
 
 
-def _stat_stamp(path: Path) -> tuple[int, int] | None:
-    """The mtime/ctime identity of the config file, or None when unreadable."""
+def _stat_stamp(path: Path) -> tuple[int, ...] | None:
+    """The identity of the config file, or None when unreadable.
+
+    mtime/ctime alone collide when a rewrite lands in the same filesystem clock
+    tick (coarse-timestamp CI runners), which served the previous parse as if the
+    file were unchanged. Size and inode catch that rewrite and an atomic replace.
+    ponytail: a same-size rewrite in the same tick still collides; hash the bytes
+    if that ever matters (the file is tiny, but this runs on every render).
+    """
     try:
         stat = path.stat()
     except OSError:
         return None
-    return (stat.st_mtime_ns, stat.st_ctime_ns)
+    return (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
 
 
 def _unreadable(

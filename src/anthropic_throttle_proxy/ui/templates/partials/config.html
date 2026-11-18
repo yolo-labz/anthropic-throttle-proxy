@@ -45,6 +45,7 @@
               hx-trigger="change delay:250ms"
               class="config-form">
           <input type="hidden" name="key" value="{{ k.key }}">
+          {% if ui_csrf %}<input type="hidden" name="csrf" value="{{ ui_csrf }}">{% endif %}
           {% if k.type == "bool" %}
             <label class="switch" title="default: {{ default }}">
               <input type="checkbox" name="value" value="true"{% if k.value %} checked{% endif %}>
@@ -70,6 +71,13 @@
                      {% if k.max is not none %}max="{{ k.max }}"{% endif %}
                      step="0.01" required>
             </label>
+          {% elif k.type == "choice" %}
+            <label class="input-wrap">
+              <span class="sr-only">{{ k.label }}</span>
+              <select name="value" title="default: {{ k.default }}">
+                {% for c in k.choices %}<option value="{{ c }}"{% if c == k.value %} selected{% endif %}>{{ c }}</option>{% endfor %}
+              </select>
+            </label>
           {% else %}
             <label class="input-wrap">
               <span class="sr-only">{{ k.label }}</span>
@@ -85,6 +93,7 @@
                 hx-confirm="reset {{ k.label }} to env default ({{ default }})?"
                 class="config-reset">
             <input type="hidden" name="key" value="{{ k.key }}">
+            {% if ui_csrf %}<input type="hidden" name="csrf" value="{{ ui_csrf }}">{% endif %}
             <button type="submit" class="reset" title="reset to env default">↻</button>
           </form>
         {% endif %}

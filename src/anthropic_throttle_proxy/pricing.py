@@ -37,6 +37,13 @@ PRICING: dict[str, dict[str, float]] = {
     "claude-opus-4-5": {"input": 5.0, "output": 25.0, "cache_read": 0.50, "cache_creation": 6.25},
     "claude-sonnet-5-5": {"input": 2.0, "output": 10.0, "cache_read": 0.10, "cache_creation": 2.5},
     "claude-sonnet-5": {"input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_creation": 2.5},
+    # Fable 5.2 (released 09/11/2026): official card, read 10/11/2026 — $8 in / $40 out
+    # per MTok, 5m cache write $10, cache hits 0.025x base input = $0.20. It MUST
+    # precede `claude-fable-5`: prefix matching would otherwise price 5.2 with the
+    # legacy Fable 5 row (10 / 50 / 1.00), overstating input 1.25x, output 1.25x and
+    # cache read 5x on every request — the same silent-inflation shape the MiMo
+    # fallback had, only via prefix collision instead of a default row.
+    "claude-fable-5-2": {"input": 8.0, "output": 40.0, "cache_read": 0.20, "cache_creation": 10.0},
     "claude-fable-5-1": {"input": 10.0, "output": 50.0, "cache_read": 0.25, "cache_creation": 12.5},
     "claude-fable-5": {"input": 10.0, "output": 50.0, "cache_read": 1.0, "cache_creation": 12.5},
     "claude-haiku-5-5": {

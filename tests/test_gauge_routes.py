@@ -315,3 +315,14 @@ async def test_background_partial_failure_retries_and_tasks_cancel(monkeypatch):
     finally:
         await routes._stop_account_refresher(app)
     assert app["_panel_refresher"].cancelled()
+
+
+async def test_consumer_panel_is_in_ui_only_when_enabled(ui, monkeypatch):
+    from anthropic_throttle_proxy import consumers
+
+    client, _, _ = ui
+    monkeypatch.delenv(consumers.ENV, raising=False)
+    assert 'hx-get="/ui/consumers"' not in await (await client.get("/ui")).text()
+    monkeypatch.setenv(consumers.ENV, "1")
+    page = await (await client.get("/ui")).text()
+    assert 'id="consumers"' in page and 'hx-get="/ui/consumers"' in page

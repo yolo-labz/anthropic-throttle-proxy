@@ -3,11 +3,78 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
+from pathlib import Path
 
 import pytest
 from aiohttp import web
 
 from anthropic_throttle_proxy import config, fleet_ui_config, forwarding, limiter, pacing, proxy
+
+
+def _shared_memory_dir() -> Path | None:
+    """The host's writable tmpfs ``.../shm`` mount, read from /proc/mounts."""
+    try:
+        with open("/proc/mounts", encoding="ascii", errors="replace") as mounts:
+            rows = [line.split() for line in mounts]
+    except OSError:
+        return None
+    for row in rows:
+        if len(row) > 2 and row[2] == "tmpfs" and row[1].endswith("/shm"):
+            path = Path(row[1])
+            if path.is_dir() and os.access(path, os.W_OK):
+                return path
+    return None
+
+
+_STATE_KEYS = pytest.StashKey[frozenset]()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_setup(item):
+    item.stash[_STATE_KEYS] = frozenset(config.state)
+    return (yield)
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Fail the test that removes or adds a ``config.state`` key, not its victim.
+
+    ``state`` is process-global and seeded once at import, so a key a test pops
+    is gone for every later test; the failure then lands far away, and only in
+    the full suite (13/11/2026: test_admission popped ``upstream_auth_ok``).
+    Values may change; restore them with ``monkeypatch.setitem``. A hook, not an
+    autouse fixture: it must compare after EVERY fixture (monkeypatch included)
+    has been torn down, and autouse fixture order is not definition order.
+    """
+    result = yield
+    before = item.stash.get(_STATE_KEYS, None)
+    after = frozenset(config.state)
+    if before is not None and after != before:
+        raise AssertionError(
+            f"test leaked config.state keys: removed={sorted(before - after)} "
+            f"added={sorted(after - before)}"
+        )
+    return result
+
+
+@pytest.fixture
+def tmpfs_state_path(tmp_path_factory):
+    """Per-test directory on tmpfs when the host has one, else a normal tmp dir.
+
+    For tests that time loop/worker hand-offs around REAL ledger saves. The file,
+    replace and directory-fsync code paths still run; only the host disk's
+    journal latency is gone. On ext4 one small-file fsync waits for every other
+    writer's dirty data: the shared CI runner stalled one past the 30 s settle
+    wait (main run 102, PR #9 run 106) while nothing in the owner was wrong.
+    """
+    shm = _shared_memory_dir()
+    if shm is None:
+        yield tmp_path_factory.mktemp("state")
+        return
+    with tempfile.TemporaryDirectory(dir=shm, prefix="pytest-state-") as path:
+        yield Path(path)
 
 
 @pytest.fixture
@@ -53,6 +120,26 @@ def _isolate_retry_probe_gates():
 
 
 @pytest.fixture(autouse=True)
+def _isolate_retry_after_state_file(monkeypatch, tmp_path):
+    """Never let the suite read or write the operator's live state file.
+
+    ``RETRY_AFTER_STATE_FILE`` defaults to the XDG state dir since the 19/10
+    state-persistence hardening (config._resolve_retry_after_state_file), so
+    without this fixture every test that notes a window would mutate the
+    developer's real ``~/.local/state/.../retry-after-state.json`` and would
+    load real bearer windows into the module-global cache. The cache is
+    forced to ``None`` (not monkeypatched) so teardown also drops any dict a
+    test populated.
+    """
+    monkeypatch.setattr(config, "RETRY_AFTER_STATE_FILE", str(tmp_path / "retry-after-state.json"))
+    limiter._retry_after_state = None
+    yield
+    # Drain the background writer so no write lands in the NEXT test's file.
+    limiter.flush_retry_after_writes()
+    limiter._retry_after_state = None
+
+
+@pytest.fixture(autouse=True)
 def _isolate_lane_report(monkeypatch, tmp_path_factory):
     """Point the lane reader at a path that does not exist.
 
@@ -88,3 +175,56 @@ def meter_rows():
         ]
 
     return rows
+
+
+@pytest.fixture
+def funded_api_metadata(monkeypatch, tmp_path):
+    """Explicit fresh receipt for owned automatic API routing in local tests."""
+    import json
+    import time
+    from datetime import UTC, datetime
+
+    from anthropic_throttle_proxy import config
+
+    def seed(model):
+        path = tmp_path / "api-funding.json"
+        now = time.time()
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "accounts": [
+                        {
+                            "id": "fixture",
+                            "provider": "anthropic",
+                            "accountId": "owned",
+                            "workspaceId": "fleet",
+                            "currency": "USD",
+                            "source": "operator-receipt",
+                            "observedAt": datetime.fromtimestamp(now - 1, UTC).isoformat(),
+                            "validUntil": datetime.fromtimestamp(now + 60, UTC).isoformat(),
+                            "credit": {"status": "available", "remaining": 1},
+                            "authorized": True,
+                            "spendLimit": {"remaining": 1, "enforced": True},
+                            "rateLimits": [
+                                {
+                                    "model": model,
+                                    "scope": "fleet",
+                                    "rpmRemaining": 5,
+                                    "tpmRemaining": 5000,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        for name, value in {
+            "API_KEY_ACCOUNT_ID": "owned",
+            "API_KEY_WORKSPACE_ID": "fleet",
+            "API_KEY_SCOPE": "fleet",
+            "API_CREDITS_FILE": str(path),
+        }.items():
+            monkeypatch.setattr(config, name, value)
+
+    return seed

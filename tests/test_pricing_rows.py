@@ -118,3 +118,27 @@ def test_record_usage_mimo_model_prices_from_the_card() -> None:
     assert input_cost is not None and abs(input_cost - 0.14) < 1e-9
     assert output_cost is not None and abs(output_cost - 0.28) < 1e-9
     assert spend is not None and abs(spend - 0.42) < 1e-9
+
+
+def test_fable_52_row_wins_over_the_legacy_fable_5_prefix() -> None:
+    """Fable 5.2 is cheaper than 5.1 on every kind, and prefix order decides.
+
+    ``_pricing_for`` walks ``PRICING`` in insertion order and matches by prefix, so
+    a missing 5.2 row silently billed every 5.2 request at the legacy Fable 5 card
+    (10 / 50 / 1.00): input +25 %, output +25 %, cache read +400 %. Measured
+    10/11/2026 against platform.claude.com/docs/en/about-claude/pricing — the
+    official card is 8 / 40 / 0.20 for hits, 10 for a 5-minute cache write.
+    """
+    assert pricing._pricing_for("claude-fable-5-2") == {
+        "input": 8.0,
+        "output": 40.0,
+        "cache_read": 0.20,
+        "cache_creation": 10.0,
+    }
+    # A provider prefix plus a thinking suffix must resolve to the same row.
+    assert pricing._pricing_for("claude-lane/claude-fable-5-2:high") == pricing._pricing_for(
+        "claude-fable-5-2"
+    )
+    # The older rows keep their own cards, so the fix is not a blanket rewrite.
+    assert pricing._pricing_for("claude-fable-5-1")["output"] == 50.0
+    assert pricing._pricing_for("claude-fable-5")["cache_read"] == 1.0

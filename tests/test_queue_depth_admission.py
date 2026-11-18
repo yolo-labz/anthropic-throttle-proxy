@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
+from types import SimpleNamespace
 
 import pytest
 
 from anthropic_throttle_proxy import config, proxy
+from anthropic_throttle_proxy import limiter as limiter_mod
 from anthropic_throttle_proxy.limiter import (
     FairBearerLimiter,
     QueueWaitTimeout,
@@ -40,6 +43,33 @@ INCIDENT_COLD_S = 10.0 / SCALE
 # Long enough that the held slots are themselves evidence the lane is slow —
 # the estimator refuses to reject on a guess.
 INCIDENT_SETTLE_S = 0.3
+
+
+class _LimiterClock:
+    """The limiter's monotonic clock, advanced only by the test.
+
+    A held slot's age is ``time.monotonic() - dispatch``; reading the real clock
+    makes the age whatever the host scheduler allows. At load ~80 a 5 ms sleep
+    lasted >20 ms and the estimate flipped source (cold -> inflight). Only the
+    limiter module's ``time`` is replaced, so asyncio's own timers stay real.
+    """
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def _freeze_limiter_clock(monkeypatch) -> _LimiterClock:
+    clock = _LimiterClock()
+    monkeypatch.setattr(
+        limiter_mod, "time", SimpleNamespace(time=time.time, monotonic=clock.monotonic)
+    )
+    return clock
 
 
 async def _saturated_incident_limiter(monkeypatch) -> tuple[FairBearerLimiter, list[asyncio.Task]]:
@@ -216,15 +246,19 @@ async def test_incident_shape_rejects_before_enqueue(monkeypatch) -> None:
     """The load-bearing case: reject pre-queue, leave the queue untouched."""
     lim, tasks = await _saturated_incident_limiter(monkeypatch)
     try:
-        loop = asyncio.get_running_loop()
-        started = loop.time()
+        # Rejected on arithmetic, not by burning the client's patience: started
+        # eagerly, the rejection must COMPLETE before yielding to the event loop
+        # once, so no wait of any length happened. A wall-clock bound measured
+        # host scheduling instead (0.32 s observed at load ~80, budget/2 = 0.15 s).
+        arrival = asyncio.Task(
+            _park(lim, "arriving", INCIDENT_BUDGET_S),
+            loop=asyncio.get_running_loop(),
+            eager_start=True,
+        )
+        assert arrival.done(), "rejection suspended: it waited instead of computing"
         with pytest.raises(QueueWaitTimeout) as caught:
-            async with lim.slot("arriving", max_wait=INCIDENT_BUDGET_S):
-                raise AssertionError("an undrainable request must never hold a slot")
-        elapsed = loop.time() - started
+            arrival.result()
         assert caught.value.pre_queue is True
-        # Rejected on arithmetic, not by burning the client's patience.
-        assert elapsed < INCIDENT_BUDGET_S / 2
         snap = lim.snapshot()
         assert snap["queued_total"] == INCIDENT_QUEUED
         assert snap["inflight"] == INCIDENT_SLOTS
@@ -306,12 +340,14 @@ async def test_free_slot_is_always_admitted(monkeypatch) -> None:
 async def test_cold_history_still_admits_a_drainable_queue(monkeypatch) -> None:
     """No completions yet: the cold estimate must not reject a feasible wait."""
     monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 0.02)
+    clock = _freeze_limiter_clock(monkeypatch)
     lim = FairBearerLimiter(2, "fair")
     lim.max_concurrent = 2
     for _ in range(2):
         await lim.acquire("holder")
     parked = [asyncio.create_task(lim.acquire(f"q{i}")) for i in range(3)]
     await asyncio.sleep(0.005)
+    clock.advance(0.005)  # holders aged 5 ms, inside the 20 ms cold default
 
     estimate = lim.drain_estimate(5.0)
     assert estimate.source == "cold"
@@ -402,13 +438,14 @@ async def test_completed_slots_teach_the_estimator() -> None:
 async def test_held_slot_elapsed_beats_a_stale_fast_history(monkeypatch) -> None:
     """A slot held longer than any completed sample IS evidence of a slow lane."""
     monkeypatch.setattr(config, "QUEUE_DRAIN_DEFAULT_S", 0.001)
+    clock = _freeze_limiter_clock(monkeypatch)
     lim = FairBearerLimiter(1, "fair")
     lim.max_concurrent = 1
     for _ in range(3):
         async with lim.slot("c1", max_wait=5.0):
-            await asyncio.sleep(0.005)
+            clock.advance(0.005)  # three fast completions: the stale history
     await lim.acquire("slow-holder")
-    await asyncio.sleep(0.08)
+    clock.advance(0.08)
     estimate = lim.drain_estimate(5.0)
     assert estimate.source == "inflight"
     assert estimate.service_time_s >= 0.07
@@ -744,15 +781,17 @@ def test_published_depth_is_exact_not_a_simulation_cap() -> None:
 
 def test_snapshot_stays_cheap_for_a_wide_registry() -> None:
     """`/__throttle/health` renders one snapshot per bearer under a 50 ms budget."""
-    import time
 
     lim = FairBearerLimiter(32, "fair")
     lim.max_concurrent = 32
     lim.snapshot()  # warm
-    started = time.perf_counter()
+    # CPU time of this thread, not wall time: the budget is the work the event
+    # loop does per snapshot. Wall time also counts preemption, which at load
+    # ~80 failed this test on a host-scheduling delay rather than on the code.
+    started = time.thread_time()
     for _ in range(250):
         lim.snapshot()
-    elapsed_ms = (time.perf_counter() - started) * 1000
+    elapsed_ms = (time.thread_time() - started) * 1000
     assert elapsed_ms < 50, f"250 bearer snapshots took {elapsed_ms:.1f} ms"
 
 
