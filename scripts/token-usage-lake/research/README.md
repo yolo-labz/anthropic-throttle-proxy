@@ -286,3 +286,22 @@ end: copy the 148 MB lake off `ProxMox.Dokku`, verify it opens read-only, build 
 in a few seconds, publish, and point Rill at the mirror. Two guards are worth keeping: compare the
 copy's row counts with `runtime/latest-complete.json` before trusting it, and expect the copy to lag
 the newest run — the file is live, so a copy is a point-in-time snapshot, never "the latest".
+
+`publish_live.sh` automates exactly that, and it is the only supported way to refresh from the live
+lake:
+
+```sh
+./publish_live.sh --dry-run   # copy + verify, stop before building
+./publish_live.sh             # copy, verify, build, publish, mirror, restart Rill
+```
+
+It reads the lake's completion receipt over SSH, exits when the run id has not moved (so an hourly
+timer costs one SSH round trip), copies the file with `sudo cp` on the host, checks the transfer
+hash, opens the copy read-only, refuses counts far below the receipt, then builds, publishes and
+mirrors. It never writes to the lake, never touches Dagster, and never opens the lake for write:
+the single-writer rule is intact, because the writer is Dagster and this only reads a copy of its
+output. State lives in `~/.local/state/token-usage-lake/publish-state.json`.
+
+A user timer drives it hourly (`token-marts-publish.timer`, `Persistent=true`); the unit lives in
+`~/.config/systemd/user/` today and should be adopted into Home Manager when the NixOS tree next
+touches these services.
