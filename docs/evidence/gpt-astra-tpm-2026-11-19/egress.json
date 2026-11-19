@@ -1,0 +1,44 @@
+{
+  "observedDate": "19/11/2026",
+  "models": [
+    {
+      "api": "openai-responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "contextWindow": 1050000,
+      "id": "gpt-6.2-astra",
+      "maxTokens": 128000
+    }
+  ],
+  "files": {
+    "installedParity": {
+      "path": "/nix/store/z60mji1wdldh2v7ysyh1azmz0b2amzdm-pi-harness-parity.ts",
+      "sha256": "025b132e1277ef9d56ae4bcd7e8014400d367320a84864e3d5644923927cf622"
+    },
+    "nativeResponses": {
+      "path": "/home/notroot/.local/share/pi-fleet/1.5.2-83a4dd90-ecba6ca1bd379430/node_modules/@earendil-works/pi-ai/dist/api/openai-responses.js",
+      "sha256": "c35b80b2eb7f84b0ea1d939784943038956aefec7b624ed7862ebe2fd9d40c4b"
+    },
+    "pi-codex-policy": {
+      "path": "/nix/store/5dghqr3wcaxp715hxq62ni3rjbfbwb3q-pi-codex-policy.mjs",
+      "sha256": "a813814eeea4b120d2e006f7d2d81f7a65f1ada2913128fda468ba8970a51d3b"
+    },
+    "pi-openai-continuity": {
+      "path": "/nix/store/dzfvbilkhvcax09wzsa6kdskhwrsrdhd-pi-openai-continuity.mjs",
+      "sha256": "bdacdbb46b138580322948da22beafd3af1dd154232734d4caeb3090b1843b2b"
+    }
+  },
+  "reportedIncident": {
+    "limitTPM": 4000000,
+    "used": 3950000,
+    "requested": 106848,
+    "retryMs": [
+      739,
+      904
+    ],
+    "source": "user handoff; not independently recovered from the bounded gateway journal or Throttler transcripts"
+  },
+  "routeConclusion": "Direct openai-api Responses calls; subscription continuity is model-scoped and does not wrap this provider",
+  "productionRequestsSent": 0,
+  "productionLoadTests": false,
+  "liveChanges": false
+}

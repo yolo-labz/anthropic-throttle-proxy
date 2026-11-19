@@ -1,0 +1,14 @@
+{
+  "date": "19/11/2026",
+  "head": "2f9ff863632ee6e6ab1681244240a7399f08050e",
+  "pr": 94,
+  "result": "not merged; CI rejected",
+  "taskIds": [
+    26204,
+    26205
+  ],
+  "failure": "six independent workers: cross-process overspend 720 over capacity600",
+  "cause": "reservation expired from grant time while sender or IPC delivery stalled",
+  "fix": "retain pending grants until headers/error; retain dead-owner uncertain debt for one full window after discovery",
+  "runnerOutputDifference": "Node default reporter spec; Python runner now forces tap"
+}

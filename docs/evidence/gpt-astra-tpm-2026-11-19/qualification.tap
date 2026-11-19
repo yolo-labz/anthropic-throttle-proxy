@@ -1,0 +1,196 @@
+TAP version 13
+# Subtest: 4M org budget: independent Pi workers cannot spend the same 50K remaining
+ok 1 - 4M org budget: independent Pi workers cannot spend the same 50K remaining
+  ---
+  duration_ms: 1616.785571
+  type: 'test'
+  ...
+# Subtest: 739/904ms native rejections share a persistent not-before, same request and model
+ok 2 - 739/904ms native rejections share a persistent not-before, same request and model
+  ---
+  duration_ms: 1178.84598
+  type: 'test'
+  ...
+# Subtest: six independent workers respect one rolling token budget
+ok 3 - six independent workers respect one rolling token budget
+  ---
+  duration_ms: 925.043629
+  type: 'test'
+  ...
+# Subtest: in-flight sends cannot expire before delayed headers arrive
+ok 4 - in-flight sends cannot expire before delayed headers arrive
+  ---
+  duration_ms: 312.022604
+  type: 'test'
+  ...
+# Subtest: a crashed sender keeps uncertain debt for a full window after discovery
+ok 5 - a crashed sender keeps uncertain debt for a full window after discovery
+  ---
+  duration_ms: 409.794416
+  type: 'test'
+  ...
+# Subtest: Retry-After parsing honors the longest header/body hint, never caps long holds
+ok 6 - Retry-After parsing honors the longest header/body hint, never caps long holds
+  ---
+  duration_ms: 1.773143
+  type: 'test'
+  ...
+# Subtest: queued cancellation sends nothing and leaves no speculative token debit
+ok 7 - queued cancellation sends nothing and leaves no speculative token debit
+  ---
+  duration_ms: 25.681624
+  type: 'test'
+  ...
+# Subtest: success and shorter parallel 429 cannot erase the longest shared hold
+ok 8 - success and shorter parallel 429 cannot erase the longest shared hold
+  ---
+  duration_ms: 29.48616
+  type: 'test'
+  ...
+# Subtest: conflicting worker policy refuses; distinct orgs have distinct buckets
+ok 9 - conflicting worker policy refuses; distinct orgs have distinct buckets
+  ---
+  duration_ms: 24.462344
+  type: 'test'
+  ...
+# Subtest: stream response passes by identity; uncertain sends and partial streams never replay
+ok 10 - stream response passes by identity; uncertain sends and partial streams never replay
+  ---
+  duration_ms: 27.275514
+  type: 'test'
+  ...
+# Subtest: worker startup contention waits instead of losing admission
+ok 11 - worker startup contention waits instead of losing admission
+  ---
+  duration_ms: 120.797971
+  type: 'test'
+  ...
+# Subtest: worker startup contention cancels instead of losing admission
+ok 12 - worker startup contention cancels instead of losing admission
+  ---
+  duration_ms: 107.858221
+  type: 'test'
+  ...
+# Subtest: post-send DB contention delivers the same response without replay
+ok 13 - post-send DB contention delivers the same response without replay
+  ---
+  duration_ms: 71.384129
+  type: 'test'
+  ...
+# Subtest: post-send DB contention cancels without replay
+ok 14 - post-send DB contention cancels without replay
+  ---
+  duration_ms: 69.428922
+  type: 'test'
+  ...
+# Subtest: quota exhausted stays native and is never replayed
+ok 15 - quota exhausted stays native and is never replayed
+  ---
+  duration_ms: 34.484161
+  type: 'test'
+  ...
+# Subtest: unknown 429 stays native and is never replayed
+ok 16 - unknown 429 stays native and is never replayed
+  ---
+  duration_ms: 20.35368
+  type: 'test'
+  ...
+# Subtest: explicit no retry stays native and is never replayed
+ok 17 - explicit no retry stays native and is never replayed
+  ---
+  duration_ms: 20.264046
+  type: 'test'
+  ...
+# Subtest: authentication stays native and is never replayed
+ok 18 - authentication stays native and is never replayed
+  ---
+  duration_ms: 26.180313
+  type: 'test'
+  ...
+# Subtest: server error stays native and is never replayed
+ok 19 - server error stays native and is never replayed
+  ---
+  duration_ms: 23.623732
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 20 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 15.415077
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 21 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 15.224397
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 22 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 15.386214
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 23 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 16.13472
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 24 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 14.755776
+  type: 'test'
+  ...
+# Subtest: oversized request and lower provider capacity refuse without altering a request
+ok 25 - oversized request and lower provider capacity refuse without altering a request
+  ---
+  duration_ms: 20.622534
+  type: 'test'
+  ...
+# Subtest: provider wrapper preserves all other providers/models and double-wraps only once
+ok 26 - provider wrapper preserves all other providers/models and double-wraps only once
+  ---
+  duration_ms: 20.879235
+  type: 'test'
+  ...
+# Subtest: Pi extension fails closed for Astra if configuration is absent, leaving other models alone
+ok 27 - Pi extension fails closed for Astra if configuration is absent, leaving other models alone
+  ---
+  duration_ms: 65.517936
+  type: 'test'
+  ...
+# Subtest: private database protections reject symlinks and permissive storage
+ok 28 - private database protections reject symlinks and permissive storage
+  ---
+  duration_ms: 3.79591
+  type: 'test'
+  ...
+# Subtest: native installed Pi Responses transport retains its terminal SSE through a 429
+ok 29 - native installed Pi Responses transport retains its terminal SSE through a 429
+  ---
+  duration_ms: 1444.779343
+  type: 'test'
+  ...
+# Subtest: native Pi never replays incomplete SSE or invents completion
+ok 30 - native Pi never replays incomplete SSE or invents completion
+  ---
+  duration_ms: 298.722975
+  type: 'test'
+  ...
+# Subtest: native Pi cancellation remains aborted while waiting on a long Retry-After
+ok 31 - native Pi cancellation remains aborted while waiting on a long Retry-After
+  ---
+  duration_ms: 393.116115
+  type: 'test'
+  ...
+1..31
+# tests 31
+# suites 0
+# pass 31
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7382.516634

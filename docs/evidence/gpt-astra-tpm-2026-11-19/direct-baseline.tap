@@ -1,0 +1,239 @@
+TAP version 13
+# Subtest: 4M org budget: independent Pi workers cannot spend the same 50K remaining
+not ok 1 - 4M org budget: independent Pi workers cannot spend the same 50K remaining
+  ---
+  duration_ms: 115.525369
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:53:1'
+  failureType: 'testCodeFailure'
+  error: 'TPM collision: 2 workers dispatched into 50K remaining'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:70:12)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+  ...
+# Subtest: 739/904ms native rejections share a persistent not-before, same request and model
+not ok 2 - 739/904ms native rejections share a persistent not-before, same request and model
+  ---
+  duration_ms: 132.544805
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:87:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 4
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 4
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:106:12
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async fixture (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:83:15)
+    async TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:88:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: six independent workers respect one rolling token budget
+not ok 3 - six independent workers respect one rolling token budget
+  ---
+  duration_ms: 139.127855
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:115:1'
+  failureType: 'testCodeFailure'
+  error: 'cross-process overspend: 720'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    fixture.limit (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:124:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    async fixture (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:83:15)
+    async TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:116:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: in-flight sends cannot expire before delayed headers arrive
+ok 4 - in-flight sends cannot expire before delayed headers arrive
+  ---
+  duration_ms: 335.182563
+  type: 'test'
+  ...
+# Subtest: a crashed sender keeps uncertain debt for a full window after discovery
+not ok 5 - a crashed sender keeps uncertain debt for a full window after discovery
+  ---
+  duration_ms: 294.869336
+  type: 'test'
+  location: '/home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:160:1'
+  failureType: 'testCodeFailure'
+  error: 'dead worker debt was refunded or backdated'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    fixture.limit (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:167:12)
+    async fixture (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:83:15)
+    async TestContext.<anonymous> (file:///home/notroot/Documents/Code/yolo-labz/anthropic-throttle-proxy/clients/openai-token-admission/admission.test.mjs:161:3)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: Retry-After parsing honors the longest header/body hint, never caps long holds
+ok 6 - Retry-After parsing honors the longest header/body hint, never caps long holds
+  ---
+  duration_ms: 1.867422
+  type: 'test'
+  ...
+# Subtest: queued cancellation sends nothing and leaves no speculative token debit
+ok 7 - queued cancellation sends nothing and leaves no speculative token debit
+  ---
+  duration_ms: 20.275398
+  type: 'test'
+  ...
+# Subtest: success and shorter parallel 429 cannot erase the longest shared hold
+ok 8 - success and shorter parallel 429 cannot erase the longest shared hold
+  ---
+  duration_ms: 24.50541
+  type: 'test'
+  ...
+# Subtest: conflicting worker policy refuses; distinct orgs have distinct buckets
+ok 9 - conflicting worker policy refuses; distinct orgs have distinct buckets
+  ---
+  duration_ms: 25.236734
+  type: 'test'
+  ...
+# Subtest: stream response passes by identity; uncertain sends and partial streams never replay
+ok 10 - stream response passes by identity; uncertain sends and partial streams never replay
+  ---
+  duration_ms: 27.30085
+  type: 'test'
+  ...
+# Subtest: worker startup contention waits instead of losing admission
+ok 11 - worker startup contention waits instead of losing admission
+  ---
+  duration_ms: 122.21973
+  type: 'test'
+  ...
+# Subtest: worker startup contention cancels instead of losing admission
+ok 12 - worker startup contention cancels instead of losing admission
+  ---
+  duration_ms: 95.047648
+  type: 'test'
+  ...
+# Subtest: post-send DB contention delivers the same response without replay
+ok 13 - post-send DB contention delivers the same response without replay
+  ---
+  duration_ms: 110.978065
+  type: 'test'
+  ...
+# Subtest: post-send DB contention cancels without replay
+ok 14 - post-send DB contention cancels without replay
+  ---
+  duration_ms: 77.783068
+  type: 'test'
+  ...
+# Subtest: quota exhausted stays native and is never replayed
+ok 15 - quota exhausted stays native and is never replayed
+  ---
+  duration_ms: 25.320258
+  type: 'test'
+  ...
+# Subtest: unknown 429 stays native and is never replayed
+ok 16 - unknown 429 stays native and is never replayed
+  ---
+  duration_ms: 47.317906
+  type: 'test'
+  ...
+# Subtest: explicit no retry stays native and is never replayed
+ok 17 - explicit no retry stays native and is never replayed
+  ---
+  duration_ms: 22.379993
+  type: 'test'
+  ...
+# Subtest: authentication stays native and is never replayed
+ok 18 - authentication stays native and is never replayed
+  ---
+  duration_ms: 25.087835
+  type: 'test'
+  ...
+# Subtest: server error stays native and is never replayed
+ok 19 - server error stays native and is never replayed
+  ---
+  duration_ms: 41.858764
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 20 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 15.427099
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 21 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 15.38152
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 22 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 43.124242
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 23 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 50.61564
+  type: 'test'
+  ...
+# Subtest: opaque server-side input refuses before any egress
+ok 24 - opaque server-side input refuses before any egress
+  ---
+  duration_ms: 15.152167
+  type: 'test'
+  ...
+# Subtest: oversized request and lower provider capacity refuse without altering a request
+ok 25 - oversized request and lower provider capacity refuse without altering a request
+  ---
+  duration_ms: 18.671172
+  type: 'test'
+  ...
+# Subtest: provider wrapper preserves all other providers/models and double-wraps only once
+ok 26 - provider wrapper preserves all other providers/models and double-wraps only once
+  ---
+  duration_ms: 20.932695
+  type: 'test'
+  ...
+# Subtest: Pi extension fails closed for Astra if configuration is absent, leaving other models alone
+ok 27 - Pi extension fails closed for Astra if configuration is absent, leaving other models alone
+  ---
+  duration_ms: 50.988082
+  type: 'test'
+  ...
+# Subtest: private database protections reject symlinks and permissive storage
+ok 28 - private database protections reject symlinks and permissive storage
+  ---
+  duration_ms: 3.198455
+  type: 'test'
+  ...
+1..28
+# tests 28
+# suites 0
+# pass 24
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1930.1676
