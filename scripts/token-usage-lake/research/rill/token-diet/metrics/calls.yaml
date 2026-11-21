@@ -1,0 +1,29 @@
+type: metrics_view
+title: Calls
+table: marts_fact_calls
+timeseries: at_brt
+smallest_time_grain: hour
+measures:
+  - name: points
+    display_name: Points
+    expression: sum(points)
+    format_preset: decimal
+  - name: calls
+    display_name: Calls
+    expression: count(*)
+    format_preset: humanize
+  - name: output_tokens
+    expression: sum("output")
+    format_preset: humanize
+  - name: p95_duration
+    expression: quantile_cont(duration_ms, 0.95)
+    format_preset: humanize
+dimensions:
+  - name: model
+    column: model
+  - name: provider
+    column: provider
+  - name: seat
+    column: seat
+  - name: thinking_level
+    column: thinking_level

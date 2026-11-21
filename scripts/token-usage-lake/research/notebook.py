@@ -10,9 +10,9 @@ def _():
     import duckdb
     import marimo as mo
     import plotly.express as px
-    from science import desktop_client, latest_snapshot
+    from science import desktop_client, latest_snapshot, parquet_paths
 
-    return mo, duckdb, px, latest_snapshot, desktop_client
+    return mo, duckdb, px, latest_snapshot, desktop_client, parquet_paths
 
 
 @app.cell
@@ -52,13 +52,13 @@ def _(latest_snapshot, mo):
 
 
 @app.cell
-def _(snapshot, duckdb):
+def _(snapshot, manifest, duckdb, parquet_paths):
     import pandas as pd
 
     con = duckdb.connect(config={"threads": 1, "memory_limit": "512MB"})
     for name in ("calls", "requests", "tool_invocations"):
-        con.read_parquet(str(snapshot / name / "**/*.parquet")).create_view(name)
-    hourly = con.read_parquet(str(snapshot / "calls_3600s" / "**/*.parquet")).df()
+        con.read_parquet(parquet_paths(snapshot, manifest, name)).create_view(name)
+    hourly = con.read_parquet(parquet_paths(snapshot, manifest, "calls_3600s")).df()
     hourly = (
         hourly.groupby(["bucket_epoch", "provider", "model"], dropna=False)["events"]
         .sum()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Existing SSH trust and separately provisioned private auth/TLS files are required.
+# Existing SSH trust and separately provisioned private compute TLS files are required.
 # Context must already contain the hash-checked Quarto installer as quarto.deb.
 set -euo pipefail
 HOST="${SCIENCE_DOKKU_HOST:-ProxMox.Dokku}"
@@ -35,7 +35,10 @@ for app in token-research token-experiments; do
   dokku nginx:set "$app" bind-address-ipv6 ::1
   dokku nginx:set "$app" client-max-body-size 64m
   mount_once "$app" "/var/lib/dokku/data/storage/$app:/workspace"
-  mount_once "$app" /var/lib/dokku/data/storage/token-science-auth:/run/science-auth:ro
+  auth_mount=/var/lib/dokku/data/storage/token-science-auth:/run/science-auth:ro
+  case "$(dokku storage:list "$app")" in
+    *"$auth_mount"*) dokku storage:unmount "$app" "$auth_mount" ;;
+  esac
   dokku resource:limit --process-type web --cpu 1 --memory 2g "$app"
   dokku config:set --no-restart "$app" PORT=5000 MLFLOW_DISABLE_AGENT_HINT=1
 done
