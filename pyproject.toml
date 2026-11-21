@@ -26,6 +26,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
+    "duckdb==2.0.0",
     "ruff>=0.7",
 ]
 # The browser-receipt delivery gate (specs/227-dashboard-audit/browser-receipt.py).
@@ -62,7 +63,7 @@ ignore = ["S101"]  # asserts in tests
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
+testpaths = ["tests", "scripts/token-usage-lake/research"]
 
 [tool.coverage.run]
 # relative_files is REQUIRED so SonarQube matches coverage.xml paths to its
