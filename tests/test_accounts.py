@@ -323,6 +323,7 @@ def test_window_view_stale_zeroes_utilization():
         "measured_or_projected": "projected",
         "rejected": False,
         "reset_in": None,
+        "reset": None,
     }
 
 
@@ -378,6 +379,25 @@ def test_account_view_merges_live_bearer(tmp_path, monkeypatch):
     assert view["pace"] == 1.2 and view["pace_warn"] is True
     assert view["eta"] is not None
     assert view["token"]["state"] == "fresh"
+
+
+def test_account_view_fable_window_falls_back_to_kept_bucket(tmp_path, monkeypatch):
+    # Only Fable responses carry 7d_oi; #88 keeps the last reading in fable_bucket.
+    cred = tmp_path / "a.json"
+    _write_cred(cred, "tok-a", expires_at_ms=int((NOW + 3600) * 1000))
+    monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", f"A:{cred}")
+    kept = {"util_7d_oi": 0.4, "status_7d_oi": "allowed", "reset_7d_oi": int(NOW + DAY)}
+    bid = _expected_bid("tok-a")
+    unified = {"util_7d": 0.1, "reset_7d": int(NOW + 3 * DAY), "status_7d": "allowed"}
+    (view,) = accounts.account_view(
+        [{"bearer_id": bid, "unified": unified, "fable_bucket": kept}], NOW
+    )
+    assert view["fable"]["pct"] == 40 and view["fable"]["reset"] == int(NOW + DAY)
+    own = {**unified, "util_7d_oi": 0.5, "reset_7d_oi": int(NOW + DAY)}
+    (view,) = accounts.account_view([{"bearer_id": bid, "unified": own, "fable_bucket": kept}], NOW)
+    assert view["fable"]["pct"] == 50
+    (view,) = accounts.account_view([{"bearer_id": bid, "unified": unified}], NOW)
+    assert view["fable"] is None
 
 
 def test_account_view_unseen_bearer_still_renders(tmp_path, monkeypatch):

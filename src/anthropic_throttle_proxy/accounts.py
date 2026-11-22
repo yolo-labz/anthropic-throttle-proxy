@@ -251,7 +251,20 @@ def _window_view(
         "measured_or_projected": "projected" if stale else "measured",
         "rejected": (not stale) and status == "rejected",
         "reset_in": _fmt_duration(reset - now) if reset is not None and not stale else None,
+        "reset": None if stale else reset,
     }
+
+
+def _fable_window(bearer: dict[str, Any] | None, now: float) -> dict[str, Any] | None:
+    """The Fable bucket (``7d_oi``): this response's reading, else the one #88 keeps.
+
+    Only Fable responses carry ``7d_oi`` headers, so ``unified`` alone goes blank
+    after any other response; ``bearer["fable_bucket"]`` is the last Fable reading.
+    """
+    unified = (bearer or {}).get("unified") or {}
+    kept = (bearer or {}).get("fable_bucket") or {}
+    src = unified if unified.get("util_7d_oi") is not None else kept
+    return _window_view(src.get("util_7d_oi"), src.get("reset_7d_oi"), src.get("status_7d_oi"), now)
 
 
 def _pace_eta(
@@ -494,6 +507,7 @@ def account_view(
                 "credential": (bearer or {}).get("credential"),
                 "pace_warn": fields["pace"] is not None and fields["pace"] >= PACE_WARN,
                 "locked_in": _locked_in(fields, bearer, endpoint_entry, now),
+                "fable": _fable_window(bearer, now),
                 **fields,
             }
         )

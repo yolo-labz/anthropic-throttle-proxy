@@ -67,6 +67,7 @@ class _BearerView(TypedDict, total=False):
     last_ratelimit: dict[str, Any] | None
     unified: dict[str, Any] | None
     unified_at: float | None
+    fable_bucket: dict[str, Any] | None
 
 
 def _asset_version(
@@ -699,10 +700,10 @@ def _build_providers(
     return providers
 
 
-def _window_meter(label: str, window: dict | None) -> dict | None:
-    """One unified window as a meter row, or None when never observed."""
+def _window_meter(label: str, window: dict | None) -> dict:
+    """One unified window as a meter row; "no reading" (never 0 %) when unobserved."""
     if not window:
-        return None
+        return {"label": label, "pct": None, "reset_in": "", "note": "no reading"}
     if window.get("stale"):
         # The reading predates its own reset: no measurement exists. The 0 is a
         # projection, so it lives in ``projected_pct`` and ``pct`` stays None —
@@ -715,12 +716,16 @@ def _window_meter(label: str, window: dict | None) -> dict | None:
             "reset_in": "",
             "note": "reset · projected 0%, not measured",
         }
-    return {
+    meter = {
         "label": label,
         "pct": window.get("pct"),
         "reset_in": window.get("reset_in") or "",
         "rejected": bool(window.get("rejected")),
     }
+    if window.get("reset"):
+        # Server-local wall clock, DD/MM HH:mm.
+        meter["reset_at"] = datetime.fromtimestamp(window["reset"]).strftime("%d/%m %H:%M")
+    return meter
 
 
 def _account_status(account: dict) -> tuple[str, str]:
@@ -791,14 +796,14 @@ def _lane_pace_eta(lane: dict[str, Any], now: float) -> tuple[float | None, str 
 def _anthropic_meters(account: dict) -> list[dict]:
     """Window meters plus the pay-go credits row for one Anthropic account."""
     meters = [
-        m
-        for m in (
-            _window_meter("5h", account.get("win5")),
-            _window_meter("7d", account.get("win7")),
-            _window_meter("7d sonnet", account.get("sonnet")),
-            _window_meter("7d opus", account.get("opus")),
-        )
-        if m is not None
+        _window_meter("5h", account.get("win5")),
+        _window_meter("7d", account.get("win7")),
+        _window_meter("7d Fable", account.get("fable")),
+        *(
+            _window_meter(label, account[key])
+            for label, key in (("7d sonnet", "sonnet"), ("7d opus", "opus"))
+            if account.get(key)
+        ),
     ]
     extra = account.get("extra") or {}
     if extra.get("used") is not None:
@@ -991,6 +996,7 @@ def _sort_subscription_rows(rows: list[dict]) -> None:
         worst_in_family[family] = max(worst_in_family.get(family, -1.0), _row_binding_pct(row))
     rows.sort(
         key=lambda r: (
+            r.get("family") != "anthropic",  # Claude is the lane with a limit: first
             -worst_in_family.get(r.get("family") or "", -1.0),
             r.get("family") or "",
             -_row_binding_pct(r),
@@ -1219,6 +1225,7 @@ async def _collect_view(*, project: bool = True, source: str | None = None) -> d
                 "closed": _closure.closed_until(lim_snap, unified, now),
                 "unified": unified,
                 "unified_at": bstate.get("unified_at"),
+                "fable_bucket": bstate.get("fable_bucket"),
                 # 5h reading frozen from before its own reset — render as
                 # "0% · reset" so the bearer column matches the accounts panel.
                 "unified_5h_stale": _window_stale(unified, "reset_5h", now),

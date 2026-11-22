@@ -639,3 +639,35 @@ def test_a_tab_rendered_by_an_older_build_is_told_to_reload(monkeypatch):
             assert "HX-Refresh" not in agreed.headers
 
     asyncio.run(run())
+
+
+# ── Claude rows: first, three meters, absolute reset ─────────────────────
+
+
+def test_claude_rows_sort_first_even_when_another_family_is_fuller():
+    rows = [
+        {"id": "codex:a", "family": "codex", "meters": [{"pct": 100.0}]},
+        {"id": "gmail", "family": "anthropic", "meters": [{"pct": 22.0}]},
+    ]
+    routes._sort_subscription_rows(rows)
+    assert [r["id"] for r in rows] == ["gmail", "codex:a"]
+
+
+def test_anthropic_meters_are_always_5h_7d_fable_and_no_reading_is_not_zero():
+    meters = routes._anthropic_meters({"win7": {"pct": 22, "reset_in": "5d 4h"}})
+    assert [m["label"] for m in meters] == ["5h", "7d", "7d Fable"]
+    assert [m["pct"] for m in meters] == [None, 22, None]
+    assert meters[0]["note"] == meters[2]["note"] == "no reading"
+
+
+def test_anthropic_meter_shows_absolute_local_reset(monkeypatch):
+    import time
+
+    monkeypatch.setenv("TZ", "BRT3")
+    time.tzset()
+    try:
+        win = {"pct": 26, "reset_in": "4d 17h", "reset": 1_795_773_600}  # 27/11 10:00 UTC
+        assert routes._window_meter("7d", win)["reset_at"] == "27/11 07:00"
+    finally:
+        monkeypatch.undo()
+        time.tzset()
