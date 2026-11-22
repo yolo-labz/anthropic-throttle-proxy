@@ -15,6 +15,7 @@ The default lane targets `api.anthropic.com`; the project originated from [anthr
 1. **local** — per-device proxy. Default `THROTTLE_QUEUE_MODE=off`. Optional fanout to a central instance via `THROTTLE_CENTRAL_URL`.
 2. **central** — fleet-wide single semaphore. Runs on Dokku (new-install example `throttler.<your-host>`; existing app/domain names stay unchanged). `THROTTLE_QUEUE_MODE=fair`.
 
+
 ## Stack
 
 - **Runtime**: Python 3.13+, `aiohttp` (server), `aiohttp-jinja2` (templates for HTMX UI), `prometheus-client` (metrics). No vendor AI SDK — the advisor talks to GROQ over raw `aiohttp` (see invariant #1).
@@ -25,33 +26,29 @@ The default lane targets `api.anthropic.com`; the project originated from [anthr
 
 ## Architecture
 
-Single-process aiohttp app, wired in `proxy.py::main()`:
+Single-process aiohttp app, wired in `proxy.py::main()`. One line per part; the full bullets are in `docs/AGENT-RUNBOOK.md` ("Architecture (full bullets)"). Read them before you change that part.
 
-- **Hot path** (`proxy.py::handler`) — catch-all `*` route forwards every request to `THROTTLE_UPSTREAM` (or `THROTTLE_CENTRAL_URL` if set), streams response back, parses SSE `usage` blocks for token/cost metrics.
-- **Per-bearer fair queue** (`FairBearerLimiter`) — replaces a flat `asyncio.Semaphore`. Lazy-allocated per `bearer_id` under `bearer_limiter_lock`. Round-robin across `client_id` (peer host:port or `X-Throttle-Client-Id` header) so one chatty TUI can't starve a sibling.
-- **Bounded queue wait** (07/07/2026) — a request parked in the fair queue longer than `THROTTLE_QUEUE_MAX_WAIT_S` (default 30 s, hot-tunable, 0=off) fails fast with `503` + `Retry-After` + `x-anthropic-throttle-queue-timeout: 1` (`QueueWaitTimeout` from `slot(max_wait=…)`; the `asyncio.wait_for` cancellation reuses `acquire`'s `_cancel_cleanup`, so no slot leaks). Reason: claude aborts a silent request at ~60 s; the proxy's late write then hits a closing transport and the truncated HTTP surfaces client-side as `InvalidHTTPResponse` → phantom 401/login storm (07/07 incident: 2/5 bearers usable → 60-80 s waits). A clean early 503 keeps the transport alive so the SDK retries transparently. The bound is END-TO-END (Codex BLOCKER): each tier computes `min(own knob, inherited x-anthropic-throttle-wait-budget-ms)` (`_effective_queue_max_wait`) and forwards only the remaining budget, so local + central waits cannot stack past client patience; budget 0 → immediate 503 pre-queue. The stamped header makes the LOCAL tier relay a central-generated queue-timeout verbatim — exempt from pushback-retry (`_should_retry_pushback`) and AIMD shrink (`_aimd_feedback`), because central queue depth is admission backpressure, not this bearer's upstream pushback. Anti-spoof (Codex MAJOR): `_stream_response` strips the stamp from any upstream response lacking `MARKER_HEADER`, so only a sibling proxy tier can assert the exemption.
-- **Queue-depth admission** (01/09/2026) — the wait bound above answers *how long* a request may wait, never *whether the wait is possible*. Before parking a request, `_FairSlotContext.__aenter__` asks `FairBearerLimiter.drain_estimate(max_wait)` whether the lane can drain one more arrival: with `free` idle slots and `slots` servers, the arrival's position is its **round-robin** rank (`_ahead_of`: own parked depth + `min(depth_j, own+1)` per sibling client — NOT raw queue depth, since a new client overtakes a chatty client's backlog by design) and its start time is the `ahead + 1`-th slot-availability event on the schedule below. The per-request service time is `max(p90 of the last 64 completions, elapsed hold of the oldest currently-held slot)`, falling back to `THROTTLE_QUEUE_DRAIN_DEFAULT_S` (10 s) before three completions exist. Over the bound → `QueueWaitTimeout(pre_queue=True)` before enqueue, so the existing handler path answers the same stamped 503 (marker, anti-spoof, pushback-retry and AIMD exemptions all inherited unchanged) while the transport is wide open. **Enforcement requires evidence** (`DrainEstimate.rejects` = `enforced and evidenced and not admits`): a lane that has completed nothing and holds no slot past the cold default has GUESSED, and a guess must never turn traffic away — cold-start bursts behave exactly as before. The queue-timeout `Retry-After` is now that drain estimate (integer, floored at `QUEUE_TIMEOUT_RETRY_AFTER_S`, HARD-capped by `THROTTLE_QUEUE_RETRY_AFTER_MAX_S`) instead of the constant `5`; a request refused BEFORE it waited is additionally floored at the budget it was refused against (`budget_floored_retry_after`), while one that already spent that budget waiting is not — that time is behind it. Reason: 01/09/2026 14:20-14:24 BRT the `:8766` Z.AI lane had `max_concurrent=2`, depth 3, an inherited 30 s budget, and slots completing after 113.7 s / 221.2 s — yet the arrival was parked without consulting any of it, timed out silently, and was told to retry in 5 s; Pi retried the same wall four times and aborted. (The record fixes neither the arrival's rotation rank nor the holders' ages at that instant, so its exact wait is not recoverable — see `specs/221-zai-queue-depth-admission/evidence.md` §5.) `/__throttle/admission` publishes `saturation.queue_admit_max_depth` (sum over measured bearers, config-derived when none are measured) plus `saturation.queue_admit` inputs, so consumers read saturation instead of re-deriving it. Held slots carry a per-slot LEASE (`_holds: lease -> (lane, start)`, threaded through `acquire_lease`/`release`/`_cancel_cleanup`), so a completion prices the request that actually finished; an unknown lease takes nothing rather than closing a live one. A slot cancelled in the dispatch race returns its lease WITHOUT a sample, since it never reached upstream. The wait itself is a scheduled estimate, not round arithmetic: each server is modelled as free-at-T (idle now, or after its own residual) and requests take the earliest slot, because two slots aged 200 s and 34 s free at very different times.
-- **Priority lane** (03/07/2026) — short/latency-sensitive calls (parsed `0 < max_tokens ≤ THROTTLE_PRIORITY_MAX_TOKENS`, no `tools`, body ≤ `THROTTLE_PRIORITY_MAX_BODY_BYTES`) can dispatch from a DEDICATED pool of `THROTTLE_PRIORITY_RESERVE_SLOTS` (default 0), independent of the main AIMD pool, with its own per-client round-robin. It was added for /goal Stop-hook evaluator queue-starvation (24s eval waited 46s behind long Opus gens → 30s client timeout), but the default stays 0 so storm traffic cannot exceed the live account cap. Total upstream concurrency ≤ live cap + reserve; reserve 0 disables the lane (priority demotes to normal RR at `acquire()`, which returns the effective lane so release accounting stays symmetric). Lane calls still honor `Retry-After` + unified-window pauses. All three knobs hot-tunable via `/ui/config`.
-- **AIMD reactive throttle** — per-bearer ceiling shrinks on rate pushback (`429/503`) by `THROTTLE_AIMD_DECREASE` (default 0.7, CUBIC-style), grows additively after `THROTTLE_AIMD_RAMP_AFTER` (default 10) successes past the `THROTTLE_AIMD_BACKOFF_S` (default 30 s) cooldown. Floor is `THROTTLE_AIMD_MIN` (default 1). `529` (upstream overloaded) is counted separately (`anthropic_overload_total`) and does NOT shrink — it's Anthropic capacity, not your usage.
-- **Budget-vs-concurrency 429 split** (03/07/2026) — a `429/503` with **no `Retry-After`** is ambiguous: Anthropic returns it for BOTH a 5h/7d budget soft-throttle AND a per-account concurrency/rate cap. `_pushback_pause`→`_budget_under_pressure` reads the `anthropic-ratelimit-unified-*` headers on the SAME response to tell them apart: `allowed_warning`/`rejected` status (or binding utilization ≥ `THROTTLE_UTILIZATION_WARN`) → **budget** → full `AIMD_BACKOFF_S` pause (hold until the window eases); every window `allowed` below the warn line → **concurrency** → only `THROTTLE_CONCURRENCY_COOLDOWN_S` (default 2 s). Both still AIMD-shrink. Fixes the single-active concentration incident where 52 tabs funneled onto one account, tripped its concurrency cap, and the flat 30 s synthetic pause misread it as budget → collapsed the live cap to 1 and held it there while Anthropic reported `unified-status=allowed` at 19 %/23 %. Absent unified headers (API-key traffic) → assume budget (conservative, unchanged). Knob hot-tunable via `/ui/config`.
-- **OAuth entitlement 429 (17/08/2026)** — Anthropic refuses a *subscription* (OAuth) bearer whose `POST /v1/messages` does not carry the Claude Code identity as its **first `system` block**, and masks the refusal as `429 {"type":"error","error":{"type":"rate_limit_error","message":"Error"}}` with **no** `anthropic-ratelimit-unified-*` headers and **no** `Retry-After`. Haiku is exempt, which is why the failure reads as "Anthropic is shedding premium models". Measured on accounts A/B/C (Max), models opus-5 / opus-4-8 / sonnet-5; two controls rule out presence/size effects — an equal-length one-character decoy (`Claude Kode`) 429s in an alternating ABBA run, and swapping two blocks whose total bytes are identical flips 200 ↔ 429. Treat it as *observed for these accounts and models*, not a documented protocol guarantee. `_is_oauth_entitlement_refusal` requires all four signals (429; `Retry-After` **absent**, not merely ≤ 0; no unified headers on the same response; the fixed envelope). `_is_entitlement_refusal_attempt` then narrows it to `POST /v1/messages` on a non-`api-key` bearer whose FRESH cached unified state is not `rejected` — `allowed_warning` must NOT veto, since the same bearer answered 200 for the same model 3 s later. Such a response is relayed **immediately**, stamped `x-anthropic-throttle-oauth-entitlement: 1` in `_finalize` (so `_maybe_fast_fail_throttle_direct` and the direct-fallback relay are labelled too), counted by `anthropic_oauth_entitlement_refusals_total`, and exempt from pushback-retry (`_should_retry_pushback`), keepalive-hold (`_is_transient_throttle`), AIMD shrink/pause (`_aimd_feedback`), and ingress spill/lane-saturation (`ingress.py`). `_stream_response` lets the stamp survive only on a MARKER-stamped (sibling proxy tier) response and strips it from any raw upstream, and `_relayed_entitlement_verdict` treats a sibling tier's answer as authoritative in BOTH directions — gated on `via == "central"`, which THIS process set from `pick_target`, **plus** the marker; keying it on the marker alone let any upstream suppress local gate detection with one header. `_stamp_entitlement_refusal` also strips an unendorsed stamp, so an upstream's own claim never reaches the client — stamp present → relay the verdict; MARKER present but no stamp → central already ruled the gate out, so do NOT re-derive locally; no marker → we talked to upstream ourselves, re-derive. With local→central account routing central picked the account that actually reached Anthropic, so the local tier's `bearer_state` may belong to a different account entirely, and a one-sided "trust only yes" rule would manufacture a false exemption against central's no. The hold path carries the same two headers through `meta` so a prepared retry classifies identically. If a hold is already prepared when the retry hits the gate, the header channel is gone, so the terminal SSE names the shape refusal instead of blaming budget. Waiting cannot change a request's shape, so the previous "headerless 429 → assume budget" fallback turned an instant client error into a 61 s stall **and** collapsed a healthy bearer: three `max_tokens=1` diagnostic probes drove `max_concurrent` 5→1 on two `allowed_warning` bearers that were still serving 200s, throttling the whole fleet.
-- **Synthetic probes must carry `CLAUDE_CODE_SYSTEM_PROMPT`.** Any request this proxy generates itself on an OAuth token (`_credential_recheck_one`, any future lane probe) must send that exact string as its first `system` block, or it hits the gate above and can never succeed — a quarantined account would then never clear, because the probe that would clear it is refused on shape.
-- **Header-aware pacing** — `_extract_ratelimit` captures `anthropic-ratelimit-*` + `Retry-After` from each upstream response into `bearer_state[bid]["last_ratelimit"]`; `FairBearerLimiter.note_retry_after`/`wait_retry_after` honor `Retry-After` (uncapped) before the next dispatch and block `grow()` until the window closes.
-- **OAuth unified-window pacing** (`_parse_unified`/`_apply_unified`) — Claude Code Max/Pro tokens return `anthropic-ratelimit-unified-*` (5h/7d *utilization* 0..1 + status + epoch reset), NOT the API-key remaining-count family (measured 21/05/2026). The proxy surfaces utilization (`bearer_state[bid]["unified"]`, gauges `anthropic_ratelimit_unified_{5h,7d}_utilization`), auto-pauses a bearer until reset when a window is `rejected`, emits a debounced early-warning (one log line + `anthropic_ratelimit_unified_warnings_total{bearer,window}`) once the binding window crosses `THROTTLE_UTILIZATION_WARN` (default 0.9, **warn-only — never shrinks**, the pre-`rejected` signal the journal previously lacked), and — when `THROTTLE_UTILIZATION_TARGET>0` (default 0/off) — proactively shrinks once the binding window crosses the target. Split into flat single-purpose helpers (`_publish_unified_gauges`/`_maybe_pause_rejected`/`_maybe_warn_unified`/`_maybe_glide`) to keep cognitive complexity low.
-- **Burst pacing** — single process-global `_dispatch_lock` enforces `THROTTLE_MIN_DISPATCH_GAP_MS` between consecutive upstream POSTs. Orthogonal to `CLAUDE_API_THROTTLE_MAX` (which caps concurrency, not rate).
-- **Queue modes** (`THROTTLE_QUEUE_MODE`): `off` (passthrough, no AIMD counters), `observe` (no queue but AIMD counters DO move — early-warning without slowdown), `fair`/`reactive` (queue + AIMD; `reactive` is an alias).
-- **Central tier** — when `THROTTLE_CENTRAL_URL` is set, local proxy forwards there; background `central_health_loop` polls `/__throttle/health` every `THROTTLE_CENTRAL_HEALTH_INTERVAL`. Central unhealthy → transparent fallback to direct upstream. A local proxy with `THROTTLE_QUEUE_MODE=off` still uses a small fair queue capped by `THROTTLE_CENTRAL_LOCAL_MAX_CONCURRENT` (default 2) so same-host Claude Code bursts cannot bypass local admission before central/AIMD feedback arrives.
-- **Local account routing** — `THROTTLE_ACCOUNT_ROUTING=least_loaded` plus `THROTTLE_ACCOUNT_CRED_PATHS` lets a local proxy choose the least-loaded usable Claude OAuth credential for each `POST /v1/messages` and rewrite only the upstream `Authorization` header. This is what makes already-running Claude sessions share two accounts; otherwise every process is pinned to the bearer it read at startup. Raw tokens stay out of logs, metrics, and UI.
-- **Subscription-constrained ingress** (Spec 094 / ADR-6a r1) — a caller that first discovers the enforcement capability in `:8760/__throttle/health` may send `x-anthropic-throttle-require-credential-mode: subscription`. The ingress classifies lane economics via the frozen two-level predicate: CLASS = E1∧E2∧E4 (api-key off; canonical upstream in `INGRESS_SUBSCRIPTION_UPSTREAMS`; loopback ∧ `central_url==""`), while CAPACITY comes from the lane's fresh authoritative `GET /__throttle/admission` verdict rather than re-derived sampled meters. It re-probes the candidate lane per request, applies the predicate to pins/selection/spill/retry before egress without changing shared unconstrained state, refuses with a pre-egress `403` policy verdict (`no_eligible_lane` / `eligible_lanes_exhausted`, role-chain-scoped) instead of spilling, and stamps `credential-mode: subscription` on constrained 2xx responses only — unconstrained traffic is behaviorally unchanged. Direct/pay-go, unattestable, and unknown lanes fail closed; upstream credential stamps are always stripped.
-- **Dashboard history** (`history.py` + `ui/signals.py`) — a 360-slot, 10 s ring (60 min, ~30 KB, process-local) of served / pushback / queue depth / live cap / p50 / p95. Requests report into it from `proxy._finalize`; the UI's sampler closes each bucket. It backs the header's four golden-signal sparklines (server-rendered `<svg><polyline>`, no charting library — invariant #6) and the `THROTTLED for 12m` duration on the status strip. A scalar with no baseline cannot be judged, which is what made the old KPI row unreadable (`docs/DASHBOARD-DESIGN.md`).
-- **UI** (`ui/routes.py::attach_ui`) — HTMX 1.x dashboard at `/ui`, jinja2 templates in `ui/templates/`. Three optional dashboard panels (all UI-only, failure-tolerant, hidden when their env var is unset): **Accounts** (`THROTTLE_ACCOUNT_CRED_PATHS`, per-account 5h/7d usage via `/api/oauth/usage`), **Fleet** (`THROTTLE_FLEET_HEALTH=LABEL:url,...` cross-fetches sibling proxies' `/__throttle/health` so the z.ai `:8766` instance shows in one pane), **Copilot** (`THROTTLE_COPILOT_ORGS` + `THROTTLE_COPILOT_TOKEN` reads `/orgs/{org}/copilot/billing` — subscription/seats only; the individual-user usage API does not exist). **Auth gate** (`ui/auth.py`, 08/11/2026): the dashboard had NO authentication, so on the network-reachable central instance anyone could hot-tune knobs via `POST /ui/config`. Setting `THROTTLE_UI_TOKEN_FILE` makes every dynamic `/ui*` route and `/__throttle/consumers` require the token for non-loopback peers (a peer carrying `Forwarded`/`X-Forwarded-For`/`X-Real-IP` counts as remote): `X-Throttle-UI-Token` header, or the HttpOnly `SameSite=Strict` cookie set by `/ui/login` (an HMAC of the token, never the token). Cookie-authenticated POSTs also need the CSRF HMAC (`X-Throttle-CSRF`, sent by htmx via `hx-headers`, or a `csrf` field). Unreadable/empty file → fail closed. It wraps handlers, not the app, so health, `/metrics`, `/__throttle/admission`, quiesce/resume and the hot path never pass through it. Token is read once; rotation needs a restart.
-- **Metrics** — `prometheus_client` with a process-local `CollectorRegistry` (NOT the default global), exposed at `/metrics`. Health JSON at `/__throttle/health` includes per-bearer `limiter.queued_per_client` for live starvation debugging.
+- **Hot path** (`proxy.py::handler`) — catch-all `*` forwards to `THROTTLE_UPSTREAM` (or `THROTTLE_CENTRAL_URL`), streams back, parses SSE `usage`.
+- **Per-bearer fair queue** (`FairBearerLimiter`) — round-robin per `client_id`; lazy per `bearer_id` under `bearer_limiter_lock`.
+- **Bounded queue wait** — `THROTTLE_QUEUE_MAX_WAIT_S` (30 s) fails fast with a stamped 503; the bound is end-to-end across tiers.
+- **Queue-depth admission** — refuses an arrival that cannot drain within the wait bound, only on measured evidence.
+- **Priority lane** — `THROTTLE_PRIORITY_RESERVE_SLOTS` (default 0) dedicated pool for short calls.
+- **AIMD reactive throttle** — ceiling shrinks on `429/503` (`THROTTLE_AIMD_DECREASE`), grows after `THROTTLE_AIMD_RAMP_AFTER`; `529` never shrinks.
+- **Budget-vs-concurrency 429 split** — a `429` without `Retry-After` reads the unified headers: budget → full pause, concurrency → 2 s.
+- **OAuth entitlement 429** — a headerless `rate_limit_error` 429 on `POST /v1/messages` is a request-shape refusal: relay it at once, no retry, no AIMD.
+- **Synthetic probes must carry `CLAUDE_CODE_SYSTEM_PROMPT`** as the first `system` block on an OAuth token, or the gate above refuses them.
+- **Header-aware pacing** — `_extract_ratelimit` honors `Retry-After` (uncapped) before the next dispatch.
+- **OAuth unified-window pacing** — `_parse_unified`/`_apply_unified` track 5h/7d utilization; pause on `rejected`, warn at `THROTTLE_UTILIZATION_WARN`.
+- **Burst pacing** — `_dispatch_lock` enforces `THROTTLE_MIN_DISPATCH_GAP_MS` between upstream POSTs.
+- **Queue modes** (`THROTTLE_QUEUE_MODE`): `off`, `observe`, `fair`/`reactive`.
+- **Central tier** — `THROTTLE_CENTRAL_URL` forwards to central; unhealthy central falls back to direct upstream.
+- **Local account routing** — `THROTTLE_ACCOUNT_ROUTING=least_loaded` picks the least-loaded OAuth credential per `POST /v1/messages`.
+- **Subscription-constrained ingress** (Spec 094) — `x-anthropic-throttle-require-credential-mode: subscription` fails closed with a pre-egress `403`.
+- **Dashboard history** (`history.py`, `ui/signals.py`) — 360-slot, 10 s ring behind the sparklines.
+- **UI** (`ui/routes.py::attach_ui`) — HTMX dashboard at `/ui`; `THROTTLE_UI_TOKEN_FILE` gates non-loopback peers.
+- **Metrics** — process-local `CollectorRegistry` at `/metrics`; health JSON at `/__throttle/health`.
 
-Distribution: `throttler-gateway`. Entry: `throttler-gateway` /
-`python -m throttler_gateway` → the existing `proxy.main()`.
-`throttler-ingress` / `python -m throttler_gateway.ingress` → existing ingress.
-Dockerfile/Procfile use `throttler-gateway`. Legacy commands,
-`anthropic_throttle_proxy` imports, wire contracts and state remain compatible.
+Distribution and entry: `throttler-gateway` (`python -m throttler_gateway`); ingress: `throttler-ingress`. Legacy commands, `anthropic_throttle_proxy` imports, wire contracts and state stay compatible.
 
 ## Load-bearing invariants
 
@@ -68,268 +65,25 @@ Dockerfile/Procfile use `throttler-gateway`. Legacy commands,
 - AIMD math (`shrink_on_pushback`, `ramp_on_success`) has a cooldown of `THROTTLE_AIMD_BACKOFF_S` (default 30 s) after each shrink before growth can resume — preserve the cooldown gate when refactoring.
 - `prometheus_client` `CollectorRegistry` is process-local, not the default global one. Required because uvicorn-style workers would double-register metrics; we currently run single-worker but keep the registry isolated anyway.
 
-## Incident workflow and adversarial review
+## Runbook pointers (`docs/AGENT-RUNBOOK.md`)
 
-Throttle incidents are not solved by a plausible code patch. They are solved
-only when the runtime symptom, code path, Nix pin, and host activation are all
-verified.
+- Before you change throttle behavior, central fallback, limiter state, pacing, Nix pins or deploy config: read "Incident workflow".
+- Before a restart, or to learn what is running: read "Host service verification". Use `throttler-gateway.service` (`anthropic-throttle-proxy.service` is a symlink to it).
+- After any Home Manager, Nix or systemd-user fix: run "Persistence checklist". For a stale-unit symptom: read "Stale-unit / root-probe incident".
+- Before you write or edit a skill under `.claude/skills/`: read "Skill design notes".
+- Before the first Dokku deploy: read "Deploy (one-time)".
 
-Before changing throttle behavior, central fallback, limiter state, request
-pacing, Nix pins, or deployment config:
+A throttle-path change needs a test on the exact failure path, full pytest and ruff, green CI, and runtime verification after the deploy. A review by a different seat is advisory (fleet rule of 14/09/2026). Do it when a reviewer lane is available. An unavailable reviewer never blocks a merge.
 
-1. Capture live evidence first: local `/__throttle/health`, central
-   `/__throttle/health`, `journalctl --user -u throttler-gateway.service` (see the
-   journal-name trap below — the `anthropic-throttle-proxy` name yields NO entries),
-   the current user unit `ExecStart`, and the current Nix store path.
-2. State the hypothesis in one sentence.
-3. Identify what would falsify the hypothesis before editing.
-4. Add or update tests that exercise the exact failure path.
-5. Run targeted tests, full pytest, and ruff.
-6. Verify the deployed runtime, not just the merged PR.
+## Where to work
 
-**Mandatory Codex adversarial review:** before merging any throttle-path fix or
-declaring a throttle incident solved, ask Codex for adversarial review. Provide
-Codex the symptom, hypothesis, live evidence, diff, tests, and deployment plan.
-Codex must challenge causality, central/local fallback behavior, limiter mode
-transitions, Nix fixed-output hashes, and whether the activated host is actually
-running the new store path. Address the findings before merge; if a finding is
-not acted on, document the evidence-backed reason.
+The shared checkout stays on plain `main` and is read-only: read code there, update it with `git pull --ff-only`, never edit, commit or switch in it. Do the work in a fresh clone under `~/.cache/<workspace>/` (one clone per task, one branch, one PR), and delete the clone after the merge. No new worktrees. GitButler workspace mode is off here since 22/11/2026: `but pull` fails on the stale branch `1111-pi-load-generation`.
 
-See `handoff.md` for the 25/05/2026 incident and the mistakes that led to this
-rule.
-
-## Host service verification
-
-Pedro's desktop runs this proxy as a Nix/Home Manager user service. Treat
-`systemctl --user cat` and `systemctl --user show` as two different evidence
-surfaces:
-
-- `systemctl --user cat anthropic-throttle-proxy.service` shows the persisted
-  unit plus persisted drop-ins. **This is what reboot will execute.**
-- `systemctl --user show anthropic-throttle-proxy.service -p ExecStart -p
-  FragmentPath -p DropInPaths -p ActiveState -p SubState` shows the effective
-  runtime state after daemon reloads, transient overrides, and restarts.
-  **This is what is currently running.**
-- Runtime drop-ins under `/run/user/$(id -u)/systemd/user/...` survive
-  `daemon-reload` but are wiped on logout/reboot. They can silently mask a
-  stale persistent unit. **A transient `ExecStart=` override hides a stale
-  base unit until the next reboot, at which point the service silently
-  regresses.**
-
-Full capture sequence (run in this order):
-
-```sh
-# 1. EFFECTIVE runtime (merged base+drop-ins, what systemd executes now)
-systemctl --user show anthropic-throttle-proxy.service \
-  -p ExecStart -p FragmentPath -p DropInPaths -p EnvironmentFiles \
-  -p MainPID -p ActiveState -p SubState
-
-# 2. BASE unit + drop-in chain (what reboot will resolve to)
-systemctl --user cat anthropic-throttle-proxy.service
-
-# 3. Persistent symlink target (Home Manager's published unit)
-readlink ~/.config/systemd/user/anthropic-throttle-proxy.service
-
-# 4. Drop-in inventory (persistent vs transient)
-ls -la ~/.config/systemd/user/anthropic-throttle-proxy.service.d/
-ls -la /run/user/$(id -u)/systemd/user/anthropic-throttle-proxy.service.d/
-
-# 5. Wire-level health (proves the running PID actually serves traffic)
-curl -fsS http://127.0.0.1:8765/__throttle/health | jq
-
-# 6. Service journal (last failure window)
-# NOTE (measured 25/10/2026): `anthropic-throttle-proxy.service` is a SYMLINK to the
-# canonical `throttler-gateway.service`, and journald attributes entries only to the
-# canonical name. The old spelling silently returns "-- No entries --", which reads as
-# "the service logs nothing" and sends you debugging journald.
-journalctl --user -u throttler-gateway.service -n 80 --no-pager
-# (equivalently: journalctl --user _PID=$(systemctl --user show throttler-gateway.service -p MainPID --value))
-
-# 7. Trace the Nix store path actually on the cmdline
-pid=$(systemctl --user show anthropic-throttle-proxy.service -p MainPID --value)
-tr '\0' '\n' </proc/$pid/cmdline | grep anthropic-throttle-proxy
-
-# 7b. RUNNING vs PERSISTED in one command. `cat` says what the next start will
-# execute and `show` what this one was launched with; neither proves the code in
-# MEMORY is the code you merged. Health publishes its own import path, so a
-# mismatch here is an activated-but-never-restarted service (08/08/2026).
-running=$(curl -fsS http://127.0.0.1:8765/__throttle/health | jq -r .build)
-persisted=$(systemctl --user cat anthropic-throttle-proxy.service |
-  grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-[0-9.]+' | head -1)
-case "$running" in "$persisted"*) echo "OK  running == persisted" ;;
-  *) echo "DRIFT  running=$running  persisted=$persisted  -> systemctl --user restart" ;;
-esac
-
-# 8. Did the HM half actually activate?
-# OBSOLETE ON DESKTOP (corrected 05/09/2026): the old form of this step
-# compared `~/.local/state/nix/profiles/home-manager` against the activated
-# toplevel's HM closure and called a mismatch a deferred switch. That pointer
-# is a STANDALONE home-manager artifact. Desktop drives HM as a NixOS module,
-# through the system-level `home-manager-notroot.service`, and that path never
-# bumps the standalone profile — it has been frozen at generation 517 since
-# 24/08/2026 while HM activations kept running normally. Comparing them now
-# reports a permanent false "stale symlink" and sends you chasing a
-# non-existent deferred switch.
-# Ask the service instead: it names the generation it activated, and a 0 exit
-# is the activation actually succeeding.
-systemctl show home-manager-notroot.service -p ExecMainStartTimestamp -p ExecMainStatus
-systemctl show home-manager-notroot.service -p ExecStart --value |
-  grep -oE '/nix/store/[a-z0-9]+-home-manager-generation'
-nix-store -qR "$(readlink /run/current-system)" | grep home-manager-generation
-# The generation the SERVICE ran must match the one in the activated closure.
-# `Status=0` plus that match is the real proof; the profile pointer is not.
-```
-
-### Persistence checklist (apply after any HM / Nix / systemd-user fix)
-
-Run this checklist verbatim. Do not declare persistence fixed without all
-boxes ticked.
-
-1. **Surgical symlink swap** if HM activation was deferred (niri-guard host):
-   ```sh
-   TOPLEVEL=$(readlink /run/current-system)
-   # Resolve HM-files deterministically. The old recipe ran
-   #   nix-store -qR "$TOPLEVEL" | grep home-manager-files | head -1
-   # over the FULL transitive closure, so on a multi-user / multi-generation
-   # store `head -1` could pick a STALE sibling's files dir (the 26/05/2026
-   # stale-unit incident). Instead: find the single home-manager-generation in
-   # the activated closure, then take the single home-manager-files it directly
-   # references. Fail loud on any ambiguity rather than silently mis-pick.
-   HM_GEN=$(nix-store -qR "$TOPLEVEL" | grep -E 'home-manager-generation$')
-   [ "$(printf '%s\n' "$HM_GEN"   | grep -c .)" -eq 1 ] || { echo "ambiguous home-manager-generation:"; printf '%s\n' "$HM_GEN"; return 1 2>/dev/null || exit 1; }
-   HM_FILES=$(nix-store -q --references "$HM_GEN" | grep -E 'home-manager-files$')
-   [ "$(printf '%s\n' "$HM_FILES" | grep -c .)" -eq 1 ] || { echo "ambiguous home-manager-files:"; printf '%s\n' "$HM_FILES"; return 1 2>/dev/null || exit 1; }
-   # verify ExecStart in that HM-files's unit BEFORE swapping
-   grep ExecStart "$HM_FILES/.config/systemd/user/anthropic-throttle-proxy.service"
-   ln -sfn "$HM_FILES/.config/systemd/user/anthropic-throttle-proxy.service" \
-     ~/.config/systemd/user/anthropic-throttle-proxy.service
-   ```
-2. **`systemctl --user daemon-reload`** so systemd re-reads the chain.
-3. **Verify base and effective ExecStart match** (no transient drop-in masking):
-   ```sh
-   systemctl --user cat anthropic-throttle-proxy.service | grep ExecStart
-   systemctl --user show anthropic-throttle-proxy.service -p ExecStart --value
-   ```
-4. **Remove redundant transient drop-ins**:
-   ```sh
-   /run/current-system/sw/bin/rm -f \
-     /run/user/$(id -u)/systemd/user/anthropic-throttle-proxy.service.d/override.conf
-   systemctl --user daemon-reload
-   ```
-5. **Restart when safe, then re-verify**:
-   ```sh
-   pre=$(curl -fsS http://127.0.0.1:8765/__throttle/health | jq .served)
-   systemctl --user restart anthropic-throttle-proxy.service
-   sleep 2
-   systemctl --user is-active anthropic-throttle-proxy.service
-   curl -fsS http://127.0.0.1:8765/__throttle/health \
-     | jq '{served,inflight,queue_mode,central_status}'
-   ```
-6. **Confirm pkg has the load-bearing code**. For PR #29 root probes:
-   ```sh
-   pkg=$(systemctl --user show anthropic-throttle-proxy.service \
-     -p ExecStart --value | grep -oE '/nix/store/[a-z0-9]+-anthropic-throttle-proxy-0\.1\.0')
-   # Glob the interpreter version: the deployed package moved from python3.13 to
-   # python3.14 (verified 22/09/2026), and a hard-coded path silently greps a file
-   # that does not exist — which reads as "the code is missing".
-   grep -c 'def root_probe\|app.router.add_get("/", root_probe' \
-     "$pkg"/lib/python3.*/site-packages/anthropic_throttle_proxy/proxy.py
-   # expect >= 2
-   ```
-   Same rule for a bare `[ -f ... ]` existence check on that path: glob it.
-7. **Nix gcroot guard** — canonical HM-files must be reachable from a gcroot:
-   ```sh
-   nix-store --query --roots "$HM_FILES" | grep -E 'system-[0-9]+-link|/run/current-system'
-   ```
-
-### Stale-unit / root-probe incident (26/05/2026)
-
-PR #29 (`fix: handle root probes locally`) shipped the new package and the
-NixOS pin was bumped to `b1555ad`. But the persistent user-unit symlink kept
-pointing at the pre-root-probe package because the host runs `niri-guard`,
-which rewrites `nh os switch` → `nh os boot`. The runtime drop-in
-(`/run/user/1000/systemd/user/anthropic-throttle-proxy.service.d/override.conf`)
-masked the regression: `systemctl --user show` reported the new package, but
-`systemctl --user cat` showed the old one. A reboot would have regressed the
-service back to a build without root-probe handling, breaking `GET /` probes
-for downstream tools.
-
-Forensic chain:
-
-- `~/.config/systemd/user/anthropic-throttle-proxy.service` → old
-  `8b4zq94h...home-manager-files` → unit ExecStart `v3hcv7w...` (pre-PR-29).
-- `/run/current-system` HM-files dep → `2yqrq9...home-manager-files` → unit
-  ExecStart `mg70cbx3...` (PR-29 correct).
-- HM profile pointer (`~/.local/state/nix/profiles/home-manager`) stuck at
-  gen 488 = `wh3678v4...home-manager-generation` → pkg `xybx7arq...`
-  (older than `v3hcv7w`).
-- Three different generations live in store, only the runtime drop-in pinned
-  the right one in memory.
-
-Three durable lessons:
-
-1. **Always use both `show` and `cat`.** `show` answers "what is running
-   now"; `cat` answers "what will run after reboot". Disagreement means a
-   transient drop-in is hiding stale state.
-2. **Root probes must be handled locally.** The proxy forwards everything
-   else to `THROTTLE_UPSTREAM`, but `GET /` and `HEAD /` are infrastructure
-   probes (load balancers, Dokku healthchecks, curl smoke tests) that should
-   not consume a bearer slot. PR #29 added a local 200 OK; any future code
-   path that re-introduces the catch-all for `/` is a regression.
-3. **Persistence != activation.** A merged PR + bumped Nix pin + green CI
-   only proves the *artifact* is correct. Whether the *host* is running it
-   requires the verification chain above.
-
-## Repo worktree policy
-
-This repo follows the global mandatory worktree-first rule
-(`~/Documents/Code/CLAUDE.md` and `~/.claude/CLAUDE.md`).
-
-- **Never edit on `main`.** `git rev-parse --show-toplevel` must end in a
-  `-NNN-<slug>` directory before any `Edit` / `Write` / `Bash` mutation.
-- **Use `.worktrees/<branch>` for in-repo feature work** (preferred when
-  scope is bounded and short-lived; survives merge cleanly). Example:
-  `.worktrees/anthropic-throttle-proxy-029-local-root-probe`.
-- For cross-repo work coordinated with `~/NixOS`, use a sibling worktree
-  under `~/NixOS-NNN-<slug>` for the NixOS half (the convention sibling
-  agents already follow — see `git -C ~/NixOS worktree list`).
-- **Never `git stash`** in this repo. Open another worktree.
-- **Never push to `main` directly.** PR workflow only (conventional commit
-  subject ≤ 72 chars, `Co-Authored-By` trailer, rebase before push, wait
-  for CI, then `gh pr merge --squash --delete-branch`).
-- Do not overwrite sibling-agent work in adjacent worktrees (e.g.
-  `~/NixOS-719-home-zellij-tabs` for fonts/statusline). Coordinate by
-  checking `git -C <sibling> log --oneline -5` before any edit that could
-  conflict.
+Never push to `main` directly. Merge with `fleet-merge`; delete the branch in a separate call.
 
 ## Project-local skills
 
-Agents should use the repo-local skills in `.claude/skills/` when the
-request matches their trigger:
-
-- **`throttle-incident`** — triage live throttle failures, central
-  fallback, queue buildup, 429/503/529 storms, and root-probe regressions.
-- **`nix-user-service`** — verify desktop/Home Manager activation for this
-  user service and catch persistent-vs-runtime systemd mismatches.
-- **`deploy-dokku`** — deploy or verify the central Dokku instance without
-  confusing container health with local desktop health.
-
-### Skill design notes
-
-When authoring or editing the skills above:
-
-- One skill per recurring incident shape. Do not bundle unrelated flows.
-- Skills must capture **evidence first, hypothesis second**. The body of
-  each `SKILL.md` is a checklist of commands + expected outputs, not a
-  prose essay.
-- Skills must reference the `Incident workflow and adversarial review`
-  section above. Codex adversarial review is mandatory before declaring
-  any throttle-path fix done.
-- Skills must prefer commands already run and observed-good on the host. When a
-  command is a template for another host, mark placeholders clearly.
-- Keep `.claude/settings.json` minimal and task-specific. Do not blindly
-  enable global skills (browser automation, generic frontend-design,
-  unrelated spec/PR skills) that this repo does not need.
+Use `.claude/skills/`: `throttle-incident` (live throttle failures, 429/503/529 storms), `nix-user-service` (Home Manager activation, persistent-vs-runtime unit mismatch), `deploy-dokku` (central Dokku instance).
 
 ## Local dev quickstart
 
@@ -343,21 +97,6 @@ uv run ruff format src tests                 # format
 ```
 
 Point clients at the proxy via `export ANTHROPIC_BASE_URL=http://127.0.0.1:8765` — claude-code / opencode / codex / Anthropic SDKs all honour it; the `Authorization: Bearer …` header passes through unchanged.
-
-## Deploy (one-time)
-
-```sh
-ssh dokku@your.host
-dokku apps:create anthropic-throttle
-dokku ports:add anthropic-throttle http:80:8765
-dokku config:set anthropic-throttle \
-  CLAUDE_API_THROTTLE_MAX=8 \
-  THROTTLE_QUEUE_MODE=fair \
-  THROTTLE_MIN_DISPATCH_GAP_MS=50
-dokku checks:enable anthropic-throttle
-git remote add dokku dokku@your.host:anthropic-throttle
-git push dokku main
-```
 
 ## Ownership
 
