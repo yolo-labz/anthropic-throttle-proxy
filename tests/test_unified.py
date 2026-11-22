@@ -310,3 +310,35 @@ async def test_rejected_sample_flags_disabled_brake(monkeypatch):
 
     assert _brake_disabled_count(bid, "5h") == before + 1
     assert any("BRAKE DISABLED" in line for line in lines)
+
+
+async def test_fable_bucket_survives_a_non_fable_response_end_to_end():
+    # 11/11/2026: only Fable responses report 7d_oi; the next Opus 200 replaces
+    # bstate["unified"] and, before the kept copy, blanked the bucket everywhere.
+    lim = FairBearerLimiter(8, "fair")
+    bstate: dict = {}
+    fable = _oauth_meta()
+    fable.update(
+        {
+            "anthropic-ratelimit-unified-7d_oi-status": "allowed",
+            "anthropic-ratelimit-unified-7d_oi-utilization": "0.44",
+            "anthropic-ratelimit-unified-7d_oi-reset": "1794564000",
+        }
+    )
+    await proxy._apply_unified("t-fable-e2e", bstate, lim, fable)
+    await proxy._apply_unified("t-fable-e2e", bstate, lim, _oauth_meta())  # an Opus response
+    assert bstate["unified"].get("util_7d_oi") is None
+    assert bstate["fable_bucket"]["util_7d_oi"] == 0.44
+    assert proxy.M_UTIL_7D_OI.labels(bearer="t-fable-e2e")._value.get() == 0.44
+
+
+def test_fable_bucket_is_kept_across_a_non_fable_response_and_published_as_a_gauge():
+    bstate: dict = {}
+    proxy._keep_fable_bucket(
+        bstate, {"util_7d_oi": 0.44, "status_7d_oi": "allowed", "reset_7d_oi": 9}
+    )
+    assert bstate["fable_bucket"]["util_7d_oi"] == 0.44
+    proxy._keep_fable_bucket(bstate, {"util_7d": 0.7})  # an Opus response: no 7d_oi
+    assert bstate["fable_bucket"]["util_7d_oi"] == 0.44
+    proxy._publish_unified_gauges("t-fable", {"util_7d_oi": 0.44})
+    assert proxy.M_UTIL_7D_OI.labels(bearer="t-fable")._value.get() == 0.44
