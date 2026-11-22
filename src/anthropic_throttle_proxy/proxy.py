@@ -1636,6 +1636,22 @@ _CREDENTIAL_DEAD_CODES = frozenset({"oauth_not_allowed_for_organization"})
 # above, or via the streak floor.
 _CREDENTIAL_DEAD_TYPES = frozenset({"authentication_error"})
 
+#
+# The OpenCode free gateways answer a free-catalog model it no longer serves
+# with
+#   403 {"type":"error","error":{"type":"FreeTierError","message":"OpenCode's
+#        free tier can only be used from within OpenCode…"}}
+# The bearer is FINE — the same key serves 200s on the sibling lane and from a
+# real client on this one — so this must not consume the streak floor. Measured
+# 20/10/2026 on :8774: three consecutive FreeTierError 403s (the proxy's own
+# credential-recheck probes, ``max_tokens=8``) drove ``credential-dead
+# reason=streak-3`` and quarantined a healthy bearer, then ``credential-recovered``
+# on the next 200. That flapping is exactly what ``permission_error`` was kept out
+# of ``_CREDENTIAL_DEAD_TYPES`` for; a tier refusal is the same shape, one level
+# further out (entitlement rather than permission), so it is named explicitly
+# instead of relying on the streak to be lenient.
+_CREDENTIAL_EXEMPT_TYPES = frozenset({"FreeTierError", "free_tier_error", "tier_error"})
+
 _CREDENTIAL_DEAD_STATUSES = frozenset({401, 403})
 
 
@@ -1676,6 +1692,28 @@ def _credential_dead_reason(status: int, captured: bytearray | None) -> str:
         return code
     etype = str(error.get("type") or "").strip()
     return etype if etype in _CREDENTIAL_DEAD_TYPES else ""
+
+
+def _is_tier_refusal(captured: bytearray | None) -> bool:
+    """True when the error envelope names a tier/entitlement refusal.
+
+    Deliberately narrow: only an explicitly listed ``error.type`` qualifies, and
+    an unparseable or absent body returns ``False`` so unrecognised rejections
+    keep the historical streak behaviour. See ``_CREDENTIAL_EXEMPT_TYPES`` for
+    the measured envelope and the 20/10/2026 quarantine flap it caused.
+    """
+    if not captured:
+        return False
+    try:
+        payload = json.loads(decompressed_body(bytes(captured[:65536])))
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    error = error if isinstance(error, dict) else {}
+    etype = str(error.get("type") or payload.get("type") or "").strip()
+    return etype in _CREDENTIAL_EXEMPT_TYPES
 
 
 # Quarantines restored from disk, keyed by bearer id. Consulted only when the
@@ -1794,6 +1832,13 @@ def _note_bearer_credential(
     reason = _credential_dead_reason(status, captured)
     if reason:
         _quarantine_bearer(bid, bstate, status, reason, detail)
+        return
+    if _is_tier_refusal(captured):
+        # A tier refusal PROVES the credential authenticated. It must not advance
+        # the streak toward quarantine, and it clears any partial streak so two
+        # stale 403s before it cannot combine with a later unrelated one.
+        bstate["credential_streak"] = 0
+        log(f"credential-exempt bid={bid} status={status} reason=tier-refusal detail={detail!r}")
         return
     previous = bstate.get("credential_streak")
     streak = (previous if isinstance(previous, int) else 0) + 1
