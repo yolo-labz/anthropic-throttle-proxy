@@ -1,6 +1,6 @@
 # Review of 282 — executable policy claims
 
-Generator: MiMo (Chinese-frontier); reviewing coordinator: GPT/Astra (OpenAI). This is a source review, not a fabricated external provider verdict.
+This is a source review, not a fabricated external provider verdict.
 
 Concrete findings on `19313dbb5783f67287a7518dd6fd18e6544dc57e`:
 

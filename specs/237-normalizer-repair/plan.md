@@ -1,6 +1,6 @@
 # Plan
 
-Generator: OpenAI GPT-6 Astra/xhigh. Original PR generator family unknown.
+Original PR generator family unknown.
 
 1. Cherry-pick only the original four commits, preserving base d83f637's unrelated auth-probe fix. A two-dot diff against original head would incorrectly remove that fix.
 2. Turn the original top-level assertions into pytest cases; retain valid coverage and replace the incorrect native-tool-deletion expectation with preservation. Add the four reproduced blockers, nested malformed inputs, falsey/long values, endpoint controls and transport tests before repairing code.

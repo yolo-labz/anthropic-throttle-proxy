@@ -1,7 +1,6 @@
 # 240 — independent gate: findings and disposition
 
-Gate: full **GLM-5.3** on the exact head `4660814` (generator family OpenAI GPT-6 Astra,
-so the review rides a different family). Verdict: **REQUEST CHANGES — one BLOCKER**,
+Gate: full **GLM-5.3** on the exact head `4660814` (so the review rides a different family). Verdict: **REQUEST CHANGES — one BLOCKER**,
 four MAJOR, several MINOR. Every finding is answered below; the fixes land on top of
 `4660814` and every claim is backed by the evidence files named here.
 

@@ -7,7 +7,10 @@
 # Keep the job id stable: it is the status context identity.
 name: CI
 on:
+  # A feature branch gets its verdict from the pull_request event. The push run on
+  # the same head was a duplicate: 7 pairs and 682 runner-seconds in the 7 days to 22/11/2026.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 jobs:

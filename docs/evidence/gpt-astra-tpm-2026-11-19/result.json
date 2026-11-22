@@ -1,0 +1,32 @@
+{
+  "date": "19/11/2026",
+  "qualificationExit": 0,
+  "testsPassed": 31,
+  "testsSkipped": 0,
+  "baselineExit": 1,
+  "baselineCollisionReproduced": true,
+  "sourceLayerOnly": true,
+  "liveDeploymentClaimed": false,
+  "realNetworkForbiddenInSyntheticWorkers": true,
+  "priorFullPythonPassed": 3211,
+  "priorFullPythonSeconds": 95.3,
+  "priorFullPythonPredatesInFlightFix": true,
+  "specReview": "no concrete residual blocker; in-flight fix independently checked",
+  "standardsReview": "no concrete residual blocker; final in-flight settlement and dead-owner handling reviewed read-only",
+  "sourceSHA256": {
+    "clients/openai-token-admission/README.md": "714259ca0c8fb92db26478bfee225df0c6e274b2c890e1da3f9e95f8b3207c8d",
+    "clients/openai-token-admission/admission.mjs": "2dd86172e37be3c787281b59f5e16186783c11818b098c870edcefafb661676a",
+    "clients/openai-token-admission/admission.test.mjs": "0cd13ed0c5a5163ce00488f934060496c63ca9d5fd2ba950e6078f530f9076b2",
+    "clients/openai-token-admission/native.qualification.mjs": "cfeb1249f63021b99dea681691ce25e23d35f44b2f436f7e1fba36efed63666e",
+    "clients/openai-token-admission/pi-extension.ts": "cb7fa0b93ff5cc05c351f97962aa6492f79685f8e1f8f498f96f1b40719f18d5",
+    "clients/openai-token-admission/worker.fixture.mjs": "c6d983ba133758220cf899b1c01bee484f07fa50063f1b281c8bfe50f67501f3",
+    "tests/test_openai_token_admission.py": "23daa7be88cd5af5c9cd6176157fef144fb3880c768e5755793607083a50556e"
+  },
+  "finalFullPythonPassed": 3211,
+  "finalFullPythonSeconds": 77.51,
+  "finalFullPythonSummary": "3211 passed, 359 warnings in 77.51s (0:01:17)",
+  "ruffCheck": "passed",
+  "ruffFormatFiles": 219,
+  "qualityGates": "alignment and code-slop path checks passed",
+  "finalCI": "pending publication"
+}

@@ -1,0 +1,25 @@
+{
+  "schema":"tu.reset-observation.v2",
+  "planning_accounts_exactly":2,
+  "grain":"account_id x limit_scope_id x distinct source observation",
+  "required_fields":["account_id","limit_scope_id","poll_time","source_observed_at","source_clock_type","source_clock_provenance","reset_epoch","utilization_fraction","duplicate_sample","producer_version","source_timestamp_identity","source_attested","source_evidence_id","quantization","clock_skew_bound_seconds","restoration_attestation","derived_display_projection"],
+  "scope_types":["session_5h","weekly_all_models","weekly_model_specific"],
+  "semantics":{
+    "poll_time":"recorder/poll wall-clock time; does not refresh source evidence",
+    "source_observed_at":"local proxy wall clock captured when response-header metadata is applied; not provider event time",
+    "source_clock_type":"must explicitly identify local proxy clock semantics; provider clock must not be invented",
+    "duplicate_sample":"producer stale=true means unchanged source timestamp. A duplicate may remain within an explicit age policy but is not independent evidence",
+    "missing_duplicate_sample":"not fresh by itself; may be interpreted only with pinned producer/version plus source timestamp identity semantics",
+    "reset_epoch":"recorded schedule metadata; passage is neither restoration nor available-capacity proof",
+    "utilization_fraction":"scope-local observed fraction only, contract domain [0,1]; never a certified cumulative debit and never additive across scopes/accounts",
+    "derived_display_projection":"post-reset projected zero or other display transformation is not a measured utilization/debit fact",
+    "restoration_attestation":"separate source-owned evidence required for post-reset restoration claims",
+    "quantization":"source resolution metadata; never fabricate precision below it",
+    "clock_skew_bound_seconds":"declared timing uncertainty for local clocks"
+  },
+  "trust_boundary":"source-owned attestations and producer/version identity must be authenticated upstream; offline evaluator does not authenticate them",
+  "fail_closed":["pre-boundary observation carried across reset","missing required bucket","invalid fraction","source age expired","unknown clock provenance","display projection used as measurement","post-reset restoration unverified","clock skew outside bound","mixed accounts","untrusted attestation"],
+  "non_failure_by_itself":["duplicate_sample=true while observation remains within explicit age policy before reset"],
+  "outputs":{"readiness":"READY|HOLD|UNKNOWN","available_capacity":null,"cumulative_debit":null,"pooled_capacity":null},
+  "api_credit_budget":{"separate":true,"must_not_increase_subscription_limits":true,"eligibility_balance_linked_org":"UNKNOWN until separately verified"}
+}

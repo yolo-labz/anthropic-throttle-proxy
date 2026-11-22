@@ -1,6 +1,6 @@
 # Gauge widget — 07/10/2026
 
-Generator family: **openai** (GPT-6.1 Sol). Branch: `313-gauge-widget`.
+Branch: `313-gauge-widget`.
 Base: `3c64a535` (#312). No model review/approval claimed.
 
 ## Plan → tasks → acceptance

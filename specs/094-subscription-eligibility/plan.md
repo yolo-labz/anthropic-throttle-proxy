@@ -186,7 +186,7 @@ dependency is warranted.
    response stamp, then suppress spoof stripping; each focused test must fail
    before the committed files are restored.
 9. Different-family adversarial review of the final diff, tests, live evidence,
-   and no-deploy plan (generator family is OpenAI — reviewer must be Anthropic).
+   and no-deploy plan.
 
 ## Complexity Tracking
 

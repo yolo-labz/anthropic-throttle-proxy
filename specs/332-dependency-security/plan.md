@@ -1,6 +1,6 @@
 # 332 — dependency/security shipping repair
 
-Date: 07/10/2026. Generator family: openai. Isolated from branch314/Actions PR315.
+Date: 07/10/2026. Isolated from branch314/Actions PR315.
 Base: `859ba6c62d3846d0ee3751b5368351f27c58c84d`. No source/runtime activation.
 
 ## Spec / hypothesis / falsifier

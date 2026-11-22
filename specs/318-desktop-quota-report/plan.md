@@ -1,6 +1,6 @@
 # Desktop weekly producer and scoped UI delivery — 07/10/2026
 
-Generator: openai / GPT-6.1 Sol. Existing Impeccable v4.5.0 visual system retained.
+Existing Impeccable v4.5.0 visual system retained.
 
 ## Hypothesis and falsifiers
 Desktop weekly quota has no independent producer/reader wiring; Token Plan reports cannot substitute. A bounded real usage read returned 93.6% remaining, reset epoch 1791844029. Falsifiers: independent report produces no Desktop row; stale/missing/ambiguous payload renders fresh; render invokes network; actual `/ui` does not change after the exact build activates.
