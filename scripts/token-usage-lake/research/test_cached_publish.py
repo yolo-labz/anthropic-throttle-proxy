@@ -69,7 +69,9 @@ class CachedPublishTests(unittest.TestCase):
 
     def test_valid_cached_retry_uses_only_immutable_generation(self):
         with patch.object(snapshots, "file_identity", side_effect=AssertionError("live lake stat")):
-            with patch.object(snapshots.duckdb, "connect", side_effect=AssertionError("DuckDB open")):
+            with patch.object(
+                snapshots.duckdb, "connect", side_effect=AssertionError("DuckDB open")
+            ):
                 result = snapshots.publish(self.lake, self.out)
         self.assertEqual(result["run_id"], "b2")
         self.assert_prior_preserved()
