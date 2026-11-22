@@ -1286,3 +1286,21 @@ rect.u-reasoning   { fill: var(--ctp-mauve); }  span.u-reasoning   { background:
 .sub-meters.is-stale .track i { background: var(--ctp-overlay0); }
 .acct-closed, .acct-open, .acct-parked { font-size: var(--fs-meta); }
 .acct-open { color: var(--ctp-green); }
+
+/* Capacity records: fixed desktop identity/burn columns leave no meter space
+   on phones. Keep each account, verdict and its windows together in reading
+   order; native column headers remain available to assistive technology. */
+@media (max-width: 900px) {
+  table.subs, table.subs tbody { display: block; }
+  table.subs colgroup { display: none; }
+  table.subs thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.subs tbody tr { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0.5rem 0; border-bottom: var(--hairline-strong); }
+  table.subs tbody tr:last-child { border-bottom: 0; }
+  table.subs tbody td { display: block; border-bottom: 0; padding: 0.3rem 0.7rem; }
+  table.subs td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 0.2rem; color: var(--muted); font-size: var(--fs-head); text-transform: uppercase; letter-spacing: 0.07em; }
+  table.subs .acct, table.subs .lane-status { overflow-wrap: anywhere; }
+  table.subs .lane-status { white-space: normal; }
+  table.subs .meter { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 2.2rem; }
+  table.subs .burn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.5rem; }
+  table.subs .burn::before { flex-basis: 100%; }
+}

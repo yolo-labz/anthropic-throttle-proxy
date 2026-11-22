@@ -90,7 +90,7 @@ def test_subscription_row_reads_the_week_samples(monkeypatch):
 
 def _burn_cell(row: dict) -> str:
     src = (routes._TEMPLATES / "partials" / "stats.html").read_text()
-    start = src.index('<td class="burn">')
+    start = src.index('<td class="burn"')
     cell = src[start : src.index("</td>", start) + 5]
     return jinja2.Environment(autoescape=True).from_string(cell).render(s=row)
 

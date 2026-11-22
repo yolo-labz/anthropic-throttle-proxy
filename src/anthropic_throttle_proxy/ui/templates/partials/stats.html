@@ -294,7 +294,7 @@
   </div>
   {% endif %}
   <section id="subs-scroll" class="bearers-wrap" tabindex="0" aria-labelledby="subs-heading">
-  <table class="bearers subs">
+  <table class="bearers subs" role="table">
     <colgroup>
       <col class="c-sub" /><col class="c-meters" /><col class="c-burn" />
     </colgroup>
@@ -358,7 +358,7 @@
           </div>
           {% endif %}
         </td>
-        <td class="sub-meters{% if s.status == 'stale' %} is-stale{% endif %}">
+        <td class="sub-meters{% if s.status == 'stale' %} is-stale{% endif %}" data-label="meters">
           <div class="meter-list">
           {% if s.meters %}
             {% for m in s.meters %}
@@ -400,7 +400,7 @@
           {% endif %}
           </div>
         </td>
-        <td class="burn">
+        <td class="burn" data-label="burn">
           {# `refusing` is a claim about the STATUS, never an inference from a
              missing number. A lane with no burn projection may simply have no
              window to project (a pay-as-you-go balance, a provider with no

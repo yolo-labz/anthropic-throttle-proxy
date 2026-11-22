@@ -500,3 +500,22 @@ def test_the_capacity_heading_does_not_repeat_the_hero_sentence():
     assert html.count(hero_sentence) == 1, (
         "the eligibility disclaimer belongs in the hero, not repeated under the panel heading"
     )
+
+
+def test_narrow_capacity_records_keep_their_field_labels():
+    """Stacked cells need visible labels; desktop still uses native headers."""
+    html = _render(subscriptions=[_row()])
+    assert 'class="sub-meters" data-label="meters"' in html
+    assert 'class="burn" data-label="burn"' in html
+    assert 'role="table"' in html
+
+
+def test_narrow_capacity_reflows_instead_of_panning_fixed_columns():
+    """The old 21rem identity + 11rem burn left no room for phone meters."""
+    css = _css()
+    assert "table.subs colgroup { display: none; }" in css
+    assert re.search(
+        r"table\.subs tbody tr[^\{]*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)", css
+    )
+    assert "table.subs td[data-label]::before" in css
+    assert re.search(r"table\.subs \.lane-status\s*\{[^}]*white-space:\s*normal", css)
