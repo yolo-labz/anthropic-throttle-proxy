@@ -77,6 +77,23 @@ def test_refusal_writes_status_row_without_usage(ledger):
     assert "output" not in row and "input" not in row
 
 
+def test_elapsed_ms_is_recorded_only_when_given(ledger):
+    body = b'{"type":"error","error":{"type":"invalid_request_error","message":"x"}}'
+    before = ul.stats()["written"] + ul.stats()["write_errors"]
+    ul.record(
+        bearer="abcd1234", model="m", project="p", status=499, captured=body, elapsed_ms=291_437
+    )
+    ul.record(bearer="abcd1234", model="m", project="p", status=499, captured=body, elapsed_ms=-5)
+    ul.record(bearer="abcd1234", model="m", project="p", status=499, captured=body)
+    deadline = time.time() + 3.0
+    while ul.stats()["written"] + ul.stats()["write_errors"] < before + 3:
+        assert time.time() < deadline, "ledger writer did not drain"
+        time.sleep(0.01)
+    rows = _rows(ledger)
+    assert [row.get("elapsed_ms") for row in rows] == [291_437, 0, None]
+    assert "elapsed_ms" not in rows[2]  # rows from older callers keep their shape
+
+
 def test_off_writes_nothing(ledger, monkeypatch):
     monkeypatch.setattr(config, "USAGE_LEDGER_MODE", "off")
     ul.record(bearer="abcd1234", model="m", project=None, status=200, captured=_sse(START, DELTA))
@@ -139,3 +156,39 @@ def test_record_uses_tail_for_overflowed_stream(ledger):
     (row,) = _rows(ledger)
     assert row["output"] == 9000
     assert row["usage_complete"] is True
+
+
+async def test_finalize_writes_dispatch_elapsed_ms(monkeypatch, proxy_admission_app):
+    """The real handler passes its dispatch-to-finish time into the row."""
+    from _free_lane_env import patch_admission
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from anthropic_throttle_proxy import proxy
+
+    patch_admission(
+        monkeypatch,
+        UPSTREAM="http://127.0.0.1:9",
+        CENTRAL_URL="",
+        QUEUE_MODE="fair",
+        MAX_CONCURRENT=4,
+        AIMD_INITIAL_CONCURRENT=4,
+        PRIORITY_RESERVE_SLOTS=0,
+        RATE_PUSHBACK_RETRIES=0,
+        MIN_DISPATCH_GAP_S=0,
+        QUEUE_MAX_WAIT_S=3,
+    )
+    rows: list[dict] = []
+    monkeypatch.setattr(config, "USAGE_LEDGER_MODE", "observe")
+    monkeypatch.setattr(ul, "_enqueue", rows.append)
+
+    async def fake_forward(request, headers, body, path, via, url, _timeout, attempt, *_a, **_k):
+        attempt.final_status = 499
+        return web.Response(status=499)
+
+    monkeypatch.setattr(proxy, "_forward_with_retry", fake_forward)
+    async with TestClient(TestServer(proxy_admission_app)) as client:
+        await client.post("/v1/messages", data=b'{"model":"claude-opus-5-5"}', headers={})
+    (row,) = rows
+    assert row["status"] == 499
+    assert isinstance(row["elapsed_ms"], int) and 0 <= row["elapsed_ms"] < 60_000
