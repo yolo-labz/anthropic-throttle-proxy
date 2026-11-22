@@ -37,16 +37,26 @@ class CachedPointerGuardTests(unittest.TestCase):
     def test_old_full_valid_cached_receipt(self):
         self.rejected(self.ra, self.a)
     def test_all_required_receipt_bindings(self):
-        for key, value in (("run_id", "c3"), ("completed_epoch", 201), ("observed_through_epoch", 201),
-                           ("input_fingerprint", "other"), ("fact_counts", {"calls": 99}),
-                           ("data_quality", {"source_freshness_1200": "changed"})):
+        for key, value in (
+            ("run_id", "c3"),
+            ("completed_epoch", 201),
+            ("observed_through_epoch", 201),
+            ("input_fingerprint", "other"),
+            ("fact_counts", {"calls": 99}),
+            ("data_quality", {"source_freshness_1200": "changed"}),
+        ):
             with self.subTest(key=key):
                 receipt = copy.deepcopy(self.rb)
                 receipt[key] = value
                 self.rejected(receipt, self.b)
     def test_version_and_numeric_types(self):
-        for key, value in (("version", True), ("version", 2), ("completed_epoch", True),
-                           ("completed_epoch", float("nan")), ("observed_through_epoch", float("inf"))):
+        for key, value in (
+            ("version", True),
+            ("version", 2),
+            ("completed_epoch", True),
+            ("completed_epoch", float("nan")),
+            ("observed_through_epoch", float("inf")),
+        ):
             with self.subTest(key=key):
                 manifest = copy.deepcopy(self.b)
                 manifest[key] = value

@@ -237,6 +237,10 @@ class Recovery:
         return {"nonce": restore["nonce"], **restored}
 
     def execute(self):
+        if not self.identity.get("targetLeaf"):
+            # Fence-only reload must not replay an unapplied historical selection.
+            # Explicit detached-context restoration retains its separate target guard.
+            core.require_safe_branch(self.identity["transcript"])
         self.native_identity()
         pid = self.identity["pid"]
         specs = [

@@ -151,3 +151,45 @@ def test_private_marker_cannot_overwrite(tmp_path):
     with pytest.raises(FileExistsError):
         module.write_once(marker, {"first": False})
     assert module.owned_json(marker) == {"first": True}
+
+
+@pytest.mark.parametrize("marker", ["context-recovery", "cross-family-model-target"])
+def test_unsafe_startup_replay_refuses_before_any_intent_or_delivery(flow, marker):
+    recovery, commands, _ = flow
+    del recovery.identity["targetLeaf"]
+    entries = [
+        {"type": "message", "id": "work", "parentId": None},
+        {
+            "type": "custom",
+            "id": "replay",
+            "parentId": "work",
+            "customType": marker,
+            "data": {"provider": "claude-lane", "model": "claude-fable-5-2", "thinking": "high"},
+        },
+    ]
+    Path(recovery.identity["transcript"]).write_text("\n".join(map(json.dumps, entries)))
+    with pytest.raises(RuntimeError, match="startup target"):
+        recovery.execute()
+    assert commands == []
+    assert list(module.ROOT.iterdir()) == []
+    assert list(module.core.ROOT.iterdir()) == []
+
+
+def test_fence_only_accepts_work_bearing_custom_root_without_navigation(flow):
+    recovery, commands, _ = flow
+    del recovery.identity["targetLeaf"]
+    entries = [
+        {"type": "custom", "id": "split", "parentId": None, "customType": "pi-artifact-cleanup"},
+        {"type": "message", "id": "new-work", "parentId": "split"},
+    ]
+    path = Path(recovery.identity["transcript"])
+    original = "\n".join(map(json.dumps, entries))
+    path.write_text(original)
+    result = recovery.execute()
+    assert result["fenceEnabled"] and not result["restored"]
+    assert [c.split()[0] for c in commands] == [
+        "/reload",
+        "/core-upgrade-state",
+        "/compaction-loop-fence-enable",
+    ]
+    assert path.read_text() == original

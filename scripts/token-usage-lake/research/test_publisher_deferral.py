@@ -90,7 +90,8 @@ class PublisherDeferralTests(unittest.TestCase):
         self.assertEqual(events[-1]["run_id"], "c3")
         self.assert_prior_untouched()
         with duckdb.connect() as con:
-            values = con.read_parquet(str(self.out / "c3/calls/**/*.parquet")).project("output").fetchall()
+            parquet = str(self.out / "c3/calls/**/*.parquet")
+            values = con.read_parquet(parquet).project("output").fetchall()
         self.assertEqual(values, [(101,)])
 
     def test_real_error_still_exits_on_third_attempt(self):
