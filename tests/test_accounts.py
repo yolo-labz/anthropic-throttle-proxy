@@ -316,7 +316,14 @@ def test_pace_eta_guards():
 def test_window_view_stale_zeroes_utilization():
     # Last-seen reading predates the window reset → show 0%, not the stale peak.
     w = accounts._window_view(0.97, int(NOW - 100), "rejected", NOW)
-    assert w == {"pct": 0, "stale": True, "rejected": False, "reset_in": None}
+    assert w == {
+        "pct": 0,
+        "stale": True,
+        "projected": True,
+        "measured_or_projected": "projected",
+        "rejected": False,
+        "reset_in": None,
+    }
 
 
 def test_window_view_live_and_rejected():

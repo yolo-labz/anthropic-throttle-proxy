@@ -704,8 +704,17 @@ def _window_meter(label: str, window: dict | None) -> dict | None:
     if not window:
         return None
     if window.get("stale"):
-        # The reading predates its own reset: 0%, not the previous cycle's peak.
-        return {"label": label, "pct": 0.0, "reset_in": "", "note": "reset"}
+        # The reading predates its own reset: no measurement exists. The 0 is a
+        # projection, so it lives in ``projected_pct`` and ``pct`` stays None —
+        # every consumer that ranks or gates on ``pct`` then treats it as unknown.
+        return {
+            "label": label,
+            "pct": None,
+            "projected": True,
+            "projected_pct": 0.0,
+            "reset_in": "",
+            "note": "reset · projected 0%, not measured",
+        }
     return {
         "label": label,
         "pct": window.get("pct"),

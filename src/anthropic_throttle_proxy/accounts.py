@@ -238,6 +238,8 @@ def _window_view(
     reset epoch passes, that reading describes the previous cycle. Mirror
     claude-account-pick's semantics: show 0% with a ``reset`` marker instead
     of the stale peak (the 10/06 outage hid behind a frozen stale reading).
+    That 0 is a PROJECTION (``projected=True``), never a measurement: no
+    sample has been taken since the reset. Consumers must not read it as one.
     """
     if util is None:
         return None
@@ -245,6 +247,8 @@ def _window_view(
     return {
         "pct": 0 if stale else min(100, round(util * 100)),
         "stale": stale,
+        "projected": stale,
+        "measured_or_projected": "projected" if stale else "measured",
         "rejected": (not stale) and status == "rejected",
         "reset_in": _fmt_duration(reset - now) if reset is not None and not stale else None,
     }
