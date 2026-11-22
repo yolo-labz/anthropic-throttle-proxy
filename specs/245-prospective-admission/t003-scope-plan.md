@@ -83,7 +83,7 @@ alias at two distinct trusted provider endpoints. Authority is the full
 Removing the redundant global alias constraint permits that positive case while
 shared canonical budget/default consistency and ambiguous-triple rejection remain.
 
-Independent Astra review found three additional concrete configuration defects:
+Independent review found three additional concrete configuration defects:
 canonical alias chains/cycles, splitting one selected canonical model into
 different account scopes, and whitespace-only ledger keys. All six new
 regression cases were RED before correction. Canonical authority now uses

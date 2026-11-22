@@ -1,7 +1,7 @@
 # Acceptance — MiMo Pi queue wait (243)
 
 23/09/2026, desktop. **Source acceptance only; not installed or activated.**
-Generator: OpenAI/GPT. ZAI quota-blocked; no ZAI delegation or inference probe.
+ZAI quota-blocked; no ZAI delegation or inference probe.
 
 ## Causality
 

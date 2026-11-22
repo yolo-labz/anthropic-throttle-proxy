@@ -1,7 +1,7 @@
 # Transport-only independent review — 14/09/2026
 
 **DENY**, exact reviewed head `d3e056cd1db0be141993f3fe35990daf485f0130`.
-Reviewer: isolated Codex/Sol; generator family of the transport and extension: Chinese-frontier. This does NOT certify the OpenAI-authored validator or recovery documents, nor the mixed-family release.
+Reviewer: isolated Codex/Sol; scope: the transport and extension only.
 
 The controller's assembled candidate passes 76/76 tests, including six actual Pi adapter/loader cases against synthetic loopback servers. Python regressions: 1045 passed; ruff check/format passed. Those checks do not discharge the findings below.
 

@@ -1,0 +1,2 @@
+web: /app/entrypoint.sh web
+publisher: /app/entrypoint.sh publisher

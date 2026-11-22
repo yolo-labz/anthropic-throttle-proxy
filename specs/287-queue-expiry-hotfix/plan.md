@@ -13,7 +13,7 @@ Hypothesis: finite default admission budgets, not upstream quota, manufacture th
 
 ## Coordination
 
-This coordinator-owned worktree does not modify the active 286 worker's worktree or interrupt its session. 286 is still building extended acceptance; integrate useful nonduplicate tests later. The recurrence must not wait for the unrelated telemetry/dashboard/pool changes in 279. Generator family: OpenAI. No automated approval is claimed; prior GLM admission refusal must not be retried as a gate.
+This coordinator-owned worktree does not modify the active 286 worker's worktree or interrupt its session. 286 is still building extended acceptance; integrate useful nonduplicate tests later. The recurrence must not wait for the unrelated telemetry/dashboard/pool changes in 279. No automated approval is claimed; prior GLM admission refusal must not be retried as a gate.
 
 ## Tasks
 

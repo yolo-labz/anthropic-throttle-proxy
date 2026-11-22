@@ -1,6 +1,6 @@
 # UI runtime delivery — 07/10/2026
 
-Owner: `thr-ui-runtime`, w1P:pV. Generator: openai / GPT-6.1 Sol.
+Owner: `thr-ui-runtime`, w1P:pV.
 
 **Current status — 07/10/2026 19:18 BRT:** corrected protected source #323
 (`45b7d0ef`) is activated only on `:8765`. Persisted/effective/imported package,

@@ -1,0 +1,15 @@
+type: metrics_view
+title: Burn
+table: marts_fact_meter_hourly
+timeseries: hour_brt
+smallest_time_grain: hour
+measures:
+  - name: points_burned
+    expression: sum(points_burned)
+    format_preset: decimal
+  - name: util_end
+    expression: avg(util_end)
+    format_preset: percentage
+dimensions:
+  - name: account
+    column: account

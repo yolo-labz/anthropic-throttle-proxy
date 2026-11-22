@@ -43,6 +43,5 @@ with its evidence, and with the reason for each decline — in `review.md`.
 
 ## Provenance
 
-Generator: OpenAI GPT-6 Astra/xhigh (this head). Original commit author of the
-dropped logic: same lineage (PR #236). Different-family review required before
+Different-family review required before
 merge.

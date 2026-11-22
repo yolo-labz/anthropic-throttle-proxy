@@ -84,7 +84,7 @@ a gratuitous restart. Source rollback is one revert PR after publication.
 Date was verified with `date` at recovery entry (03/10/2026 17:19, -03).
 
 **State: written and frozen for Mac acceptance/publication; UNTESTED.** This is
-not THRTL-19 completion or a merge/deployment claim. Generator family: OpenAI.
+not THRTL-19 completion or a merge/deployment claim.
 No provider/reviewer call, push, PR, deployment, tracker update, live-config
 edit, or runtime/session change was performed. NixOS `2585` and `2588` were
 observed clean on their original heads and never modified. Parent/session

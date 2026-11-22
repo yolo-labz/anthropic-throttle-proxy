@@ -1,0 +1,5 @@
+compiler: rillv1
+display_name: Token Diet
+# Rill's embedded DuckDB reads the Parquet mirror of a verified S3 generation.
+# `python -m objectstore --download` re-checks every file's SHA-256 against the manifest.
+olap_connector: duckdb
