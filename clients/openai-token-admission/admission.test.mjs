@@ -21,8 +21,15 @@ export async function workers(config, count, respond, prepare = () => {}) {
   const events = [];
   const children = [];
   let ready = 0;
+  let watchdog;
   try {
-    await Promise.all(Array.from({length: count}, (_, index) => new Promise((resolve, reject) => {
+    // node:test reports a stuck run only as "test timed out after 60000ms" (seen on a
+    // loaded CI runner, never reproduced locally). Fail first with the stuck state.
+    const stuck = new Promise((_resolve, reject) => {
+      watchdog = setTimeout(() => reject(new Error(`workers stuck after 50s: ready ${ready}/${count}, `
+        + `events ${events.length}, exited ${children.filter(child => child.exitCode !== null).length}`)), 50000);
+    });
+    await Promise.race([stuck, Promise.all(Array.from({length: count}, (_, index) => new Promise((resolve, reject) => {
       const child = fork(worker, [JSON.stringify({...config, baseline})], {
         execArgv: [], env: {PATH: process.env.PATH, HOME: config.home, NODE_NO_WARNINGS: '1'},
         stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
@@ -43,9 +50,10 @@ export async function workers(config, count, respond, prepare = () => {}) {
       });
       child.on('error', reject);
       child.on('exit', code => code === 0 ? resolve() : reject(new Error(`child ${code}: ${error}`)));
-    })));
+    })))]);
     return events;
   } finally {
+    clearTimeout(watchdog);
     for (const child of children) if (child.exitCode === null) child.kill();
   }
 }

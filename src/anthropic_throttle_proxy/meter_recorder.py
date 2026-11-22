@@ -61,6 +61,22 @@ _SEED_TAIL_BYTES = 256 * 1024
 # bearers without letting an unrotated log stall startup.
 _RESTORE_TAIL_BYTES = 8 * 1024 * 1024
 
+# Clock/provenance fields (B1, 22/11/2026). Rows written before this revision lack all of
+# them; ``normalize_row`` reads those as None (UNKNOWN), never False or 0.
+PRODUCER_REVISION = "meter_recorder.v2"
+# ``unified_at`` is time.time() on the proxy when it applies response headers: a local
+# receipt clock, not a provider event time. Skew is not measured, so uncertainty is None.
+CLOCK_AUTHORITY = "local_proxy_wallclock"
+PROVENANCE_FIELDS = (
+    "recorder_observed_at",
+    "proxy_header_observed_at",
+    "clock_authority",
+    "clock_uncertainty",
+    "producer_revision",
+    "duplicate_sample",
+    "measured_or_projected",
+)
+
 BearerSource = Callable[[], Mapping[str, Mapping[str, object]]]
 
 
@@ -99,6 +115,20 @@ def recent_rows(path: Path | None, since: float) -> list[dict]:
         t = row.get("sampled_at") if isinstance(row, dict) else None
         if isinstance(t, (int, float)) and t >= since:
             out.append(row)
+    return out
+
+
+def normalize_row(row: Mapping[str, object]) -> dict:
+    """A logged row with every provenance field present; absent means None (UNKNOWN).
+
+    ``stale=True`` is positive evidence of a duplicate. A missing ``stale`` on an old
+    row is NOT evidence of a fresh sample, so it never becomes False.
+    """
+    out = dict(row)
+    for field in PROVENANCE_FIELDS:
+        out.setdefault(field, None)
+    if out["duplicate_sample"] is None and row.get("stale") is True:
+        out["duplicate_sample"] = True
     return out
 
 
@@ -166,6 +196,13 @@ def _snapshot(bid: str, bstate: Mapping[str, object], now: float) -> dict | None
         "bearer": bid,
         "sampled_at": sampled_at,
         "sample_age_s": age,
+        "recorder_observed_at": now,
+        "proxy_header_observed_at": sampled_at,
+        "clock_authority": CLOCK_AUTHORITY,
+        "clock_uncertainty": None,
+        "producer_revision": PRODUCER_REVISION,
+        "duplicate_sample": False,
+        "measured_or_projected": "measured",
         **{k: unified.get(k) for k in ("util_5h", "reset_5h", "status_5h", "util_7d", "reset_7d")},
         "status_7d": unified.get("status_7d"),
         **_fable_fields(bstate, unified),
@@ -215,6 +252,7 @@ class MeterRecorder:
             if prev is not None and prev.get("sampled_at") == row["sampled_at"]:
                 # No new header since the last row: keep the cadence, skip the verdict.
                 row["stale"] = True
+                row["duplicate_sample"] = True
             else:
                 self._judge(bid, prev, row)
                 self.last[bid] = row

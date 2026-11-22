@@ -114,7 +114,7 @@ def _decorate_row(row: dict) -> None:
     meters = row.get("meters") or []
     for meter in meters:
         meter["icon"] = _meter_icon(meter)
-        meter["reset_at"] = _reset_at(meter.get("resets_at"))
+        meter["reset_at"] = meter.get("reset_at") or _reset_at(meter.get("resets_at"))
     _codex_pool_note(row, sid, meters)
 
 

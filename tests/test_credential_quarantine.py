@@ -492,3 +492,56 @@ def test_dead_incoming_with_every_account_dead_keeps_the_incoming(monkeypatch):
     snapshot = _snapshot(("deadF2", "A"), ("deadF3", "B"))
     (used_bid, label), _ = _route(monkeypatch, snapshot, "deadF2")
     assert used_bid == "deadF2" and label is None
+
+
+# The verbatim free-tier refusal from the OpenCode zen gateway (:8774), measured
+# 20/10/2026. The bearer is healthy — the same key served 200s on the sibling
+# lane and from a real client on this one — so a tier refusal must never count
+# toward the dead-credential streak.
+FREE_TIER_BODY = json.dumps(
+    {
+        "type": "error",
+        "error": {
+            "type": "FreeTierError",
+            "message": (
+                "OpenCode's free tier can only be used from within OpenCode. "
+                "Please use the paid tier or the OpenCode client."
+            ),
+        },
+    }
+)
+
+
+def test_free_tier_refusal_never_quarantines_the_bearer(monkeypatch):
+    """A tier refusal flapping a healthy bearer is the 20/10 quarantine incident.
+
+    Three consecutive FreeTierError 403s (the proxy's own credential-recheck
+    probes) drove ``credential-dead reason=streak-3`` on a bearer that kept
+    serving 200s. The tier is the rejected object; the credential authenticated.
+    """
+    monkeypatch.setattr(config, "CREDENTIAL_DEAD_STREAK", 3)
+    bstate = _bstate("tier01")
+    for _ in range(5):
+        proxy._note_bearer_credential("tier01", bstate, 403, bytearray(FREE_TIER_BODY.encode()))
+        assert not proxy._bearer_credential_dead("tier01")
+    assert bstate["credential_streak"] == 0
+
+
+def test_tier_refusal_clears_a_partial_streak(monkeypatch):
+    """Two unrecognised 403s must not combine with a later one through an exempt 403."""
+    monkeypatch.setattr(config, "CREDENTIAL_DEAD_STREAK", 3)
+    bstate = _bstate("tier02")
+    proxy._note_bearer_credential("tier02", bstate, 403, None)
+    proxy._note_bearer_credential("tier02", bstate, 403, None)
+    assert bstate["credential_streak"] == 2
+    proxy._note_bearer_credential("tier02", bstate, 403, bytearray(FREE_TIER_BODY.encode()))
+    assert bstate["credential_streak"] == 0
+    proxy._note_bearer_credential("tier02", bstate, 403, None)
+    assert not proxy._bearer_credential_dead("tier02")
+
+
+def test_tier_exemption_does_not_mask_real_credential_death():
+    """The org-disabled error_code still quarantines on the first response."""
+    bstate = _bstate("tier03")
+    proxy._note_bearer_credential("tier03", bstate, 403, bytearray(ORG_DISABLED_BODY))
+    assert proxy._bearer_credential_dead("tier03")

@@ -403,10 +403,16 @@ def test_operational_timeout_reaps_actual_child(tmp_path):
         sys.executable,
         "-c",
         "import os,time; from pathlib import Path; "
-        f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(5)",
+        f"Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(60)",
     ]
+    # The cap must outlast interpreter start-up, or the child is killed before it writes
+    # the marker. A fixed 0.2 s broke on a loaded runner (32 busy loops: 10 of 10 runs).
+    # Measure this machine's start-up once and scale the cap from it.
+    began = time.monotonic()
+    idle.run([sys.executable, "-c", "pass"], time.monotonic() + 60)
+    cap = max(1.0, 5 * (time.monotonic() - began))
     with pytest.raises(idle.subprocess.TimeoutExpired):
-        idle.run(command, time.monotonic() + 2, cap=0.2)
+        idle.run(command, time.monotonic() + 2 * cap + 5, cap=cap)
     assert marker.exists()
     assert not Path("/proc", marker.read_text()).exists()
 

@@ -1,0 +1,10 @@
+{
+  "date": "19/11/2026",
+  "pr": 94,
+  "head": "48d43535318be972fe98d4015e21e85deb834260",
+  "stateAtPublication": "OPEN",
+  "requiredCI": "both pending",
+  "boundedMergeWaiter": "throttler-astra-pr94-ci-r2.service",
+  "maxWaitSeconds": 870,
+  "liveActivation": false
+}

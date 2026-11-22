@@ -1,0 +1,23 @@
+{
+  "date": "19/11/2026",
+  "pr": 94,
+  "state": "MERGED",
+  "head": "48d43535318be972fe98d4015e21e85deb834260",
+  "mergeSHA": "1a003d7c5ced583d11fd36a30ab18a23fea75e6d",
+  "requiredChecks": [
+    {
+      "context": "CI / ruff-pytest (pull_request)",
+      "status": "success",
+      "description": "Successful in 1m35s",
+      "target_url": "actions/runs/544/jobs/0"
+    },
+    {
+      "context": "CI / ruff-pytest (push)",
+      "status": "success",
+      "description": "Successful in 1m36s",
+      "target_url": "actions/runs/543/jobs/0"
+    }
+  ],
+  "liveDeploymentClaimed": false,
+  "postMergeIntegrationOwner": "requesting session"
+}
