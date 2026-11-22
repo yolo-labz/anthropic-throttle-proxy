@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Throttler quota-meter row, clock and provenance fields (v2)",
+  "description": "Fields added by meter_recorder.v2. Rows written earlier lack them: readers MUST treat a missing field as null (UNKNOWN), never false or 0 (meter_recorder.normalize_row). Existing row fields (sampled_at, util_*, reset_*, stale, event_*) are unchanged.",
+  "type": "object",
+  "properties": {
+    "recorder_observed_at": {
+      "type": ["number", "null"],
+      "description": "Recorder poll time (epoch seconds, local clock). Does not refresh source evidence."
+    },
+    "proxy_header_observed_at": {
+      "type": ["number", "null"],
+      "description": "Proxy time.time() when the response headers were applied (same value as sampled_at). A local receipt clock, not provider event time."
+    },
+    "clock_authority": {
+      "type": ["string", "null"],
+      "description": "Which clock produced proxy_header_observed_at. Producer v2 writes local_proxy_wallclock."
+    },
+    "clock_uncertainty": {
+      "type": ["number", "null"],
+      "description": "Declared skew bound in seconds. null = not measured (UNKNOWN); never 0 by default."
+    },
+    "producer_revision": {
+      "type": ["string", "null"],
+      "description": "Row-producer revision, e.g. meter_recorder.v2. Not a deployed-build identity."
+    },
+    "duplicate_sample": {
+      "type": ["boolean", "null"],
+      "description": "true = same unified_at as the previous row (not independent evidence); false = new header sample; null = unknown (old row without stale)."
+    },
+    "measured_or_projected": {
+      "type": ["string", "null"],
+      "enum": ["measured", "projected", null],
+      "description": "measured = raw cached header value. Display projections (post-reset zero) are never written to this log."
+    }
+  },
+  "required": [],
+  "additionalProperties": true
+}
