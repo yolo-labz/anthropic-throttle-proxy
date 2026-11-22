@@ -11,8 +11,12 @@ the request.
 
 Row shape (never prompt content, never a token)::
 
-    {"epoch", "bearer", "model", "project", "status", "session"?, "usage_complete"?,
-     "input", "output", "cacheRead", "cacheWrite"?}
+    {"epoch", "bearer", "model", "project", "status", "session"?, "elapsed_ms"?,
+     "usage_complete"?, "input", "output", "cacheRead", "cacheWrite"?}
+
+* ``elapsed_ms`` is dispatch-to-finish time (queue wait excluded), the same
+  span as the ``done`` log line. It lets a reader tell a request cut at a client
+  deadline (a 499 near 300 s) from a quick cancel without joining the journal.
 
 * Observed token counts can include aborted, possibly billed work. They are
   lower bounds, not useful native completions or a billing guarantee.
@@ -239,6 +243,7 @@ def record(
     eof: bool | None = None,
     stream_error: bool | None = None,
     via: str = "direct",
+    elapsed_ms: int | None = None,
 ) -> None:
     """Queue one row for this attempt. No-op when the ledger is off. Never raises."""
     if mode() == "off":
@@ -256,6 +261,8 @@ def record(
         }
         if session:
             row["session"] = session  # hashed session key (session_affinity.derive_key)
+        if elapsed_ms is not None:
+            row["elapsed_ms"] = max(0, int(elapsed_ms))
         metadata = _settlement(bytes(captured or b""), tail)
         row.update(metadata, upstream_eof=eof)
         failed = bool(stream_error or metadata["stream_error_seen"] or (status and status >= 400))

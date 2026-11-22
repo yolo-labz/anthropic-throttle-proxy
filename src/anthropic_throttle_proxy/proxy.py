@@ -5757,6 +5757,7 @@ async def _finalize(
             eof=observed.get("eof"),
             stream_error=observed.get("error"),
             via=observed.get("via", attempt.context.get("via", "unknown")),
+            elapsed_ms=int(duration * 1000),
         )
         _summary_breaker.settle(request, final_status, duration)
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
