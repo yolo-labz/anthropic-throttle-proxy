@@ -1,0 +1,8 @@
+2026-11-08T21:00:00.000000-03:00 desktop throttler-gateway[1]: [anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=aaaa1111 cid=x via=direct model=m1 elapsed_ms=1 project=p seat=s/one inflight=0
+2026-11-08T21:00:30.000000-03:00 desktop throttler-gateway[1]: [anthropic-throttle] affinity-migrate session=ffff0000 from=aaaa1111 to=bbbb2222
+2026-11-08T21:00:33.000000-03:00 desktop throttler-gateway[1]: [anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=bbbb2222 cid=x via=direct model=m1 elapsed_ms=1 project=p seat=s/one inflight=0
+2026-11-08T22:00:00.000000-03:00 desktop throttler-gateway[2]: [anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=aaaa1111 cid=x via=direct model=m1 elapsed_ms=1 project=p seat=s/one inflight=0
+2026-11-08T22:01:00.000000-03:00 desktop throttler-gateway[2]: [anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=bbbb2222 cid=x via=direct model=m1 elapsed_ms=1 project=p seat=s/one inflight=0
+2026-11-08T22:02:00.000000-03:00 desktop throttler-gateway[2]: [anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=bbbb2222 cid=x via=direct model=m1 elapsed_ms=1 project=p seat=s/one inflight=0
+2026-11-08T22:03:00.000000-03:00 desktop throttler-gateway[2]: [anthropic-throttle] done   method=POST path=/v1/messages status=200 bid=bbbb2222 cid=x via=direct model=m1 elapsed_ms=1 project=p seat=s/one inflight=0
+2026-11-08T22:20:00.000000-03:00 desktop throttler-gateway[2]: [anthropic-throttle] account-route from=api-key to=bbbb2222 label=x
