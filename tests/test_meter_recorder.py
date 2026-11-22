@@ -230,3 +230,23 @@ def test_rows_written_before_7d_oi_stay_readable_and_seed_the_next_reading(tmp_p
     new = _lines(path)[-1]
     assert new["event_7d_oi"] == "first"  # no 7d_oi in the old row: nothing to compare
     assert new["event_7d"] == "steady"
+
+
+def test_non_fable_response_after_a_fable_one_leaves_the_bucket_in_the_row(tmp_path):
+    # Only Fable responses carry 7d_oi; every other response replaces bstate["unified"].
+    # proxy._keep_fable_bucket keeps the last Fable reading, the recorder falls back to it.
+    kept = {"util_7d_oi": 0.44, "reset_7d_oi": RESET_7D_OI, "status_7d_oi": "allowed"}
+    state = {"b": {**_bearer_oi(0.44, at=1.0), "fable_bucket": kept}}
+    rec = _rec(tmp_path, state)
+    assert rec.rows(10)[0]["util_7d_oi"] == 0.44
+    state["b"] = {**_bearer(0.21, 0.31, at=2.0), "fable_bucket": kept}  # an Opus response
+    row = rec.rows(20)[0]
+    assert (row["util_7d_oi"], row["reset_7d_oi"], row["status_7d_oi"]) == (
+        0.44,
+        RESET_7D_OI,
+        "allowed",
+    )
+    assert row["event_7d_oi"] == "steady"
+    # A fresh Fable reading in the same sample wins over the kept one.
+    state["b"] = {**_bearer_oi(0.50, at=3.0), "fable_bucket": kept}
+    assert rec.rows(30)[0]["util_7d_oi"] == 0.50
