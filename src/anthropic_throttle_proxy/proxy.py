@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -65,6 +66,7 @@ from . import free_budget as _free_budget
 from . import history as _history
 from . import lanes as _lanes
 from . import limiter as _limiter
+from . import metered_spend as _metered_spend
 from . import model_retry as _model_retry
 from . import pacing as _pacing
 from . import points as _points
@@ -1419,11 +1421,88 @@ def _api_key_routing_enabled() -> bool:
     return config.API_KEY_ROUTING_MODE in {"overflow", "prefer"} and bool(config.API_KEY_FILE)
 
 
+def _metered_lane_bound() -> bool:
+    """The owned key spends real dollars: the Anthropic API-key lane."""
+    upstream = urlsplit(config.UPSTREAM)
+    return upstream.scheme == "https" and upstream.hostname == "api.anthropic.com"
+
+
+def _caller_supplied_api_key(headers: object) -> bool:
+    """The client sent its OWN key: ``x-api-key``, no Authorization, not the sentinel.
+
+    Same predicate the router uses to skip the owned candidate
+    (``explicit_api_key`` in ``_route_account_if_enabled``). Such a request
+    shares the ``api-key`` bearer id with the owned key (``ratelimit._api_key_id``
+    is constant), so without this its spend would count against the owned USD
+    ceiling and refuse the owned key early (p2S adversarial read of #62, S2).
+    """
+    get = getattr(headers, "get", None)
+    if get is None:
+        return False
+    key = get("x-api-key") or get("X-Api-Key") or get("X-API-Key")
+    if not key or get("Authorization") or get("authorization"):
+        return False
+    owned = _owned_api_key_token()
+    if owned is not None and hmac.compare_digest(key.encode(), owned.encode()):
+        return False  # the owned key itself, presented by a client: still owned spend (N1)
+    return key != config.LOCAL_API_KEY_SENTINEL
+
+
+_metered_refusal_logged = ""
+
+
+def _metered_refusal(model: str) -> str | None:
+    """Why the owned metered key must not take this request (USD ceiling), or None.
+
+    No ceiling, an unreadable spend file, a spent window, or a model whose price
+    is unknown (its spend could never be counted) all refuse. One log line per
+    change of reason, so a refused storm does not flood the journal.
+    """
+    global _metered_refusal_logged
+    reason = _metered_spend.refusal(
+        config.API_KEY_USD_CEILING,
+        config.API_KEY_SPEND_FILE,
+        config.API_KEY_USD_WINDOW_S,
+        time.time(),
+    )
+    if reason is None and model and _pricing_for(model) is None:
+        reason = "unpriced-model"
+    kind = reason.split(" ", 1)[0] if reason else "allowed"
+    if kind != _metered_refusal_logged:
+        _metered_refusal_logged = kind
+        log(f"api-key-candidate {'refused reason=' + reason if reason else 'allowed'}")
+    return reason
+
+
 def _bearer_retry_after_remaining(bid: str) -> float:
     retry_after_remaining = getattr(config.bearer_limiters.get(bid), "retry_after_remaining", None)
     if callable(retry_after_remaining):
         return retry_after_remaining()
     return max(0.0, float(_limiter._load_retry_after_state().get(bid, 0.0)) - time.time())
+
+
+def _owned_api_key_token() -> str | None:
+    """The gateway-owned key from its 0600 runtime file, cached by (mtime, size).
+
+    A request normally pays one stat(); rotation is picked up without restart.
+    """
+    if not config.API_KEY_FILE:
+        return None
+    try:
+        st = os.stat(config.API_KEY_FILE)
+    except OSError:
+        return None
+    global _api_key_cache
+    if _api_key_cache is None or _api_key_cache[:2] != (st.st_mtime_ns, st.st_size):
+        try:
+            with open(config.API_KEY_FILE, encoding="utf-8") as fh:
+                token = fh.read().strip()
+        except OSError:
+            return None
+        if not token:
+            return None
+        _api_key_cache = (st.st_mtime_ns, st.st_size, _api_key_bid(token), token)
+    return _api_key_cache[3]
 
 
 def _api_key_candidate(
@@ -1471,21 +1550,12 @@ def _api_key_candidate(
             matching[0], model, config.API_KEY_SCOPE
         ):
             return None
-    try:
-        st = os.stat(config.API_KEY_FILE)
-    except OSError:
+        if _metered_refusal(model) is not None:
+            return None
+    token = _owned_api_key_token()
+    if token is None:
         return None
-    global _api_key_cache
-    if _api_key_cache is None or _api_key_cache[:2] != (st.st_mtime_ns, st.st_size):
-        try:
-            with open(config.API_KEY_FILE, encoding="utf-8") as fh:
-                token = fh.read().strip()
-        except OSError:
-            return None
-        if not token:
-            return None
-        _api_key_cache = (st.st_mtime_ns, st.st_size, _api_key_bid(token), token)
-    bid, token = _api_key_cache[2], _api_key_cache[3]
+    bid = _api_key_bid(token)
     if _bearer_retry_after_remaining(bid) > 0:
         return None
     return {
@@ -5658,6 +5728,16 @@ def _record_usage(
             cost = (count / 1_000_000.0) * rates[kind]
             M_COST.labels(model=model_label, kind=kind).inc(cost)
             spend_usd += cost
+        if (
+            seat == API_KEY_BEARER_ID
+            and spend_usd > 0
+            and _metered_lane_bound()
+            and not _caller_supplied_api_key(seat_headers)
+            and not _metered_spend.record(
+                config.API_KEY_SPEND_FILE, spend_usd, config.API_KEY_USD_WINDOW_S, time.time()
+            )
+        ):
+            log("api-key-spend unrecorded: spend file unreadable; metered lane stays refused")
         if spend_usd > 0 and (lane or seat):
             # Spec 337: per-lane/seat spend — what is being spent, by whom.
             M_SPEND.labels(lane=lane or "local", seat=seat or "unknown", model=model_label).inc(
@@ -8811,6 +8891,12 @@ async def health(_request: web.Request) -> web.Response:
             "routing": config.API_KEY_ROUTING_MODE,
             "label": config.API_KEY_LABEL,
             "max_concurrent": config.API_KEY_MAX_CONCURRENT,
+            # 09/11 incident: the ceiling and the window's persisted spend.
+            "usd_ceiling": config.API_KEY_USD_CEILING,
+            "usd_window_s": config.API_KEY_USD_WINDOW_S,
+            "usd_window_spend": _metered_spend.window_spend(
+                config.API_KEY_SPEND_FILE, config.API_KEY_USD_WINDOW_S, time.time()
+            ),
         },
         "central_last_check": state["central_last_check"],
         # PR #562/#573: per-bearer + per-client view so /__throttle/health
