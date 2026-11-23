@@ -1,7 +1,4 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/yolo-labz/.github/main/profile/assets/brand/logo-mark-dark.svg">
-  <img src="https://raw.githubusercontent.com/yolo-labz/.github/main/profile/assets/brand/logo-mark-light.svg" alt="yolo-labz" width="48">
-</picture>
+<img src="https://raw.githubusercontent.com/yolo-labz/.github/96969d2591eae5b32c6f6e67a0812f2bca3085bd/profile/assets/brand/repo-headers/anthropic-throttle-proxy.png" alt="anthropic-throttle-proxy: Pace Anthropic API traffic across clients with per-bearer queues and a live dashboard." width="100%">
 
 <p align="center">
   <img src="assets/brand/lockup.svg" alt="Throttler, fleet-wide pacing and admission" width="460">
