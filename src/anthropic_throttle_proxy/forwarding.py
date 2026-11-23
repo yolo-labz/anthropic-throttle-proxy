@@ -520,6 +520,7 @@ async def _forward_once(
                     pool_ticket = account_pool.BALANCER.begin(_bearer_id(headers))
                 pool_usage = None
                 try:
+                    usage_ledger.note_physical_attempt(request)
                     async with session.request(
                         request.method,
                         url,
@@ -527,6 +528,7 @@ async def _forward_once(
                         data=body,
                         allow_redirects=False,
                     ) as upstream:
+                        usage_ledger.note_response(request, upstream)
                         if retryable_statuses and upstream.status in retryable_statuses:
                             payload = await upstream.read()
                             pool_usage = _parse_sse_usage(payload)

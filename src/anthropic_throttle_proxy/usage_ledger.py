@@ -30,6 +30,27 @@ Row shape (never prompt content, never a token)::
   the captured bytes (capture is capped at 1 MiB); the counts are then lower
   bounds.
 
+Attempt correlation (``THROTTLE_ATTEMPT_ID_CAPTURE=observe``, needs the ledger on, default off):
+a row is one GATEWAY REQUEST. It may hold several PHYSICAL upstream HTTP attempts (a held
+429 retried, a direct fallback). Added fields, all content-free:
+
+* ``gateway_request_id`` random hex made by the gateway; the only id the gateway itself owns.
+* ``attempt_binding`` how the client claim ended: ``missing`` | ``invalid`` | ``repeated`` (the
+  header twice, same value) | ``conflicting`` (twice, different values) | ``replayed`` (valid
+  UUID already seen in this process window) | ``claimed`` (one well-formed, first-seen value).
+* ``x_pi_attempt_id`` the value, only for ``claimed``. A client header is a CLAIM: nothing here
+  authenticates the producer. A join needs independent evidence, i.e. the same
+  ``provider_request_id`` on the producer's row. Any id that appears in more than one row joins
+  nothing (rows written before a replay cannot be rewritten).
+* ``physical_attempts`` upstream sends counted for this request; ``upstream_responses`` how many
+  answered; ``retry_observed`` is ``physical_attempts > 1``.
+* ``provider_request_ids`` one entry per response (``null`` where the header was absent or not
+  ``req_...``); ``provider_request_id`` only when exactly one send, one response and the egress
+  was direct, else ``null``.
+
+No account, reset or timestamp inference is added; ``bearer`` stays the opaque hash and reset
+provenance stays absent.
+
 Off the hot path: ``record`` only parses the already-captured bytes and calls
 ``put_nowait``. A daemon thread does the file I/O, so the event loop never
 waits on disk. A full queue or a write error drops the row and is counted; it
@@ -45,8 +66,11 @@ import hashlib
 import json
 import logging
 import queue
+import re
 import threading
 import time
+import uuid
+from collections import OrderedDict
 from pathlib import Path
 
 from aiohttp import web
@@ -61,6 +85,14 @@ MAX_BYTES = 64 * 1024 * 1024
 _QUEUE_MAX = 4096
 _BATCH = 256
 CAPTURE_KEY = web.RequestKey("usage_ledger.upstream_capture", dict)
+ATTEMPT_KEY = web.RequestKey("usage_ledger.attempt_correlation", dict)
+ATTEMPT_HEADER = "x-pi-attempt-id"
+_UUID4 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+_PROVIDER_ID = re.compile(r"^req_[A-Za-z0-9]{8,64}$")
+_SEEN_MAX = 8192
+_MAX_RESPONSES = 8
+_seen_ids: OrderedDict[str, None] = OrderedDict()
+_seen_lock = threading.Lock()
 
 
 def save_capture(request, upstream, captured: bytearray, tail: bytearray, error: bool) -> None:
@@ -230,6 +262,93 @@ def _counts(usage: dict, output) -> dict:
     }
 
 
+def attempt_capture_on() -> bool:
+    raw = (getattr(config, "ATTEMPT_ID_CAPTURE_MODE", "off") or "").strip().lower()
+    return mode() == "observe" and raw == "observe"
+
+
+def _attempt_state(request) -> dict:
+    state = request.get(ATTEMPT_KEY)
+    if state is None:
+        state = {"sends": 0, "responses": []}
+        request[ATTEMPT_KEY] = state
+    return state
+
+
+def note_physical_attempt(request) -> None:
+    """Count one upstream HTTP send for this gateway request. Never raises."""
+    if not attempt_capture_on():
+        return
+    try:
+        _attempt_state(request)["sends"] += 1
+    except Exception:
+        _stats["dropped"] += 1
+
+
+def _provider_id(headers) -> str | None:
+    found = {
+        v
+        for v in (headers.get("request-id"), headers.get("x-request-id"))
+        if isinstance(v, str) and _PROVIDER_ID.fullmatch(v)
+    }
+    return found.pop() if len(found) == 1 else None  # two different ids: observe neither
+
+
+def note_response(request, upstream) -> None:
+    """Keep the provider request id of one upstream response (validated shape only)."""
+    if not attempt_capture_on():
+        return
+    try:
+        responses = _attempt_state(request)["responses"]
+        if len(responses) < _MAX_RESPONSES:
+            responses.append(_provider_id(upstream.headers))
+    except Exception:
+        _stats["dropped"] += 1
+
+
+def _claim(request) -> tuple[str, str | None]:
+    values = request.headers.getall(ATTEMPT_HEADER, [])
+    if not values:
+        return "missing", None
+    if len(values) > 1:
+        return ("repeated" if len(set(values)) == 1 else "conflicting"), None
+    value = values[0]
+    if not _UUID4.fullmatch(value):
+        return "invalid", None
+    with _seen_lock:
+        if value in _seen_ids:
+            _seen_ids.move_to_end(value)
+            return "replayed", None
+        _seen_ids[value] = None
+        while len(_seen_ids) > _SEEN_MAX:
+            _seen_ids.popitem(last=False)
+    return "claimed", value
+
+
+def correlation_of(request, via: str = "unknown") -> dict:
+    """Row fields for this request's attempt correlation; ``{}`` when the capture is off."""
+    if not attempt_capture_on():
+        return {}
+    try:
+        binding, value = _claim(request)
+        state = request.get(ATTEMPT_KEY) or {"sends": 0, "responses": []}
+        sends, responses = int(state["sends"]), list(state["responses"])
+        single = sends == 1 and len(responses) == 1 and via == "direct"
+        return {
+            "gateway_request_id": uuid.uuid4().hex,
+            "attempt_binding": binding,
+            "x_pi_attempt_id": value,
+            "physical_attempts": sends,
+            "upstream_responses": len(responses),
+            "retry_observed": sends > 1,
+            "provider_request_ids": responses,
+            "provider_request_id": responses[0] if single else None,
+        }
+    except Exception:
+        _stats["dropped"] += 1
+        return {}
+
+
 def record(
     *,
     bearer: str | None,
@@ -244,6 +363,7 @@ def record(
     stream_error: bool | None = None,
     via: str = "direct",
     elapsed_ms: int | None = None,
+    correlation: dict | None = None,
 ) -> None:
     """Queue one row for this attempt. No-op when the ledger is off. Never raises."""
     if mode() == "off":
@@ -263,6 +383,8 @@ def record(
             row["session"] = session  # hashed session key (session_affinity.derive_key)
         if elapsed_ms is not None:
             row["elapsed_ms"] = max(0, int(elapsed_ms))
+        if correlation:
+            row.update(correlation)
         metadata = _settlement(bytes(captured or b""), tail)
         row.update(metadata, upstream_eof=eof)
         failed = bool(stream_error or metadata["stream_error_seen"] or (status and status >= 400))

@@ -529,6 +529,9 @@ _FIVE_HOUR_RAW = os.environ.get("THROTTLE_5H_SOURCE", "off").strip().lower()
 FIVE_HOUR_SOURCE = _FIVE_HOUR_RAW if _FIVE_HOUR_RAW in ("off", "observe", "enforce") else "off"
 # Per-request quota ledger (usage_ledger.py): off|observe. Measurement only; read per call.
 USAGE_LEDGER_MODE = os.environ.get("THROTTLE_USAGE_LEDGER", "off")
+# Attempt-correlation capture on ledger rows (usage_ledger.py): off|observe, default off.
+# Needs the ledger itself on. Content-free: validated ids and counts only.
+ATTEMPT_ID_CAPTURE_MODE = os.environ.get("THROTTLE_ATTEMPT_ID_CAPTURE", "off")
 # pi summary stop-loss (summary_breaker.py): off|observe|enforce; default observe (logs and
 # counts, never refuses); enforce answers a cut session's summaries locally. Unknown means off.
 # A session whose compaction summary the client cut (499) after MIN_S of upstream time

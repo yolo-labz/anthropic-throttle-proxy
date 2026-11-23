@@ -4182,9 +4182,11 @@ async def _forward_once_into_sse(
             with calibration_attempt(permit) as calibration:
                 permit.handoff()
                 try:
+                    usage_ledger.note_physical_attempt(request)
                     async with session.request(
                         request.method, url, headers=headers, data=body, allow_redirects=False
                     ) as upstream:
+                        usage_ledger.note_response(request, upstream)
                         meta = _extract_ratelimit(upstream.headers)
                         # Throttle / error status: capture, without inventing completion.
                         if upstream.status in config.THROTTLE_STATUSES or upstream.status >= 400:
@@ -6049,6 +6051,9 @@ async def _finalize(
             stream_error=observed.get("error"),
             via=observed.get("via", attempt.context.get("via", "unknown")),
             elapsed_ms=int(duration * 1000),
+            correlation=usage_ledger.correlation_of(
+                request, observed.get("via", attempt.context.get("via", "unknown"))
+            ),
         )
         _summary_breaker.settle(request, final_status, duration)
     _log_final_status_reason(bid, model_label, attempt, final_status, path)
