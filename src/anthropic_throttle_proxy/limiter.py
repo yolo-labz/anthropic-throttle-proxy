@@ -853,6 +853,9 @@ class FairBearerLimiter:
             maxlen=_SERVICE_SAMPLES
         )
         self._lock = asyncio.Lock()
+        # Wall clock of the last QueueWaitTimeout: proof that the drain estimate
+        # was too optimistic for this lane (session-affinity pin release reads it).
+        self.last_queue_timeout_at = 0.0
         # _last_throttle_at: monotonic-ish wall clock of the last shrink.
         # _successes_since_throttle: consecutive 2xx since that shrink.
         # _retry_after_until: wall-clock end of any open Retry-After window.
@@ -1712,6 +1715,7 @@ class _FairSlotContext:
             try:
                 self.priority, self.lease = await asyncio.wait_for(acquire, timeout=self.max_wait)
             except TimeoutError as exc:
+                self.limiter.last_queue_timeout_at = time.time()
                 raise QueueWaitTimeout(self.max_wait, estimate=self._estimate()) from exc
         else:
             self.priority, self.lease = await acquire

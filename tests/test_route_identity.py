@@ -46,14 +46,14 @@ def bridge(monkeypatch):
 
 
 def _fake_route(monkeypatch, label, claimed=False):
-    def fake(headers, bid, *, method, path, model, max_tokens):
+    def fake(headers, bid, *, method, path, model, max_tokens, wait_budget_s=None):
         return "bid-selected", label, claimed
 
     monkeypatch.setattr(proxy, "_route_account_and_claim_retry_probe", fake)
 
 
 def _request() -> SimpleNamespace:
-    return SimpleNamespace(method="POST", query_string="")
+    return SimpleNamespace(method="POST", query_string="", headers={})
 
 
 def test_claim_route_records_trusted_selected_source(bridge, monkeypatch):
