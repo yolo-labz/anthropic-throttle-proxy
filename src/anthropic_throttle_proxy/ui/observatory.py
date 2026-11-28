@@ -9,11 +9,13 @@ change. No collectors, network calls, capture, or runtime mutations live here.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import aiohttp_jinja2
 from aiohttp import web
@@ -40,7 +42,8 @@ COLUMNS = (
     ("reasoning", "Of which reasoning"),
 )
 _FILTER_DEFAULTS = {"provider": "", "model": "", "role": "", "measure": "tokens"}
-_UNSUPPORTED_SELECTIONS = ("account", "from", "to", "pane", "resolution", "mode", "as_of")
+_UNSUPPORTED_SELECTIONS = ("account", "from", "to", "pane", "resolution")
+_LOADED_SHA256 = re.compile(r"[0-9a-f]{64}")
 CLASS_LABELS = dict(usage.COLUMNS)
 FRESHNESS_LABELS = {
     "ok": "Source within one hour",
@@ -230,28 +233,67 @@ def build_view(summary: us.Summary, query: Mapping[str, str], *, now: float) -> 
     }
 
 
-def view(query: Mapping[str, str], now: float | None = None) -> dict[str, Any]:
+class _PinnedSummaryUnavailable(Exception):
+    """The existing loader cannot resolve the requested immutable generation."""
+
+
+def view(
+    query: Mapping[str, str], now: float | None = None, *, frozen_sha256: str | None = None
+) -> dict[str, Any]:
     """Reuse the bounded, stat-keyed loader; called in a worker thread."""
-    now = time.time() if now is None else now
     path = usage.summary_path()
     if path is None:
+        if frozen_sha256 is not None:
+            raise _PinnedSummaryUnavailable
         return {
             "state": "missing",
             "error": "No published usage summary is configured for this process.",
         }
     summary, error = usage._read(path)
+    if frozen_sha256 is not None:
+        # ponytail: compare only the loaded digest in the existing read. No archive or fallback.
+        if summary is None or summary.loaded_sha256 != frozen_sha256:
+            raise _PinnedSummaryUnavailable
+        pinned = build_view(summary, query, now=summary.generated_at.timestamp())
+        pin = {"mode": "frozen", "as_of": frozen_sha256}
+        pinned.update(
+            frozen=True,
+            captured_at=None,
+            source_age=None,
+            clear_url="/ui/observatory?" + urlencode(pin),
+            current_url="/ui/observatory?" + urlencode(pinned["selected"]),
+        )
+        return pinned
     if summary is None:
         return {"state": "error", "error": error}
-    return build_view(summary, query, now=now)
+    current = build_view(summary, query, now=time.time() if now is None else now)
+    if summary.loaded_sha256:
+        selection = current["selected"] | {"mode": "frozen", "as_of": summary.loaded_sha256}
+        current["freeze_url"] = "/ui/observatory?" + urlencode(selection)
+    return current
 
 
-def _query_selections(request: web.Request) -> dict[str, str]:
+def _query_selections(request: web.Request) -> tuple[dict[str, str], str | None]:
     query = request.query
     for key in _UNSUPPORTED_SELECTIONS:
         if key in query:
             raise ValueError(
                 f"Unsupported Observatory selection: {key}. Use provider, model, role, or measure."
             )
+
+    modes = query.getall("mode", [])
+    digests = query.getall("as_of", [])
+    frozen_sha256 = None
+    if modes:
+        if modes != ["frozen"] or not digests:
+            raise ValueError(
+                "Unsupported Observatory selection: mode. Frozen mode requires one as_of SHA-256."
+            )
+        if len(digests) != 1 or not _LOADED_SHA256.fullmatch(digests[0]):
+            raise ValueError("Invalid Observatory as_of: expected one lowercase SHA-256.")
+        frozen_sha256 = digests[0]
+    elif digests:
+        raise ValueError("Unsupported Observatory selection: as_of. Use mode=frozen.")
 
     # Other parameters are not selection controls (for example, cache busters).
     selected = {}
@@ -261,13 +303,22 @@ def _query_selections(request: web.Request) -> dict[str, str]:
             raise ValueError(f"Conflicting {key} filter values. Send one value per filter.")
         if values:
             selected[key] = values[0]
-    return selected
+    return selected, frozen_sha256
 
 
 async def index(request: web.Request) -> web.Response:
     """GET-only snapshot. Inspection never starts background refresh or traffic."""
     try:
-        context = await asyncio.to_thread(view, _query_selections(request))
+        selected, frozen_sha256 = _query_selections(request)
+        if frozen_sha256 is None:
+            context = await asyncio.to_thread(view, selected)
+        else:
+            context = await asyncio.to_thread(view, selected, frozen_sha256=frozen_sha256)
+    except _PinnedSummaryUnavailable:
+        raise web.HTTPNotFound(
+            text="Pinned Observatory summary unavailable or expired.",
+            headers={"Cache-Control": "no-store"},
+        ) from None
     except ValueError as exc:
         raise web.HTTPBadRequest(text=str(exc), headers={"Cache-Control": "no-store"}) from None
     from .routes import _ASSET_V

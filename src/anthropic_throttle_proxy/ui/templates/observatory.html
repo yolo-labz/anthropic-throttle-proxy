@@ -19,19 +19,25 @@
   {% if preview_label|default("") %}<p class="ob-preview">{{ preview_label }}</p>{% endif %}
   <section class="ob-titlebar" aria-labelledby="ob-title">
     <div><p class="ob-eyebrow">01 / USAGE ATTRIBUTION</p><h1 id="ob-title">Where the volume goes.</h1><p class="ob-subtitle">Provider → model. One source window. Every count inspectable.</p></div>
-    <div class="ob-snapshot"><span class="ob-snapshot-mark" aria-hidden="true"></span><span>Manual snapshot<br><small>Refresh with “Update view”</small></span></div>
+    {% if ob.state == "ok" and not ob.frozen|default(false) %}<div class="ob-snapshot"><span class="ob-snapshot-mark" aria-hidden="true"></span><span>Manual snapshot<br><small>Refresh with “Update view”</small></span></div>{% endif %}
   </section>
   {% if ob.state == "ok" %}
   <form class="ob-controls" method="get" action="/ui/observatory" aria-label="Filter usage attribution">
+    {% if ob.frozen|default(false) %}<input type="hidden" name="mode" value="frozen"><input type="hidden" name="as_of" value="{{ ob.loaded_sha256 }}">{% endif %}
     <div class="ob-control"><label for="ob-provider">Provider</label><select id="ob-provider" name="provider"><option value="">All providers</option>{% for value in ob.provider_options %}<option value="{{ value }}"{% if value == ob.selected.provider %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
     <div class="ob-control ob-model-control"><label for="ob-model">Model</label><select id="ob-model" name="model"><option value="">All models</option>{% for value in ob.model_options %}<option value="{{ value }}"{% if value == ob.selected.model %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
     <div class="ob-control"><label for="ob-role">Call type</label><select id="ob-role" name="role">{% for value, label in roles %}<option value="{{ value }}"{% if value == ob.selected.role %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <div class="ob-control ob-measure-control"><label for="ob-measure">Measure</label><select id="ob-measure" name="measure">{% for value, label in measures %}<option value="{{ value }}"{% if value == ob.selected.measure %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
     <button type="submit" class="ob-apply">Update view <span aria-hidden="true">↻</span></button>
-    <a class="ob-clear" href="/ui/observatory">Clear filters</a>
+    <a class="ob-clear" href="{{ ob.clear_url|default('/ui/observatory') }}">Clear filters</a>
   </form>
   <div class="ob-source-strip">
+    {% if ob.frozen|default(false) %}
+    <span><strong>Frozen snapshot</strong> · Request time not recorded. No archive is kept. <a href="{{ ob.current_url }}">Return to current</a></span>
+    {% else %}
     <span class="ob-freshness ob-{{ ob.freshness }}"><span aria-hidden="true">●</span> {{ ob.freshness_label }} · {{ ob.source_age }}</span>
+    {% if ob.freeze_url|default('') %}<a href="{{ ob.freeze_url }}">Freeze this summary</a>{% endif %}
+    {% endif %}
     <span>Source window <strong>{{ ob.window_span }}</strong> · {{ ob.window_start }} → {{ ob.window_end }}</span>
   </div>
   <div class="ob-workspace">
@@ -70,7 +76,7 @@
           </div>
           {% endfor %}
         </section>
-        {% else %}<div class="ob-empty"><h2>No rows match this scope.</h2><p>The source exists. This provider, model and call-type combination has no recorded rows.</p><a href="/ui/observatory">Return to all recorded usage</a></div>{% endfor %}
+        {% else %}<div class="ob-empty"><h2>No rows match this scope.</h2><p>The source exists. This provider, model and call-type combination has no recorded rows.</p><a href="{{ ob.clear_url|default('/ui/observatory') }}">Return to all recorded usage</a></div>{% endfor %}
       </div>
       <p class="ob-chart-footnote">All lanes share a zero origin and the same full-source maximum. Tiny volumes may be below one pixel. Exact values remain available below.</p>
     </section>
@@ -87,7 +93,7 @@
       {% if ob.files_skipped or ob.rejected_rows %}<p class="ob-coverage-note">Coverage has exclusions. Counts describe accepted records only.</p>{% endif %}
       <details class="ob-source-detail"><summary>How to read this view</summary><div><p>Accounted tokens add fresh input, cache write, cache read and output. Reasoning is already inside output.</p><p>Recorded calls count usage-bearing source records. They do not establish unique tasks or physical API attempts.</p><p>Filters select source rows across this whole window. Pane labels are source attribution, not verified workspace ownership.</p></div></details>
       <details class="ob-source-detail"><summary>What this source cannot show</summary><div><p>No quota denominator, account eligibility, request timeline or smaller time buckets is present in this aggregate.</p><p>This is observed usage coverage, not complete provider history, billed spend or live streaming speed. No reported exclusions does not prove complete coverage.</p><a href="/ui">Inspect the existing dashboard</a></div></details>
-      <p class="ob-captured">Page captured {{ ob.captured_at }}.<br>Source time does not advance while you inspect.</p>
+      {% if not ob.frozen|default(false) %}<p class="ob-captured">Page captured {{ ob.captured_at }}.<br>Source time does not advance while you inspect.</p>{% endif %}
     </aside>
   </div>
   <details class="ob-data-drawer" id="ob-exact-data">
