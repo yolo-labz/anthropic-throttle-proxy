@@ -15,7 +15,7 @@
         {
           default = pkgs.mkShellNoCC {
             name = "throttler-dev";
-            packages = [ pkgs.python314 pkgs.uv ];
+            packages = [ pkgs.python314 pkgs.uv pkgs.nodejs_22 ];
 
             UV_PYTHON = pkgs.python314.interpreter;
             UV_PYTHON_DOWNLOADS = "never";

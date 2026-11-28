@@ -58,10 +58,12 @@ uv run --locked python -c "import duckdb"
 uv run --locked pytest
 ```
 
-The shell supplies Python 3.14, uv, and the C++ runtime required by the locked
-DuckDB wheel. Python downloads are disabled in this shell so uv uses its Nix
-interpreter. Python dependencies remain governed by `uv.lock`. The development
-shell does not start the gateway or change a running service.
+The shell supplies Python 3.14, uv, Node.js 22, and the C++ runtime required by
+the locked DuckDB wheel. Node provides built-in SQLite and TypeScript stripping
+for the OpenAI token-admission tests. Python downloads are disabled in this
+shell so uv uses its Nix interpreter. Python dependencies remain governed by
+`uv.lock`. The development shell does not start the gateway or change a running
+service.
 
 ## Canonical commands and compatibility
 
