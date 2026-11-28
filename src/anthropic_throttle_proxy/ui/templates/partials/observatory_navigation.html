@@ -1,0 +1,10 @@
+<nav class="ob-shell-nav" aria-label="Observatory">
+  <a class="ob-shell-dashboard" href="/ui">Dashboard</a>
+  {% if ob.state == "ok" %}
+  <a class="ob-shell-flow" href="#ob-volume-title">Observed volume</a>
+  <a href="#ob-exact-data">Exact data</a>
+  <a href="#ob-source">Source &amp; coverage</a>
+  {% else %}
+  <a href="#ob-source">Required source</a>
+  {% endif %}
+</nav>

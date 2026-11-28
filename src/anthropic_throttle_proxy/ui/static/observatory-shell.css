@@ -1,0 +1,93 @@
+/* Observatory shell; loaded after observatory.css. */
+.observatory .ob-masthead {
+  flex-wrap: wrap;
+  row-gap: .5rem;
+}
+
+.observatory .ob-shell-nav {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .25rem;
+  min-inline-size: 0;
+  font-size: .8125rem;
+}
+
+/* The base mobile masthead hides its second link. Keep every shell link visible. */
+.observatory .ob-masthead .ob-shell-nav a {
+  display: inline-flex;
+}
+
+.observatory .ob-shell-nav a {
+  align-items: center;
+  min-block-size: 2.75rem;
+  padding-inline: .625rem;
+  color: var(--ctp-text);
+}
+
+.observatory .ob-shell-nav .ob-shell-dashboard {
+  color: var(--ctp-subtext1);
+}
+
+.observatory .ob-shell-nav .ob-shell-flow {
+  color: var(--ctp-sky);
+  font-weight: 600;
+}
+
+.observatory .ob-shell-nav a:hover,
+.observatory .ob-shell-nav a:focus-visible {
+  color: var(--ctp-sky);
+  background: var(--ctp-base);
+  text-decoration: underline;
+}
+
+.observatory .ob-shell-nav a:focus-visible {
+  outline-offset: -2px;
+}
+
+.observatory #ob-volume-title,
+.observatory #ob-source,
+.observatory #ob-exact-data {
+  scroll-margin-block-start: 1rem;
+}
+
+.observatory #ob-volume-title:target {
+  color: var(--ctp-sky);
+  text-decoration: underline;
+  text-underline-offset: .25em;
+}
+
+.observatory #ob-source:target,
+.observatory #ob-exact-data:target {
+  outline: 1px solid var(--ctp-sky);
+  outline-offset: -1px;
+}
+
+.observatory .ob-data-drawer > summary {
+  min-block-size: 2.75rem;
+  padding-block: .5rem;
+}
+
+.observatory .ob-data-drawer > summary:hover,
+.observatory .ob-data-drawer > summary:focus-visible {
+  background: var(--ctp-base);
+}
+
+.observatory .ob-data-drawer > summary:focus-visible {
+  outline-offset: -2px;
+}
+
+.observatory .ob-table-scroll:focus-visible {
+  outline-offset: -2px;
+}
+
+.observatory .ob-table :is(th, td) {
+  padding-block: .5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 560px) {
+  .observatory .ob-shell-nav {
+    flex-basis: 100%;
+    border-block-start: 1px solid var(--ctp-surface0);
+  }
+}

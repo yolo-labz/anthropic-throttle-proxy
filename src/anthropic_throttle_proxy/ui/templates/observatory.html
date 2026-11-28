@@ -8,12 +8,13 @@
   <link rel="icon" href="/ui/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/ui/static/style.css?v={{ asset_v }}">
   <link rel="stylesheet" href="/ui/static/observatory.css?v={{ asset_v }}">
+  <link rel="stylesheet" href="/ui/static/observatory-shell.css?v={{ asset_v }}">
 </head>
 <body class="observatory">
 <a class="ob-skip" href="#ob-main">Skip to main content</a>
 <header class="ob-masthead">
   <div class="ob-brand"><span class="ob-brand-mark" aria-hidden="true"></span><span>THROTTLER</span><span class="ob-divider" aria-hidden="true">/</span><span class="ob-eyebrow">PROVIDER OBSERVATORY</span></div>
-  <nav aria-label="Observatory"><a href="/ui">Dashboard <span aria-hidden="true">↗</span></a><a href="#ob-source">Source &amp; coverage</a></nav>
+  {% include "partials/observatory_navigation.html" %}
 </header>
 <main id="ob-main">
   {% if preview_label|default("") %}<p class="ob-preview">{{ preview_label }}</p>{% endif %}
