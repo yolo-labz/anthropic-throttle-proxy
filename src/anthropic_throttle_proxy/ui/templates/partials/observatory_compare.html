@@ -1,0 +1,63 @@
+<section aria-label="Output-token period comparison">
+  <h2>Output-token period comparison</h2>
+  <p>All recorded gateway observations. Provider, model and account filters do not apply to this comparison.</p>
+  {% if comparison.status == 'unavailable' %}
+  <p><strong>Comparison unavailable.</strong> {{ comparison.reason }}</p>
+  {% else %}
+  <p>Same UTC grain ({{ comparison.grain }}). The baseline is the immediately preceding period. Windows include the start and exclude the end.</p>
+  {% if comparison.delta is not none %}
+  <p><strong>Current minus baseline:</strong> {{ '%+d' | format(comparison.delta) }} tokens</p>
+  {% else %}
+  <p><strong>Delta unavailable.</strong> {{ comparison.reason }}</p>
+  {% endif %}
+  <div class="ob-table-scroll" tabindex="0" role="region" aria-label="Exact comparison table">
+    <table>
+      <caption>Exact output-token totals and measurement counts</caption>
+      <thead><tr>
+        <th scope="col">UTC period</th><th scope="col">Recorded rows</th><th scope="col">Measured</th>
+        <th scope="col">Unknown</th><th scope="col">Output tokens</th>
+      </tr></thead>
+      <tbody>
+      {% for period in comparison.periods %}
+      {% set label = 'Earlier UTC period (baseline)' if loop.first else 'Later UTC period (current)' %}
+      <tr>
+        <th scope="row">{{ label }}</th>
+        <td>{{ period.observed_rows }}</td><td>{{ period.known_rows }}</td><td>{{ period.unknown_rows }}</td>
+        <td>{% if period.total is not none %}{{ period.total }}{% elif period.observed_sum is not none %}Known output sum: {{ period.observed_sum }} tokens (partial){% else %}Unknown{% endif %}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <h3>Output measurement composition</h3>
+  {% for period in comparison.periods %}
+  {% set label = 'Baseline' if loop.first else 'Current' %}
+  <p><strong>{{ label }}:</strong>
+    {% if period.observed_rows %}
+    <meter min="0" max="{{ period.observed_rows }}" value="{{ period.known_rows }}" aria-label="{{ label }} rows with measured output"></meter>
+    {{ period.known_rows }} measured / {{ period.unknown_rows }} unknown
+    {% else %}No recorded rows; no output-token total.{% endif %}
+  </p>
+  {% endfor %}
+  <details>
+    <summary>Both periods: windows and source evidence</summary>
+    {% for period in comparison.periods %}
+    <h3>{{ 'Baseline' if loop.first else 'Current' }}</h3>
+    <dl>
+      <dt>UTC interval</dt><dd><time datetime="{{ period.evidence.window.start.isoformat() }}">{{ period.evidence.window.start.isoformat() }}</time> to <time datetime="{{ period.evidence.window.end.isoformat() }}">{{ period.evidence.window.end.isoformat() }}</time></dd>
+      <dt>Source kind</dt><dd>{{ period.evidence.source.kind }}</dd>
+      <dt>Generation</dt><dd>{{ period.evidence.source.generation.id }}</dd>
+      <dt>Manifest SHA-256</dt><dd class="ob-table-scroll">{{ period.evidence.source.generation.manifest_sha256 }}</dd>
+      <dt>Consumed aggregate SHA-256</dt><dd class="ob-table-scroll">{{ period.evidence.source.loaded_sha256 }}</dd>
+      <dt>Independent source coverage</dt><dd>Complete for this UTC interval, regardless of per-row output measurement.</dd>
+      <dt>Verified source cutoff for this period</dt><dd><time datetime="{{ period.independently_verified_cutoff.isoformat() }}">{{ period.independently_verified_cutoff.isoformat() }}</time></dd>
+    </dl>
+    {% endfor %}
+    <dl>
+      <dt>Common comparison cutoff</dt><dd><time datetime="{{ comparison.source_cutoff.isoformat() }}">{{ comparison.source_cutoff.isoformat() }}</time></dd>
+      <dt>Independent coverage SHA-256</dt><dd class="ob-table-scroll">{{ comparison.coverage_sha256 }}</dd>
+      <dt>Export member SHA-256</dt><dd class="ob-table-scroll">{{ comparison.member_sha256 }}</dd>
+    </dl>
+  </details>
+  {% endif %}
+</section>
