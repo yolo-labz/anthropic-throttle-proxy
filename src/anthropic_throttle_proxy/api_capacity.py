@@ -45,6 +45,7 @@ import aiohttp_jinja2
 from aiohttp import web
 
 from . import api_credits
+from .ui.observatory_constraints import ConstraintObservation, project_api_constraints
 
 try:  # PR #28's token gate owns remote access once it lands; until then this module
     from .ui import auth as _auth  # refuses remote peers itself, fail closed.
@@ -616,6 +617,31 @@ def _table(head: tuple[str, ...], rows: list[str], empty: str) -> str:
     )
 
 
+def _constraint_time(value: str | None) -> str:
+    if value is None:
+        return "unknown"
+    stamp = _esc(value)
+    return f'<time datetime="{stamp}">{stamp}</time>'
+
+
+def _constraint_display(row: ConstraintObservation) -> str:
+    label = _esc(f"{row.kind}: {row.dimension}" if row.dimension else row.kind)
+    evidence = " · ".join(_esc(value) for value in (row.source, row.provider, row.scope) if value)
+    if row.state == "unavailable":
+        return f"<dt>{label}</dt><dd>{evidence} · unavailable · {_esc(row.reason)}</dd>"
+    unit = f" {_esc(row.unit)}" if row.unit else ""
+    remaining = "unknown" if row.remaining is None else f"{_esc(row.remaining)}{unit}"
+    used = "unknown" if row.used is None else f"{_esc(row.used)}{unit}"
+    denominator = "unknown" if row.denominator is None else f"{_esc(row.denominator)}{unit}"
+    enforcement = "" if row.enforced is None else f" · enforced: {'yes' if row.enforced else 'no'}"
+    return (
+        f"<dt>{label}</dt><dd>{evidence} · {_esc(row.state)} · {_esc(row.reason)}<br>"
+        f"Remaining: {remaining} · used: {used} · denominator: {denominator}{enforcement}<br>"
+        f"Observed at: {_constraint_time(row.observed_at)} · "
+        f"Reset observation: {_constraint_time(row.reset_at)}</dd>"
+    )
+
+
 def render_fragment(snap: Mapping[str, Any]) -> str:
     """Server-rendered panel; colours come from the dashboard's token classes.
 
@@ -632,6 +658,9 @@ def render_fragment(snap: Mapping[str, Any]) -> str:
         [_header_row(lane) for lane in snap["header_lanes"]],
         "no API-key rate-limit headers observed",
     )
+    typed = "".join(
+        _constraint_display(row) for row in project_api_constraints(snap, now=time.time())
+    )
     return (
         '<div class="projects-card">'
         '<div class="projects-head"><span><b>API credits &amp; limits</b> · read-only</span>'
@@ -640,6 +669,7 @@ def render_fragment(snap: Mapping[str, Any]) -> str:
         f"<span>gate <b>{html.escape(snap['remote_access_gate'])}</b></span></div>"
         + accounts
         + headers
+        + f"<section><h2>Constraint observations</h2><dl>{typed}</dl></section>"
         + '<p class="muted">Each value carries its own freshness from when it was observed. '
         "A refused or insufficient-credit receipt is shown as balance unknown, never 0.</p>"
         "</div>"
