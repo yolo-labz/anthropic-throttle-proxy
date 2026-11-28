@@ -1,0 +1,60 @@
+{# Pure partial: caller supplies a projected LatencyHeatmap, not raw records. #}
+{% set latency_reasons = {
+  'histogram_input_not_supplied': 'No histogram was supplied.',
+  'unverified_scrape_coverage_or_series': 'Continuous scrape coverage or series identity is unproved.',
+  'generation_boundary_without_covered_window': 'Series or publication generation does not match the selected track.',
+  'histogram_not_observed': 'Required histogram observations are missing.',
+  'histogram_counter_invariant': 'Cumulative buckets or independent totals are inconsistent.',
+  'incompatible_scope_or_bucket_schema': 'Window, scope, measure, or bucket boundaries do not match.'
+} %}
+<section>
+  <h2>Forwarded request latency</h2>
+  <p>Wall-clock duration without queue wait. Counts describe change between scrapes, not exact event times. Counts are shown only for windows with complete coverage.</p>
+  {% if latency_heatmap.rows %}
+  <div role="region" aria-label="Latency heatmap" tabindex="0" style="overflow-x: auto">
+    <table>
+      <caption>Request observations by exact UTC window and duration in seconds</caption>
+      <thead>
+        <tr>
+          <th scope="col">Window (start inclusive, end exclusive)</th>
+          {% for bin in latency_heatmap.bins %}
+          <th scope="col">
+            {% if bin.lower_seconds is none %}≤ {{ bin.upper_seconds }} s
+            {% elif bin.upper_seconds is none %}&gt; {{ bin.lower_seconds }} s
+            {% else %}({{ bin.lower_seconds }}, {{ bin.upper_seconds }}] s{% endif %}
+          </th>
+          {% endfor %}
+          <th scope="col">Total observations</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in latency_heatmap.rows %}
+        <tr>
+          <th scope="row">
+            <time datetime="{{ row.window.start.isoformat() }}">{{ row.window.start.isoformat() }}</time>
+            to <time datetime="{{ row.window.end.isoformat() }}">{{ row.window.end.isoformat() }}</time>
+          </th>
+          {% if row.counts is not none %}
+            {% for count in row.counts %}
+            <td>
+              {% if latency_heatmap.peak_count > 0 %}
+              <meter min="0" max="1" value="{{ count / latency_heatmap.peak_count }}" aria-hidden="true"></meter>
+              {% endif %}
+              <span class="latency-count">{{ count }}</span>
+            </td>
+            {% endfor %}
+            <td>{{ row.count }}</td>
+          {% else %}
+          <td colspan="{{ latency_heatmap.bins | length + 1 }}">
+            Unavailable — {{ latency_reasons[row.reason_code] }}
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No latency windows were selected.</p>
+  {% endif %}
+</section>
