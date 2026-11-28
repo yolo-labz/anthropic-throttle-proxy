@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/ui/static/observatory.css?v={{ asset_v }}">
 </head>
 <body class="observatory">
-<a class="ob-skip" href="#ob-main">Skip to measured volume</a>
+<a class="ob-skip" href="#ob-main">Skip to main content</a>
 <header class="ob-masthead">
   <div class="ob-brand"><span class="ob-brand-mark" aria-hidden="true"></span><span>THROTTLER</span><span class="ob-divider" aria-hidden="true">/</span><span class="ob-eyebrow">PROVIDER OBSERVATORY</span></div>
   <nav aria-label="Observatory"><a href="/ui">Dashboard <span aria-hidden="true">↗</span></a><a href="#ob-source">Source &amp; coverage</a></nav>
@@ -41,7 +41,7 @@
         <p class="ob-scope"><strong>{{ ob.provider_count }}</strong> providers <span aria-hidden="true">/</span> <strong>{{ ob.model_count }}</strong> models<span class="ob-source-row-count">{{ ob.matched_rows }} of {{ ob.source_rows }} accepted source rows</span></p>
       </div>
       <div class="ob-reading-key">
-        <div class="ob-legend" aria-label="Chart legend">{% for key, label in ob.legend %}<span><i class="ob-{{ key }}" aria-hidden="true"></i>{{ label }}</span>{% endfor %}</div>
+        <div class="ob-legend" role="group" aria-label="Chart legend">{% for key, label in ob.legend %}<span><i class="ob-{{ key }}" aria-hidden="true"></i>{{ label }}</span>{% endfor %}</div>
         <span>Linear scale · fixed across filters</span>
       </div>
       {% if ob.total.unknown %}<p class="ob-partial-note"><strong>Incomplete measurement.</strong> {{ ob.total.unknown }} selected value{% if ob.total.unknown != 1 %}s{% endif %} unknown. “≥” marks known lower bounds; blank volume is never assumed zero.</p>{% endif %}
