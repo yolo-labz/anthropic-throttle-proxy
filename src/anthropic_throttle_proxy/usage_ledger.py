@@ -53,8 +53,8 @@ provenance stays absent.
 
 Off the hot path: ``record`` only parses the already-captured bytes and calls
 ``put_nowait``. A daemon thread does the file I/O, so the event loop never
-waits on disk. A full queue or a write error drops the row and is counted; it
-never reaches the response.
+waits on disk. A full queue can drop a row. A write exception counts its batch
+and unconfirmed rows (a partial append is possible); neither affects the response.
 
 ponytail: one size cap with one ``.1`` generation, as in meter_recorder.
 Upgrade path: dated rotation if more than two generations are needed.
@@ -170,7 +170,15 @@ def _settlement(captured: bytes, tail: str | None) -> dict:
 _queue: queue.Queue | None = None
 _writer: threading.Thread | None = None
 _start_lock = threading.Lock()
-_stats = {"queued": 0, "written": 0, "dropped": 0, "write_errors": 0}
+# A write exception may follow a partial append: these rows are unconfirmed,
+# not necessarily lost. Keep row counts separate from failed batch counts.
+_stats = {
+    "queued": 0,
+    "written": 0,
+    "dropped": 0,
+    "write_errors": 0,
+    "write_unconfirmed_rows": 0,
+}
 
 
 def parse_mode(raw: str | None) -> str:
@@ -438,7 +446,8 @@ def _drain() -> None:
             _stats["written"] += len(batch)
         except Exception:
             _stats["write_errors"] += 1
-            log.warning("usage ledger write failed; %d rows dropped", len(batch), exc_info=True)
+            _stats["write_unconfirmed_rows"] += len(batch)
+            log.warning("usage ledger write failed; %d rows unconfirmed", len(batch), exc_info=True)
 
 
 def write_rows(path: Path, rows: list[dict]) -> None:
