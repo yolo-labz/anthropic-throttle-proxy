@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from anthropic_throttle_proxy import usage_summary
-from anthropic_throttle_proxy.ui import observatory, usage
+from anthropic_throttle_proxy.ui import observatory, observatory_compare, usage
 from anthropic_throttle_proxy.ui import observatory_evidence as evidence
 
 
@@ -150,3 +150,89 @@ def test_compatible_pair_retains_independently_evidenced_restart_gap(linked_evid
     assert pair.observed.coverage.state == "partial"
     assert pair.observed.coverage.gaps == (gap,)
     assert pair.observed.coverage.refs == (proof,)
+
+
+def test_frozen_summary_scope_cannot_narrow_independent_period_comparison(frozen_summary):
+    path, raw = frozen_summary
+    document = json.loads(raw)
+    row = dict(
+        provider="fixture-a",
+        model="fixture-model",
+        role="turn",
+        pane=None,
+        requests=1,
+        fresh_input=0,
+        cache_write=0,
+        cache_read=0,
+        output=7,
+        reasoning=0,
+    )
+    document["rows"] = [row, row | {"provider": "fixture-b"}]
+    new_bytes = json.dumps(document).encode()
+    path.write_bytes(new_bytes)
+    frozen = observatory.view(
+        {"provider": "fixture-a", "measure": "output"}, frozen_sha256=sha256(new_bytes).hexdigest()
+    )
+    assert frozen["selected"]["provider"] == "fixture-a"
+    assert frozen["total"]["value"] == 7
+    selected = evidence.summary_evidence(
+        usage_summary.load(path),
+        measure="output",
+        filters=(("provider", frozen["selected"]["provider"]),),
+        unknown_values=0,
+    )
+
+    # Test-local P3-shaped result; this does not attest source admission or coverage.
+    generation = evidence.Generation("fixture-owner", "fixture-w07", "a" * 64)
+    aggregate = evidence.SourceRef("fixture-w07", "b" * 64, generation)
+    coverage = evidence.SourceRef("fixture-checkpoint", "c" * 64, generation)
+
+    def utc(seconds):
+        return datetime.fromtimestamp(seconds, UTC)
+
+    global_scope = evidence.Scope("gateway_requests_utc:all")
+    common = dict(
+        source=aggregate,
+        scope=global_scope,
+        measure="output_tokens",
+        unit="tokens",
+        coverage=evidence.Coverage("complete", refs=(coverage,)),
+    )
+    baseline = evidence.Evidence(window=evidence.Window(utc(0), utc(3600), 3600, True), **common)
+    current = evidence.Evidence(window=evidence.Window(utc(3600), utc(7200), 3600, True), **common)
+    counts = dict(observed_rows=1, known_rows=1, unknown_rows=0, observed_sum=7, complete_total=7)
+    combined = dict(
+        observed_rows=2, known_rows=2, unknown_rows=0, observed_sum=14, complete_total=14
+    )
+    result = dict(
+        status="PASS_AGGREGATE_RECONCILIATION_ONLY",
+        generation=generation.id,
+        manifest_sha256=generation.manifest_sha256,
+        source_age_seconds=1,
+        unit="hour",
+        intervals=[dict(start=0, end=3600, **counts), dict(start=3600, end=7200, **counts)],
+        union=combined,
+    )
+    pins = dict(
+        baseline=baseline,
+        source_cutoff_epoch=7200,
+        verified_cutoffs_epoch=(7200, 7201),
+        aggregate_sha256=aggregate.loaded_sha256,
+        coverage_sha256=coverage.loaded_sha256,
+        member_sha256="d" * 64,
+    )
+    valid = observatory_compare.build_w07_comparison(result, current=current, **pins)
+    assert valid.status == "comparable" and valid.delta == 0
+    assert [p.total for p in valid.periods] == [7, 7]
+    assert (
+        evidence.selection_relation(valid.periods[1].evidence, selected.scope)
+        == "independent_global"
+    )
+
+    # Keep the usage population and every numeric, time and source field unchanged.
+    # Only smuggle the W17 provider narrowing into the global N20 operand.
+    narrowed_scope = evidence.Scope(global_scope.population, selected.scope.filters)
+    narrowed = evidence.Evidence(window=current.window, **(common | {"scope": narrowed_scope}))
+    rejected = observatory_compare.build_w07_comparison(result, current=narrowed, **pins)
+    assert rejected.status == "unavailable" and rejected.delta is None
+    assert rejected.periods == ()
