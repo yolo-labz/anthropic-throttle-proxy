@@ -588,7 +588,8 @@ def _header_dimension(dim: Mapping[str, Any]) -> str:
     limit = dim["ratio_denominator"]
     if limit is not None:
         amount += f"/{_esc(limit)}"
-    return f"{label}: {amount} remaining"
+    reset = _esc(dim["historical"]["reset_at"])
+    return f'{label}: {amount} remaining · Observed reset <time datetime="{reset}">{reset}</time>'
 
 
 def _header_row(lane: Mapping[str, Any]) -> str:

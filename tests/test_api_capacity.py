@@ -327,9 +327,13 @@ def test_header_reset_contract(case):
         if name in ("input_tokens", "output_tokens"):
             assert dim["fields"]["limit"] == "unsupported" and dim["historical"]["limit"] is None
         if status == "current":
-            current_resets.append(ac.parse_ts(dim["historical"]["reset_at"]))
+            reset = dim["historical"]["reset_at"]
+            current_resets.append(ac.parse_ts(reset))
             expected_amount = str(amount) if limit is None else f"{amount}/{limit}"
-            assert f"{label}: {expected_amount} remaining" in document
+            assert (
+                f'{label}: {expected_amount} remaining · Observed reset <time datetime="{reset}">'
+                f"{reset}</time>"
+            ) in document
         elif status == "absent":
             assert f"{label}:" not in document
         else:
@@ -337,6 +341,7 @@ def test_header_reset_contract(case):
             historical = dim["historical"]["remaining"]
             if historical is not None:
                 assert f"{label}: {historical}" not in document
+    assert document.count("Observed reset") == statuses.count("current")
     coverage = rate["aggregate"]
     assert coverage["current"] == statuses.count("current")
     assert coverage["expired"] == statuses.count("expired")
