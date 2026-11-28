@@ -39,9 +39,10 @@ calls that rewrite a context). ``pane`` may be ``null`` when unattributed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -87,6 +88,7 @@ class Summary:
     files_skipped: int
     rows: list[Row] = field(default_factory=list)
     rejected_rows: int = 0
+    loaded_sha256: str | None = None  # only set by load(), not parse()
 
 
 def _ts(value: object, name: str) -> datetime:
@@ -203,7 +205,8 @@ def load(path: Path) -> Summary:
         doc = json.loads(blob, parse_constant=_reject_constant)
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise SummaryError("not valid JSON") from None
-    return parse(doc)
+    summary = parse(doc)
+    return replace(summary, loaded_sha256=hashlib.sha256(blob).hexdigest())
 
 
 def total(rows: list[Row], key: str) -> tuple[int | None, int]:

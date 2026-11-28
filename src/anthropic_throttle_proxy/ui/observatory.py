@@ -219,6 +219,7 @@ def build_view(summary: us.Summary, query: Mapping[str, str], *, now: float) -> 
         "observed_iso": observed.astimezone(UTC).isoformat(),
         "generated_at": _stamp(summary.generated_at),
         "generated_iso": summary.generated_at.astimezone(UTC).isoformat(),
+        "loaded_sha256": summary.loaded_sha256,
         "window_start": _stamp(summary.window_start),
         "window_end": _stamp(summary.window_end),
         "window_span": usage._ago((summary.window_end - summary.window_start).total_seconds()),
@@ -230,7 +231,7 @@ def build_view(summary: us.Summary, query: Mapping[str, str], *, now: float) -> 
 
 
 def view(query: Mapping[str, str], now: float | None = None) -> dict[str, Any]:
-    """Reuse the bounded, mtime/size-cached loader; called in a worker thread."""
+    """Reuse the bounded, stat-keyed loader; called in a worker thread."""
     now = time.time() if now is None else now
     path = usage.summary_path()
     if path is None:

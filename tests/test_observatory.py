@@ -7,7 +7,9 @@ No live provider calls, account refreshers, timers, or credential reads.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import os
 from pathlib import Path
 
 import jinja2
@@ -244,6 +246,115 @@ async def test_route_reuses_loader_is_get_only_and_marks_missing(monkeypatch, tm
         assert (await c.get("/ui/observatory?measure=quota")).status == 400
     finally:
         await c.close()
+
+
+def _lineage_pair() -> tuple[bytes, bytes]:
+    a = document()
+    b = copy.deepcopy(a)
+    b["rows"][0]["requests"] = 121  # Same token headline; different accepted data.
+    return json.dumps(a, indent=2).encode() + b"\n", json.dumps(b, indent=2).encode() + b"\n"
+
+
+async def test_loaded_summary_lineage_tracks_atomic_replacement(tmp_path, monkeypatch):
+    path = tmp_path / "private-fixture.json"
+    a, b = _lineage_pair()
+    digest_a, digest_b = (hashlib.sha256(blob).hexdigest() for blob in (a, b))
+    path.write_bytes(a)
+    monkeypatch.setenv(usage.ENV, str(path))
+    original = path.stat()
+    reads = []
+    load = us.load
+
+    def counted_load(path):
+        reads.append(path)
+        return load(path)
+
+    monkeypatch.setattr(us, "load", counted_load)
+    summary_a, error = usage._read(path)
+    assert error is None and summary_a.rows[0].requests == 120
+    assert usage._read(path)[0] is summary_a and reads == [path]
+    c = await client()
+    try:
+        first = await (await c.get("/ui/observatory")).text()
+        replacement = tmp_path / "new-summary.json"
+        replacement.write_bytes(b)
+        os.utime(replacement, ns=(original.st_atime_ns, original.st_mtime_ns))
+        replacement.replace(path)
+        updated = path.stat()
+        assert (updated.st_mtime_ns, updated.st_size) == (original.st_mtime_ns, original.st_size)
+        assert updated.st_ino != original.st_ino
+        summary_b, error = usage._read(path)
+        assert error is None and summary_b.rows[0].requests == 121
+        second = await (await c.get("/ui/observatory")).text()
+        assert usage._read(path)[0] is summary_b and reads == [path, path]
+        assert summary_a.loaded_sha256 == digest_a and summary_b.loaded_sha256 == digest_b
+        assert digest_a != digest_b
+        assert f"<code>{digest_a}</code>" in first and digest_b not in first
+        assert f"<code>{digest_b}</code>" in second and digest_a not in second
+        assert (
+            first.split('class="ob-total"')[1].split("</p>")[0]
+            == second.split('class="ob-total"')[1].split("</p>")[0]
+        )
+        assert str(path) not in first + second
+    finally:
+        await c.close()
+
+
+@pytest.mark.parametrize("failure", ["bad-json", "bad-schema", "oversize", "unreadable", "missing"])
+async def test_loaded_summary_lineage_is_absent_on_failure(tmp_path, monkeypatch, failure):
+    path = tmp_path / "private-fixture.json"
+    a, _ = _lineage_pair()
+    path.write_bytes(a)
+    digest = hashlib.sha256(a).hexdigest()
+    monkeypatch.setenv(usage.ENV, str(path))
+    assert usage._read(path)[0] is not None
+    marker = b"synthetic-private-data"
+    if failure == "bad-json":
+        path.write_bytes(marker)
+    elif failure == "bad-schema":
+        path.write_bytes(json.dumps({"schema": marker.decode()}).encode())
+    elif failure == "oversize":
+        path.write_bytes(b" " * (us.MAX_BYTES + 1))
+    elif failure == "unreadable":
+        path.unlink()
+        path.mkdir()  # Stat succeeds but a directory cannot be loaded.
+    else:
+        path.unlink()
+    c = await client()
+    try:
+        response = await c.get("/ui/observatory")
+        html = await response.text()
+        assert response.status == 200 and "Usage observation unavailable" in html
+        assert "Loaded summary SHA-256" not in html and digest not in html
+        assert marker.decode() not in html and str(path) not in html
+        assert usage._read(path)[0] is None
+    finally:
+        await c.close()
+
+
+def test_loaded_summary_lineage_hashes_only_bytes_that_were_validated(tmp_path, monkeypatch):
+    path = tmp_path / "usage.json"
+    a, b = _lineage_pair()
+    path.write_bytes(a)
+    replacement = tmp_path / "replacement.json"
+    replacement.write_bytes(b)
+    parse = us.parse
+
+    def rotate_during_validation(doc):
+        parsed = parse(doc)
+        assert parsed.loaded_sha256 is None
+        replacement.replace(path)
+        return parsed
+
+    monkeypatch.setattr(us, "parse", rotate_during_validation)
+    cached, error = usage._read(path)
+    assert error is None and cached.rows[0].requests == 120
+    assert cached.loaded_sha256 == hashlib.sha256(a).hexdigest()
+    monkeypatch.setattr(us, "parse", parse)
+    cached, error = usage._read(path)
+    assert error is None and cached.rows[0].requests == 121
+    assert cached.loaded_sha256 == hashlib.sha256(b).hexdigest()
+    assert "Loaded summary SHA-256" not in rendered(projected())
 
 
 @pytest.fixture

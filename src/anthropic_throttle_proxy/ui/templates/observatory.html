@@ -80,6 +80,7 @@
         <div><dt>Contract</dt><dd><code>usage-summary.v1</code><small>Published aggregate · read only</small></dd></div>
         <div><dt>Source as of</dt><dd><time datetime="{{ ob.observed_iso }}">{{ ob.observed_at }}</time><small>Earlier of publication and coverage end</small></dd></div>
         <div><dt>Published</dt><dd><time datetime="{{ ob.generated_iso }}">{{ ob.generated_at }}</time></dd></div>
+        {% if ob.loaded_sha256 %}<div><dt>Loaded summary SHA-256</dt><dd><code>{{ ob.loaded_sha256 }}</code></dd></div>{% endif %}
         <div><dt>Window</dt><dd>{{ ob.window_start }}<span class="ob-window-to">through</span>{{ ob.window_end }}</dd></div>
       </dl>
       <div class="ob-coverage-counts"><span>Files scanned <strong>{{ "{:,}".format(ob.files_scanned) }}</strong></span><span>Files skipped <strong>{{ "{:,}".format(ob.files_skipped) }}</strong></span><span>Rejected rows <strong>{{ "{:,}".format(ob.rejected_rows) }}</strong></span></div>

@@ -2,8 +2,8 @@
 
 Hidden unless ``THROTTLE_USAGE_SUMMARY_PATH`` is set. Failure-tolerant: an
 unreadable or invalid file renders a one-line reason in the panel, never a
-500, never the file's content. The file is read only by ``GET /ui/usage`` (in a
-worker thread, cached on mtime+size) — ``/__throttle/health`` never touches it.
+500, never the file's content. Usage and Observatory read it in a worker
+thread; ``/__throttle/health`` never touches it.
 
 Every token class is its own column and its own bar segment; cache is never
 folded into fresh input, and an unknown count renders as ``unknown``.
@@ -38,7 +38,7 @@ COLUMNS = (
     ("reasoning", "of which reasoning"),
 )
 
-# ponytail: one-entry cache keyed on (path, mtime_ns, size); enough for one file.
+# ponytail: a single stat-keyed entry for the single configured summary.
 _cache: dict[str, Any] = {"key": None, "result": (None, None)}
 
 
@@ -51,19 +51,31 @@ def enabled() -> bool:
     return summary_path() is not None
 
 
+def _file_key(path: Path) -> tuple[str, int, int, int, int, int]:
+    st = path.stat()
+    return str(path), st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size
+
+
 def _read(path: Path) -> tuple[_us.Summary | None, str | None]:
     try:
-        st = path.stat()
+        key = _file_key(path)
     except OSError as exc:
         return None, f"summary file unreadable ({exc.__class__.__name__})"
-    key = (str(path), st.st_mtime_ns, st.st_size)
-    if _cache["key"] != key:
-        try:
-            result: tuple[_us.Summary | None, str | None] = (_us.load(path), None)
-        except _us.SummaryError as exc:
-            result = (None, f"summary rejected: {exc}")
+    entry = _cache.copy()  # key and result are a pair, even across worker threads.
+    if entry["key"] == key:
+        return entry["result"]
+    try:
+        result: tuple[_us.Summary | None, str | None] = (_us.load(path), None)
+    except _us.SummaryError as exc:
+        result = (None, f"summary rejected: {exc}")
+    # A rename during the load must not cache one publication under another's key.
+    try:
+        unchanged = _file_key(path) == key
+    except OSError:
+        return result
+    if unchanged:
         _cache.update(key=key, result=result)
-    return _cache["result"]
+    return result
 
 
 def _brt(dt: datetime) -> str:
