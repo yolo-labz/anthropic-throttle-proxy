@@ -425,6 +425,130 @@ def test_bearer_labels_reverse_map(tmp_path, monkeypatch):
     assert labels == {_expected_bid("tok-a"): "A", _expected_bid("tok-b"): "B"}
 
 
+def _projected_account(label, bid):
+    return {
+        "label": label,
+        "path": f"/fixture/{label}",
+        "bearer_id": bid,
+        "expires_at": None,
+        "error": None,
+    }
+
+
+def _proxy_observation(bid, utilization):
+    return {
+        "bearer_id": bid,
+        "unified": {"util_5h": utilization, "reset_5h": NOW + 4000},
+        "unified_at": NOW - 10,
+        "credential": "refused",
+        "last_ratelimit": {"retry-after": "3600"},
+        "fable_bucket": {"util_7d_oi": 0.4, "reset_7d_oi": NOW + DAY},
+    }
+
+
+@pytest.fixture
+def projected_accounts(monkeypatch):
+    configured = []
+    monkeypatch.setattr(accounts, "account_snapshot", lambda: configured)
+    monkeypatch.setattr(accounts, "guard_email", lambda _: (None, False))
+    return configured
+
+
+def test_proxy_identity_requires_exact_nonblank_id(projected_accounts):
+    projected_accounts.extend(
+        [
+            _projected_account("A", "a1"),
+            _projected_account("B", "b2"),
+            _projected_account("Missing", "m3"),
+            _projected_account("Unset", None),
+            _projected_account("Empty", ""),
+            _projected_account("Blank", " "),
+        ]
+    )
+    rows = accounts.account_view(
+        [
+            _proxy_observation("b2", 0.62),
+            _proxy_observation("a1", 0.31),
+            _proxy_observation("M3", 0.9),
+            _proxy_observation("m3 ", 0.9),
+            _proxy_observation(None, 0.9),
+            _proxy_observation("", 0.9),
+            _proxy_observation(" ", 0.9),
+            {},
+        ],
+        NOW,
+    )
+    assert [row["label"] for row in rows] == [acct["label"] for acct in projected_accounts]
+    first, second, *missing = rows
+    assert [row["win5"]["pct"] for row in (first, second)] == [31, 62]
+    for row in (first, second):
+        assert row["proxy_identity"] == "unique" and row["seen"]
+        assert row["src"] == "proxy" and row["sample_age_s"] == 10
+        assert row["credential"] == "refused" and row["locked_in"] is not None
+        assert row["fable"]["pct"] == 40
+    for row in missing:
+        assert row["proxy_identity"] == "unobserved" and not row["seen"]
+        assert row["src"] == "none"
+        assert row["win5"] is row["credential"] is row["locked_in"] is row["fable"] is None
+    assert accounts.bearer_labels() == {"a1": "A", "b2": "B", "m3": "Missing"}
+
+
+@pytest.mark.parametrize("utilizations", [(0.31, 0.62), (0.62, 0.31)])
+def test_proxy_identity_rejects_duplicate_observations(projected_accounts, utilizations):
+    projected_accounts.append(_projected_account("A", "a1"))
+    (row,) = accounts.account_view([_proxy_observation("a1", u) for u in utilizations], NOW)
+    assert row["win5"] is None  # neither the first nor the last observation is attributable
+    assert row["proxy_identity"] == "ambiguous" and not row["seen"]
+    assert row["bearer_id"] is None and row["src"] == "none"
+    assert row["sample_age_s"] is row["credential"] is row["locked_in"] is row["fable"] is None
+    assert accounts.bearer_labels() == {"a1": "A"}  # configuration-only reverse map
+
+
+@pytest.mark.parametrize("observed", [False, True])
+def test_proxy_identity_rejects_shared_configured_id(projected_accounts, observed):
+    projected_accounts.extend(
+        [
+            _projected_account("A", "shared"),
+            _projected_account("B", "shared"),
+            _projected_account("C", "c3"),
+        ]
+    )
+    assert accounts.bearer_labels() == {"c3": "C"}
+    bearers = [_proxy_observation("shared", 0.9)] if observed else []
+    first, second, other = accounts.account_view(bearers, NOW)
+    for row in (first, second):
+        assert row["proxy_identity"] == "ambiguous" and not row["seen"]
+        assert row["bearer_id"] is None and row["src"] == "none"
+        assert row["win5"] is row["credential"] is row["locked_in"] is row["fable"] is None
+    assert other["proxy_identity"] == "unobserved"
+
+
+def test_proxy_identity_keeps_independent_path_readings(projected_accounts):
+    projected_accounts.extend([_projected_account(label, "shared") for label in ("A", "B")])
+    accounts._endpoint_cache.update(
+        {
+            "/fixture/A": {
+                "fetched": NOW - 20,
+                "usage": accounts._parse_usage(_usage_body(u5=100.0)),
+            },
+            "/fixture/B": {
+                "fetched": NOW - accounts.ENDPOINT_STALE_MAX_S - 1,
+                "usage": accounts._parse_usage(_usage_body(u5=37.0)),
+            },
+        }
+    )
+    first, second = accounts.account_view(
+        [_proxy_observation("shared", 0.75)], NOW, dict(accounts._endpoint_cache)
+    )
+    assert (first["src"], first["win5"]["pct"]) == ("endpoint", 100)
+    assert (second["src"], second["win5"]["pct"]) == ("cache", 37)
+    assert first["locked_in"] == first["win5"]["reset_in"] and first["locked_in"] is not None
+    assert second["locked_in"] is None
+    for row in (first, second):
+        assert row["proxy_identity"] == "ambiguous" and not row["seen"]
+        assert row["bearer_id"] is row["credential"] is row["fable"] is None
+
+
 def test_unconfigured_is_invisible(monkeypatch):
     monkeypatch.setattr(config, "ACCOUNT_CRED_PATHS", "")
     assert accounts.account_snapshot() == []

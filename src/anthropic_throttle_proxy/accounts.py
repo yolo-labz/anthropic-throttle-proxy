@@ -26,6 +26,7 @@ import math
 import os
 import re
 import time
+from collections import Counter
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -454,6 +455,13 @@ def _account_fields(
     return fields, endpoint_err
 
 
+def _bearer_id_counts(rows: list[dict[str, Any]]) -> Counter[str]:
+    """Count nonblank IDs as-is; never normalize a join key."""
+    return Counter(
+        bid for row in rows if isinstance(bid := row.get("bearer_id"), str) and bid.strip()
+    )
+
+
 def account_view(
     bearers: list[dict[str, Any]],
     now: float,
@@ -462,15 +470,20 @@ def account_view(
     """Merge credential files, endpoint truth, and per-bearer proxy state.
 
     Source precedence per account is ``_account_fields``' job (the ``src`` field
-    names the winner). Accounts whose current bearer the proxy has not seen
-    still render — "B invisible" was exactly the 10/06 blind spot, and a
-    budget-locked un-routed account after a restart is the #128 blind spot (six
-    "—" + a cold-poll 429 note).
+    names the winner). ``proxy_identity`` describes only the bearer join,
+    independently of the winning source. Even accounts the proxy has never
+    seen still render with any path-scoped reading.
     """
-    by_id = {b["bearer_id"]: b for b in bearers}
+    configured = account_snapshot()
+    configured_counts = _bearer_id_counts(configured)
+    observed_counts = _bearer_id_counts(bearers)
+    by_id = {b["bearer_id"]: b for b in bearers if observed_counts[b.get("bearer_id")] == 1}
     out: list[dict[str, Any]] = []
-    for acct in account_snapshot():
-        bearer = by_id.get(acct["bearer_id"]) if acct["bearer_id"] else None
+    for acct in configured:
+        bid = acct["bearer_id"]
+        ambiguous = configured_counts[bid] > 1 or observed_counts[bid] > 1
+        bearer = None if ambiguous else by_id.get(bid)
+        proxy_identity = "ambiguous" if ambiguous else "unobserved" if bearer is None else "unique"
         endpoint_entry = _endpoint_cache.get(acct["path"]) or (endpoint or {}).get(acct["path"])
         fields, endpoint_err = _account_fields(acct, bearer, endpoint, now)
         observed = (
@@ -484,9 +497,11 @@ def account_view(
         out.append(
             {
                 "label": acct["label"],
-                "bearer_id": acct["bearer_id"],
+                # Do not expose an ambiguous key for downstream bearer joins.
+                "bearer_id": bid if not ambiguous and configured_counts[bid] == 1 else None,
                 "error": acct["error"],
                 "seen": bearer is not None,
+                "proxy_identity": proxy_identity,
                 "email": email,
                 # identity_state provenance — a local .claude.json label must
                 # not be treated as a probed identity (promote-swap false alarm)
@@ -515,8 +530,10 @@ def account_view(
 
 
 def bearer_labels() -> dict[str, str]:
-    """Reverse map ``bearer_id → account label`` for annotating bearer rows."""
-    return {a["bearer_id"]: a["label"] for a in account_snapshot() if a["bearer_id"]}
+    """Return labels only for IDs claimed by exactly one configured account."""
+    configured = account_snapshot()
+    counts = _bearer_id_counts(configured)
+    return {a["bearer_id"]: a["label"] for a in configured if counts[a["bearer_id"]] == 1}
 
 
 # --- /api/oauth/usage endpoint truth (PR #55) -------------------------------
