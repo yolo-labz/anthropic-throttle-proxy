@@ -246,6 +246,96 @@ async def test_route_reuses_loader_is_get_only_and_marks_missing(monkeypatch, tm
         await c.close()
 
 
+@pytest.fixture
+async def scoped_client(tmp_path, monkeypatch):
+    path = tmp_path / "usage.json"
+    path.write_text(FIXTURE.read_text())
+    monkeypatch.setenv(usage.ENV, str(path))
+    c = await client()
+    try:
+        yield c
+    finally:
+        await c.close()
+
+
+_SCOPE_SELECTION = {
+    "provider": "anthropic",
+    "model": "claude-opus-5-5",
+    "role": "turn",
+    "measure": "requests",
+}
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("account", "synthetic-private-account"),
+        ("from", "synthetic-private-start"),
+        ("to", "synthetic-private-end"),
+        ("pane", ""),
+        ("resolution", "synthetic-private-resolution"),
+        ("mode", "live"),
+        ("mode", "frozen"),
+        ("as_of", "synthetic-private-observation"),
+    ],
+)
+async def test_query_scope_rejects_unsupported_keys(scoped_client, key, value):
+    response = await scoped_client.get("/ui/observatory", params={**_SCOPE_SELECTION, key: value})
+    body = await response.text()
+    assert response.status == 400
+    assert response.headers["Cache-Control"] == "no-store"
+    assert f"Unsupported Observatory selection: {key}." in body
+    assert "ob-total" not in body and "synthetic-private" not in body
+    assert usage._cache["key"] is None
+
+
+@pytest.mark.parametrize(
+    ("key", "other"),
+    [("provider", "zai"), ("model", "glm-5.3"), ("role", ""), ("measure", "tokens")],
+)
+async def test_query_scope_rejects_conflicts_in_both_orders(scoped_client, key, other):
+    siblings = [(k, v) for k, v in _SCOPE_SELECTION.items() if k != key]
+    values = (_SCOPE_SELECTION[key], other)
+    expected = f"Conflicting {key} filter values."
+    for pair in (values, values[::-1]):
+        response = await scoped_client.get(
+            "/ui/observatory", params=[*siblings, (key, pair[0]), (key, pair[1])]
+        )
+        assert response.status == 400
+        assert response.headers["Cache-Control"] == "no-store"
+        assert (await response.text()).startswith(expected)
+    assert usage._cache["key"] is None
+
+
+async def test_query_scope_roundtrip_and_clear(scoped_client):
+    selected = list(_SCOPE_SELECTION.items())
+    measure = ("measure", "requests")
+    response = await scoped_client.get(
+        "/ui/observatory", params=[*selected, measure, ("_", "synthetic-private-cache-bust")]
+    )
+    assert response.status == 200 and response.headers["Cache-Control"] == "no-store"
+    html = await response.text()
+    for value in _SCOPE_SELECTION.values():
+        assert f'value="{value}" selected' in html
+    assert "2 of 6 accepted source rows" in html and "synthetic-private" not in html
+    assert 'href="/ui/observatory">Clear filters' in html
+
+    # An explicit empty provider leaves all the other selections intact.
+    response = await scoped_client.get(
+        "/ui/observatory", params={**_SCOPE_SELECTION, "provider": ""}
+    )
+    assert response.status == 200
+    html = await response.text()
+    for key in ("model", "role", "measure"):
+        assert f'value="{_SCOPE_SELECTION[key]}" selected' in html
+    assert 'value="anthropic" selected' not in html
+
+    response = await scoped_client.get("/ui/observatory")
+    assert response.status == 200
+    html = await response.text()
+    assert 'value="tokens" selected' in html and "6 of 6 accepted source rows" in html
+
+
 async def test_invalid_summary_is_explicit_and_never_echoes_source(tmp_path, monkeypatch):
     p = tmp_path / "bad.json"
     p.write_text('{"prompt":"PRIVATE-BAD-SOURCE"}')

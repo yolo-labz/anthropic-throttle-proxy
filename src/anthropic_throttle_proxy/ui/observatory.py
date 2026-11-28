@@ -39,6 +39,8 @@ COLUMNS = (
     ("output", "Output"),
     ("reasoning", "Of which reasoning"),
 )
+_FILTER_DEFAULTS = {"provider": "", "model": "", "role": "", "measure": "tokens"}
+_UNSUPPORTED_SELECTIONS = ("account", "from", "to", "pane", "resolution", "mode", "as_of")
 CLASS_LABELS = dict(usage.COLUMNS)
 FRESHNESS_LABELS = {
     "ok": "Source within one hour",
@@ -118,8 +120,7 @@ def _geometry(rows: list[us.Row], measure: str, maximum: int) -> list[dict[str, 
 
 
 def _options(query: Mapping[str, str], summary: us.Summary) -> dict[str, str]:
-    selected = {key: query.get(key, "") for key in ("provider", "model", "role")}
-    selected["measure"] = query.get("measure", "tokens")
+    selected = {key: query.get(key, default) for key, default in _FILTER_DEFAULTS.items()}
     allowed = {
         "provider": {"", *(r.provider for r in summary.rows)},
         "model": {"", *(r.model for r in summary.rows)},
@@ -243,12 +244,31 @@ def view(query: Mapping[str, str], now: float | None = None) -> dict[str, Any]:
     return build_view(summary, query, now=now)
 
 
+def _query_selections(request: web.Request) -> dict[str, str]:
+    query = request.query
+    for key in _UNSUPPORTED_SELECTIONS:
+        if key in query:
+            raise ValueError(
+                f"Unsupported Observatory selection: {key}. Use provider, model, role, or measure."
+            )
+
+    # Other parameters are not selection controls (for example, cache busters).
+    selected = {}
+    for key in _FILTER_DEFAULTS:
+        values = query.getall(key, [])
+        if len(set(values)) > 1:
+            raise ValueError(f"Conflicting {key} filter values. Send one value per filter.")
+        if values:
+            selected[key] = values[0]
+    return selected
+
+
 async def index(request: web.Request) -> web.Response:
     """GET-only snapshot. Inspection never starts background refresh or traffic."""
     try:
-        context = await asyncio.to_thread(view, dict(request.query))
+        context = await asyncio.to_thread(view, _query_selections(request))
     except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc)) from None
+        raise web.HTTPBadRequest(text=str(exc), headers={"Cache-Control": "no-store"}) from None
     from .routes import _ASSET_V
 
     response = aiohttp_jinja2.render_template(
