@@ -15,7 +15,9 @@ proves them, expiresAt), rateLimits[] (rpm/tpm per model/scope), spendLimit
   refused outright (`remote_access_gate: "loopback-only"`), because a credits
   projection on the Dokku instance must never be readable without a token.
 * ``header_lanes`` — the ``anthropic-ratelimit-*`` headers the gateway already keeps in
-  ``bearer_state[bid]["last_ratelimit"]`` for API-key bearers.
+  ``bearer_state[bid]["last_ratelimit"]`` for API-key bearers. Only ``dimensions``
+  qualifies amounts as current. The original flat ``values``, ``fresh`` and
+  ``reset_passed`` fields describe the sampled snapshot for legacy readers.
 
 Freshness is per meter and comes only from when the value was observed, never the
 write or render time. A missing, invalid or future observation is never fresh, so a
@@ -31,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import math
 import os
 import re
 import time
@@ -69,6 +72,9 @@ _RESET_FIELDS: Final[tuple[tuple[str, str], ...]] = (
     ("input_tokens_reset", "anthropic-ratelimit-input-tokens-reset"),
     ("output_tokens_reset", "anthropic-ratelimit-output-tokens-reset"),
 )
+_DIMENSIONS: Final = ("requests", "tokens", "input_tokens", "output_tokens")
+_COUNT_HEADERS: Final = dict(_RATE_FIELDS)
+_RESET_HEADERS: Final = dict(_RESET_FIELDS)
 _API_KEY_FAMILY: Final[frozenset[str]] = frozenset(h for _, h in _RATE_FIELDS[:4])
 
 
@@ -88,8 +94,8 @@ def parse_ts(value: Any) -> float | None:
         return None
 
 
-def _iso(epoch: float) -> str:
-    return datetime.fromtimestamp(epoch, UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+def _iso(epoch: float, timespec: str = "seconds") -> str:
+    return datetime.fromtimestamp(epoch, UTC).isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
 def freshness(observed: float | None, now: float, max_age_s: int) -> dict[str, Any]:
@@ -124,25 +130,111 @@ def _is_api_key_meta(meta: Mapping[str, Any]) -> bool:
     )
 
 
+def _header_count(value: Any) -> int | None:
+    if type(value) is int:
+        return value if value >= 0 else None
+    if isinstance(value, str) and re.fullmatch(r"[0-9]{1,128}", value.strip()):
+        return int(value.strip())
+    return None
+
+
+def _field_status(meta: Mapping[str, Any], header: str | None, value: Any) -> str:
+    if header is None:
+        return "unsupported"
+    if header not in meta:
+        return "absent"
+    return "malformed" if value is None else "valid"
+
+
+def _dimension(
+    name: str, meta: Mapping[str, Any], reset: float | None, fresh: bool, now: float
+) -> dict[str, Any]:
+    remaining_header = _COUNT_HEADERS[f"{name}_remaining"]
+    limit_header = _COUNT_HEADERS.get(f"{name}_limit")
+    remaining = _header_count(meta.get(remaining_header))
+    limit = _header_count(meta.get(limit_header)) if limit_header is not None else None
+    fields = {
+        "remaining": _field_status(meta, remaining_header, remaining),
+        "limit": _field_status(meta, limit_header, limit),
+        "reset_at": _field_status(meta, _RESET_HEADERS[f"{name}_reset"], reset),
+    }
+    if all(state in ("absent", "unsupported") for state in fields.values()):
+        status = "absent"
+    elif reset is not None and reset <= now:
+        status = "expired"
+    elif not fresh:
+        status = "observation_unusable"
+    elif reset is None:
+        status = "reset_unknown"
+    elif remaining is None:
+        status = "remaining_unknown"
+    else:
+        status = "current"
+    current = remaining if status == "current" else None
+    return {
+        "unit": name.replace("_", " "),
+        "status": status,
+        "fields": fields,
+        "historical": {
+            "remaining": remaining,
+            "limit": limit,
+            "reset_at": _iso(reset, "auto") if reset is not None else None,
+        },
+        "current_remaining": current,
+        "ratio_denominator": limit if current is not None and limit and current <= limit else None,
+    }
+
+
+def _header_clock(
+    bstate: Mapping[str, Any], now: float, max_age_s: int
+) -> tuple[dict[str, Any], str]:
+    stamp = bstate.get("last_ratelimit_at")
+    if type(stamp) in (int, float) and stamp > 0:
+        try:
+            if math.isfinite(stamp):
+                meter = freshness(float(stamp), now, max_age_s)
+                return meter, meter["freshness"]
+        except (ValueError, OverflowError, OSError):
+            return freshness(None, now, max_age_s), "malformed"
+    status = "malformed" if "last_ratelimit_at" in bstate else "absent"
+    return freshness(None, now, max_age_s), status
+
+
 def _rate_meter(bstate: Mapping[str, Any], now: float, max_age_s: int) -> dict[str, Any]:
     meta = bstate.get("last_ratelimit")
     meta = meta if isinstance(meta, Mapping) else {}
-    stamp = bstate.get("last_ratelimit_at")
-    observed = float(stamp) if isinstance(stamp, int | float) and stamp > 0 else None
-    meter = freshness(observed, now, max_age_s)
-    values: dict[str, Any] = {name: _int(meta.get(header)) for name, header in _RATE_FIELDS}
+    meter, observation_status = _header_clock(bstate, now, max_age_s)
     resets = {name: parse_ts(meta.get(header)) for name, header in _RESET_FIELDS}
+    dimensions = {
+        name: _dimension(name, meta, resets[f"{name}_reset"], meter["fresh"], now)
+        for name in _DIMENSIONS
+    }
+    coverage = dict.fromkeys(("current", "expired", "absent", "unknown"), 0)
+    current_resets = []
+    for name, dim in dimensions.items():
+        status = dim["status"]
+        coverage[status if status in coverage else "unknown"] += 1
+        reset = resets[f"{name}_reset"]
+        if status == "current" and reset is not None:
+            current_resets.append(reset)
+    values: dict[str, Any] = {name: _int(meta.get(header)) for name, header in _RATE_FIELDS}
     values.update({name: _iso(ts) if ts is not None else None for name, ts in resets.items()})
     known = [ts for ts in resets.values() if ts is not None]
     reset_passed = bool(known) and max(known) <= now
     if reset_passed:
-        # The window these numbers describe has already rolled over.
+        # Compatibility: all parsed resets in this snapshot have passed.
         meter["fresh"] = False
     return {
         "state": "observed" if any(v is not None for v in values.values()) else "absent",
         "header_family": "anthropic-ratelimit",
         "values": values,
         "reset_passed": reset_passed,
+        "observation_status": observation_status,
+        "dimensions": dimensions,
+        "aggregate": {
+            **coverage,
+            "next_current_reset_at": _iso(min(current_resets), "auto") if current_resets else None,
+        },
         **meter,
     }
 
@@ -480,13 +572,37 @@ def _account_row(acct: Mapping[str, Any]) -> str:
     )
 
 
+_HEADER_STATUS: Final = {
+    "expired": "expired",
+    "observation_unusable": "observation not current",
+    "reset_unknown": "reset unknown",
+    "remaining_unknown": "remaining unknown",
+}
+
+
+def _header_dimension(dim: Mapping[str, Any]) -> str:
+    label = _esc(dim["unit"].capitalize())
+    if dim["status"] != "current":
+        return f'<span class="muted">{label}: {_HEADER_STATUS[dim["status"]]}</span>'
+    amount = _esc(dim["current_remaining"])
+    limit = dim["ratio_denominator"]
+    if limit is not None:
+        amount += f"/{_esc(limit)}"
+    return f"{label}: {amount} remaining"
+
+
 def _header_row(lane: Mapping[str, Any]) -> str:
     rate = lane["rate_limit"]
-    values = rate["values"]
+    amounts = (
+        "<br>".join(
+            _header_dimension(dim)
+            for dim in rate["dimensions"].values()
+            if dim["status"] != "absent"
+        )
+        or '<span class="muted">no dimension readings</span>'
+    )
     return (
-        f"<tr><td><code>{_esc(lane['lane'])}</code></td>"
-        f"<td>req {_esc(values['requests_remaining'])}/{_esc(values['requests_limit'])} · "
-        f"tok {_esc(values['tokens_remaining'])}/{_esc(values['tokens_limit'])}</td>"
+        f"<tr><td><code>{_esc(lane['lane'])}</code></td><td>{amounts}</td>"
         f"<td>{_esc(rate['observed_at'])}{_tag(rate['freshness'])}</td></tr>"
     )
 
@@ -511,7 +627,7 @@ def render_fragment(snap: Mapping[str, Any]) -> str:
         "no apiCredits receipt account",
     )
     headers = _table(
-        ("API-key lane", "rate-limit headers", "observed"),
+        ("API-key lane", "current rate-limit amounts", "header capture"),
         [_header_row(lane) for lane in snap["header_lanes"]],
         "no API-key rate-limit headers observed",
     )

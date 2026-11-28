@@ -267,6 +267,86 @@ def test_header_lanes_without_or_with_future_observation_are_never_fresh(tmp_pat
     assert (lanes["api:caller"]["fresh"], lanes["api:caller"]["freshness"]) == (False, "future")
 
 
+_RESET_VECTORS = json.loads(
+    Path(__file__).with_name("fixtures").joinpath("api_capacity_reset_vectors.json").read_text()
+)["cases"]
+_RATE_LABELS = {
+    "requests": "Requests",
+    "tokens": "Tokens",
+    "input_tokens": "Input tokens",
+    "output_tokens": "Output tokens",
+}
+
+
+def _vector_snapshot(case):
+    return ac.snapshot(
+        credits=("absent", {"schema": 1, "accounts": []}),
+        bearer_state={"api-key": case["bstate"]},
+        candidate_bid=None,
+        api_label="fixture",
+        now=case["now"],
+        rate_max_age_s=case["max_age_s"],
+    )
+
+
+def test_header_row_distinguishes_expired_request_and_token_windows():
+    requests_expired, tokens_expired = (
+        ac.render_fragment(_vector_snapshot(case)) for case in _RESET_VECTORS[:2]
+    )
+    assert (
+        "Requests: expired" in requests_expired and "Tokens: 800/1200 remaining" in requests_expired
+    )
+    assert "Tokens: expired" in tokens_expired and "Requests: 7/20 remaining" in tokens_expired
+    assert "7/20 remaining" not in requests_expired and "800/1200 remaining" not in tokens_expired
+
+
+@pytest.mark.parametrize("case", _RESET_VECTORS, ids=lambda case: case["id"])
+def test_header_reset_contract(case):
+    snap = _vector_snapshot(case)
+    rate = snap["header_lanes"][0]["rate_limit"]
+    document = ac.render_fragment(snap)
+    statuses = []
+    current_resets = []
+    for name, label in _RATE_LABELS.items():
+        dim = rate["dimensions"][name]
+        status, amount, limit = case["expected"].get(name, ["absent", None, None])
+        statuses.append(status)
+        assert [dim["status"], dim["current_remaining"], dim["ratio_denominator"]] == [
+            status,
+            amount,
+            limit,
+        ]
+        reset_header = f"anthropic-ratelimit-{name.replace('_', '-')}-reset"
+        assert dim["fields"]["reset_at"] == (
+            "valid"
+            if dim["historical"]["reset_at"] is not None
+            else "malformed"
+            if reset_header in case["bstate"].get("last_ratelimit", {})
+            else "absent"
+        )
+        if name in ("input_tokens", "output_tokens"):
+            assert dim["fields"]["limit"] == "unsupported" and dim["historical"]["limit"] is None
+        if status == "current":
+            current_resets.append(ac.parse_ts(dim["historical"]["reset_at"]))
+            expected_amount = str(amount) if limit is None else f"{amount}/{limit}"
+            assert f"{label}: {expected_amount} remaining" in document
+        elif status == "absent":
+            assert f"{label}:" not in document
+        else:
+            assert f"{label}:" in document
+            historical = dim["historical"]["remaining"]
+            if historical is not None:
+                assert f"{label}: {historical}" not in document
+    coverage = rate["aggregate"]
+    assert coverage["current"] == statuses.count("current")
+    assert coverage["expired"] == statuses.count("expired")
+    assert coverage["absent"] == statuses.count("absent")
+    assert coverage["unknown"] == 4 - sum(coverage[k] for k in ("current", "expired", "absent"))
+    assert ac.parse_ts(coverage["next_current_reset_at"]) == min(current_resets, default=None)
+    if case["id"] == "fractional-future-reset":
+        assert coverage["next_current_reset_at"] == "2026-11-28T02:00:00.125000Z"
+
+
 async def test_routes_serve_json_and_panel(tmp_path, monkeypatch):
     path = tmp_path / "api-credits.json"
     path.write_text(json.dumps(_receipt(status="refused", remaining=0)))
