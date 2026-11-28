@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Provider Observatory · Throttler</title>
+  <link rel="icon" href="/ui/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/ui/static/style.css?v={{ asset_v }}">
+  <link rel="stylesheet" href="/ui/static/observatory.css?v={{ asset_v }}">
+</head>
+<body class="observatory">
+<a class="ob-skip" href="#ob-main">Skip to measured volume</a>
+<header class="ob-masthead">
+  <div class="ob-brand"><span class="ob-brand-mark" aria-hidden="true"></span><span>THROTTLER</span><span class="ob-divider" aria-hidden="true">/</span><span class="ob-eyebrow">PROVIDER OBSERVATORY</span></div>
+  <nav aria-label="Observatory"><a href="/ui">Dashboard <span aria-hidden="true">↗</span></a><a href="#ob-source">Source &amp; coverage</a></nav>
+</header>
+<main id="ob-main">
+  {% if preview_label|default("") %}<p class="ob-preview">{{ preview_label }}</p>{% endif %}
+  <section class="ob-titlebar" aria-labelledby="ob-title">
+    <div><p class="ob-eyebrow">01 / USAGE ATTRIBUTION</p><h1 id="ob-title">Where the volume goes.</h1><p class="ob-subtitle">Provider → model. One source window. Every count inspectable.</p></div>
+    <div class="ob-snapshot"><span class="ob-snapshot-mark" aria-hidden="true"></span><span>Manual snapshot<br><small>Refresh with “Update view”</small></span></div>
+  </section>
+  {% if ob.state == "ok" %}
+  <form class="ob-controls" method="get" action="/ui/observatory" aria-label="Filter usage attribution">
+    <div class="ob-control"><label for="ob-provider">Provider</label><select id="ob-provider" name="provider"><option value="">All providers</option>{% for value in ob.provider_options %}<option value="{{ value }}"{% if value == ob.selected.provider %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="ob-control ob-model-control"><label for="ob-model">Model</label><select id="ob-model" name="model"><option value="">All models</option>{% for value in ob.model_options %}<option value="{{ value }}"{% if value == ob.selected.model %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></div>
+    <div class="ob-control"><label for="ob-role">Call type</label><select id="ob-role" name="role">{% for value, label in roles %}<option value="{{ value }}"{% if value == ob.selected.role %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="ob-control ob-measure-control"><label for="ob-measure">Measure</label><select id="ob-measure" name="measure">{% for value, label in measures %}<option value="{{ value }}"{% if value == ob.selected.measure %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <button type="submit" class="ob-apply">Update view <span aria-hidden="true">↻</span></button>
+    <a class="ob-clear" href="/ui/observatory">Clear filters</a>
+  </form>
+  <div class="ob-source-strip">
+    <span class="ob-freshness ob-{{ ob.freshness }}"><span aria-hidden="true">●</span> {{ ob.freshness_label }} · {{ ob.source_age }}</span>
+    <span>Source window <strong>{{ ob.window_span }}</strong> · {{ ob.window_start }} → {{ ob.window_end }}</span>
+  </div>
+  <div class="ob-workspace">
+    <section class="ob-instrument" aria-labelledby="ob-volume-title">
+      <div class="ob-instrument-head">
+        <div><p class="ob-eyebrow" id="ob-volume-title">{{ ob.measure_label }} / SELECTED SCOPE</p><p class="ob-total">{{ ob.total.compact }} <span>{{ ob.unit }}</span></p></div>
+        <p class="ob-scope"><strong>{{ ob.provider_count }}</strong> providers <span aria-hidden="true">/</span> <strong>{{ ob.model_count }}</strong> models<span class="ob-source-row-count">{{ ob.matched_rows }} of {{ ob.source_rows }} accepted source rows</span></p>
+      </div>
+      <div class="ob-reading-key">
+        <div class="ob-legend" aria-label="Chart legend">{% for key, label in ob.legend %}<span><i class="ob-{{ key }}" aria-hidden="true"></i>{{ label }}</span>{% endfor %}</div>
+        <span>Linear scale · fixed across filters</span>
+      </div>
+      {% if ob.total.unknown %}<p class="ob-partial-note"><strong>Incomplete measurement.</strong> {{ ob.total.unknown }} selected value{% if ob.total.unknown != 1 %}s{% endif %} unknown. “≥” marks known lower bounds; blank volume is never assumed zero.</p>{% endif %}
+      <div class="ob-tracks" tabindex="0" role="region" aria-label="Provider and model volume tracks">
+        <div class="ob-axis">
+          <span>PROVIDER / MODEL</span>
+          <div class="ob-ticks" aria-hidden="true">{% for tick in ob.ticks %}<span style="left:{{ tick.position }}%">{{ tick.text }}</span>{% endfor %}</div>
+          <span class="ob-value-head">{{ ob.unit }}</span>
+        </div>
+        {% for provider in ob.providers %}
+        <section class="ob-provider-group" aria-labelledby="ob-provider-{{ loop.index }}">
+          <div class="ob-provider-heading"><h2 id="ob-provider-{{ loop.index }}">{{ provider.provider }}</h2><span>{{ provider.models|length }} model{% if provider.models|length != 1 %}s{% endif %}</span><p>{{ provider.metric.compact }} <small>{{ ob.unit }}</small></p></div>
+          {% for model in provider.models %}
+          <div class="ob-model-row">
+            <div class="ob-model-name"><span>{{ model.model }}</span>{% if model.metric.unknown %}<small>{% if model.metric.value is none %}unmeasured{% else %}partial{% endif %}</small>{% endif %}</div>
+            <div class="ob-track">
+              {% if model.metric.value is none %}<span class="ob-unmeasured">Unknown volume</span>{% else %}
+              <svg viewBox="0 0 1000 22" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                {% for segment in model.segments %}<rect class="ob-{{ segment.key }}" x="{{ '%.6f'|format(segment.x) }}" y="3" width="{{ '%.6f'|format(segment.width) }}" height="16"><title>{{ segment.label }}: {{ segment.text }}</title></rect>{% endfor %}
+              </svg>
+              {% if model.metric.value == 0 %}<span class="ob-zero">{% if model.metric.unknown %}No known volume{% else %}Measured zero{% endif %}</span>{% endif %}
+              {% endif %}
+            </div>
+            <span class="ob-model-value" title="{{ model.metric.text }} {{ ob.unit }}">{{ model.metric.compact }}</span>
+          </div>
+          {% endfor %}
+        </section>
+        {% else %}<div class="ob-empty"><h2>No rows match this scope.</h2><p>The source exists. This provider, model and call-type combination has no recorded rows.</p><a href="/ui/observatory">Return to all recorded usage</a></div>{% endfor %}
+      </div>
+      <p class="ob-chart-footnote">All lanes share a zero origin and the same full-source maximum. Tiny volumes may be below one pixel. Exact values remain available below.</p>
+    </section>
+    <aside class="ob-inspector" id="ob-source" aria-labelledby="ob-source-title">
+      <div class="ob-inspector-title"><span class="ob-eyebrow">EVIDENCE / 01</span><h2 id="ob-source-title">Source &amp; coverage</h2></div>
+      <dl class="ob-source-facts">
+        <div><dt>Contract</dt><dd><code>usage-summary.v1</code><small>Published aggregate · read only</small></dd></div>
+        <div><dt>Source as of</dt><dd><time datetime="{{ ob.observed_iso }}">{{ ob.observed_at }}</time><small>Earlier of publication and coverage end</small></dd></div>
+        <div><dt>Published</dt><dd><time datetime="{{ ob.generated_iso }}">{{ ob.generated_at }}</time></dd></div>
+        <div><dt>Window</dt><dd>{{ ob.window_start }}<span class="ob-window-to">through</span>{{ ob.window_end }}</dd></div>
+      </dl>
+      <div class="ob-coverage-counts"><span>Files scanned <strong>{{ "{:,}".format(ob.files_scanned) }}</strong></span><span>Files skipped <strong>{{ "{:,}".format(ob.files_skipped) }}</strong></span><span>Rejected rows <strong>{{ "{:,}".format(ob.rejected_rows) }}</strong></span></div>
+      {% if ob.files_skipped or ob.rejected_rows %}<p class="ob-coverage-note">Coverage has exclusions. Counts describe accepted records only.</p>{% endif %}
+      <details class="ob-source-detail"><summary>How to read this view</summary><div><p>Accounted tokens add fresh input, cache write, cache read and output. Reasoning is already inside output.</p><p>Recorded calls count usage-bearing source records. They do not establish unique tasks or physical API attempts.</p><p>Filters select source rows across this whole window. Pane labels are source attribution, not verified workspace ownership.</p></div></details>
+      <details class="ob-source-detail"><summary>What this source cannot show</summary><div><p>No quota denominator, account eligibility, request timeline or smaller time buckets is present in this aggregate.</p><p>This is observed usage coverage, not complete provider history, billed spend or live streaming speed.</p><a href="/ui">Inspect the existing dashboard</a></div></details>
+      <p class="ob-captured">Page captured {{ ob.captured_at }}.<br>Source time does not advance while you inspect.</p>
+    </aside>
+  </div>
+  <details class="ob-data-drawer" id="ob-exact-data">
+    <summary><span><span class="ob-eyebrow">EXACT DATA</span><strong>Inspect {{ ob.matched_rows }} matched source rows</strong></span><span>Counts, attribution &amp; unknowns <span aria-hidden="true">↗</span></span></summary>
+    <div class="ob-data-intro"><p>The same source rows drive the chart and these totals. “Unknown” is absent measurement; “≥” means at least the known sum.</p><p>All token columns use tokens. Recorded calls use source records. Reasoning remains a subset of output.</p></div>
+    <div class="ob-table-scroll" tabindex="0" role="region" aria-label="Exact usage table">
+      <table class="ob-table">
+        <caption>Selected source rows · {{ ob.window_start }} through {{ ob.window_end }}</caption>
+        <thead><tr><th scope="col">Provider</th><th scope="col">Model</th><th scope="col">Call type</th><th scope="col">Pane label</th>{% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr></thead>
+        <tbody>{% for row in ob.table_rows %}<tr><th scope="row">{{ row.provider }}</th><td>{{ row.model }}</td><td>{{ row.role }}</td><td>{{ row.pane }}</td>{% for cell in row.cells %}<td class="{% if cell.value is none %}ob-unknown-cell{% endif %}">{{ cell.text }}</td>{% endfor %}</tr>{% else %}<tr><td colspan="10">No rows match this scope.</td></tr>{% endfor %}</tbody>
+        <tfoot><tr><th scope="row" colspan="4">Known totals{% if ob.matched_rows == 0 %} · no matching records{% endif %}</th>{% for cell in ob.totals %}<td>{{ cell.text }}{% if cell.unknown %}<small>{{ cell.unknown }} unknown</small>{% endif %}</td>{% endfor %}</tr></tfoot>
+      </table>
+    </div>
+  </details>
+  {% else %}
+  <section class="ob-missing" aria-labelledby="ob-missing-title"><p class="ob-eyebrow">SOURCE GAP</p><h2 id="ob-missing-title">Usage observation unavailable.</h2><p>{{ ob.error }}</p><p>No volume, percentage or capacity verdict can be derived from an unavailable summary.</p><a href="/ui">Return to the dashboard</a></section>
+  <aside class="ob-inspector ob-missing-source" id="ob-source"><h2>Required source</h2><p>This view reads the dashboard’s existing <code>usage-summary.v1</code> publication. It starts no collector and makes no provider requests.</p></aside>
+  {% endif %}
+</main>
+<footer class="ob-footer"><span>THROTTLER / OBSERVATORY</span><span>Read-only aggregate instrument · source-scoped attribution</span><span>build {{ asset_v }}</span></footer>
+</body>
+</html>

@@ -100,6 +100,8 @@ def _asset_version(
             h.update((_HERE / module).read_bytes())
         for module in ("output_usage.py", "fleet_ui_config.py"):
             h.update((_HERE.parent / module).read_bytes())
+    with contextlib.suppress(OSError):
+        h.update((_HERE / "observatory.py").read_bytes())
     return h.hexdigest()[:12]
 
 
@@ -1654,6 +1656,9 @@ def attach_ui(app: web.Application) -> None:
     app.router.add_post("/ui/projects/weight", _auth.guard(project_weight_set))
     _auth.attach_login(app)
     app.router.add_static("/ui/static/", _STATIC, follow_symlinks=False)
+    from .observatory import attach_observatory
+
+    attach_observatory(app)
     app.on_startup.append(_start_account_refresher)
     app.on_cleanup.append(_stop_account_refresher)
     app.on_startup.append(_start_history_sampler)

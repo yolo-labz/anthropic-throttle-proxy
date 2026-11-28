@@ -47,6 +47,22 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:8765
 claude       # an Anthropic-protocol client
 ```
 
+## Development on NixOS
+
+Enter the pinned development shell before installing or running the Python tools:
+
+```sh
+nix develop
+uv sync --locked
+uv run --locked python -c "import duckdb"
+uv run --locked pytest
+```
+
+The shell supplies Python 3.14, uv, and the C++ runtime required by the locked
+DuckDB wheel. Python downloads are disabled in this shell so uv uses its Nix
+interpreter. Python dependencies remain governed by `uv.lock`. The development
+shell does not start the gateway or change a running service.
+
 ## Canonical commands and compatibility
 
 The Python distribution is `throttler-gateway`; its import package is
