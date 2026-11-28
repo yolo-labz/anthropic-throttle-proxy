@@ -174,6 +174,12 @@ def build_view(summary: us.Summary, query: Mapping[str, str], *, now: float) -> 
     observed = min(summary.generated_at, summary.window_end)
     measure_label = dict(MEASURES)[measure]
     unit = "recorded calls" if measure == "requests" else "tokens"
+    source_omissions = bool(summary.files_skipped or summary.rejected_rows)
+    total = _metric(rows, measure)
+    headline = total["compact"]
+    if total["value"] is not None and (source_omissions or total["unknown"]):
+        # Do not round a lower bound up or attach source omissions to individual groups.
+        headline = f"≥ {total['value']:,}"
     return {
         "state": "ok",
         "selected": selected,
@@ -181,7 +187,9 @@ def build_view(summary: us.Summary, query: Mapping[str, str], *, now: float) -> 
         "model_options": sorted({r.model for r in summary.rows}),
         "measure_label": measure_label,
         "unit": unit,
-        "total": _metric(rows, measure),
+        "total": total,
+        "headline": headline,
+        "source_omissions": source_omissions,
         "totals": _cells(rows),
         "providers": providers,
         "model_count": len(groups),

@@ -37,7 +37,7 @@
   <div class="ob-workspace">
     <section class="ob-instrument" aria-labelledby="ob-volume-title">
       <div class="ob-instrument-head">
-        <div><p class="ob-eyebrow" id="ob-volume-title">{{ ob.measure_label }} / SELECTED SCOPE</p><p class="ob-total">{{ ob.total.compact }} <span>{{ ob.unit }}</span></p></div>
+        <div><p class="ob-eyebrow" id="ob-volume-title">{{ ob.measure_label }} / OBSERVED SELECTED SCOPE</p><p class="ob-total">{{ ob.headline }} <span>{{ ob.unit }}</span></p></div>
         <p class="ob-scope"><strong>{{ ob.provider_count }}</strong> providers <span aria-hidden="true">/</span> <strong>{{ ob.model_count }}</strong> models<span class="ob-source-row-count">{{ ob.matched_rows }} of {{ ob.source_rows }} accepted source rows</span></p>
       </div>
       <div class="ob-reading-key">
@@ -45,6 +45,7 @@
         <span>Linear scale · fixed across filters</span>
       </div>
       {% if ob.total.unknown %}<p class="ob-partial-note"><strong>Incomplete measurement.</strong> {{ ob.total.unknown }} selected value{% if ob.total.unknown != 1 %}s{% endif %} unknown. “≥” marks known lower bounds; blank volume is never assumed zero.</p>{% endif %}
+      {% if ob.source_omissions %}<p class="ob-partial-note"><strong>Source coverage has reported omissions.</strong> Usage from skipped files or rejected rows is unknown and cannot be assigned to the selected groups.{% if ob.total.value is not none %} The headline is a lower bound, not a complete total.{% endif %}</p>{% endif %}
       <div class="ob-tracks" tabindex="0" role="region" aria-label="Provider and model volume tracks">
         <div class="ob-axis">
           <span>PROVIDER / MODEL</span>
@@ -84,7 +85,7 @@
       <div class="ob-coverage-counts"><span>Files scanned <strong>{{ "{:,}".format(ob.files_scanned) }}</strong></span><span>Files skipped <strong>{{ "{:,}".format(ob.files_skipped) }}</strong></span><span>Rejected rows <strong>{{ "{:,}".format(ob.rejected_rows) }}</strong></span></div>
       {% if ob.files_skipped or ob.rejected_rows %}<p class="ob-coverage-note">Coverage has exclusions. Counts describe accepted records only.</p>{% endif %}
       <details class="ob-source-detail"><summary>How to read this view</summary><div><p>Accounted tokens add fresh input, cache write, cache read and output. Reasoning is already inside output.</p><p>Recorded calls count usage-bearing source records. They do not establish unique tasks or physical API attempts.</p><p>Filters select source rows across this whole window. Pane labels are source attribution, not verified workspace ownership.</p></div></details>
-      <details class="ob-source-detail"><summary>What this source cannot show</summary><div><p>No quota denominator, account eligibility, request timeline or smaller time buckets is present in this aggregate.</p><p>This is observed usage coverage, not complete provider history, billed spend or live streaming speed.</p><a href="/ui">Inspect the existing dashboard</a></div></details>
+      <details class="ob-source-detail"><summary>What this source cannot show</summary><div><p>No quota denominator, account eligibility, request timeline or smaller time buckets is present in this aggregate.</p><p>This is observed usage coverage, not complete provider history, billed spend or live streaming speed. No reported exclusions does not prove complete coverage.</p><a href="/ui">Inspect the existing dashboard</a></div></details>
       <p class="ob-captured">Page captured {{ ob.captured_at }}.<br>Source time does not advance while you inspect.</p>
     </aside>
   </div>
